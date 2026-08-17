@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { LocationMenuResponse } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
@@ -16,8 +17,10 @@ export class LocationsService {
     });
   }
 
-  findMenu(locationId: string) {
-    return this.prisma.locationMenu.findFirst({
+  async findMenu(
+    locationId: string,
+  ): Promise<LocationMenuResponse | null> {
+    const locationMenu = await this.prisma.locationMenu.findFirst({
       where: {
         locationId,
         isActive: true,
@@ -29,6 +32,7 @@ export class LocationsService {
         },
       },
       include: {
+        location: true,
         menu: {
           include: {
             products: {
@@ -50,5 +54,39 @@ export class LocationsService {
         },
       },
     });
+
+    if (!locationMenu) {
+      return null;
+    }
+
+    return {
+      location: {
+        id: locationMenu.location.id,
+        name: locationMenu.location.name,
+        slug: locationMenu.location.slug,
+      },
+      menu: {
+        id: locationMenu.menu.id,
+        name: locationMenu.menu.name,
+        slug: locationMenu.menu.slug,
+        products: locationMenu.menu.products.map((menuProduct) => ({
+          displayOrder: menuProduct.displayOrder,
+          product: {
+            id: menuProduct.product.id,
+            name: menuProduct.product.name,
+            slug: menuProduct.product.slug,
+            description: menuProduct.product.description,
+            basePrice: menuProduct.product.basePrice,
+            currency: menuProduct.product.currency,
+            category: {
+              id: menuProduct.product.category.id,
+              name: menuProduct.product.category.name,
+              slug: menuProduct.product.category.slug,
+              displayOrder: menuProduct.product.category.displayOrder,
+            },
+          },
+        })),
+      },
+    };
   }
 }
