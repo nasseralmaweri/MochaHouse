@@ -15,4 +15,40 @@ export class LocationsService {
       },
     });
   }
+
+  findMenu(locationId: string) {
+    return this.prisma.locationMenu.findFirst({
+      where: {
+        locationId,
+        isActive: true,
+        location: {
+          isActive: true,
+        },
+        menu: {
+          isActive: true,
+        },
+      },
+      include: {
+        menu: {
+          include: {
+            products: {
+              where: {
+                isActive: true,
+              },
+              orderBy: {
+                displayOrder: 'asc',
+              },
+              include: {
+                product: {
+                  include: {
+                    category: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  }
 }
