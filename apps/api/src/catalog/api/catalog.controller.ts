@@ -9,4 +9,9 @@ export class CatalogController {
   findCategories() {
     return this.catalogService.findCategories();
   }
+
+  @Get('products')
+  findProducts() {
+    return this.catalogService.findProducts();
+  }
 }
