@@ -9,7 +9,7 @@ const adapter = new PrismaPg({
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  await prisma.location.upsert({
+  const location = await prisma.location.upsert({
     where: {
       slug: 'dearborn-heights',
     },
@@ -17,6 +17,78 @@ async function main() {
     create: {
       name: 'Mocha House - Dearborn Heights',
       slug: 'dearborn-heights',
+      isActive: true,
+    },
+  });
+
+  const category = await prisma.category.upsert({
+    where: {
+      slug: 'coffee',
+    },
+    update: {},
+    create: {
+      name: 'Coffee',
+      slug: 'coffee',
+      displayOrder: 1,
+      isActive: true,
+    },
+  });
+
+  const product = await prisma.product.upsert({
+    where: {
+      slug: 'drip-coffee',
+    },
+    update: {},
+    create: {
+      name: 'Drip Coffee',
+      slug: 'drip-coffee',
+      description: 'Freshly brewed drip coffee.',
+      basePrice: 350,
+      currency: 'USD',
+      isActive: true,
+      categoryId: category.id,
+    },
+  });
+
+  const menu = await prisma.menu.upsert({
+    where: {
+      slug: 'main-menu',
+    },
+    update: {},
+    create: {
+      name: 'Main Menu',
+      slug: 'main-menu',
+      isActive: true,
+    },
+  });
+
+  await prisma.menuProduct.upsert({
+    where: {
+      menuId_productId: {
+        menuId: menu.id,
+        productId: product.id,
+      },
+    },
+    update: {},
+    create: {
+      menuId: menu.id,
+      productId: product.id,
+      displayOrder: 1,
+      isActive: true,
+    },
+  });
+
+  await prisma.locationMenu.upsert({
+    where: {
+      locationId_menuId: {
+        locationId: location.id,
+        menuId: menu.id,
+      },
+    },
+    update: {},
+    create: {
+      locationId: location.id,
+      menuId: menu.id,
       isActive: true,
     },
   });
