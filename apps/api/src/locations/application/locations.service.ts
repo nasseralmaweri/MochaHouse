@@ -1,4 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type {
   LocationMenuResponse,
   LocationSummary,
@@ -181,5 +185,44 @@ export class LocationsService {
         }),
       },
     };
+  }
+
+  async updateDigitalOrdering(
+    locationId: string,
+    isDigitalOrderingEnabled: boolean,
+  ): Promise<LocationSummary> {
+    if (typeof isDigitalOrderingEnabled !== 'boolean') {
+      throw new BadRequestException(
+        'Digital ordering state must be a boolean.',
+      );
+    }
+
+    const existingLocation = await this.prisma.location.findUnique({
+      where: {
+        id: locationId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!existingLocation) {
+      throw new NotFoundException('Location not found.');
+    }
+
+    return this.prisma.location.update({
+      where: {
+        id: locationId,
+      },
+      data: {
+        isDigitalOrderingEnabled,
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isDigitalOrderingEnabled: true,
+      },
+    });
   }
 }
