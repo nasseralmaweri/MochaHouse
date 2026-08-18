@@ -14,14 +14,15 @@ datasource db {
 }
 
 model Location {
-  id        String                 @id @default(uuid(7))
-  name      String
-  slug      String                 @unique
-  isActive  Boolean                @default(true)
-  createdAt DateTime               @default(now())
-  updatedAt DateTime               @updatedAt
-  menus     LocationMenu[]
-  productPriceOverrides LocationProductPriceOverride[]
+  id                           String                                @id @default(uuid(7))
+  name                         String
+  slug                         String                                @unique
+  isActive                     Boolean                               @default(true)
+  createdAt                    DateTime                              @default(now())
+  updatedAt                    DateTime                              @updatedAt
+  menus                        LocationMenu[]
+  productPriceOverrides        LocationProductPriceOverride[]
+  productAvailabilityOverrides LocationProductAvailabilityOverride[]
 }
 
 model Category {
@@ -36,34 +37,36 @@ model Category {
 }
 
 model Product {
-  id             String                         @id @default(uuid(7))
-  name           String
-  slug           String                         @unique
-  description    String?
-  basePrice      Int?
-  currency       String                         @default("USD")
-  isActive       Boolean                        @default(true)
-  categoryId     String
-  category       Category                       @relation(fields: [categoryId], references: [id])
-  createdAt      DateTime                       @default(now())
-  updatedAt      DateTime                       @updatedAt
-  modifierGroups ProductModifierGroup[]
-  menus          MenuProduct[]
-  priceOverrides LocationProductPriceOverride[]
+  id                    String                                @id @default(uuid(7))
+  name                  String
+  slug                  String                                @unique
+  description           String?
+  basePrice             Int?
+  currency              String                                @default("USD")
+  isActive              Boolean                               @default(true)
+  categoryId            String
+  category              Category                              @relation(fields: [categoryId], references: [id])
+  createdAt             DateTime                              @default(now())
+  updatedAt             DateTime                              @updatedAt
+  modifierGroups        ProductModifierGroup[]
+  menus                 MenuProduct[]
+  priceOverrides        LocationProductPriceOverride[]
+  availabilityOverrides LocationProductAvailabilityOverride[]
 
   @@index([categoryId])
 }
 
 model Menu {
-  id        String                         @id @default(uuid(7))
-  name      String
-  slug      String                         @unique
-  isActive  Boolean                        @default(true)
-  products  MenuProduct[]
-  locations LocationMenu[]
-  priceOverrides LocationProductPriceOverride[]
-  createdAt DateTime                       @default(now())
-  updatedAt DateTime                       @updatedAt
+  id                    String                                @id @default(uuid(7))
+  name                  String
+  slug                  String                                @unique
+  isActive              Boolean                               @default(true)
+  products              MenuProduct[]
+  locations             LocationMenu[]
+  priceOverrides        LocationProductPriceOverride[]
+  availabilityOverrides LocationProductAvailabilityOverride[]
+  createdAt             DateTime                              @default(now())
+  updatedAt             DateTime                              @updatedAt
 }
 
 model ModifierGroup {
@@ -97,7 +100,7 @@ model ModifierOption {
 model ProductModifierGroup {
   productId       String
   modifierGroupId String
-  displayOrder    Int    @default(0)
+  displayOrder    Int @default(0)
 
   product       Product       @relation(fields: [productId], references: [id])
   modifierGroup ModifierGroup @relation(fields: [modifierGroupId], references: [id])
@@ -138,6 +141,23 @@ model LocationProductPriceOverride {
   price      Int
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  location Location @relation(fields: [locationId], references: [id])
+  menu     Menu     @relation(fields: [menuId], references: [id])
+  product  Product  @relation(fields: [productId], references: [id])
+
+  @@id([locationId, menuId, productId])
+  @@index([menuId])
+  @@index([productId])
+}
+
+model LocationProductAvailabilityOverride {
+  locationId  String
+  menuId      String
+  productId   String
+  isAvailable Boolean
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   location Location @relation(fields: [locationId], references: [id])
   menu     Menu     @relation(fields: [menuId], references: [id])

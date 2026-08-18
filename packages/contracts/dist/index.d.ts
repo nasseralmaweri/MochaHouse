@@ -41,6 +41,7 @@ export interface ModifierGroupSummary {
 export interface EffectiveMenuProduct {
     displayOrder: number;
     effectivePrice: number | null;
+    isAvailable: boolean;
     product: ProductSummary;
     modifierGroups: ModifierGroupSummary[];
 }

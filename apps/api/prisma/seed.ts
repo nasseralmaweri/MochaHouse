@@ -112,6 +112,25 @@ async function main() {
     },
   });
 
+  await prisma.locationProductAvailabilityOverride.upsert({
+    where: {
+      locationId_menuId_productId: {
+        locationId: location.id,
+        menuId: menu.id,
+        productId: product.id,
+      },
+    },
+    update: {
+      isAvailable: false,
+    },
+    create: {
+      locationId: location.id,
+      menuId: menu.id,
+      productId: product.id,
+      isAvailable: false,
+    },
+  });
+
   let sizeGroup = await prisma.modifierGroup.findFirst({
     where: {
       name: 'Size',

@@ -57,6 +57,11 @@ export class LocationsService {
                         locationId,
                       },
                     },
+                    availabilityOverrides: {
+                      where: {
+                        locationId,
+                      },
+                    },
                     modifierGroups: {
                       where: {
                         modifierGroup: {
@@ -110,10 +115,17 @@ export class LocationsService {
               (override) => override.menuId === locationMenu.menu.id,
             );
 
+          const availabilityOverride =
+            menuProduct.product.availabilityOverrides.find(
+              (override) => override.menuId === locationMenu.menu.id,
+            );
+
           return {
             displayOrder: menuProduct.displayOrder,
             effectivePrice:
               priceOverride?.price ?? menuProduct.product.basePrice,
+            isAvailable:
+              availabilityOverride?.isAvailable ?? true,
             product: {
               id: menuProduct.product.id,
               name: menuProduct.product.name,
