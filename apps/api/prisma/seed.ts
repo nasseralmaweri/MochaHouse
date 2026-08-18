@@ -92,6 +92,105 @@ async function main() {
       isActive: true,
     },
   });
+
+  let sizeGroup = await prisma.modifierGroup.findFirst({
+    where: {
+      name: 'Size',
+    },
+  });
+
+  if (!sizeGroup) {
+    sizeGroup = await prisma.modifierGroup.create({
+      data: {
+        name: 'Size',
+        displayOrder: 1,
+        isRequired: true,
+        minSelections: 1,
+        maxSelections: 1,
+        isActive: true,
+      },
+    });
+  } else {
+    sizeGroup = await prisma.modifierGroup.update({
+      where: {
+        id: sizeGroup.id,
+      },
+      data: {
+        displayOrder: 1,
+        isRequired: true,
+        minSelections: 1,
+        maxSelections: 1,
+        isActive: true,
+      },
+    });
+  }
+
+  const sizeOptions = [
+    {
+      name: 'Small',
+      priceAdjustment: 0,
+      displayOrder: 1,
+    },
+    {
+      name: 'Medium',
+      priceAdjustment: 50,
+      displayOrder: 2,
+    },
+    {
+      name: 'Large',
+      priceAdjustment: 100,
+      displayOrder: 3,
+    },
+  ];
+
+  for (const option of sizeOptions) {
+    const existingOption = await prisma.modifierOption.findFirst({
+      where: {
+        modifierGroupId: sizeGroup.id,
+        name: option.name,
+      },
+    });
+
+    if (existingOption) {
+      await prisma.modifierOption.update({
+        where: {
+          id: existingOption.id,
+        },
+        data: {
+          priceAdjustment: option.priceAdjustment,
+          displayOrder: option.displayOrder,
+          isActive: true,
+        },
+      });
+    } else {
+      await prisma.modifierOption.create({
+        data: {
+          name: option.name,
+          priceAdjustment: option.priceAdjustment,
+          displayOrder: option.displayOrder,
+          isActive: true,
+          modifierGroupId: sizeGroup.id,
+        },
+      });
+    }
+  }
+
+  await prisma.productModifierGroup.upsert({
+    where: {
+      productId_modifierGroupId: {
+        productId: product.id,
+        modifierGroupId: sizeGroup.id,
+      },
+    },
+    update: {
+      displayOrder: 1,
+    },
+    create: {
+      productId: product.id,
+      modifierGroupId: sizeGroup.id,
+      displayOrder: 1,
+    },
+  });
 }
 
 main()
