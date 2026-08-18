@@ -47,6 +47,11 @@ export class LocationsService {
                   include: {
                     category: true,
                     modifierGroups: {
+                      where: {
+                        modifierGroup: {
+                          isActive: true,
+                        },
+                      },
                       orderBy: {
                         displayOrder: 'asc',
                       },
