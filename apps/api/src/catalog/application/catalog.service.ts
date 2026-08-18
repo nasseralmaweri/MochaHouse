@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type {
   CategorySummary,
+  ModifierGroupSummary,
   ProductSummary,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -49,6 +50,39 @@ export class CatalogService {
       },
       orderBy: {
         name: 'asc',
+      },
+    });
+  }
+
+  findModifierGroups(): Promise<ModifierGroupSummary[]> {
+    return this.prisma.modifierGroup.findMany({
+      where: {
+        isActive: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        displayOrder: true,
+        isRequired: true,
+        minSelections: true,
+        maxSelections: true,
+        options: {
+          where: {
+            isActive: true,
+          },
+          select: {
+            id: true,
+            name: true,
+            priceAdjustment: true,
+            displayOrder: true,
+          },
+          orderBy: {
+            displayOrder: 'asc',
+          },
+        },
+      },
+      orderBy: {
+        displayOrder: 'asc',
       },
     });
   }

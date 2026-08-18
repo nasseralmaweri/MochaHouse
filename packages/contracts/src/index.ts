@@ -21,6 +21,23 @@ export interface ProductSummary {
   category: CategorySummary;
 }
 
+export interface ModifierOptionSummary {
+  id: string;
+  name: string;
+  priceAdjustment: number;
+  displayOrder: number;
+}
+
+export interface ModifierGroupSummary {
+  id: string;
+  name: string;
+  displayOrder: number;
+  isRequired: boolean;
+  minSelections: number;
+  maxSelections: number | null;
+  options: ModifierOptionSummary[];
+}
+
 export interface EffectiveMenuProduct {
   displayOrder: number;
   product: ProductSummary;

@@ -14,4 +14,9 @@ export class CatalogController {
   findProducts() {
     return this.catalogService.findProducts();
   }
+
+  @Get('modifier-groups')
+  findModifierGroups() {
+    return this.catalogService.findModifierGroups();
+  }
 }
