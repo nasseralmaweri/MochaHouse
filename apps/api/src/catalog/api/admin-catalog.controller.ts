@@ -19,6 +19,10 @@ interface SetPriceOverrideBody {
   price: number;
 }
 
+interface SetAvailabilityOverrideBody {
+  isAvailable: boolean;
+}
+
 @Controller('api/v1/admin/catalog')
 export class AdminCatalogController {
   constructor(private readonly catalogService: CatalogService) {}
@@ -57,6 +61,38 @@ export class AdminCatalogController {
     @Param('productId') productId: string,
   ) {
     return this.catalogService.removeProductPriceOverride(
+      locationId,
+      menuId,
+      productId,
+    );
+  }
+
+  @Put(
+    'locations/:locationId/menus/:menuId/products/:productId/availability-override',
+  )
+  setProductAvailabilityOverride(
+    @Param('locationId') locationId: string,
+    @Param('menuId') menuId: string,
+    @Param('productId') productId: string,
+    @Body() body: SetAvailabilityOverrideBody,
+  ) {
+    return this.catalogService.setProductAvailabilityOverride(
+      locationId,
+      menuId,
+      productId,
+      body.isAvailable,
+    );
+  }
+
+  @Delete(
+    'locations/:locationId/menus/:menuId/products/:productId/availability-override',
+  )
+  removeProductAvailabilityOverride(
+    @Param('locationId') locationId: string,
+    @Param('menuId') menuId: string,
+    @Param('productId') productId: string,
+  ) {
+    return this.catalogService.removeProductAvailabilityOverride(
       locationId,
       menuId,
       productId,

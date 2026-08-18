@@ -120,8 +120,13 @@ export class CatalogService {
     input: UpdateProductInput,
   ): Promise<ProductSummary> {
     if (input.name !== undefined) {
-      if (typeof input.name !== 'string' || input.name.trim().length === 0) {
-        throw new BadRequestException('Product name cannot be empty.');
+      if (
+        typeof input.name !== 'string' ||
+        input.name.trim().length === 0
+      ) {
+        throw new BadRequestException(
+          'Product name cannot be empty.',
+        );
       }
     }
 
@@ -136,7 +141,10 @@ export class CatalogService {
     }
 
     if (input.basePrice !== undefined && input.basePrice !== null) {
-      if (!Number.isInteger(input.basePrice) || input.basePrice < 0) {
+      if (
+        !Number.isInteger(input.basePrice) ||
+        input.basePrice < 0
+      ) {
         throw new BadRequestException(
           'Product base price must be a non-negative integer or null.',
         );
@@ -307,6 +315,130 @@ export class CatalogService {
     }
 
     await this.prisma.locationProductPriceOverride.delete({
+      where: {
+        locationId_menuId_productId: {
+          locationId,
+          menuId,
+          productId,
+        },
+      },
+    });
+
+    return {
+      locationId,
+      menuId,
+      productId,
+      inherited: true,
+    };
+  }
+
+  async setProductAvailabilityOverride(
+    locationId: string,
+    menuId: string,
+    productId: string,
+    isAvailable: boolean,
+  ) {
+    if (typeof isAvailable !== 'boolean') {
+      throw new BadRequestException(
+        'Availability override must be a boolean.',
+      );
+    }
+
+    const [locationMenu, menuProduct] = await Promise.all([
+      this.prisma.locationMenu.findUnique({
+        where: {
+          locationId_menuId: {
+            locationId,
+            menuId,
+          },
+        },
+        select: {
+          locationId: true,
+          menuId: true,
+        },
+      }),
+      this.prisma.menuProduct.findUnique({
+        where: {
+          menuId_productId: {
+            menuId,
+            productId,
+          },
+        },
+        select: {
+          menuId: true,
+          productId: true,
+        },
+      }),
+    ]);
+
+    if (!locationMenu) {
+      throw new NotFoundException(
+        'The selected menu is not assigned to this location.',
+      );
+    }
+
+    if (!menuProduct) {
+      throw new NotFoundException(
+        'The selected product is not assigned to this menu.',
+      );
+    }
+
+    return this.prisma.locationProductAvailabilityOverride.upsert({
+      where: {
+        locationId_menuId_productId: {
+          locationId,
+          menuId,
+          productId,
+        },
+      },
+      update: {
+        isAvailable,
+      },
+      create: {
+        locationId,
+        menuId,
+        productId,
+        isAvailable,
+      },
+      select: {
+        locationId: true,
+        menuId: true,
+        productId: true,
+        isAvailable: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  }
+
+  async removeProductAvailabilityOverride(
+    locationId: string,
+    menuId: string,
+    productId: string,
+  ) {
+    const existingOverride =
+      await this.prisma.locationProductAvailabilityOverride.findUnique({
+        where: {
+          locationId_menuId_productId: {
+            locationId,
+            menuId,
+            productId,
+          },
+        },
+        select: {
+          locationId: true,
+          menuId: true,
+          productId: true,
+        },
+      });
+
+    if (!existingOverride) {
+      throw new NotFoundException(
+        'Availability override not found.',
+      );
+    }
+
+    await this.prisma.locationProductAvailabilityOverride.delete({
       where: {
         locationId_menuId_productId: {
           locationId,
