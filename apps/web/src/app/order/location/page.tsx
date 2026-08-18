@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { LocationSummary } from "@mocha-house/contracts";
 import { getLocations } from "@/lib/api";
+import { Card } from "@/components/Card";
+import { PageHeader } from "@/components/PageHeader";
 
 // Location availability and digital-ordering state are admin-mutable at
 // runtime, so this page must be rendered per-request, not baked in at
@@ -12,14 +14,10 @@ export default async function OrderLocationPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
-          Choose a location
-        </h1>
-        <p className="text-sm text-text-secondary">
-          Select a Mocha House location to start your order.
-        </p>
-      </header>
+      <PageHeader
+        title="Choose a location"
+        subtitle="Select a Mocha House location to start your order."
+      />
 
       {locations.length === 0 ? (
         <p className="text-sm text-text-muted">
@@ -42,10 +40,9 @@ function LocationListItem({ location }: { location: LocationSummary }) {
   const available = location.isDigitalOrderingEnabled;
 
   const card = (
-    <div
-      className={`flex min-h-11 items-center justify-between gap-4 rounded-xl border border-border-default px-4 py-4 ${
-        available ? "bg-surface-card" : "bg-surface-subtle"
-      }`}
+    <Card
+      tone={available ? "default" : "subtle"}
+      className="flex min-h-11 items-center justify-between gap-4"
     >
       <span
         className={`text-base font-medium ${
@@ -55,7 +52,7 @@ function LocationListItem({ location }: { location: LocationSummary }) {
         {location.name}
       </span>
       <OrderingStatusBadge available={available} />
-    </div>
+    </Card>
   );
 
   if (!available) {

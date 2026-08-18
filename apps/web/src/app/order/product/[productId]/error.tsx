@@ -2,7 +2,7 @@
 
 import { OrderErrorState } from "@/components/OrderErrorState";
 
-export default function OrderMenuError({
+export default function OrderProductError({
   error,
   retry,
 }: {
@@ -13,7 +13,7 @@ export default function OrderMenuError({
     <OrderErrorState
       error={error}
       retry={retry}
-      message="We couldn't load this location's menu. Please try again."
+      message="We couldn't load this item. Please try again."
     />
   );
 }

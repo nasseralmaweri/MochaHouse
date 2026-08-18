@@ -2,6 +2,10 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import type { EffectiveMenuProduct } from "@mocha-house/contracts";
 import { getLocationMenu } from "@/lib/api";
+import { formatPrice } from "@/lib/money";
+import { Card } from "@/components/Card";
+import { PageHeader } from "@/components/PageHeader";
+import { BackLink } from "@/components/BackLink";
 
 interface CategoryGroup {
   id: string;
@@ -45,17 +49,6 @@ function groupByCategory(products: EffectiveMenuProduct[]): CategoryGroup[] {
   });
 }
 
-function formatPrice(effectivePrice: number | null, currency: string): string {
-  if (effectivePrice === null) {
-    return "Price unavailable";
-  }
-
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-  }).format(effectivePrice / 100);
-}
-
 export default async function OrderMenuPage({
   searchParams,
 }: {
@@ -81,17 +74,13 @@ export default async function OrderMenuPage({
   if (!location.isDigitalOrderingEnabled) {
     return (
       <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
-        <header className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
-            {location.name}
-          </h1>
-        </header>
-        <div className="flex flex-col gap-3 rounded-xl border border-border-default bg-surface-subtle px-4 py-4">
+        <PageHeader title={location.name} />
+        <Card tone="subtle" className="flex flex-col gap-3">
           <p className="text-sm font-medium text-text-muted">
             Online ordering isn&apos;t available at this location right now.
           </p>
-          <BackToLocationsLink />
-        </div>
+          <BackLink href="/order/location">Choose a different location</BackLink>
+        </Card>
       </main>
     );
   }
@@ -100,12 +89,7 @@ export default async function OrderMenuPage({
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
-          {location.name}
-        </h1>
-        <p className="text-sm text-text-secondary">{menu.name}</p>
-      </header>
+      <PageHeader title={location.name} subtitle={menu.name} />
 
       {categories.length === 0 ? (
         <p className="text-sm text-text-muted">
@@ -121,7 +105,7 @@ export default async function OrderMenuPage({
               <ul className="flex flex-col gap-3">
                 {category.products.map((item) => (
                   <li key={item.product.id}>
-                    <MenuProductRow item={item} />
+                    <MenuProductRow item={item} locationId={location.id} />
                   </li>
                 ))}
               </ul>
@@ -133,26 +117,26 @@ export default async function OrderMenuPage({
   );
 }
 
-function MenuProductRow({ item }: { item: EffectiveMenuProduct }) {
-  return (
-    <div className="flex min-h-11 items-center justify-between gap-4 rounded-xl border border-border-default bg-surface-card px-4 py-4">
-      <span className="text-base font-medium text-text-primary">
-        {item.product.name}
-      </span>
-      <span className="shrink-0 text-base font-semibold text-text-primary">
-        {formatPrice(item.effectivePrice, item.product.currency)}
-      </span>
-    </div>
-  );
-}
-
-function BackToLocationsLink() {
+function MenuProductRow({
+  item,
+  locationId,
+}: {
+  item: EffectiveMenuProduct;
+  locationId: string;
+}) {
   return (
     <Link
-      href="/order/location"
-      className="text-sm font-medium text-text-primary underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+      href={`/order/product/${item.product.id}?location=${locationId}`}
+      className="block rounded-xl transition active:scale-[0.99] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
     >
-      Choose a different location
+      <Card className="flex min-h-11 items-center justify-between gap-4">
+        <span className="text-base font-medium text-text-primary">
+          {item.product.name}
+        </span>
+        <span className="shrink-0 text-base font-semibold text-text-primary">
+          {formatPrice(item.effectivePrice, item.product.currency)}
+        </span>
+      </Card>
     </Link>
   );
 }
