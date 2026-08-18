@@ -46,6 +46,25 @@ export class LocationsService {
                 product: {
                   include: {
                     category: true,
+                    modifierGroups: {
+                      orderBy: {
+                        displayOrder: 'asc',
+                      },
+                      include: {
+                        modifierGroup: {
+                          include: {
+                            options: {
+                              where: {
+                                isActive: true,
+                              },
+                              orderBy: {
+                                displayOrder: 'asc',
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
                   },
                 },
               },
@@ -85,6 +104,24 @@ export class LocationsService {
               displayOrder: menuProduct.product.category.displayOrder,
             },
           },
+          modifierGroups: menuProduct.product.modifierGroups.map(
+            (productModifierGroup) => ({
+              id: productModifierGroup.modifierGroup.id,
+              name: productModifierGroup.modifierGroup.name,
+              displayOrder: productModifierGroup.displayOrder,
+              isRequired: productModifierGroup.modifierGroup.isRequired,
+              minSelections: productModifierGroup.modifierGroup.minSelections,
+              maxSelections: productModifierGroup.modifierGroup.maxSelections,
+              options: productModifierGroup.modifierGroup.options.map(
+                (option) => ({
+                  id: option.id,
+                  name: option.name,
+                  priceAdjustment: option.priceAdjustment,
+                  displayOrder: option.displayOrder,
+                }),
+              ),
+            }),
+          ),
         })),
       },
     };

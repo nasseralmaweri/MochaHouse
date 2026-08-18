@@ -36,6 +36,7 @@ export interface ModifierGroupSummary {
 export interface EffectiveMenuProduct {
     displayOrder: number;
     product: ProductSummary;
+    modifierGroups: ModifierGroupSummary[];
 }
 export interface LocationMenuResponse {
     location: LocationSummary;
