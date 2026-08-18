@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type {
   CategorySummary,
+  MenuSummary,
   ModifierGroupSummary,
   ProductSummary,
 } from '@mocha-house/contracts';
@@ -47,6 +48,22 @@ export class CatalogService {
             displayOrder: true,
           },
         },
+      },
+      orderBy: {
+        name: 'asc',
+      },
+    });
+  }
+
+  findMenus(): Promise<MenuSummary[]> {
+    return this.prisma.menu.findMany({
+      where: {
+        isActive: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
       },
       orderBy: {
         name: 'asc',

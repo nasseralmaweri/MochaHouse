@@ -4,6 +4,12 @@ export interface LocationSummary {
   slug: string;
 }
 
+export interface MenuSummary {
+  id: string;
+  name: string;
+  slug: string;
+}
+
 export interface CategorySummary {
   id: string;
   name: string;

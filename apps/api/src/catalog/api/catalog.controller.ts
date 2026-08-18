@@ -15,6 +15,11 @@ export class CatalogController {
     return this.catalogService.findProducts();
   }
 
+  @Get('menus')
+  findMenus() {
+    return this.catalogService.findMenus();
+  }
+
   @Get('modifier-groups')
   findModifierGroups() {
     return this.catalogService.findModifierGroups();
