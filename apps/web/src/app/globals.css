@@ -1,26 +1,48 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens: Document 06 semantic vocabulary.
+ * Only the tokens the current screens actually use are defined here —
+ * this is not the full Document 06 palette. Add more as later screens
+ * require them.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --surface-page: #f7f1e8;
+  --surface-card: #fffdf9;
+  --surface-subtle: #efe7db;
+
+  --text-primary: #2b1b12;
+  --text-secondary: #5b4636;
+  --text-muted: #8a7a6d;
+
+  --border-default: #e3d9cb;
+
+  --focus: #b8872e;
+
+  --status-success: #1e7a34;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-surface-page: var(--surface-page);
+  --color-surface-card: var(--surface-card);
+  --color-surface-subtle: var(--surface-subtle);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+
+  --color-border-default: var(--border-default);
+
+  --color-focus: var(--focus);
+
+  --color-status-success: var(--status-success);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--surface-page);
+  color: var(--text-primary);
   font-family: Arial, Helvetica, sans-serif;
 }

@@ -13,11 +13,15 @@ async function main() {
     where: {
       slug: 'dearborn-heights',
     },
-    update: {},
+    update: {
+      isActive: true,
+      isDigitalOrderingEnabled: true,
+    },
     create: {
       name: 'Mocha House - Dearborn Heights',
       slug: 'dearborn-heights',
       isActive: true,
+      isDigitalOrderingEnabled: true,
     },
   });
 
@@ -93,41 +97,22 @@ async function main() {
     },
   });
 
-  await prisma.locationProductPriceOverride.upsert({
+  // Dearborn Heights / Drip Coffee should inherit Master pricing and
+  // availability (no active override), so the effective price is the
+  // product's $3.50 base price and it is available for ordering.
+  await prisma.locationProductPriceOverride.deleteMany({
     where: {
-      locationId_menuId_productId: {
-        locationId: location.id,
-        menuId: menu.id,
-        productId: product.id,
-      },
-    },
-    update: {
-      price: 400,
-    },
-    create: {
       locationId: location.id,
       menuId: menu.id,
       productId: product.id,
-      price: 400,
     },
   });
 
-  await prisma.locationProductAvailabilityOverride.upsert({
+  await prisma.locationProductAvailabilityOverride.deleteMany({
     where: {
-      locationId_menuId_productId: {
-        locationId: location.id,
-        menuId: menu.id,
-        productId: product.id,
-      },
-    },
-    update: {
-      isAvailable: false,
-    },
-    create: {
       locationId: location.id,
       menuId: menu.id,
       productId: product.id,
-      isAvailable: false,
     },
   });
 
