@@ -10,13 +10,20 @@ export default async function OrderProductPage({
   searchParams,
 }: {
   params: Promise<{ productId: string }>;
-  searchParams: Promise<{ location?: string | string[] }>;
+  searchParams: Promise<{
+    location?: string | string[];
+    editLineId?: string | string[];
+  }>;
 }) {
   const { productId } = await params;
-  const { location: locationParam } = await searchParams;
+  const { location: locationParam, editLineId: editLineIdParam } =
+    await searchParams;
   const locationId = Array.isArray(locationParam)
     ? locationParam[0]
     : locationParam;
+  const editLineId = Array.isArray(editLineIdParam)
+    ? editLineIdParam[0]
+    : editLineIdParam;
 
   if (!locationId) {
     redirect("/order/location");
@@ -77,6 +84,10 @@ export default async function OrderProductPage({
         product={menuProduct.product}
         effectivePrice={menuProduct.effectivePrice}
         modifierGroups={menuProduct.modifierGroups}
+        locationId={location.id}
+        locationName={location.name}
+        menuId={menu.id}
+        editLineId={editLineId}
       />
     </main>
   );

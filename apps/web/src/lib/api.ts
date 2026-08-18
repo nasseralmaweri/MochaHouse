@@ -2,6 +2,7 @@ import type {
   LocationMenuResponse,
   LocationSummary,
 } from "@mocha-house/contracts";
+import { parseLocationMenuResponse } from "@/lib/menu";
 
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;
@@ -36,8 +37,5 @@ export async function getLocationMenu(
     throw new Error(`Failed to load location menu (${response.status}).`);
   }
 
-  // The API returns an empty 200 body (not JSON "null") when there is no
-  // effective menu for this location, so response.json() would throw.
-  const body = await response.text();
-  return body ? (JSON.parse(body) as LocationMenuResponse) : null;
+  return parseLocationMenuResponse(response);
 }
