@@ -38,6 +38,12 @@ export class LocationsService {
             products: {
               where: {
                 isActive: true,
+                product: {
+                  isActive: true,
+                  category: {
+                    isActive: true,
+                  },
+                },
               },
               orderBy: {
                 displayOrder: 'asc',
