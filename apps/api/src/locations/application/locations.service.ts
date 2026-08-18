@@ -1,13 +1,16 @@
 import { Injectable } from '@nestjs/common';
-import type { LocationMenuResponse } from '@mocha-house/contracts';
+import type {
+  LocationMenuResponse,
+  LocationSummary,
+} from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class LocationsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll() {
-    return this.prisma.location.findMany({
+  async findAll(): Promise<LocationSummary[]> {
+    const locations = await this.prisma.location.findMany({
       where: {
         isActive: true,
       },
@@ -15,6 +18,13 @@ export class LocationsService {
         name: 'asc',
       },
     });
+
+    return locations.map((location) => ({
+      id: location.id,
+      name: location.name,
+      slug: location.slug,
+      isDigitalOrderingEnabled: location.isDigitalOrderingEnabled,
+    }));
   }
 
   async findMenu(
@@ -104,6 +114,8 @@ export class LocationsService {
         id: locationMenu.location.id,
         name: locationMenu.location.name,
         slug: locationMenu.location.slug,
+        isDigitalOrderingEnabled:
+          locationMenu.location.isDigitalOrderingEnabled,
       },
       menu: {
         id: locationMenu.menu.id,

@@ -2,6 +2,7 @@ export interface LocationSummary {
     id: string;
     name: string;
     slug: string;
+    isDigitalOrderingEnabled: boolean;
 }
 export interface MenuSummary {
     id: string;
