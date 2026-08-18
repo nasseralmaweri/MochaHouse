@@ -23,6 +23,10 @@ interface SetAvailabilityOverrideBody {
   isAvailable: boolean;
 }
 
+interface UpdateMenuProductAssignmentBody {
+  isActive: boolean;
+}
+
 @Controller('api/v1/admin/catalog')
 export class AdminCatalogController {
   constructor(private readonly catalogService: CatalogService) {}
@@ -33,6 +37,19 @@ export class AdminCatalogController {
     @Body() body: UpdateProductBody,
   ) {
     return this.catalogService.updateProduct(productId, body);
+  }
+
+  @Patch('menus/:menuId/products/:productId/assignment')
+  updateMenuProductAssignment(
+    @Param('menuId') menuId: string,
+    @Param('productId') productId: string,
+    @Body() body: UpdateMenuProductAssignmentBody,
+  ) {
+    return this.catalogService.updateMenuProductAssignment(
+      menuId,
+      productId,
+      body.isActive,
+    );
   }
 
   @Put(

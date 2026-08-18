@@ -210,6 +210,55 @@ export class CatalogService {
     });
   }
 
+  async updateMenuProductAssignment(
+    menuId: string,
+    productId: string,
+    isActive: boolean,
+  ) {
+    if (typeof isActive !== 'boolean') {
+      throw new BadRequestException(
+        'Menu product assignment active state must be a boolean.',
+      );
+    }
+
+    const menuProduct = await this.prisma.menuProduct.findUnique({
+      where: {
+        menuId_productId: {
+          menuId,
+          productId,
+        },
+      },
+      select: {
+        menuId: true,
+        productId: true,
+      },
+    });
+
+    if (!menuProduct) {
+      throw new NotFoundException(
+        'Product is not assigned to this menu.',
+      );
+    }
+
+    return this.prisma.menuProduct.update({
+      where: {
+        menuId_productId: {
+          menuId,
+          productId,
+        },
+      },
+      data: {
+        isActive,
+      },
+      select: {
+        menuId: true,
+        productId: true,
+        displayOrder: true,
+        isActive: true,
+      },
+    });
+  }
+
   async setProductPriceOverride(
     locationId: string,
     menuId: string,
