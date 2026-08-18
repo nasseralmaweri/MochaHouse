@@ -14,13 +14,14 @@ datasource db {
 }
 
 model Location {
-  id        String         @id @default(uuid(7))
+  id        String                 @id @default(uuid(7))
   name      String
-  slug      String         @unique
-  isActive  Boolean        @default(true)
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
+  slug      String                 @unique
+  isActive  Boolean                @default(true)
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
   menus     LocationMenu[]
+  productPriceOverrides LocationProductPriceOverride[]
 }
 
 model Category {
@@ -35,32 +36,34 @@ model Category {
 }
 
 model Product {
-  id             String                 @id @default(uuid(7))
+  id             String                         @id @default(uuid(7))
   name           String
-  slug           String                 @unique
+  slug           String                         @unique
   description    String?
   basePrice      Int?
-  currency       String                 @default("USD")
-  isActive       Boolean                @default(true)
+  currency       String                         @default("USD")
+  isActive       Boolean                        @default(true)
   categoryId     String
-  category       Category               @relation(fields: [categoryId], references: [id])
-  createdAt      DateTime               @default(now())
-  updatedAt      DateTime               @updatedAt
+  category       Category                       @relation(fields: [categoryId], references: [id])
+  createdAt      DateTime                       @default(now())
+  updatedAt      DateTime                       @updatedAt
   modifierGroups ProductModifierGroup[]
   menus          MenuProduct[]
+  priceOverrides LocationProductPriceOverride[]
 
   @@index([categoryId])
 }
 
 model Menu {
-  id        String         @id @default(uuid(7))
+  id        String                         @id @default(uuid(7))
   name      String
-  slug      String         @unique
-  isActive  Boolean        @default(true)
+  slug      String                         @unique
+  isActive  Boolean                        @default(true)
   products  MenuProduct[]
   locations LocationMenu[]
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
+  priceOverrides LocationProductPriceOverride[]
+  createdAt DateTime                       @default(now())
+  updatedAt DateTime                       @updatedAt
 }
 
 model ModifierGroup {
@@ -126,4 +129,21 @@ model LocationMenu {
 
   @@id([locationId, menuId])
   @@index([menuId])
+}
+
+model LocationProductPriceOverride {
+  locationId String
+  menuId     String
+  productId  String
+  price      Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  location Location @relation(fields: [locationId], references: [id])
+  menu     Menu     @relation(fields: [menuId], references: [id])
+  product  Product  @relation(fields: [productId], references: [id])
+
+  @@id([locationId, menuId, productId])
+  @@index([menuId])
+  @@index([productId])
 }

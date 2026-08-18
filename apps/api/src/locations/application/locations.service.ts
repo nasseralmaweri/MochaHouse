@@ -52,6 +52,11 @@ export class LocationsService {
                 product: {
                   include: {
                     category: true,
+                    priceOverrides: {
+                      where: {
+                        locationId,
+                      },
+                    },
                     modifierGroups: {
                       where: {
                         modifierGroup: {
@@ -99,41 +104,57 @@ export class LocationsService {
         id: locationMenu.menu.id,
         name: locationMenu.menu.name,
         slug: locationMenu.menu.slug,
-        products: locationMenu.menu.products.map((menuProduct) => ({
-          displayOrder: menuProduct.displayOrder,
-          product: {
-            id: menuProduct.product.id,
-            name: menuProduct.product.name,
-            slug: menuProduct.product.slug,
-            description: menuProduct.product.description,
-            basePrice: menuProduct.product.basePrice,
-            currency: menuProduct.product.currency,
-            category: {
-              id: menuProduct.product.category.id,
-              name: menuProduct.product.category.name,
-              slug: menuProduct.product.category.slug,
-              displayOrder: menuProduct.product.category.displayOrder,
+        products: locationMenu.menu.products.map((menuProduct) => {
+          const priceOverride =
+            menuProduct.product.priceOverrides.find(
+              (override) => override.menuId === locationMenu.menu.id,
+            );
+
+          return {
+            displayOrder: menuProduct.displayOrder,
+            effectivePrice:
+              priceOverride?.price ?? menuProduct.product.basePrice,
+            product: {
+              id: menuProduct.product.id,
+              name: menuProduct.product.name,
+              slug: menuProduct.product.slug,
+              description: menuProduct.product.description,
+              basePrice: menuProduct.product.basePrice,
+              currency: menuProduct.product.currency,
+              category: {
+                id: menuProduct.product.category.id,
+                name: menuProduct.product.category.name,
+                slug: menuProduct.product.category.slug,
+                displayOrder:
+                  menuProduct.product.category.displayOrder,
+              },
             },
-          },
-          modifierGroups: menuProduct.product.modifierGroups.map(
-            (productModifierGroup) => ({
-              id: productModifierGroup.modifierGroup.id,
-              name: productModifierGroup.modifierGroup.name,
-              displayOrder: productModifierGroup.displayOrder,
-              isRequired: productModifierGroup.modifierGroup.isRequired,
-              minSelections: productModifierGroup.modifierGroup.minSelections,
-              maxSelections: productModifierGroup.modifierGroup.maxSelections,
-              options: productModifierGroup.modifierGroup.options.map(
-                (option) => ({
-                  id: option.id,
-                  name: option.name,
-                  priceAdjustment: option.priceAdjustment,
-                  displayOrder: option.displayOrder,
+            modifierGroups:
+              menuProduct.product.modifierGroups.map(
+                (productModifierGroup) => ({
+                  id: productModifierGroup.modifierGroup.id,
+                  name: productModifierGroup.modifierGroup.name,
+                  displayOrder:
+                    productModifierGroup.displayOrder,
+                  isRequired:
+                    productModifierGroup.modifierGroup.isRequired,
+                  minSelections:
+                    productModifierGroup.modifierGroup.minSelections,
+                  maxSelections:
+                    productModifierGroup.modifierGroup.maxSelections,
+                  options:
+                    productModifierGroup.modifierGroup.options.map(
+                      (option) => ({
+                        id: option.id,
+                        name: option.name,
+                        priceAdjustment: option.priceAdjustment,
+                        displayOrder: option.displayOrder,
+                      }),
+                    ),
                 }),
               ),
-            }),
-          ),
-        })),
+          };
+        }),
       },
     };
   }

@@ -40,6 +40,7 @@ export interface ModifierGroupSummary {
 }
 export interface EffectiveMenuProduct {
     displayOrder: number;
+    effectivePrice: number | null;
     product: ProductSummary;
     modifierGroups: ModifierGroupSummary[];
 }

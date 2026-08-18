@@ -93,6 +93,25 @@ async function main() {
     },
   });
 
+  await prisma.locationProductPriceOverride.upsert({
+    where: {
+      locationId_menuId_productId: {
+        locationId: location.id,
+        menuId: menu.id,
+        productId: product.id,
+      },
+    },
+    update: {
+      price: 400,
+    },
+    create: {
+      locationId: location.id,
+      menuId: menu.id,
+      productId: product.id,
+      price: 400,
+    },
+  });
+
   let sizeGroup = await prisma.modifierGroup.findFirst({
     where: {
       name: 'Size',
