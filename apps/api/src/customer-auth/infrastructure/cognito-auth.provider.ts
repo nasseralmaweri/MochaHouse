@@ -28,6 +28,17 @@ interface CognitoInitiateAuthResponse {
 // secret. Cognito itself verifies the password; this process never stores
 // or re-implements that check (see architecture guardrail: no custom
 // production password system).
+//
+// This implementation deliberately expects the production app client to be
+// a *public* client (no client secret) with ALLOW_USER_PASSWORD_AUTH
+// enabled — no SECRET_HASH is computed or sent. If the configured app
+// client has a secret instead, Cognito rejects every InitiateAuth call
+// with NotAuthorizedException ("Unable to verify secret hash for client
+// ..."), which CREDENTIAL_REJECTION_TYPES maps to the same
+// invalid-credentials outcome as a wrong password — i.e. sign-in would
+// fail for every customer, indistinguishably from bad credentials, until
+// the app client configuration itself is fixed. Supporting a confidential
+// client (computing SECRET_HASH) is out of scope for this slice.
 @Injectable()
 export class CognitoAuthProvider implements CustomerAuthProvider {
   async signIn(request: CustomerSignInRequest): Promise<CustomerSignInOutcome> {

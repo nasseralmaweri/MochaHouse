@@ -71,6 +71,13 @@ export async function signInAction(
   redirect("/account");
 }
 
+// Clears the Mocha House browser session (the httpOnly cookie) — after
+// this, the browser sends no token, so getCustomerSession() and every
+// protected page treat the customer as signed out immediately. This does
+// not revoke the underlying Cognito ID token itself: it remains a valid,
+// stateless JWT (in production, until its own ~1hr expiry) if it were
+// somehow captured before sign-out. Server-side revocation (Cognito
+// GlobalSignOut) is deliberately deferred to a later Milestone 4 slice.
 export async function signOutAction(): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.delete(CUSTOMER_SESSION_COOKIE);
