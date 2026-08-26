@@ -11,12 +11,11 @@ import {
 import type {
   CheckoutRequest,
   OrderConfirmation,
-  OrderLineSummary,
   OrderStatusResponse,
 } from '@mocha-house/contracts';
 import { priceCart } from '@mocha-house/domain';
 import type { PaymentProvider } from '@mocha-house/integrations';
-import { Prisma } from '../../../generated/prisma/client';
+import { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsService } from '../../locations/application/locations.service';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
@@ -24,6 +23,7 @@ import {
   generateOrderAccessToken,
   generateOrderNumber,
 } from '../infrastructure/order-identifiers';
+import { toOrderLineSummary } from '../infrastructure/order-line-mapper';
 
 const MAX_ORDER_NUMBER_ATTEMPTS = 5;
 
@@ -156,7 +156,7 @@ export class CheckoutService {
       guestName: order.guestName,
       subtotal: order.subtotal,
       currency: order.currency,
-      lines: order.lines.map(toLineSummary),
+      lines: order.lines.map(toOrderLineSummary),
       createdAt: order.createdAt.toISOString(),
     };
   }
@@ -424,34 +424,10 @@ export class CheckoutService {
       guestName: order.guestName,
       subtotal: order.subtotal,
       currency: order.currency,
-      lines: order.lines.map(toLineSummary),
+      lines: order.lines.map(toOrderLineSummary),
       createdAt: order.createdAt.toISOString(),
     };
   }
-}
-
-function toLineSummary(line: {
-  productId: string;
-  productName: string;
-  quantity: number;
-  unitPrice: number;
-  lineTotal: number;
-  currency: string;
-  selections: Prisma.JsonValue;
-}): OrderLineSummary {
-  const selections = Array.isArray(line.selections) ? line.selections : [];
-  return {
-    productId: line.productId,
-    productName: line.productName,
-    quantity: line.quantity,
-    unitPrice: line.unitPrice,
-    lineTotal: line.lineTotal,
-    currency: line.currency,
-    selections: selections.map((selection) => {
-      const s = selection as { groupName: string; optionNames: string[] };
-      return { groupName: s.groupName, optionNames: s.optionNames };
-    }),
-  };
 }
 
 function constantTimeEquals(a: string, b: string): boolean {

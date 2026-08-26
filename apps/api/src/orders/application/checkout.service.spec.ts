@@ -61,6 +61,37 @@ describe('CheckoutService (integration)', () => {
   });
 
   afterAll(async () => {
+    // Every idempotencyKey this file creates starts with "test_" (see
+    // buildRequest below) — clean up exactly those PaymentAttempts/Orders
+    // so repeated runs don't accumulate permanent data, without touching
+    // the seeded dearborn-heights/drip-coffee catalog fixture.
+    const attempts = await prisma.paymentAttempt.findMany({
+      where: { idempotencyKey: { startsWith: 'test_' } },
+      select: { id: true },
+    });
+    const attemptIds = attempts.map((a) => a.id);
+    if (attemptIds.length > 0) {
+      const orders = await prisma.order.findMany({
+        where: { paymentAttemptId: { in: attemptIds } },
+        select: { id: true },
+      });
+      const orderIds = orders.map((o) => o.id);
+
+      await prisma.orderLine.deleteMany({
+        where: { orderId: { in: orderIds } },
+      });
+      await prisma.orderStatusHistory.deleteMany({
+        where: { orderId: { in: orderIds } },
+      });
+      await prisma.outboxEvent.deleteMany({
+        where: { aggregateType: 'Order', aggregateId: { in: orderIds } },
+      });
+      await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+      await prisma.paymentAttempt.deleteMany({
+        where: { id: { in: attemptIds } },
+      });
+    }
+
     await prisma.$disconnect();
   });
 

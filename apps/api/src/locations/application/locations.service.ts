@@ -8,7 +8,7 @@ import type {
   LocationSummary,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
-import type { Prisma } from '../../../generated/prisma/client';
+import type { Prisma } from '@mocha-house/database';
 
 // Same shape PrismaService and a $transaction callback both satisfy, for
 // the query methods below that checkout re-runs inside a protected

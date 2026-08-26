@@ -2,7 +2,32 @@ import type {
   CheckoutLineInput,
   LocationMenuResponse,
   OrderLineSummary,
+  OrderStatus,
 } from "@mocha-house/contracts";
+
+// The one place the approved operational pipeline (RECEIVED -> ACCEPTED ->
+// PREPARING -> READY -> COMPLETED) is encoded. Deliberately a strict
+// single-step "what's next" function rather than a general "is X -> Y
+// legal" validator — the store API never accepts an arbitrary target
+// status, only "advance", so there is no transition request this function
+// could be asked to validate as invalid in the first place.
+const NEXT_ORDER_STATUS: Record<OrderStatus, OrderStatus | null> = {
+  RECEIVED: "ACCEPTED",
+  ACCEPTED: "PREPARING",
+  PREPARING: "READY",
+  READY: "COMPLETED",
+  COMPLETED: null,
+};
+
+// Returns the next status in the pipeline, or null if `current` is
+// terminal (COMPLETED) and cannot be advanced further.
+export function nextOrderStatus(current: OrderStatus): OrderStatus | null {
+  return NEXT_ORDER_STATUS[current];
+}
+
+export function isActiveOrderStatus(status: OrderStatus): boolean {
+  return status !== "COMPLETED";
+}
 
 // Pure, framework-agnostic repricing/validation for a submitted cart against
 // an already-fetched effective menu. This is the one place "is this cart

@@ -1,8 +1,13 @@
 import type {
+  AdvanceOrderStatusResponse,
   CheckoutRequest,
   LocationMenuResponse,
+  LocationSummary,
   OrderConfirmation,
+  OrderStatus,
   OrderStatusResponse,
+  StoreOrderDetail,
+  StoreOrderSummary,
 } from "@mocha-house/contracts";
 import { parseLocationMenuResponse } from "@/lib/menu";
 
@@ -124,4 +129,87 @@ async function safeJson(response: Response): Promise<{ outcome?: string; message
   } catch {
     return null;
   }
+}
+
+// --- Store queue (DEV-ONLY / INTERNAL — see AdminOrdersController) -----
+// No authentication exists yet. These calls assume a trusted internal
+// caller, exactly like the API endpoints they hit.
+
+export async function getLocationsFromBrowser(): Promise<LocationSummary[]> {
+  const response = await fetch(`${getPublicApiUrl()}/locations`);
+  if (!response.ok) {
+    throw new Error(`Failed to load locations (${response.status}).`);
+  }
+  return response.json() as Promise<LocationSummary[]>;
+}
+
+export async function getActiveStoreOrdersFromBrowser(
+  locationId: string,
+): Promise<StoreOrderSummary[]> {
+  const response = await fetch(
+    `${getPublicApiUrl()}/admin/orders?locationId=${encodeURIComponent(locationId)}`,
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to load active orders (${response.status}).`);
+  }
+  return response.json() as Promise<StoreOrderSummary[]>;
+}
+
+export async function getStoreOrderDetailFromBrowser(
+  orderId: string,
+  locationId: string,
+): Promise<StoreOrderDetail | null> {
+  const response = await fetch(
+    `${getPublicApiUrl()}/admin/orders/${orderId}?locationId=${encodeURIComponent(locationId)}`,
+  );
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`Failed to load order detail (${response.status}).`);
+  }
+  return response.json() as Promise<StoreOrderDetail>;
+}
+
+export type AdvanceResult =
+  | { outcome: "success"; result: AdvanceOrderStatusResponse }
+  | { outcome: "conflict"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function advanceStoreOrderStatusFromBrowser(
+  orderId: string,
+  locationId: string,
+  expectedStatus: OrderStatus,
+): Promise<AdvanceResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${getPublicApiUrl()}/admin/orders/${orderId}/advance`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locationId, expectedStatus }),
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 409) {
+    const body = await safeJson(response);
+    return {
+      outcome: "conflict",
+      message: body?.message ?? "Order status changed. Refresh and try again.",
+    };
+  }
+
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+
+  return {
+    outcome: "success",
+    result: (await response.json()) as AdvanceOrderStatusResponse,
+  };
 }

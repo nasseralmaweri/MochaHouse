@@ -147,3 +147,44 @@ export interface CheckoutDeclinedResponse {
   outcome: "declined" | "failed";
   message: string;
 }
+
+// --- Store Queue / operational lifecycle (Milestone 3, next slice) -----
+// DEV-ONLY NOTE: these endpoints have no authentication/authorization yet
+// (see AdminOrdersController). Deliberately excludes guest accessToken and
+// guestEmail — staff never need the guest's own bearer credential, and
+// email isn't operationally necessary at the counter.
+
+// Rich enough to work a kitchen/counter queue from directly, without a
+// click-through to the detail view for every order.
+export interface StoreOrderSummary {
+  orderId: string;
+  orderNumber: string;
+  status: OrderStatus;
+  createdAt: string;
+  guestName: string;
+  subtotal: number;
+  currency: string;
+  lines: OrderLineSummary[];
+}
+
+export interface StoreOrderDetail extends StoreOrderSummary {
+  guestPhone: string;
+}
+
+export interface AdvanceOrderStatusRequest {
+  locationId: string;
+  // Optimistic-concurrency guard, not a target status — the server always
+  // advances exactly one step from whatever the order's current status
+  // actually is. A stale expectedStatus (someone else already advanced it)
+  // is how a retry is told apart from a real conflict.
+  expectedStatus: OrderStatus;
+}
+
+export interface AdvanceOrderStatusResponse {
+  orderId: string;
+  status: OrderStatus;
+  // false when this call found the order already at the target status
+  // (an idempotent replay of a retried request) rather than performing the
+  // transition itself.
+  advanced: boolean;
+}

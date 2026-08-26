@@ -118,4 +118,26 @@ export interface CheckoutDeclinedResponse {
     outcome: "declined" | "failed";
     message: string;
 }
+export interface StoreOrderSummary {
+    orderId: string;
+    orderNumber: string;
+    status: OrderStatus;
+    createdAt: string;
+    guestName: string;
+    subtotal: number;
+    currency: string;
+    lines: OrderLineSummary[];
+}
+export interface StoreOrderDetail extends StoreOrderSummary {
+    guestPhone: string;
+}
+export interface AdvanceOrderStatusRequest {
+    locationId: string;
+    expectedStatus: OrderStatus;
+}
+export interface AdvanceOrderStatusResponse {
+    orderId: string;
+    status: OrderStatus;
+    advanced: boolean;
+}
 //# sourceMappingURL=index.d.ts.map

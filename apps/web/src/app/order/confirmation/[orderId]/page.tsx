@@ -13,7 +13,7 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   RECEIVED: "Received",
   ACCEPTED: "Accepted",
   PREPARING: "Preparing",
-  READY: "Ready for pickup",
+  READY: "Ready",
   COMPLETED: "Completed",
 };
 
@@ -29,6 +29,7 @@ export default function OrderConfirmationPage() {
   const [status, setStatus] = useState<OrderStatusResponse | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,6 +51,25 @@ export default function OrderConfirmationPage() {
       cancelled = true;
     };
   }, [params.orderId, accessToken]);
+
+  // No automatic polling here by design — this is a manual, deliberate
+  // action, not real-time order tracking.
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      const result = await getOrderStatusFromBrowser(params.orderId, accessToken);
+      if (result === null) {
+        setNotFound(true);
+      } else {
+        setStatus(result);
+        setLoadFailed(false);
+      }
+    } catch {
+      setLoadFailed(true);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   if (notFound) {
     return (
@@ -116,9 +136,19 @@ export default function OrderConfirmationPage() {
         </div>
       </Card>
 
-      <Card tone="subtle" className="flex flex-col gap-1 text-sm text-text-secondary">
+      <Card tone="subtle" className="flex flex-col gap-2 text-sm text-text-secondary">
         <span>Thanks, {status.guestName}!</span>
-        <span>Status: {STATUS_LABEL[status.status]}</span>
+        <div className="flex items-center justify-between gap-4">
+          <span>Status: {STATUS_LABEL[status.status]}</span>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="text-xs font-medium text-text-primary underline underline-offset-2 disabled:text-text-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+          >
+            {refreshing ? "Refreshing…" : "Refresh status"}
+          </button>
+        </div>
       </Card>
 
       <BackLink href="/order/location">Start a new order</BackLink>
