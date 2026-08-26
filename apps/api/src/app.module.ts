@@ -6,6 +6,8 @@ import { RedisModule } from './redis/redis.module';
 import { LocationsModule } from './locations/locations.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { OrdersModule } from './orders/orders.module';
+import { CustomerAuthModule } from './customer-auth/customer-auth.module';
+import { CustomersModule } from './customers/customers.module';
 
 @Module({
   imports: [
@@ -14,6 +16,8 @@ import { OrdersModule } from './orders/orders.module';
     LocationsModule,
     CatalogModule,
     OrdersModule,
+    CustomerAuthModule,
+    CustomersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

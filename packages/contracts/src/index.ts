@@ -148,6 +148,34 @@ export interface CheckoutDeclinedResponse {
   message: string;
 }
 
+// --- Customer identity & sign-in (Milestone 4, customer auth foundation) ---
+// Cognito (or the equivalent local/test auth boundary — see apps/api's
+// customer-auth module) owns credentials; these shapes never carry a
+// password or a Cognito SDK payload, only what the account UI needs.
+
+export type CustomerAccountStatus = "ACTIVE" | "RESTRICTED" | "DEACTIVATED";
+
+export interface CustomerProfile {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  status: CustomerAccountStatus;
+  createdAt: string;
+}
+
+export interface CustomerSignInRequest {
+  identifier: string;
+  password: string;
+}
+
+// idToken is a bearer credential for GET /customers/me (Authorization:
+// Bearer <idToken>) — the caller is expected to store it only in an
+// httpOnly cookie, never in browser-readable storage.
+export interface CustomerSignInResponse {
+  idToken: string;
+  expiresInSeconds: number;
+}
+
 // --- Store Queue / operational lifecycle (Milestone 3, next slice) -----
 // DEV-ONLY NOTE: these endpoints have no authentication/authorization yet
 // (see AdminOrdersController). Deliberately excludes guest accessToken and

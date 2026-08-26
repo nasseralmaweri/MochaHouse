@@ -171,6 +171,34 @@ model LocationProductAvailabilityOverride {
   @@index([productId])
 }
 
+// --- Milestone 4, customer identity foundation -------------------------
+// Cognito owns credentials/passwords, verification, recovery, and token
+// lifecycle. Mocha House owns this record, the customer's profile, and
+// account status. externalProvider + externalSubject is a deliberately
+// provider-agnostic identity mapping (a plain string pair, never a Cognito
+// SDK payload shape) so the Customer domain never depends on Cognito's
+// token/claims structure — only the customer-auth boundary (apps/api) does.
+// No password or Cognito token is ever stored here.
+
+enum CustomerAccountStatus {
+  ACTIVE
+  RESTRICTED
+  DEACTIVATED
+}
+
+model Customer {
+  id               String                @id @default(uuid(7))
+  externalProvider String
+  externalSubject  String
+  email            String?
+  displayName      String?
+  status           CustomerAccountStatus @default(ACTIVE)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@unique([externalProvider, externalSubject])
+}
+
 // --- Milestone 3, first transaction slice -----------------------------
 // Checkout -> FakePaymentProvider -> durable Order + immutable snapshots
 // -> OrderStatusHistory -> transactional OutboxEvent -> confirmation.

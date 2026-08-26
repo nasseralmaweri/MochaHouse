@@ -118,6 +118,22 @@ export interface CheckoutDeclinedResponse {
     outcome: "declined" | "failed";
     message: string;
 }
+export type CustomerAccountStatus = "ACTIVE" | "RESTRICTED" | "DEACTIVATED";
+export interface CustomerProfile {
+    id: string;
+    email: string | null;
+    displayName: string | null;
+    status: CustomerAccountStatus;
+    createdAt: string;
+}
+export interface CustomerSignInRequest {
+    identifier: string;
+    password: string;
+}
+export interface CustomerSignInResponse {
+    idToken: string;
+    expiresInSeconds: number;
+}
 export interface StoreOrderSummary {
     orderId: string;
     orderNumber: string;
