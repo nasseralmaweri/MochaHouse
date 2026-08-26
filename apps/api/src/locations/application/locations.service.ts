@@ -8,6 +8,12 @@ import type {
   LocationSummary,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { Prisma } from '../../../generated/prisma/client';
+
+// Same shape PrismaService and a $transaction callback both satisfy, for
+// the query methods below that checkout re-runs inside a protected
+// transaction rather than against the ambient client.
+type PrismaClientLike = PrismaService | Prisma.TransactionClient;
 
 @Injectable()
 export class LocationsService {
@@ -33,8 +39,9 @@ export class LocationsService {
 
   async findMenu(
     locationId: string,
+    client: PrismaClientLike = this.prisma,
   ): Promise<LocationMenuResponse | null> {
-    const locationMenu = await this.prisma.locationMenu.findFirst({
+    const locationMenu = await client.locationMenu.findFirst({
       where: {
         locationId,
         isActive: true,

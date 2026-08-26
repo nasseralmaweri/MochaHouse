@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import type { LocationMenuResponse } from "@mocha-house/contracts";
 import { useCart, type CartLine } from "@/lib/cart/store";
 import { getLocationMenuFromBrowser } from "@/lib/api-client";
@@ -167,6 +168,17 @@ export default function OrderCartPage() {
     );
   }
 
+  // Checkout re-validates everything authoritatively on its own, but there
+  // is no reason to send the customer there when this page already knows a
+  // line needs attention first.
+  const canCheckout =
+    !orderingDisabled &&
+    !isRevalidating &&
+    cart.lines.every((line) => {
+      const status = lineStatuses.get(line.lineId);
+      return status?.kind === "ok" || status?.kind === "price-changed";
+    });
+
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
       <PageHeader title="Your cart" subtitle={cart.locationName ?? undefined} />
@@ -214,6 +226,23 @@ export default function OrderCartPage() {
           Final pricing is confirmed at checkout.
         </p>
       </div>
+
+      {canCheckout ? (
+        <Link
+          href="/order/checkout"
+          className="flex min-h-11 items-center justify-center rounded-xl bg-status-success/10 px-4 py-3 text-base font-semibold text-status-success"
+        >
+          Checkout
+        </Link>
+      ) : (
+        <button
+          type="button"
+          disabled
+          className="flex min-h-11 items-center justify-center rounded-xl bg-surface-subtle px-4 py-3 text-base font-semibold text-text-muted"
+        >
+          Checkout
+        </button>
+      )}
 
       <div className="flex items-center justify-between">
         <BackLink href={`/order/menu?location=${cart.locationId}`}>

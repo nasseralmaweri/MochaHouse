@@ -1,8 +1,13 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
+    // CommonJS, not ESNext: this package's only current consumer is
+    // apps/api, a CommonJS NestJS build that reaches it via a plain
+    // Node `require()` at runtime (Nest's build doesn't bundle
+    // dependencies) — an ESM-only build here would throw ERR_REQUIRE_ESM.
+    "module": "CommonJS",
+    "moduleResolution": "Node10",
+    "esModuleInterop": true,
     "strict": true,
     "declaration": true,
     "declarationMap": true,

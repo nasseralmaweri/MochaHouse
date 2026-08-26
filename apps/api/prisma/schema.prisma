@@ -24,7 +24,8 @@ model Location {
   menus                        LocationMenu[]
   productPriceOverrides        LocationProductPriceOverride[]
   productAvailabilityOverrides LocationProductAvailabilityOverride[]
-  
+  orders                       Order[]
+
 }
 
 model Category {
@@ -168,4 +169,172 @@ model LocationProductAvailabilityOverride {
   @@id([locationId, menuId, productId])
   @@index([menuId])
   @@index([productId])
+}
+
+// --- Milestone 3, first transaction slice -----------------------------
+// Checkout -> FakePaymentProvider -> durable Order + immutable snapshots
+// -> OrderStatusHistory -> transactional OutboxEvent -> confirmation.
+// Store Queue processing / status advancement is a later slice: OutboxEvent
+// rows are written here but nothing consumes them yet.
+
+enum PaymentAttemptStatus {
+  PENDING
+  SUCCEEDED
+  DECLINED
+  FAILED
+}
+
+// RECEIVED is the only status this slice ever writes. ACCEPTED..COMPLETED
+// name the approved Store Queue pipeline stages so the next slice adds no
+// new enum values, only the code that transitions into them.
+enum OrderStatus {
+  RECEIVED
+  ACCEPTED
+  PREPARING
+  READY
+  COMPLETED
+}
+
+enum OutboxEventStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+// A durable, independent record of a payment charge attempt against
+// FakePaymentProvider. Created (PENDING) before the provider is invoked,
+// and preserved regardless of outcome — a decline/failure never deletes or
+// overwrites this row, it only ever updates its status once. The unique
+// idempotencyKey is what makes checkout submission idempotent: a retried
+// request with the same key reuses this row's outcome instead of charging
+// or creating an Order again.
+model PaymentAttempt {
+  id                String               @id @default(uuid(7))
+  idempotencyKey    String               @unique
+  provider          String
+  status            PaymentAttemptStatus @default(PENDING)
+  locationId        String
+  amount            Int
+  currency          String
+  providerReference String?
+  failureReason     String?
+
+  // Set when this attempt's payment SUCCEEDED but the subsequent protected
+  // Order transaction did not commit (e.g. the catalog changed underneath
+  // it, or an unexpected error aborted the transaction). `status` stays
+  // SUCCEEDED — the payment truthfully did succeed — this is a separate,
+  // explicit flag so that condition is durable and queryable rather than
+  // only inferable from "SUCCEEDED with no linked Order". No refund or
+  // retry is triggered automatically; a later reconciliation slice (worker
+  // or admin) is expected to query reconciliationRequired = true.
+  reconciliationRequired   Boolean   @default(false)
+  reconciliationReason     String?
+  reconciliationDetectedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order Order?
+
+  @@index([status])
+  @@index([reconciliationRequired])
+}
+
+// The durable Mocha House order. Only ever created inside the protected
+// transaction that follows a SUCCEEDED PaymentAttempt — paymentAttemptId is
+// required and unique, so the database itself rules out an Order existing
+// without a successful payment behind it. Guest contact and pricing fields
+// are point-in-time snapshots (see OrderLine), never re-derived from the
+// catalog after the fact.
+model Order {
+  id          String      @id @default(uuid(7))
+  orderNumber String      @unique
+  // Opaque bearer credential for guest access to this order's status. The
+  // internal id alone is not authorization — see OrdersController.
+  accessToken String      @unique
+  status      OrderStatus @default(RECEIVED)
+
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id])
+
+  paymentAttemptId String         @unique
+  paymentAttempt   PaymentAttempt @relation(fields: [paymentAttemptId], references: [id])
+
+  // Guest checkout only in this slice — no Customer record, no auth.
+  guestName  String
+  guestPhone String
+  guestEmail String?
+
+  currency String
+  // Merchandise total only. No tax/fee model is approved yet — see
+  // Milestone 3 report for this explicitly flagged limitation.
+  subtotal Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines         OrderLine[]
+  statusHistory OrderStatusHistory[]
+
+  @@index([locationId])
+}
+
+// Immutable line snapshot captured at order-creation time: prices and
+// modifier selections are copied by value from the authoritative repricing
+// step, never re-joined against the live catalog. `selections` is a JSON
+// snapshot (group/option names + price adjustments) for the same reason
+// the cart already treats catalog state as mutable — an Order must survive
+// later menu/price changes unchanged.
+model OrderLine {
+  id      String @id @default(uuid(7))
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id])
+
+  productId   String
+  productName String
+  unitPrice   Int
+  quantity    Int
+  lineTotal   Int
+  currency    String
+  selections  Json
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+}
+
+// Append-only. Rows are never updated or deleted — the current status is
+// whichever row is latest, but Order.status is kept as the fast-read
+// projection of that history rather than requiring a join on every read.
+model OrderStatusHistory {
+  id      String @id @default(uuid(7))
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id])
+
+  status    OrderStatus
+  note      String?
+  createdAt DateTime    @default(now())
+
+  @@index([orderId])
+}
+
+// Generic transactional outbox: written in the same database transaction
+// that commits a successful Order, so "the order exists" and "a
+// fulfillment event was recorded" can never disagree. Deliberately not
+// scoped to Order via a foreign key — that's what keeps this a genuine,
+// aggregate-agnostic outbox rather than an Order-specific queue table.
+// Nothing consumes these rows yet; that is the next slice (Store Queue
+// worker), not this one.
+model OutboxEvent {
+  id            String            @id @default(uuid(7))
+  aggregateType String
+  aggregateId   String
+  eventType     String
+  payload       Json
+  status        OutboxEventStatus @default(PENDING)
+  createdAt     DateTime          @default(now())
+  processedAt   DateTime?
+
+  @@index([status])
+  @@index([aggregateType, aggregateId])
 }
