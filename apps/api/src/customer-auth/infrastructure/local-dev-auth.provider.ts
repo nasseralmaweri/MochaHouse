@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { CustomerSignInRequest } from '@mocha-house/contracts';
 import { requireEnv } from './require-env';
 import { signDevJwt } from './dev-jwt';
+import { LocalDevCustomerDirectory } from './local-dev-customer-directory';
 import type {
   CustomerAuthProvider,
   CustomerSignInOutcome,
@@ -18,9 +19,25 @@ const TOKEN_TTL_SECONDS = 3600;
 // resolve to the same Mocha House Customer record.
 @Injectable()
 export class LocalDevAuthProvider implements CustomerAuthProvider {
+  constructor(private readonly directory: LocalDevCustomerDirectory) {}
+
   signIn(request: CustomerSignInRequest): Promise<CustomerSignInOutcome> {
     const secret = requireEnv('AUTH_DEV_JWT_SECRET');
     const identifier = request.identifier.trim().toLowerCase();
+
+    // Mirrors Cognito's UserNotConfirmedException (see
+    // cognito-auth.provider.ts's CREDENTIAL_REJECTION_TYPES): an
+    // identifier this directory knows about but hasn't verified must not
+    // get a session, the same as a wrong password. An identifier the
+    // directory has never seen (i.e. never went through /auth/register)
+    // is untouched by this check and signs in exactly as before —
+    // required so every pre-existing dev sign-in test, which never
+    // registers first, keeps working unchanged.
+    const pending = this.directory.get(identifier);
+    if (pending && !pending.verified) {
+      return Promise.resolve({ outcome: 'invalid-credentials' });
+    }
+
     const looksLikeEmail = identifier.includes('@');
 
     const idToken = signDevJwt(

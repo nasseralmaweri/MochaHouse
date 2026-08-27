@@ -8,6 +8,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsModule } from '../../locations/locations.module';
 import { CustomersModule } from '../../customers/customers.module';
+import { CustomerAuthModule } from '../../customer-auth/customer-auth.module';
 import { CheckoutService } from './checkout.service';
 import { AdminOrdersService } from './admin-orders.service';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
@@ -39,7 +40,12 @@ describe('AdminOrdersService (integration)', () => {
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({
-      imports: [PrismaModule, LocationsModule, CustomersModule],
+      imports: [
+        PrismaModule,
+        LocationsModule,
+        CustomersModule,
+        CustomerAuthModule,
+      ],
       providers: [
         CheckoutService,
         AdminOrdersService,

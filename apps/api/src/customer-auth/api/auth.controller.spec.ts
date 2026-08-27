@@ -4,6 +4,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import type { CustomerSignInResponse } from '@mocha-house/contracts';
+import { PrismaModule } from '../../prisma/prisma.module';
 import { CustomerAuthModule } from '../customer-auth.module';
 
 describe('POST /api/v1/auth/sign-in (integration, dev provider)', () => {
@@ -16,7 +17,7 @@ describe('POST /api/v1/auth/sign-in (integration, dev provider)', () => {
     process.env.AUTH_DEV_JWT_SECRET = 'auth-controller-spec-secret';
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [CustomerAuthModule],
+      imports: [PrismaModule, CustomerAuthModule],
     }).compile();
 
     app = moduleFixture.createNestApplication();

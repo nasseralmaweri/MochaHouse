@@ -176,6 +176,40 @@ export interface CustomerSignInResponse {
   expiresInSeconds: number;
 }
 
+// --- Customer registration & email verification (Milestone 4C) ---------
+// Register -> Verify -> Sign In, deliberately kept as three separate
+// steps (no session is established by register/verify) — see
+// customer-auth's registration provider boundary. Never carries a
+// password back, a raw provider payload, or a verification code in a
+// response body.
+
+export interface CustomerRegisterRequest {
+  email: string;
+  password: string;
+  displayName: string;
+}
+
+export interface CustomerRegisterResponse {
+  email: string;
+}
+
+export interface CustomerVerifyRequest {
+  email: string;
+  code: string;
+}
+
+export interface CustomerVerifyResponse {
+  email: string;
+}
+
+export interface CustomerResendVerificationRequest {
+  email: string;
+}
+
+export interface CustomerResendVerificationResponse {
+  email: string;
+}
+
 // --- Customer order history (Milestone 4B) ------------------------------
 // Read-only, authenticated views over the same authoritative Order records
 // guest confirmation/tracking already uses (see OrderConfirmation /

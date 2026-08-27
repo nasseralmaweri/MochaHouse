@@ -53,4 +53,27 @@ export class CustomersService {
       createdAt: customer.createdAt.toISOString(),
     };
   }
+
+  // Used only by the registration/verification flow (Milestone 4C) to find
+  // the Customer created moments earlier at registration, scoped by
+  // provider so a 'dev' and a 'cognito' row can never collide on the same
+  // email. Deliberately a lookup, not an identity key: the authoritative
+  // identity is always (externalProvider, externalSubject) — see
+  // resolveOrCreateFromIdentity — this exists because Cognito's
+  // ConfirmSignUp response carries no subject to resolve by directly.
+  async findByEmailAndProvider(
+    provider: string,
+    email: string,
+  ): Promise<CustomerRow | null> {
+    return this.prisma.customer.findFirst({
+      where: { externalProvider: provider, email },
+    });
+  }
+
+  async markEmailVerified(customerId: string): Promise<CustomerRow> {
+    return this.prisma.customer.update({
+      where: { id: customerId },
+      data: { emailVerifiedAt: new Date() },
+    });
+  }
 }

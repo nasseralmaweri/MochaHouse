@@ -134,6 +134,27 @@ export interface CustomerSignInResponse {
     idToken: string;
     expiresInSeconds: number;
 }
+export interface CustomerRegisterRequest {
+    email: string;
+    password: string;
+    displayName: string;
+}
+export interface CustomerRegisterResponse {
+    email: string;
+}
+export interface CustomerVerifyRequest {
+    email: string;
+    code: string;
+}
+export interface CustomerVerifyResponse {
+    email: string;
+}
+export interface CustomerResendVerificationRequest {
+    email: string;
+}
+export interface CustomerResendVerificationResponse {
+    email: string;
+}
 export interface CustomerOrderSummary {
     orderId: string;
     orderNumber: string;

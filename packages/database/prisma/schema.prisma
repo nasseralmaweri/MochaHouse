@@ -193,6 +193,13 @@ model Customer {
   email            String?
   displayName      String?
   status           CustomerAccountStatus @default(ACTIVE)
+  // Contact-verification state (Milestone 4C) — deliberately separate from
+  // `status` above: this tracks whether the registration email has been
+  // confirmed with the identity provider, not the customer's business
+  // account standing. Null means "never verified" — set once, at
+  // successful verification, and never fabricated/backfilled for rows
+  // created before this column existed (see the migration's own comment).
+  emailVerifiedAt  DateTime?
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
   orders           Order[]
