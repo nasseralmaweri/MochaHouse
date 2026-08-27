@@ -11,8 +11,10 @@ import type { CheckoutRequest } from '@mocha-house/contracts';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsModule } from '../../locations/locations.module';
+import { CustomersModule } from '../../customers/customers.module';
 import { CheckoutService } from './checkout.service';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
+import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 
 // Integration test against the real local Postgres instance (see
 // infrastructure/local/compose.yml + apps/api/.env), exercising the full
@@ -30,7 +32,7 @@ describe('CheckoutService (integration)', () => {
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [PrismaModule, LocationsModule],
+      imports: [PrismaModule, LocationsModule, CustomersModule],
       providers: [
         CheckoutService,
         { provide: PAYMENT_PROVIDER, useClass: FakePaymentProvider },
@@ -92,6 +94,17 @@ describe('CheckoutService (integration)', () => {
       });
     }
 
+    // Every Customer this file creates uses the 'test' provider with a
+    // 'test-customer-' subject prefix (see testCustomerIdentity below) —
+    // Order.customerId already reverted to null above via the FK's
+    // onDelete: SetNull, so this is safe regardless of ordering.
+    await prisma.customer.deleteMany({
+      where: {
+        externalProvider: 'test',
+        externalSubject: { startsWith: 'test-customer-' },
+      },
+    });
+
     await prisma.$disconnect();
   });
 
@@ -116,6 +129,64 @@ describe('CheckoutService (integration)', () => {
       ...overrides,
     };
   }
+
+  function testCustomerIdentity(suffix: string): CustomerIdentity {
+    return {
+      provider: 'test',
+      subject: `test-customer-${suffix}`,
+      email: `${suffix}@example.com`,
+      name: null,
+    };
+  }
+
+  it('associates an authenticated checkout with the resolved Customer id (Milestone 4B)', async () => {
+    const identity = testCustomerIdentity(randomUUID());
+
+    const confirmation = await checkoutService.checkout(
+      buildRequest(),
+      identity,
+    );
+
+    const order = await prisma.order.findUniqueOrThrow({
+      where: { id: confirmation.orderId },
+    });
+    expect(order.customerId).not.toBeNull();
+
+    const customer = await prisma.customer.findUniqueOrThrow({
+      where: {
+        externalProvider_externalSubject: {
+          externalProvider: identity.provider,
+          externalSubject: identity.subject,
+        },
+      },
+    });
+    expect(order.customerId).toBe(customer.id);
+  });
+
+  it('guest checkout (no customer identity) still creates an Order with customerId null', async () => {
+    const confirmation = await checkoutService.checkout(buildRequest());
+
+    const order = await prisma.order.findUniqueOrThrow({
+      where: { id: confirmation.orderId },
+    });
+    expect(order.customerId).toBeNull();
+  });
+
+  it('resolves the same Customer across repeated authenticated checkouts by the same identity', async () => {
+    const identity = testCustomerIdentity(randomUUID());
+
+    const first = await checkoutService.checkout(buildRequest(), identity);
+    const second = await checkoutService.checkout(buildRequest(), identity);
+
+    const orderA = await prisma.order.findUniqueOrThrow({
+      where: { id: first.orderId },
+    });
+    const orderB = await prisma.order.findUniqueOrThrow({
+      where: { id: second.orderId },
+    });
+    expect(orderA.customerId).not.toBeNull();
+    expect(orderA.customerId).toBe(orderB.customerId);
+  });
 
   it('creates a durable order, history row, and outbox event on a successful payment', async () => {
     const request = buildRequest();

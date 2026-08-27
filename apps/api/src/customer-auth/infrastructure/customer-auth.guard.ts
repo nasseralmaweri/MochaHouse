@@ -7,6 +7,7 @@ import {
 import { isDevCustomerAuthEnabled } from './auth-provider-mode';
 import { CognitoTokenVerifier } from './cognito-token-verifier';
 import { LocalDevTokenVerifier } from './local-dev-token-verifier';
+import { extractBearerToken } from './bearer-token';
 import type { CustomerAuthenticatedRequest } from './customer-identity';
 
 // The customer-authentication boundary: verifies a Bearer token and
@@ -50,15 +51,4 @@ export class CustomerAuthGuard implements CanActivate {
 
     return true;
   }
-}
-
-function extractBearerToken(header: string | undefined): string | null {
-  if (!header) {
-    return null;
-  }
-  const [scheme, token] = header.split(' ');
-  if (scheme !== 'Bearer' || !token) {
-    return null;
-  }
-  return token;
 }

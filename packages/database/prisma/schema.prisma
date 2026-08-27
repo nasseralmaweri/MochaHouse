@@ -195,6 +195,7 @@ model Customer {
   status           CustomerAccountStatus @default(ACTIVE)
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
+  orders           Order[]
 
   @@unique([externalProvider, externalSubject])
 }
@@ -285,10 +286,25 @@ model Order {
   locationId String
   location   Location @relation(fields: [locationId], references: [id])
 
+  // Nullable: guest checkout (Milestone 3) never sets this. Populated only
+  // when the checkout request carried a valid, verified customer session
+  // (Milestone 4B) — the Mocha House Customer.id, never a Cognito subject,
+  // keeping this relationship provider-agnostic like the rest of the
+  // customer domain. onDelete: SetNull rather than Cascade so a Customer
+  // record being removed later (privacy handling is explicitly not part of
+  // this slice) can never destroy this Order's own history — the order
+  // simply reverts to looking like a guest order, never disappears.
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
   paymentAttemptId String         @unique
   paymentAttempt   PaymentAttempt @relation(fields: [paymentAttemptId], references: [id])
 
-  // Guest checkout only in this slice — no Customer record, no auth.
+  // Guest contact snapshot, captured at checkout time regardless of whether
+  // the order is also linked to a Customer above — never re-derived from a
+  // Customer's (mutable) profile fields, so this historical snapshot can
+  // never change after the fact even if the customer later edits their
+  // profile (not yet possible, but this must hold once it is).
   guestName  String
   guestPhone String
   guestEmail String?
@@ -305,6 +321,7 @@ model Order {
   statusHistory OrderStatusHistory[]
 
   @@index([locationId])
+  @@index([customerId])
 }
 
 // Immutable line snapshot captured at order-creation time: prices and

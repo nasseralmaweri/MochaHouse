@@ -46,7 +46,11 @@ export async function getLocationMenuFromBrowser(
 // Checkout is a client-side fetch for the same reason cart revalidation is:
 // there is no server-rendered step between "review cart" and "submit" that
 // could carry a server action, and the cart itself only exists in
-// localStorage.
+// localStorage. It posts to this app's own /api/checkout route (not the
+// backend directly) — that route runs server-side and can read the
+// customer's httpOnly session cookie to attach it as a bearer token,
+// something this client-side code structurally cannot do. See
+// app/api/checkout/route.ts.
 export type CheckoutResult =
   | { outcome: "success"; confirmation: OrderConfirmation }
   | { outcome: "declined" | "failed"; message: string }
@@ -59,7 +63,7 @@ export async function submitCheckoutFromBrowser(
 ): Promise<CheckoutResult> {
   let response: Response;
   try {
-    response = await fetch(`${getPublicApiUrl()}/orders`, {
+    response = await fetch("/api/checkout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),

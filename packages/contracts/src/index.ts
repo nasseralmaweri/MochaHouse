@@ -176,6 +176,28 @@ export interface CustomerSignInResponse {
   expiresInSeconds: number;
 }
 
+// --- Customer order history (Milestone 4B) ------------------------------
+// Read-only, authenticated views over the same authoritative Order records
+// guest confirmation/tracking already uses (see OrderConfirmation /
+// OrderStatusResponse above) — never a separate/parallel order record.
+// Deliberately reuses OrderStatus and OrderLineSummary rather than
+// duplicating them. These are historical snapshots: nothing here is
+// re-derived from the live catalog or from the Customer's current profile.
+
+export interface CustomerOrderSummary {
+  orderId: string;
+  orderNumber: string;
+  createdAt: string;
+  locationName: string;
+  status: OrderStatus;
+  subtotal: number;
+  currency: string;
+}
+
+export interface CustomerOrderDetail extends CustomerOrderSummary {
+  lines: OrderLineSummary[];
+}
+
 // --- Store Queue / operational lifecycle (Milestone 3, next slice) -----
 // DEV-ONLY NOTE: these endpoints have no authentication/authorization yet
 // (see AdminOrdersController). Deliberately excludes guest accessToken and

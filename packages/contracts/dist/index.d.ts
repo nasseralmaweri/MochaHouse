@@ -134,6 +134,18 @@ export interface CustomerSignInResponse {
     idToken: string;
     expiresInSeconds: number;
 }
+export interface CustomerOrderSummary {
+    orderId: string;
+    orderNumber: string;
+    createdAt: string;
+    locationName: string;
+    status: OrderStatus;
+    subtotal: number;
+    currency: string;
+}
+export interface CustomerOrderDetail extends CustomerOrderSummary {
+    lines: OrderLineSummary[];
+}
 export interface StoreOrderSummary {
     orderId: string;
     orderNumber: string;

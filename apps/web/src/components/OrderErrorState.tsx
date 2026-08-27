@@ -8,10 +8,14 @@ export function OrderErrorState({
   error,
   retry,
   message = "We couldn't load this page. Please try again.",
+  backHref = "/order/location",
+  backLabel = "Choose a location",
 }: {
   error: Error & { digest?: string };
   retry: () => void;
   message?: string;
+  backHref?: string;
+  backLabel?: string;
 }) {
   useEffect(() => {
     console.error(error);
@@ -28,7 +32,7 @@ export function OrderErrorState({
         >
           Try again
         </button>
-        <BackLink href="/order/location">Choose a location</BackLink>
+        <BackLink href={backHref}>{backLabel}</BackLink>
       </div>
     </main>
   );

@@ -18,6 +18,8 @@ import type { PaymentProvider } from '@mocha-house/integrations';
 import { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsService } from '../../locations/application/locations.service';
+import { CustomersService } from '../../customers/application/customers.service';
+import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import {
   generateOrderAccessToken,
@@ -46,11 +48,19 @@ export class CheckoutService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly locationsService: LocationsService,
+    private readonly customersService: CustomersService,
     @Inject(PAYMENT_PROVIDER)
     private readonly paymentProvider: PaymentProvider,
   ) {}
 
-  async checkout(request: CheckoutRequest): Promise<OrderConfirmation> {
+  // customerIdentity is optional — sign-in is never required to check out
+  // (see OrdersController's OptionalCustomerAuthGuard). When present, it
+  // has already been verified by the customer-auth boundary; this method
+  // never verifies a token itself.
+  async checkout(
+    request: CheckoutRequest,
+    customerIdentity?: CustomerIdentity,
+  ): Promise<OrderConfirmation> {
     this.validateRequestShape(request);
 
     const existingAttempt = await this.prisma.paymentAttempt.findUnique({
@@ -60,6 +70,13 @@ export class CheckoutService {
     if (existingAttempt) {
       return this.replay(existingAttempt);
     }
+
+    // Resolved once, up front, alongside the other pre-payment steps —
+    // never re-derived inside the transaction or on replay, so a
+    // subsequent status/history read of this Order always reflects
+    // whichever Customer (if any) was authenticated at the moment payment
+    // was attempted, not whatever happens to be true later.
+    const customerId = await this.resolveCustomerId(customerIdentity);
 
     const menu = await this.locationsService.findMenu(request.locationId);
     if (!menu) {
@@ -118,7 +135,11 @@ export class CheckoutService {
 
     let order: OrderWithRelations;
     try {
-      order = await this.createOrderTransactionally(request, attempt.id);
+      order = await this.createOrderTransactionally(
+        request,
+        attempt.id,
+        customerId,
+      );
     } catch (error) {
       // Payment already succeeded (the update above committed before this
       // ever runs) but the order transaction did not — durably record that
@@ -159,6 +180,24 @@ export class CheckoutService {
       lines: order.lines.map(toOrderLineSummary),
       createdAt: order.createdAt.toISOString(),
     };
+  }
+
+  // customerIdentity is undefined for guest checkout (no Authorization
+  // header) and also whenever OptionalCustomerAuthGuard couldn't verify a
+  // header that was present — both cases resolve to a plain guest order
+  // (customerId: null), never an error. JIT-provisions the Customer record
+  // exactly like GET /customers/me does, so a customer's very first
+  // checkout can associate to their account without a prior /customers/me
+  // call ever having happened.
+  private async resolveCustomerId(
+    customerIdentity: CustomerIdentity | undefined,
+  ): Promise<string | null> {
+    if (!customerIdentity) {
+      return null;
+    }
+    const customer =
+      await this.customersService.resolveOrCreateFromIdentity(customerIdentity);
+    return customer.id;
   }
 
   private validateRequestShape(request: CheckoutRequest): void {
@@ -314,6 +353,7 @@ export class CheckoutService {
   private async createOrderTransactionally(
     request: CheckoutRequest,
     paymentAttemptId: string,
+    customerId: string | null,
   ): Promise<OrderWithRelations> {
     return this.prisma.$transaction(async (tx) => {
       // Revalidate against the current catalog state — payment succeeding
@@ -358,6 +398,7 @@ export class CheckoutService {
           orderNumber,
           accessToken: generateOrderAccessToken(),
           locationId: request.locationId,
+          customerId,
           paymentAttemptId,
           guestName: request.guest.name.trim(),
           guestPhone: request.guest.phone.trim(),

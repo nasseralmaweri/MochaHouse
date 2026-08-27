@@ -17,16 +17,22 @@ function getApiUrl(): string {
   return apiUrl;
 }
 
+// Server-only: the raw bearer token, for callers (order history) that need
+// to attach it to a different API call themselves rather than resolving a
+// full profile. Never sent to the browser as script-readable state.
+export async function getCustomerSessionToken(): Promise<string | null> {
+  const cookieStore = await cookies();
+  return cookieStore.get(CUSTOMER_SESSION_COOKIE)?.value ?? null;
+}
+
 // Resolves the current customer session, if any, by calling the API's
 // /customers/me with the session cookie's bearer token. Returns null both
 // for "no session" and for "session present but no longer accepted"
 // (expired/invalid token, or the API is unreachable) — callers (the
 // /account pages) treat both the same way: no authenticated customer, so
-// redirect to sign-in. This is the only place the customer session cookie
-// is read; it is never sent to the browser as script-readable state.
+// redirect to sign-in.
 export async function getCustomerSession(): Promise<CustomerProfile | null> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(CUSTOMER_SESSION_COOKIE)?.value;
+  const token = await getCustomerSessionToken();
   if (!token) {
     return null;
   }

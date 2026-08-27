@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { AuthController } from './api/auth.controller';
 import { CustomerSignInService } from './application/customer-sign-in.service';
 import { CustomerAuthGuard } from './infrastructure/customer-auth.guard';
+import { OptionalCustomerAuthGuard } from './infrastructure/optional-customer-auth.guard';
 import { CognitoTokenVerifier } from './infrastructure/cognito-token-verifier';
 import { LocalDevTokenVerifier } from './infrastructure/local-dev-token-verifier';
 import { CognitoAuthProvider } from './infrastructure/cognito-auth.provider';
@@ -25,15 +26,21 @@ import { LocalDevAuthProvider } from './infrastructure/local-dev-auth.provider';
   providers: [
     CustomerSignInService,
     CustomerAuthGuard,
+    OptionalCustomerAuthGuard,
     CognitoTokenVerifier,
     LocalDevTokenVerifier,
     CognitoAuthProvider,
     LocalDevAuthProvider,
   ],
-  // CustomerAuthGuard's own constructor dependencies (the two verifiers)
-  // must be exported too, not just the guard itself — an importing module
-  // resolving CustomerAuthGuard via @UseGuards() still needs to be able to
-  // resolve *its* dependencies in that scope.
-  exports: [CustomerAuthGuard, CognitoTokenVerifier, LocalDevTokenVerifier],
+  // Both guards' own constructor dependencies (the two verifiers) must be
+  // exported too, not just the guards themselves — an importing module
+  // resolving a guard via @UseGuards() still needs to be able to resolve
+  // *its* dependencies in that scope.
+  exports: [
+    CustomerAuthGuard,
+    OptionalCustomerAuthGuard,
+    CognitoTokenVerifier,
+    LocalDevTokenVerifier,
+  ],
 })
 export class CustomerAuthModule {}
