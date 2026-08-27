@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { CustomerSignInRequest } from '@mocha-house/contracts';
 import { requireEnv } from './require-env';
 import { signDevJwt } from './dev-jwt';
+import { devPasswordMatches } from './dev-password-hash';
 import { LocalDevCustomerDirectory } from './local-dev-customer-directory';
 import type {
   CustomerAuthProvider,
@@ -35,6 +36,20 @@ export class LocalDevAuthProvider implements CustomerAuthProvider {
     // registers first, keeps working unchanged.
     const pending = this.directory.get(identifier);
     if (pending && !pending.verified) {
+      return Promise.resolve({ outcome: 'invalid-credentials' });
+    }
+
+    // Password check, but only for an identifier that actually registered
+    // through the dev boundary (so a password hash was recorded). An
+    // identifier the directory has never seen — every pre-existing dev
+    // sign-in test — carries no hash and signs in with any password, as
+    // before. This is what makes an old password stop working after
+    // /auth/reset-password replaces the stored hash, and the new one start
+    // working.
+    if (
+      pending?.passwordHash &&
+      !devPasswordMatches(request.password, pending.passwordHash, secret)
+    ) {
       return Promise.resolve({ outcome: 'invalid-credentials' });
     }
 

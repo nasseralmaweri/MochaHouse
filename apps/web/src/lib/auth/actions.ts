@@ -3,10 +3,13 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type {
+  CustomerForgotPasswordRequest,
   CustomerRegisterRequest,
   CustomerRegisterResponse,
   CustomerResendVerificationRequest,
   CustomerResendVerificationResponse,
+  CustomerResetPasswordRequest,
+  CustomerResetPasswordResponse,
   CustomerSignInRequest,
   CustomerSignInResponse,
   CustomerVerifyRequest,
@@ -212,6 +215,108 @@ export async function resendVerificationAction(
 
   const result = (await response.json()) as CustomerResendVerificationResponse;
   return { message: `A new verification code has been sent to ${result.email}.`, error: null };
+}
+
+export interface ForgotPasswordFormState {
+  error: string | null;
+}
+
+// Server Action backing /account/forgot-password's form. On success it
+// redirects into the reset step carrying only the email (never a password
+// or code) — the same non-sensitive-contact-only convention registerAction
+// uses for /account/verify. The API's own response is a fixed neutral
+// message regardless of whether the account exists, so nothing this action
+// does can be used to enumerate accounts. A genuine server/provider outage
+// returns an error state here (not a redirect), so the customer is never
+// falsely told a code was sent.
+export async function forgotPasswordAction(
+  _previousState: ForgotPasswordFormState,
+  formData: FormData,
+): Promise<ForgotPasswordFormState> {
+  const email = String(formData.get("email") ?? "").trim();
+
+  if (!email) {
+    return { error: "Enter the email address for your account." };
+  }
+
+  const request: CustomerForgotPasswordRequest = { email };
+
+  let response: Response;
+  try {
+    response = await fetch(`${getApiUrl()}/auth/forgot-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  } catch {
+    return {
+      error: "Could not reach the server. Check your connection and try again.",
+    };
+  }
+
+  if (!response.ok) {
+    return {
+      error: await readErrorMessage(
+        response,
+        "Could not send a recovery code right now. Please try again shortly.",
+      ),
+    };
+  }
+
+  redirect(`/account/reset-password?email=${encodeURIComponent(email)}`);
+}
+
+export interface ResetPasswordFormState {
+  error: string | null;
+}
+
+// Server Action backing /account/reset-password's form. The code and new
+// password are posted straight through to the API and never returned to
+// the client in any form. Deliberately does not sign the customer in on
+// success — it redirects to /account/sign-in, keeping the recovery flow's
+// last step an explicit sign-in with the new password.
+export async function resetPasswordAction(
+  _previousState: ResetPasswordFormState,
+  formData: FormData,
+): Promise<ResetPasswordFormState> {
+  const email = String(formData.get("email") ?? "").trim();
+  const code = String(formData.get("code") ?? "").trim();
+  const newPassword = String(formData.get("newPassword") ?? "");
+  const confirmPassword = String(formData.get("confirmPassword") ?? "");
+
+  if (!email || !code || !newPassword) {
+    return { error: "Email, recovery code, and a new password are required." };
+  }
+  if (newPassword !== confirmPassword) {
+    return { error: "The two passwords do not match." };
+  }
+
+  const request: CustomerResetPasswordRequest = { email, code, newPassword };
+
+  let response: Response;
+  try {
+    response = await fetch(`${getApiUrl()}/auth/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  } catch {
+    return {
+      error: "Could not reach the server. Check your connection and try again.",
+    };
+  }
+
+  if (!response.ok) {
+    return {
+      error: await readErrorMessage(
+        response,
+        "We couldn't reset your password. Please try again.",
+      ),
+    };
+  }
+
+  const result = (await response.json()) as CustomerResetPasswordResponse;
+  redirect(`/account/sign-in?reset=${encodeURIComponent(result.email)}`);
 }
 
 // Clears the Mocha House browser session (the httpOnly cookie) — after

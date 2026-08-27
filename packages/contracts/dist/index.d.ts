@@ -155,6 +155,20 @@ export interface CustomerResendVerificationRequest {
 export interface CustomerResendVerificationResponse {
     email: string;
 }
+export interface CustomerForgotPasswordRequest {
+    email: string;
+}
+export interface CustomerForgotPasswordResponse {
+    message: string;
+}
+export interface CustomerResetPasswordRequest {
+    email: string;
+    code: string;
+    newPassword: string;
+}
+export interface CustomerResetPasswordResponse {
+    email: string;
+}
 export interface CustomerOrderSummary {
     orderId: string;
     orderNumber: string;

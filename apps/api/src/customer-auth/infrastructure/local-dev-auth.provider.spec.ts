@@ -1,5 +1,6 @@
 import { LocalDevAuthProvider } from './local-dev-auth.provider';
 import { LocalDevCustomerDirectory } from './local-dev-customer-directory';
+import { deriveDevPasswordHash } from './dev-password-hash';
 
 describe('LocalDevAuthProvider', () => {
   const originalEnv = { ...process.env };
@@ -55,5 +56,34 @@ describe('LocalDevAuthProvider', () => {
     });
 
     expect(result.outcome).toBe('success');
+  });
+
+  it('checks the stored password hash when the directory record has one', async () => {
+    directory.set('has-password@example.com', {
+      subject: 'dev:has-password@example.com',
+      displayName: null,
+      issuedAt: Date.now(),
+      verified: true,
+      passwordHash: deriveDevPasswordHash(
+        'the-real-password',
+        'local-dev-auth-spec-secret',
+      ),
+    });
+
+    expect(
+      await provider.signIn({
+        identifier: 'has-password@example.com',
+        password: 'the-wrong-password',
+      }),
+    ).toEqual({ outcome: 'invalid-credentials' });
+
+    expect(
+      (
+        await provider.signIn({
+          identifier: 'has-password@example.com',
+          password: 'the-real-password',
+        })
+      ).outcome,
+    ).toBe('success');
   });
 });

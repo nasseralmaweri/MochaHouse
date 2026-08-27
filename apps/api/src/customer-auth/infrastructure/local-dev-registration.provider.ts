@@ -5,6 +5,7 @@ import type {
 } from '@mocha-house/contracts';
 import { requireEnv } from './require-env';
 import { deriveDevVerificationCode } from './dev-verification-code';
+import { deriveDevPasswordHash } from './dev-password-hash';
 import { LocalDevCustomerDirectory } from './local-dev-customer-directory';
 import type {
   CustomerRegistrationProvider,
@@ -47,12 +48,18 @@ export class LocalDevRegistrationProvider implements CustomerRegistrationProvide
       return Promise.resolve({ outcome: 'invalid-password' });
     }
 
+    const secret = requireEnv('AUTH_DEV_JWT_SECRET');
     const subject = `dev:${email}`;
     this.directory.set(email, {
       subject,
       displayName: request.displayName?.trim() || null,
       issuedAt: Date.now(),
       verified: false,
+      // Stored as a non-reversible hash only so a later dev sign-in can
+      // tell this password from one set by a subsequent password reset —
+      // see dev-password-hash.ts. Never the plaintext, never logged.
+      passwordHash: deriveDevPasswordHash(request.password, secret),
+      recoveryIssuedAt: null,
     });
 
     return Promise.resolve({ outcome: 'success', provider: 'dev', subject });

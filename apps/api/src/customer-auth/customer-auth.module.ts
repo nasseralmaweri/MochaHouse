@@ -3,6 +3,7 @@ import { CustomersModule } from '../customers/customers.module';
 import { AuthController } from './api/auth.controller';
 import { CustomerSignInService } from './application/customer-sign-in.service';
 import { CustomerRegistrationService } from './application/customer-registration.service';
+import { CustomerPasswordRecoveryService } from './application/customer-password-recovery.service';
 import { CustomerAuthGuard } from './infrastructure/customer-auth.guard';
 import { OptionalCustomerAuthGuard } from './infrastructure/optional-customer-auth.guard';
 import { CognitoTokenVerifier } from './infrastructure/cognito-token-verifier';
@@ -11,11 +12,14 @@ import { CognitoAuthProvider } from './infrastructure/cognito-auth.provider';
 import { LocalDevAuthProvider } from './infrastructure/local-dev-auth.provider';
 import { CognitoRegistrationProvider } from './infrastructure/cognito-registration.provider';
 import { LocalDevRegistrationProvider } from './infrastructure/local-dev-registration.provider';
+import { CognitoPasswordRecoveryProvider } from './infrastructure/cognito-password-recovery.provider';
+import { LocalDevPasswordRecoveryProvider } from './infrastructure/local-dev-password-recovery.provider';
 import { LocalDevCustomerDirectory } from './infrastructure/local-dev-customer-directory';
 
 // The customer-authentication boundary: token verification (CustomerAuthGuard,
-// used by other modules to protect routes), sign-in, registration, and
-// email verification (all under AuthController, POST /api/v1/auth/*).
+// used by other modules to protect routes), sign-in, registration, email
+// verification, and password recovery/reset (all under AuthController,
+// POST /api/v1/auth/*).
 // Both the Cognito and dev/test implementations of every provider are
 // always wired up; which one actually runs is decided per-request from
 // AUTH_PROVIDER/NODE_ENV (see infrastructure/auth-provider-mode.ts) rather
@@ -42,6 +46,7 @@ import { LocalDevCustomerDirectory } from './infrastructure/local-dev-customer-d
   providers: [
     CustomerSignInService,
     CustomerRegistrationService,
+    CustomerPasswordRecoveryService,
     CustomerAuthGuard,
     OptionalCustomerAuthGuard,
     CognitoTokenVerifier,
@@ -50,6 +55,8 @@ import { LocalDevCustomerDirectory } from './infrastructure/local-dev-customer-d
     LocalDevAuthProvider,
     CognitoRegistrationProvider,
     LocalDevRegistrationProvider,
+    CognitoPasswordRecoveryProvider,
+    LocalDevPasswordRecoveryProvider,
     LocalDevCustomerDirectory,
   ],
   // Both guards' own constructor dependencies (the two verifiers) must be

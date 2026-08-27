@@ -210,6 +210,36 @@ export interface CustomerResendVerificationResponse {
   email: string;
 }
 
+// --- Customer password recovery & reset (Milestone 4D) -----------------
+// Forgot Password -> Reset Password, mirroring Register -> Verify: two
+// separate steps, no session established by either. The identity provider
+// (Cognito, or its local/test stand-in) owns the recovery code and the
+// password — these shapes never carry a code, a password, a raw provider
+// payload, or an auth token. A successful reset ends at Sign In; the
+// customer is never auto-authenticated.
+
+export interface CustomerForgotPasswordRequest {
+  email: string;
+}
+
+// Deliberately just a fixed, neutral acknowledgement — the same text
+// whether or not an account exists for that email, so the response cannot
+// be used to enumerate registered accounts. A genuine provider outage is
+// still surfaced as an error status, not masked as this success.
+export interface CustomerForgotPasswordResponse {
+  message: string;
+}
+
+export interface CustomerResetPasswordRequest {
+  email: string;
+  code: string;
+  newPassword: string;
+}
+
+export interface CustomerResetPasswordResponse {
+  email: string;
+}
+
 // --- Customer order history (Milestone 4B) ------------------------------
 // Read-only, authenticated views over the same authoritative Order records
 // guest confirmation/tracking already uses (see OrderConfirmation /
