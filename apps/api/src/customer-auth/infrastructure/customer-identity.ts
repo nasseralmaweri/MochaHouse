@@ -9,6 +9,14 @@ export interface CustomerIdentity {
   subject: string;
   email: string | null;
   name: string | null;
+  // The provider's own authoritative signal for whether this identity's
+  // email is confirmed — read straight off the verified token (Cognito's
+  // standard `email_verified` claim), never re-derived from a Mocha House
+  // lookup. null means the provider didn't assert either way (never
+  // treated as true). Required, not optional, so every call site has to
+  // consciously decide this rather than silently defaulting — see
+  // CustomersService.resolveOrCreateFromIdentity for how it's used.
+  emailVerified: boolean | null;
 }
 
 export interface CustomerAuthenticatedRequest extends Request {

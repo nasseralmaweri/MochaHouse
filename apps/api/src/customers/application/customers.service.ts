@@ -36,6 +36,17 @@ export class CustomersService {
         externalSubject: identity.subject,
         email: identity.email,
         displayName: identity.name,
+        // Set once, at creation, straight from the provider's own
+        // authoritative claim on the verified token — this is what
+        // recovers the Milestone 4C registration partial-failure window
+        // (Cognito SignUp succeeded but the Customer row never got
+        // created) without any reconciliation job: the customer's first
+        // successful sign-in after verifying with Cognito JIT-creates this
+        // row here, and its emailVerified claim is already true by then,
+        // so the row is never incorrectly stuck unverified. Never touched
+        // on update (below) — a real verification, once recorded, is
+        // never revisited by a later sign-in's claims.
+        emailVerifiedAt: identity.emailVerified ? new Date() : null,
       },
       update: {
         ...(identity.email ? { email: identity.email } : {}),
@@ -59,15 +70,34 @@ export class CustomersService {
   // provider so a 'dev' and a 'cognito' row can never collide on the same
   // email. Deliberately a lookup, not an identity key: the authoritative
   // identity is always (externalProvider, externalSubject) — see
-  // resolveOrCreateFromIdentity — this exists because Cognito's
-  // ConfirmSignUp response carries no subject to resolve by directly.
+  // resolveOrCreateFromIdentity — this exists only because Cognito's
+  // ConfirmSignUp response carries no subject to resolve by directly, and
+  // there is no non-privileged Cognito API that returns one either
+  // (retrieving an existing user's sub requires AdminGetUser, a
+  // credentialed Admin API this architecture deliberately does not use).
+  //
+  // Never guesses: if more than one Customer row under this provider
+  // somehow shares this email — which normal operation cannot produce,
+  // since each provider is expected to enforce its own username/email
+  // uniqueness (Cognito: email IS the Username) — this refuses to pick one
+  // rather than silently binding verification state to an arbitrary
+  // customer. That would be a genuine data anomaly elsewhere, not a
+  // request-level error, so it throws rather than returning null.
   async findByEmailAndProvider(
     provider: string,
     email: string,
   ): Promise<CustomerRow | null> {
-    return this.prisma.customer.findFirst({
+    const matches = await this.prisma.customer.findMany({
       where: { externalProvider: provider, email },
     });
+
+    if (matches.length > 1) {
+      throw new Error(
+        `Ambiguous Customer lookup: ${matches.length} rows found for provider "${provider}" and this email.`,
+      );
+    }
+
+    return matches[0] ?? null;
   }
 
   async markEmailVerified(customerId: string): Promise<CustomerRow> {

@@ -45,6 +45,11 @@ export class LocalDevAuthProvider implements CustomerAuthProvider {
         sub: `dev:${identifier}`,
         email: looksLikeEmail ? identifier : null,
         name: null,
+        // true only when this directory positively confirms it (mirrors
+        // Cognito's email_verified claim); an identifier the directory
+        // has never seen carries no assertion either way, same as a real
+        // token with no such claim — never guessed as true.
+        emailVerified: pending?.verified === true ? true : null,
       },
       secret,
       TOKEN_TTL_SECONDS,

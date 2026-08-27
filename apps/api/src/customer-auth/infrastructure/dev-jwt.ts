@@ -13,6 +13,12 @@ export interface DevJwtPayload {
   sub: string;
   email: string | null;
   name: string | null;
+  // Optional (unlike CustomerIdentity.emailVerified, which is required) so
+  // every pre-existing caller that never asserted this keeps compiling
+  // unchanged — LocalDevTokenVerifier treats an absent value as `null`
+  // ("not asserted"), the same safe default as a real Cognito token with
+  // no email_verified claim at all.
+  emailVerified?: boolean | null;
   exp: number;
 }
 

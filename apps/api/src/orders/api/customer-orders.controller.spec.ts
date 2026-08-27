@@ -147,6 +147,7 @@ describe('CustomerOrdersController (integration)', () => {
       subject: `dev:${identifier}`,
       email: identifier,
       name: null,
+      emailVerified: null,
     };
   }
 

@@ -11,6 +11,7 @@ import type {
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { CustomersModule } from '../customers/customers.module';
+import { CustomersService } from '../customers/application/customers.service';
 import { CustomerAuthModule } from './customer-auth.module';
 import { LocalDevRegistrationProvider } from './infrastructure/local-dev-registration.provider';
 import { deriveDevVerificationCode } from './infrastructure/dev-verification-code';
@@ -24,6 +25,7 @@ import { deriveDevVerificationCode } from './infrastructure/dev-verification-cod
 describe('Customer registration + email verification (integration)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
+  let customersService: CustomersService;
   let localDevRegistrationProvider: LocalDevRegistrationProvider;
   const devSecret = 'registration-flow-spec-secret';
   const originalEnv = { ...process.env };
@@ -40,6 +42,7 @@ describe('Customer registration + email verification (integration)', () => {
     app = moduleFixture.createNestApplication();
     await app.init();
     prisma = moduleFixture.get(PrismaService);
+    customersService = moduleFixture.get(CustomersService);
     localDevRegistrationProvider = moduleFixture.get(
       LocalDevRegistrationProvider,
     );
@@ -318,6 +321,110 @@ describe('Customer registration + email verification (integration)', () => {
         .post('/api/v1/auth/verification/resend')
         .send({ email })
         .expect(409);
+    });
+  });
+
+  // Simulates Cognito SignUp succeeding but the follow-up Mocha House
+  // Customer creation failing (e.g. a crash or DB error in between) — the
+  // known registration partial-failure window this review is about. Uses
+  // the real CustomersService singleton the app is wired with, so the
+  // failure is exactly where AuthController.register would hit it.
+  describe('registration partial-failure recovery', () => {
+    it('surfaces a clear failure, creates no Customer, and a retry correctly reports the account as already existing', async () => {
+      const email = uniqueEmail('partialfail');
+      const spy = jest
+        .spyOn(customersService, 'resolveOrCreateFromIdentity')
+        .mockRejectedValueOnce(
+          new Error('Simulated Customer persistence failure'),
+        );
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send({
+          email,
+          password: 'a-fine-password',
+          displayName: 'Test Customer',
+        })
+        .expect(500);
+
+      spy.mockRestore();
+
+      // The provider-side registration (Cognito SignUp, or here its dev
+      // stand-in) genuinely succeeded before the failure — Mocha House
+      // simply never got to record it.
+      expect(await findCustomer(email)).toBeNull();
+
+      // Retrying /register must not silently "succeed again" (that would
+      // imply a second provider identity/subject) — it correctly reports
+      // the account as already existing, exactly as a genuinely duplicate
+      // registration attempt would.
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send({
+          email,
+          password: 'a-fine-password',
+          displayName: 'Test Customer',
+        })
+        .expect(409);
+
+      expect(await findCustomer(email)).toBeNull();
+    });
+
+    it('verification still succeeds after the partial-failure window (the provider confirmed it), and the next sign-in JIT-creates the Customer already verified', async () => {
+      const email = uniqueEmail('partialfailverify');
+      const spy = jest
+        .spyOn(customersService, 'resolveOrCreateFromIdentity')
+        .mockRejectedValueOnce(
+          new Error('Simulated Customer persistence failure'),
+        );
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send({
+          email,
+          password: 'a-fine-password',
+          displayName: 'Test Customer',
+        })
+        .expect(500);
+      spy.mockRestore();
+
+      expect(await findCustomer(email)).toBeNull();
+
+      // Verifying with the correct code succeeds — this is a genuine,
+      // independent provider-side confirmation that never depended on a
+      // local Customer row existing.
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/verify')
+        .send({ email, code: codeFor(email) })
+        .expect(201);
+
+      // Still no local Customer — verify() has no subject to safely
+      // create or bind one with (see AuthController.verify's comment).
+      // This is the accepted, documented residual limitation.
+      expect(await findCustomer(email)).toBeNull();
+
+      // Sign-in itself only mints a token — JIT provisioning happens on
+      // the next *authenticated* request (CustomerAuthGuard), so recovery
+      // completes at the first protected call after signing in, here
+      // /customers/me. Its emailVerified claim (true, since this
+      // identifier is verified in the dev directory) means the
+      // JIT-created Customer is stamped verified immediately, never stuck
+      // incorrectly null.
+      const signInResponse = await request(app.getHttpServer())
+        .post('/api/v1/auth/sign-in')
+        .send({ identifier: email, password: 'a-fine-password' })
+        .expect(201);
+      const { idToken } = signInResponse.body as CustomerSignInResponse;
+
+      const meResponse = await request(app.getHttpServer())
+        .get('/api/v1/customers/me')
+        .set('Authorization', `Bearer ${idToken}`)
+        .expect(200);
+
+      const recovered = await findCustomer(email);
+      expect(recovered).not.toBeNull();
+      expect(recovered?.emailVerifiedAt).not.toBeNull();
+      expect((meResponse.body as CustomerProfile).id).toBe(recovered?.id);
     });
   });
 });

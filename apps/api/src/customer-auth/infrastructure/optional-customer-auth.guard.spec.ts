@@ -107,6 +107,7 @@ describe('OptionalCustomerAuthGuard', () => {
       subject: 'dev:test@example.com',
       email: 'test@example.com',
       name: null,
+      emailVerified: null,
     });
   });
 

@@ -142,6 +142,7 @@ describe('CheckoutService (integration)', () => {
       subject: `test-customer-${suffix}`,
       email: `${suffix}@example.com`,
       name: null,
+      emailVerified: null,
     };
   }
 

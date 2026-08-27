@@ -41,11 +41,25 @@ export class CognitoTokenVerifier {
 
     const payload = await this.cached.verifier.verify(token);
 
+    // Cognito's standard `email_verified` claim — normally a real boolean
+    // in the ID token, but read defensively (a string "true"/"false" has
+    // been observed depending on attribute-mapping configuration) rather
+    // than assumed. Anything else (missing, some other type) is `null` —
+    // "not asserted" — never coerced to true.
+    const rawEmailVerified = payload.email_verified;
+    const emailVerified =
+      typeof rawEmailVerified === 'boolean'
+        ? rawEmailVerified
+        : typeof rawEmailVerified === 'string'
+          ? rawEmailVerified === 'true'
+          : null;
+
     return {
       provider: 'cognito',
       subject: payload.sub,
       email: typeof payload.email === 'string' ? payload.email : null,
       name: typeof payload.name === 'string' ? payload.name : null,
+      emailVerified,
     };
   }
 }

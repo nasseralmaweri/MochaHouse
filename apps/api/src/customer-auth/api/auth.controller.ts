@@ -105,6 +105,10 @@ export class AuthController {
       subject: result.subject,
       email,
       name: displayName,
+      // Registration always precedes verification in this flow — the
+      // account is definitively not yet confirmed the moment it's
+      // created, never assumed otherwise.
+      emailVerified: false,
     });
 
     return { email };
@@ -156,16 +160,31 @@ export class AuthController {
       email,
     );
 
-    if (!customer) {
-      throw new NotFoundException(
-        "We couldn't find a pending registration for that email.",
-      );
+    if (customer) {
+      if (!customer.emailVerifiedAt) {
+        await this.customersService.markEmailVerified(customer.id);
+      }
+      return { email };
     }
 
-    if (!customer.emailVerifiedAt) {
-      await this.customersService.markEmailVerified(customer.id);
-    }
-
+    // Cognito has already authoritatively confirmed this account — we
+    // only reach here after a 'success' or 'already-verified' provider
+    // outcome — but no local Customer row exists for it yet. This is the
+    // known registration partial-failure window: SignUp succeeded, but the
+    // Customer creation at the end of /auth/register did not (e.g. a
+    // crash or DB error in between). There is no safe way to create or
+    // bind one here — ConfirmSignUp's response carries no subject, and
+    // fetching one back from Cognito would require the privileged
+    // AdminGetUser API, which this architecture deliberately does not use
+    // (see CustomersService.findByEmailAndProvider). Reported as success
+    // rather than "not found": the thing this response is actually about
+    // — did the provider confirm the account — is true, and no special
+    // recovery step is needed from here. The customer's very next
+    // successful sign-in resolves this correctly on its own:
+    // CustomerAuthGuard extracts the authoritative subject straight from
+    // their verified ID token, and CustomersService.resolveOrCreateFromIdentity
+    // JIT-creates the Customer row from it — already stamped verified,
+    // since that same token's email_verified claim is true by then.
     return { email };
   }
 

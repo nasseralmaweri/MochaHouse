@@ -19,6 +19,7 @@ export class LocalDevTokenVerifier {
       subject: payload.sub,
       email: payload.email,
       name: payload.name,
+      emailVerified: payload.emailVerified ?? null,
     });
   }
 }
