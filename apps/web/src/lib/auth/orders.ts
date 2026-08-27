@@ -1,12 +1,16 @@
+import "server-only";
 import type {
   CustomerOrderDetail,
   CustomerOrderSummary,
 } from "@mocha-house/contracts";
 
-// Server-only: both calls take the customer session token explicitly
-// (see lib/auth/session.ts's getCustomerSessionToken) rather than reading
-// the cookie themselves, so callers decide once whether a session exists
-// at all before fetching anything.
+// The "server-only" import above makes it a build error for any Client
+// Component to import this module — both calls take the customer session
+// token as a plain parameter (see lib/auth/session.ts's
+// getCustomerSessionToken) rather than reading the cookie themselves, but
+// they still attach that raw bearer token to an outgoing request and read
+// the server-only API_URL, neither of which may ever end up in a browser
+// bundle.
 
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;

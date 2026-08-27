@@ -1,4 +1,9 @@
-import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { isDevCustomerAuthEnabled } from './auth-provider-mode';
 import { CognitoTokenVerifier } from './cognito-token-verifier';
 import { LocalDevTokenVerifier } from './local-dev-token-verifier';
@@ -7,16 +12,18 @@ import type { CustomerAuthenticatedRequest } from './customer-identity';
 
 // Best-effort counterpart to CustomerAuthGuard, for routes where signing in
 // is optional (checkout: guest ordering must keep working with no account
-// at all). This guard never rejects a request:
-//   - no Authorization header -> proceeds as anonymous (no
-//     customerIdentity set at all — indistinguishable from a guest today).
+// at all). "Optional" means authentication is not *required* — it does
+// not mean a token that was actually presented gets a pass if it's wrong:
+//   - no Authorization header at all -> proceeds as anonymous (no
+//     customerIdentity set) — this is the only case treated as a guest.
 //   - a header that verifies successfully -> customerIdentity is attached,
 //     exactly as CustomerAuthGuard would.
-//   - a header present but invalid/expired/malformed -> the verification
-//     failure is swallowed and the request still proceeds as anonymous. An
-//     invalid or stale token must never be treated as an authenticated
-//     customer, but it also must not block an otherwise-valid checkout —
-//     the caller simply doesn't get their order associated with an account.
+//   - a header present but malformed/invalid/tampered/expired -> rejected
+//     with the same generic 401 CustomerAuthGuard would use. Silently
+//     downgrading an explicitly-presented bad token to "guest" would let a
+//     customer's order vanish from their own history the moment their
+//     session expires mid-checkout, with no indication anything went
+//     wrong — worse than failing loudly.
 // Uses the same per-request Cognito-vs-dev selection as CustomerAuthGuard
 // (see isDevCustomerAuthEnabled) — this is the only place that decision is
 // made, never duplicated inside checkout itself.
@@ -44,7 +51,7 @@ export class OptionalCustomerAuthGuard implements CanActivate {
     try {
       request.customerIdentity = await verifier.verify(token);
     } catch {
-      // Swallowed by design — see class doc comment.
+      throw new UnauthorizedException('Invalid or expired authentication.');
     }
 
     return true;
