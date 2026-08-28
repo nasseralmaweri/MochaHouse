@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import type { OrderStatus } from "@mocha-house/contracts";
 import { getCustomerSessionToken } from "@/lib/auth/session";
@@ -83,6 +84,13 @@ export default async function AccountOrderDetailPage({
         <span>Status</span>
         <span className="text-text-primary">{STATUS_LABEL[order.status]}</span>
       </Card>
+
+      <Link
+        href={`/account/orders/${order.orderId}/reorder`}
+        className="flex min-h-11 items-center justify-center rounded-xl bg-status-success/10 px-4 py-3 text-base font-semibold text-status-success"
+      >
+        Reorder
+      </Link>
 
       <BackLink href="/account/orders">Back to my orders</BackLink>
     </main>

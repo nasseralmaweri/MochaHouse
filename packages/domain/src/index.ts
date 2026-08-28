@@ -3,6 +3,10 @@ import type {
   LocationMenuResponse,
   OrderLineSummary,
   OrderStatus,
+  ReorderIssue,
+  ReorderItemStatus,
+  ReorderPreparedItem,
+  ReorderPreparationStatus,
 } from "@mocha-house/contracts";
 
 // The one place the approved operational pipeline (RECEIVED -> ACCEPTED ->
@@ -242,4 +246,235 @@ export function priceCart(
   const subtotal = pricedLines.reduce((sum, line) => sum + line.lineTotal, 0);
 
   return { ok: true, currency: currency as string, subtotal, lines: pricedLines };
+}
+
+// --- Reorder preparation (Milestone 4G) -------------------------------
+// Pure, framework-agnostic validation of a historical order's line
+// snapshots against an already-fetched current effective menu. Same
+// authority boundary as priceCart: the historical prices/availability are
+// never trusted, only the live menu passed in. Unlike priceCart this does
+// NOT fail fast — it classifies every line so the customer can see the
+// full picture, and it never substitutes a product or a modifier option.
+//
+// Matching is by STABLE ID only (OrderLine.productId, and the groupId /
+// optionIds persisted in OrderLine.selections). Historical display names
+// are used only for messages, never for matching.
+
+export interface HistoricalReorderSelection {
+  groupId: string;
+  groupName: string;
+  optionIds: string[];
+  optionNames: string[];
+}
+
+export interface HistoricalReorderLine {
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  currency: string;
+  selections: HistoricalReorderSelection[];
+}
+
+export interface ReorderPreparationResult {
+  status: ReorderPreparationStatus;
+  items: ReorderPreparedItem[];
+  currentEstimatedSubtotal: number;
+}
+
+// Any real (non-rounding) unit-price movement is worth showing. There is
+// no rounding in this codebase's integer-cent math, so the threshold is 0
+// — kept as a named constant to make the intent explicit.
+const PRICE_CHANGE_MIN_CENTS = 1;
+
+export function prepareReorder(
+  menu: LocationMenuResponse,
+  historicalLines: HistoricalReorderLine[],
+): ReorderPreparationResult {
+  const items: ReorderPreparedItem[] = [];
+
+  for (const line of historicalLines) {
+    items.push(prepareLine(menu, line));
+  }
+
+  const restorable = items.filter((item) => item.status !== "UNAVAILABLE");
+  const currentEstimatedSubtotal = restorable.reduce(
+    (sum, item) => sum + (item.currentLineSubtotal ?? 0),
+    0,
+  );
+
+  let status: ReorderPreparationStatus;
+  if (restorable.length === 0) {
+    status = "UNAVAILABLE";
+  } else if (items.every((item) => item.status === "VALID")) {
+    status = "READY";
+  } else {
+    status = "NEEDS_REVIEW";
+  }
+
+  return { status, items, currentEstimatedSubtotal };
+}
+
+function prepareLine(
+  menu: LocationMenuResponse,
+  line: HistoricalReorderLine,
+): ReorderPreparedItem {
+  const menuProduct = menu.menu.products.find(
+    (candidate) => candidate.product.id === line.productId,
+  );
+
+  const base = {
+    productId: line.productId,
+    quantity: line.quantity,
+    currency: line.currency,
+    historicalUnitPrice: line.unitPrice,
+  };
+
+  if (!menuProduct) {
+    return {
+      ...base,
+      status: "UNAVAILABLE",
+      productName: line.productName,
+      selections: [],
+      needsCustomization: false,
+      issues: [
+        {
+          code: "PRODUCT_NOT_ON_MENU",
+          message: `${line.productName} is no longer on this location's menu.`,
+          productName: line.productName,
+        },
+      ],
+    };
+  }
+
+  const currentName = menuProduct.product.name;
+
+  if (!menuProduct.isAvailable || menuProduct.effectivePrice === null) {
+    return {
+      ...base,
+      status: "UNAVAILABLE",
+      productName: currentName,
+      selections: [],
+      needsCustomization: false,
+      issues: [
+        {
+          code: "PRODUCT_UNAVAILABLE",
+          message: `${currentName} is currently unavailable at this location.`,
+          productName: currentName,
+        },
+      ],
+    };
+  }
+
+  const issues: ReorderIssue[] = [];
+  let needsCustomization = false;
+  let unitPrice = menuProduct.effectivePrice;
+  const resolvedSelections: ReorderPreparedItem["selections"] = [];
+
+  // Track, per current group, how many options ended up selected — so
+  // min/max and required rules can be checked against the CURRENT
+  // structure afterward, not just the historical selections.
+  const selectedCountByGroup = new Map<string, number>();
+
+  for (const historicalSelection of line.selections) {
+    const currentGroup = menuProduct.modifierGroups.find(
+      (group) => group.id === historicalSelection.groupId,
+    );
+
+    if (!currentGroup) {
+      issues.push({
+        code: "MODIFIER_GROUP_REMOVED",
+        message: `"${historicalSelection.groupName}" is no longer an option for ${currentName}.`,
+        productName: currentName,
+      });
+      continue;
+    }
+
+    const resolvedOptionIds: string[] = [];
+    const resolvedOptionNames: string[] = [];
+
+    for (let i = 0; i < historicalSelection.optionIds.length; i++) {
+      const optionId = historicalSelection.optionIds[i];
+      const currentOption = currentGroup.options.find(
+        (option) => option.id === optionId,
+      );
+
+      if (!currentOption) {
+        const historicalOptionName =
+          historicalSelection.optionNames[i] ?? "A previous choice";
+        issues.push({
+          code: "MODIFIER_OPTION_REMOVED",
+          message: `${historicalOptionName} is no longer available for ${currentName}.`,
+          productName: currentName,
+        });
+        continue;
+      }
+
+      resolvedOptionIds.push(currentOption.id);
+      resolvedOptionNames.push(currentOption.name);
+      unitPrice += currentOption.priceAdjustment;
+    }
+
+    selectedCountByGroup.set(currentGroup.id, resolvedOptionIds.length);
+
+    if (resolvedOptionIds.length > 0) {
+      resolvedSelections.push({
+        groupId: currentGroup.id,
+        groupName: currentGroup.name,
+        optionIds: resolvedOptionIds,
+        optionNames: resolvedOptionNames,
+      });
+    }
+  }
+
+  // Validate every CURRENT group's rules against what we ended up with —
+  // this is where a newly-required group, or a min/max the historical
+  // selection no longer satisfies, is caught. Never auto-picks a default.
+  for (const group of menuProduct.modifierGroups) {
+    const count = selectedCountByGroup.get(group.id) ?? 0;
+
+    if (group.isRequired && count === 0) {
+      needsCustomization = true;
+      issues.push({
+        code: "MODIFIER_REQUIRED_SELECTION_MISSING",
+        message: `${currentName} now needs a "${group.name}" choice.`,
+        productName: currentName,
+      });
+      continue;
+    }
+
+    if (
+      count < group.minSelections ||
+      (group.maxSelections !== null && count > group.maxSelections)
+    ) {
+      needsCustomization = true;
+      issues.push({
+        code: "MODIFIER_SELECTION_COUNT_INVALID",
+        message: `Your "${group.name}" choice for ${currentName} needs updating.`,
+        productName: currentName,
+      });
+    }
+  }
+
+  if (Math.abs(unitPrice - line.unitPrice) >= PRICE_CHANGE_MIN_CENTS) {
+    issues.push({
+      code: "PRICE_CHANGED",
+      message: `The price of ${currentName} has changed since your last order.`,
+      productName: currentName,
+    });
+  }
+
+  const status: ReorderItemStatus = issues.length === 0 ? "VALID" : "CHANGED";
+  const currentLineSubtotal = unitPrice * line.quantity;
+
+  return {
+    ...base,
+    status,
+    productName: currentName,
+    currentUnitPrice: unitPrice,
+    currentLineSubtotal,
+    selections: resolvedSelections,
+    needsCustomization,
+    issues,
+  };
 }

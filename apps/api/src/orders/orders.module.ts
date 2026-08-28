@@ -9,6 +9,7 @@ import { CustomerOrdersController } from './api/customer-orders.controller';
 import { CheckoutService } from './application/checkout.service';
 import { AdminOrdersService } from './application/admin-orders.service';
 import { CustomerOrdersService } from './application/customer-orders.service';
+import { CustomerReorderService } from './application/customer-reorder.service';
 import { PAYMENT_PROVIDER } from './infrastructure/payment-provider.token';
 import { DevInternalGuard } from './infrastructure/dev-internal.guard';
 
@@ -32,6 +33,7 @@ import { DevInternalGuard } from './infrastructure/dev-internal.guard';
     CheckoutService,
     AdminOrdersService,
     CustomerOrdersService,
+    CustomerReorderService,
     // FakePaymentProvider is the only binding here — CheckoutService only
     // ever depends on the PaymentProvider interface, so a real processor
     // is a one-line swap in this provider list, not an orchestration change.

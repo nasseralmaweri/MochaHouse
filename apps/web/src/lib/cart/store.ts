@@ -224,6 +224,43 @@ function replaceCartWithItem(input: AddItemInput) {
   });
 }
 
+export interface ReplaceCartInput {
+  locationId: string;
+  locationName: string;
+  lines: {
+    productId: string;
+    productName: string;
+    currency: string;
+    menuId: string;
+    quantity: number;
+    selections: CartLineSelection[];
+    unitPriceAtAdd: number;
+  }[];
+}
+
+// Wholesale cart replacement — used only by the reorder flow, after the
+// customer has explicitly reviewed the reorder preparation and confirmed.
+// Never merges: whatever was in the cart (including a different location's
+// items) is discarded. Callers own asking for that confirmation first.
+function replaceCart(input: ReplaceCartInput) {
+  setState({
+    version: CART_VERSION,
+    locationId: input.locationId,
+    locationName: input.locationName,
+    lines: input.lines.map((line) => ({
+      lineId: createLineId(),
+      productId: line.productId,
+      productName: line.productName,
+      currency: line.currency,
+      menuId: line.menuId,
+      locationId: input.locationId,
+      quantity: line.quantity,
+      selections: line.selections,
+      unitPriceAtAdd: line.unitPriceAtAdd,
+    })),
+  });
+}
+
 function updateLine(
   lineId: string,
   changes: {
@@ -290,6 +327,7 @@ export function useCart() {
     // Module-level functions — stable references, no useCallback needed.
     addItem,
     replaceCartWithItem,
+    replaceCart,
     updateLine,
     removeLine,
     setLineQuantity,

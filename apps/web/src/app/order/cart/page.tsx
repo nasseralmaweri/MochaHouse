@@ -15,6 +15,7 @@ type LineStatus =
   | { kind: "ok"; unitPrice: number }
   | { kind: "price-changed"; unitPrice: number }
   | { kind: "modifiers-changed"; unitPrice: number }
+  | { kind: "needs-choice"; unitPrice: number }
   | { kind: "unavailable" }
   | { kind: "removed" };
 
@@ -121,8 +122,32 @@ export default function OrderCartPage() {
         }
       }
 
+      // Also check every CURRENT modifier group's rules against this line —
+      // catches a group that became required (or changed its min/max) after
+      // the line was added, which the selection-only loop above can't see.
+      // Without this the cart would let such a line reach checkout only to
+      // be rejected there.
+      let needsChoice = false;
+      for (const group of menuProduct.modifierGroups) {
+        const selection = line.selections.find((s) => s.groupId === group.id);
+        const count = selection ? new Set(selection.optionIds).size : 0;
+        if (group.isRequired && count === 0) {
+          needsChoice = true;
+          break;
+        }
+        if (
+          count < group.minSelections ||
+          (group.maxSelections !== null && count > group.maxSelections)
+        ) {
+          needsChoice = true;
+          break;
+        }
+      }
+
       if (modifiersChanged) {
         statuses.set(line.lineId, { kind: "modifiers-changed", unitPrice });
+      } else if (needsChoice) {
+        statuses.set(line.lineId, { kind: "needs-choice", unitPrice });
       } else if (unitPrice !== line.unitPriceAtAdd) {
         statuses.set(line.lineId, { kind: "price-changed", unitPrice });
       } else {
@@ -353,6 +378,8 @@ function LineStatusNotice({
         return "This item is currently unavailable.";
       case "modifiers-changed":
         return "One of your selected options is no longer available. Please edit this item.";
+      case "needs-choice":
+        return "This item needs a choice before you can check out. Please edit it.";
       case "price-changed":
         return `Price updated from ${formatPrice(priorUnitPrice, currency)} to ${formatPrice(status.unitPrice, currency)}.`;
       default:

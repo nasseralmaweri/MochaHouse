@@ -19,6 +19,7 @@ import { signDevJwt } from '../../customer-auth/infrastructure/dev-jwt';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 import { CheckoutService } from '../application/checkout.service';
 import { CustomerOrdersService } from '../application/customer-orders.service';
+import { CustomerReorderService } from '../application/customer-reorder.service';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import { CustomerOrdersController } from './customer-orders.controller';
 
@@ -56,6 +57,7 @@ describe('CustomerOrdersController (integration)', () => {
       providers: [
         CheckoutService,
         CustomerOrdersService,
+        CustomerReorderService,
         { provide: PAYMENT_PROVIDER, useClass: FakePaymentProvider },
       ],
     }).compile();

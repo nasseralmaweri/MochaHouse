@@ -195,6 +195,43 @@ export interface CustomerOrderSummary {
 export interface CustomerOrderDetail extends CustomerOrderSummary {
     lines: OrderLineSummary[];
 }
+export type ReorderIssueCode = "LOCATION_INACTIVE" | "LOCATION_DIGITAL_ORDERING_DISABLED" | "PRODUCT_NOT_ON_MENU" | "PRODUCT_UNAVAILABLE" | "PRICE_CHANGED" | "MODIFIER_GROUP_REMOVED" | "MODIFIER_OPTION_REMOVED" | "MODIFIER_REQUIRED_SELECTION_MISSING" | "MODIFIER_SELECTION_COUNT_INVALID";
+export interface ReorderIssue {
+    code: ReorderIssueCode;
+    message: string;
+    productName?: string;
+}
+export type ReorderItemStatus = "VALID" | "CHANGED" | "UNAVAILABLE";
+export interface ReorderPreparedSelection {
+    groupId: string;
+    groupName: string;
+    optionIds: string[];
+    optionNames: string[];
+}
+export interface ReorderPreparedItem {
+    status: ReorderItemStatus;
+    productId: string;
+    productName: string;
+    quantity: number;
+    currency: string;
+    historicalUnitPrice: number;
+    currentUnitPrice?: number;
+    currentLineSubtotal?: number;
+    selections: ReorderPreparedSelection[];
+    needsCustomization: boolean;
+    issues: ReorderIssue[];
+}
+export type ReorderPreparationStatus = "READY" | "NEEDS_REVIEW" | "UNAVAILABLE";
+export interface ReorderPreparation {
+    orderId: string;
+    location: LocationSummary;
+    menuId?: string;
+    status: ReorderPreparationStatus;
+    items: ReorderPreparedItem[];
+    issues: ReorderIssue[];
+    historicalTotal: number;
+    currentEstimatedSubtotal: number;
+}
 export interface StoreOrderSummary {
     orderId: string;
     orderNumber: string;

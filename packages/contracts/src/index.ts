@@ -307,6 +307,95 @@ export interface CustomerOrderDetail extends CustomerOrderSummary {
   lines: OrderLineSummary[];
 }
 
+// --- Reorder from order history (Milestone 4G) -------------------------
+// The historical Order is a snapshot/reference only. A reorder is ALWAYS
+// revalidated against the current location, menu, product availability,
+// modifier structure, and pricing before any cart is rebuilt — no
+// checkout request is ever constructed from stored historical prices or
+// availability. The prepare endpoint mutates nothing (no Order, no
+// PaymentAttempt); the web layer converts the validated result into the
+// existing cart representation, and checkout still performs its own final
+// authoritative validation.
+
+// Machine-readable so the UI can branch reliably; the human-facing
+// `message` on each ReorderIssue is mapped deliberately, never a raw
+// backend/Prisma error.
+export type ReorderIssueCode =
+  | "LOCATION_INACTIVE"
+  | "LOCATION_DIGITAL_ORDERING_DISABLED"
+  | "PRODUCT_NOT_ON_MENU"
+  | "PRODUCT_UNAVAILABLE"
+  | "PRICE_CHANGED"
+  | "MODIFIER_GROUP_REMOVED"
+  | "MODIFIER_OPTION_REMOVED"
+  | "MODIFIER_REQUIRED_SELECTION_MISSING"
+  | "MODIFIER_SELECTION_COUNT_INVALID";
+
+export interface ReorderIssue {
+  code: ReorderIssueCode;
+  message: string;
+  productName?: string;
+}
+
+// VALID   — restores exactly, nothing material changed.
+// CHANGED — still reorderable, but the customer must see what changed
+//           (price moved, an optional modifier disappeared, a now-required
+//           choice is missing, min/max no longer satisfied). When
+//           `needsCustomization` is true the item must be opened in the
+//           normal product customizer before checkout.
+// UNAVAILABLE — cannot be automatically restored (product gone from the
+//           menu / unavailable). Never silently substituted.
+export type ReorderItemStatus = "VALID" | "CHANGED" | "UNAVAILABLE";
+
+export interface ReorderPreparedSelection {
+  groupId: string;
+  groupName: string;
+  optionIds: string[];
+  optionNames: string[];
+}
+
+export interface ReorderPreparedItem {
+  status: ReorderItemStatus;
+  productId: string;
+  // Current product name (historical name is intentionally not surfaced
+  // separately — the current catalog is authoritative for display too).
+  productName: string;
+  quantity: number;
+  currency: string;
+  historicalUnitPrice: number;
+  // Present unless status is UNAVAILABLE.
+  currentUnitPrice?: number;
+  currentLineSubtotal?: number;
+  // The current, resolved modifier selections (historical option ids that
+  // no longer resolve are dropped and reported as issues, never guessed).
+  selections: ReorderPreparedSelection[];
+  needsCustomization: boolean;
+  issues: ReorderIssue[];
+}
+
+// READY       — every item is VALID; a fast rebuild is safe.
+// NEEDS_REVIEW — at least one item changed or is unavailable, but >=1 item
+//               can still be restored. The customer reviews, then confirms.
+// UNAVAILABLE  — nothing can be restored (location not orderable, or every
+//               item unavailable).
+export type ReorderPreparationStatus = "READY" | "NEEDS_REVIEW" | "UNAVAILABLE";
+
+export interface ReorderPreparation {
+  orderId: string;
+  location: LocationSummary;
+  // The current active menu id for the location — present unless the
+  // location is UNAVAILABLE. The web layer stamps it onto rebuilt cart
+  // lines; cart/checkout revalidation is still by location.
+  menuId?: string;
+  status: ReorderPreparationStatus;
+  items: ReorderPreparedItem[];
+  // Order-level issues (currently only location problems).
+  issues: ReorderIssue[];
+  historicalTotal: number;
+  // Sum of currentLineSubtotal across restorable (VALID/CHANGED) items.
+  currentEstimatedSubtotal: number;
+}
+
 // --- Store Queue / operational lifecycle (Milestone 3, next slice) -----
 // DEV-ONLY NOTE: these endpoints have no authentication/authorization yet
 // (see AdminOrdersController). Deliberately excludes guest accessToken and
