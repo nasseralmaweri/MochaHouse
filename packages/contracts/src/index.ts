@@ -168,6 +168,34 @@ export interface CustomerProfile {
   createdAt: string;
 }
 
+// --- Preferred locations & communication preferences (Milestone 4F) ---
+// The customer account exists to make repeat ordering faster. A preferred
+// location is just a saved reference to an authoritative Location — the
+// account never stores location details of its own, and orderability is
+// always re-checked live against the menu when an order actually begins.
+// Marketing consent is kept entirely separate from transactional email.
+
+// GET/POST/DELETE /customers/me/locations all return the customer's
+// current preferred set, reusing LocationSummary. `isDigitalOrderingEnabled`
+// is the live orderability signal the account UI shows; it is never frozen
+// into preference state.
+export type CustomerPreferredLocationsResponse = LocationSummary[];
+
+export interface AddPreferredLocationRequest {
+  locationId: string;
+}
+
+export interface CustomerCommunicationPreferences {
+  // true only when the customer has explicitly opted in to marketing email.
+  // Never affects transactional/account mail (verification, password
+  // recovery, order confirmation, security notices).
+  marketingEmailOptIn: boolean;
+}
+
+export interface CustomerUpdateCommunicationPreferencesRequest {
+  marketingEmailOptIn: boolean;
+}
+
 // --- Customer profile management (Milestone 4E) ------------------------
 // The Mocha House Customer record is the authoritative application
 // profile. This request carries ONLY the customer-editable fields — never

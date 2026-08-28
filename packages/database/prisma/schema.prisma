@@ -18,14 +18,14 @@ model Location {
   name                         String
   slug                         String                                @unique
   isActive                     Boolean                               @default(true)
-  isDigitalOrderingEnabled Boolean @default(true)
+  isDigitalOrderingEnabled     Boolean                               @default(true)
   createdAt                    DateTime                              @default(now())
   updatedAt                    DateTime                              @updatedAt
   menus                        LocationMenu[]
   productPriceOverrides        LocationProductPriceOverride[]
   productAvailabilityOverrides LocationProductAvailabilityOverride[]
   orders                       Order[]
-
+  preferredByCustomers         CustomerPreferredLocation[]
 }
 
 model Category {
@@ -103,7 +103,7 @@ model ModifierOption {
 model ProductModifierGroup {
   productId       String
   modifierGroupId String
-  displayOrder    Int @default(0)
+  displayOrder    Int    @default(0)
 
   product       Product       @relation(fields: [productId], references: [id])
   modifierGroup ModifierGroup @relation(fields: [modifierGroupId], references: [id])
@@ -187,24 +187,59 @@ enum CustomerAccountStatus {
 }
 
 model Customer {
-  id               String                @id @default(uuid(7))
-  externalProvider String
-  externalSubject  String
-  email            String?
-  displayName      String?
-  status           CustomerAccountStatus @default(ACTIVE)
+  id                  String                      @id @default(uuid(7))
+  externalProvider    String
+  externalSubject     String
+  email               String?
+  displayName         String?
+  status              CustomerAccountStatus       @default(ACTIVE)
   // Contact-verification state (Milestone 4C) — deliberately separate from
   // `status` above: this tracks whether the registration email has been
   // confirmed with the identity provider, not the customer's business
   // account standing. Null means "never verified" — set once, at
   // successful verification, and never fabricated/backfilled for rows
   // created before this column existed (see the migration's own comment).
-  emailVerifiedAt  DateTime?
-  createdAt        DateTime              @default(now())
-  updatedAt        DateTime              @updatedAt
-  orders           Order[]
+  emailVerifiedAt     DateTime?
+  // Communication preference (Milestone 4F). true ONLY when the customer
+  // has explicitly opted in to marketing/promotional email. It never gates
+  // transactional/account mail (verification, password recovery, order
+  // confirmation, security notices) — those are operationally required and
+  // sent regardless. This column is current-state only: it is not, and
+  // must not be treated as, an audit-quality record of historic consent
+  // (no source/version/timestamp of the consent event is captured here).
+  marketingEmailOptIn Boolean                     @default(false)
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
+  orders              Order[]
+  preferredLocations  CustomerPreferredLocation[]
 
   @@unique([externalProvider, externalSubject])
+}
+
+// --- Milestone 4F, preferred locations --------------------------------
+// A managed set of authoritative Mocha House Location records a customer
+// has saved to speed up repeat ordering. Pure join table: it carries no
+// customer-authored content (no nickname/notes/ranking) — those are
+// deliberately out of scope. There is no "primary/default" concept; the
+// approved requirement is satisfied by the set alone.
+//
+// onDelete: Cascade on both sides — a join row is meaningless without both
+// referents, and removing it can never corrupt a Customer or a Location
+// (neither has a foreign key pointing here). A Location going inactive is
+// handled in the query layer (CustomerPreferredLocationsService only
+// returns rows whose Location is still active), not by deleting rows.
+model CustomerPreferredLocation {
+  id         String   @id @default(uuid(7))
+  customerId String
+  locationId String
+  createdAt  DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, locationId])
+  @@index([customerId])
+  @@index([locationId])
 }
 
 // --- Milestone 3, first transaction slice -----------------------------

@@ -127,6 +127,16 @@ export interface CustomerProfile {
     emailVerified: boolean;
     createdAt: string;
 }
+export type CustomerPreferredLocationsResponse = LocationSummary[];
+export interface AddPreferredLocationRequest {
+    locationId: string;
+}
+export interface CustomerCommunicationPreferences {
+    marketingEmailOptIn: boolean;
+}
+export interface CustomerUpdateCommunicationPreferencesRequest {
+    marketingEmailOptIn: boolean;
+}
 export interface CustomerUpdateProfileRequest {
     displayName: string | null;
 }

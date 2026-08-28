@@ -18,6 +18,11 @@ import type {
 } from "@mocha-house/contracts";
 import { CUSTOMER_SESSION_COOKIE, getCustomerSessionToken } from "./session";
 import { updateCustomerProfile } from "./profile";
+import {
+  addPreferredLocation,
+  removePreferredLocation,
+} from "./locations";
+import { updateCommunicationPreferences } from "./preferences";
 
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;
@@ -362,6 +367,109 @@ export async function updateProfileAction(
 
   revalidatePath("/account/profile");
   revalidatePath("/account");
+  return { error: null, success: true };
+}
+
+export interface PreferredLocationsFormState {
+  error: string | null;
+}
+
+// Server Action: add a preferred location. locationId comes from a
+// <select> of authoritative active locations — the customer never types a
+// store name. Revalidates the account routes so the new card appears.
+export async function addPreferredLocationAction(
+  _previousState: PreferredLocationsFormState,
+  formData: FormData,
+): Promise<PreferredLocationsFormState> {
+  const token = await getCustomerSessionToken();
+  if (!token) {
+    redirect("/account/sign-in");
+  }
+
+  const locationId = String(formData.get("locationId") ?? "").trim();
+  if (!locationId) {
+    return { error: "Choose a location to add." };
+  }
+
+  const result = await addPreferredLocation(token, locationId);
+  if (result.outcome === "unauthorized") {
+    redirect("/account/sign-in");
+  }
+  if (result.outcome === "invalid") {
+    return { error: result.message };
+  }
+  if (result.outcome === "error") {
+    return { error: "Could not save that location. Please try again." };
+  }
+
+  revalidatePath("/account/locations");
+  revalidatePath("/account");
+  return { error: null };
+}
+
+// Server Action: remove a preferred location. Idempotent on the API side.
+export async function removePreferredLocationAction(
+  _previousState: PreferredLocationsFormState,
+  formData: FormData,
+): Promise<PreferredLocationsFormState> {
+  const token = await getCustomerSessionToken();
+  if (!token) {
+    redirect("/account/sign-in");
+  }
+
+  const locationId = String(formData.get("locationId") ?? "").trim();
+  if (!locationId) {
+    return { error: "Something went wrong. Please try again." };
+  }
+
+  const result = await removePreferredLocation(token, locationId);
+  if (result.outcome === "unauthorized") {
+    redirect("/account/sign-in");
+  }
+  if (result.outcome === "error") {
+    return { error: "Could not remove that location. Please try again." };
+  }
+
+  revalidatePath("/account/locations");
+  revalidatePath("/account");
+  return { error: null };
+}
+
+export interface PreferencesFormState {
+  error: string | null;
+  success: boolean;
+}
+
+// Server Action backing /account/preferences. Sends the checkbox state as
+// a strict boolean; the API rejects anything else.
+export async function updatePreferencesAction(
+  _previousState: PreferencesFormState,
+  formData: FormData,
+): Promise<PreferencesFormState> {
+  const token = await getCustomerSessionToken();
+  if (!token) {
+    redirect("/account/sign-in");
+  }
+
+  const marketingEmailOptIn = formData.get("marketingEmailOptIn") === "on";
+
+  const result = await updateCommunicationPreferences(token, {
+    marketingEmailOptIn,
+  });
+  if (result.outcome === "unauthorized") {
+    redirect("/account/sign-in");
+  }
+  if (result.outcome === "invalid") {
+    return { error: result.message, success: false };
+  }
+  if (result.outcome === "error") {
+    return {
+      error: "Could not save your preferences. Please try again.",
+      success: false,
+    };
+  }
+
+  revalidatePath("/account/preferences");
   return { error: null, success: true };
 }
 
