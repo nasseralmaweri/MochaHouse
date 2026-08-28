@@ -69,7 +69,7 @@ describe('CustomersService (integration)', () => {
     expect(second.id).toBe(first.id);
   });
 
-  it('resyncs profile fields from the latest identity claims without blanking them out', async () => {
+  it('resyncs email from the latest identity claims without blanking it out', async () => {
     const identity = testIdentity({
       email: 'old@example.com',
       name: 'Old Name',
@@ -85,9 +85,8 @@ describe('CustomersService (integration)', () => {
     });
     expect(updated.id).toBe(created.id);
     expect(updated.email).toBe('new@example.com');
-    expect(updated.displayName).toBe('New Name');
 
-    // A later sign-in with no email/name claim (e.g. the dev boundary for a
+    // A later sign-in with no email claim (e.g. the dev boundary for a
     // non-email identifier) must not blank out what's already known.
     const resyncedWithoutClaims =
       await customersService.resolveOrCreateFromIdentity({
@@ -97,7 +96,28 @@ describe('CustomersService (integration)', () => {
       });
     expect(resyncedWithoutClaims.id).toBe(created.id);
     expect(resyncedWithoutClaims.email).toBe('new@example.com');
-    expect(resyncedWithoutClaims.displayName).toBe('New Name');
+  });
+
+  it('seeds displayName from the identity at creation, then never overwrites it from later claims (Milestone 4E ownership rule)', async () => {
+    const identity = testIdentity({ name: 'Seeded Name' });
+    const created =
+      await customersService.resolveOrCreateFromIdentity(identity);
+    createdIds.push(created.id);
+    expect(created.displayName).toBe('Seeded Name');
+
+    // Customer edits their Mocha House profile.
+    await customersService.updateProfile(created.id, {
+      displayName: 'Customer Chosen Name',
+    });
+
+    // A later sign-in whose token still carries the old provider name must
+    // NOT clobber the customer-owned value.
+    const afterResync = await customersService.resolveOrCreateFromIdentity({
+      ...identity,
+      name: 'Seeded Name',
+    });
+    expect(afterResync.id).toBe(created.id);
+    expect(afterResync.displayName).toBe('Customer Chosen Name');
   });
 
   it('stamps emailVerifiedAt at creation when the identity asserts emailVerified: true', async () => {
@@ -192,7 +212,7 @@ describe('CustomersService (integration)', () => {
   });
 
   it('maps a Customer row to the shared CustomerProfile contract shape', async () => {
-    const identity = testIdentity();
+    const identity = testIdentity({ emailVerified: false });
     const customer =
       await customersService.resolveOrCreateFromIdentity(identity);
     createdIds.push(customer.id);
@@ -204,7 +224,103 @@ describe('CustomersService (integration)', () => {
       email: customer.email,
       displayName: customer.displayName,
       status: customer.status,
+      emailVerified: false,
       createdAt: customer.createdAt.toISOString(),
+    });
+  });
+
+  it('reports emailVerified: true once emailVerifiedAt is set', async () => {
+    const identity = testIdentity({ emailVerified: true });
+    const customer =
+      await customersService.resolveOrCreateFromIdentity(identity);
+    createdIds.push(customer.id);
+
+    expect(customersService.toProfile(customer).emailVerified).toBe(true);
+  });
+
+  describe('updateProfile', () => {
+    async function freshCustomer() {
+      const customer = await customersService.resolveOrCreateFromIdentity(
+        testIdentity({ name: 'Original', emailVerified: true }),
+      );
+      createdIds.push(customer.id);
+      return customer;
+    }
+
+    it('updates the display name and returns the updated row', async () => {
+      const customer = await freshCustomer();
+      const updated = await customersService.updateProfile(customer.id, {
+        displayName: 'New Display Name',
+      });
+      expect(updated.id).toBe(customer.id);
+      expect(updated.displayName).toBe('New Display Name');
+    });
+
+    it('trims and collapses internal whitespace', async () => {
+      const customer = await freshCustomer();
+      const updated = await customersService.updateProfile(customer.id, {
+        displayName: '  Ada   Lovelace  ',
+      });
+      expect(updated.displayName).toBe('Ada Lovelace');
+    });
+
+    it('stores a blank / whitespace-only name as null rather than an empty string', async () => {
+      const customer = await freshCustomer();
+      const updated = await customersService.updateProfile(customer.id, {
+        displayName: '   ',
+      });
+      expect(updated.displayName).toBeNull();
+
+      const explicitNull = await customersService.updateProfile(customer.id, {
+        displayName: null,
+      });
+      expect(explicitNull.displayName).toBeNull();
+    });
+
+    it('rejects a name longer than the limit', async () => {
+      const customer = await freshCustomer();
+      await expect(
+        customersService.updateProfile(customer.id, {
+          displayName: 'x'.repeat(81),
+        }),
+      ).rejects.toThrow('characters or fewer');
+    });
+
+    it('rejects a non-string, non-null displayName', async () => {
+      const customer = await freshCustomer();
+      await expect(
+        customersService.updateProfile(customer.id, {
+          displayName: 42 as unknown as string,
+        }),
+      ).rejects.toThrow('must be a string or null');
+    });
+
+    it('never mutates identity, status, or verification state', async () => {
+      const customer = await freshCustomer();
+      const updated = await customersService.updateProfile(customer.id, {
+        displayName: 'Only This Changes',
+      });
+      expect(updated.externalProvider).toBe(customer.externalProvider);
+      expect(updated.externalSubject).toBe(customer.externalSubject);
+      expect(updated.status).toBe(customer.status);
+      expect(updated.email).toBe(customer.email);
+      expect(updated.emailVerifiedAt?.toISOString()).toBe(
+        customer.emailVerifiedAt?.toISOString(),
+      );
+    });
+
+    it('updating one customer never affects another', async () => {
+      const a = await freshCustomer();
+      const b = await freshCustomer();
+      await customersService.updateProfile(a.id, { displayName: 'A Only' });
+      const bReloaded = await customersService.resolveOrCreateFromIdentity({
+        provider: b.externalProvider,
+        subject: b.externalSubject,
+        email: b.email,
+        name: null,
+        emailVerified: null,
+      });
+      expect(bReloaded.displayName).toBe('Original');
     });
   });
 });

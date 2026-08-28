@@ -13,9 +13,9 @@ const STATUS_LABEL: Record<CustomerAccountStatus, string> = {
 };
 
 // Account Home: proves the authenticated customer identity is being
-// resolved from the API (GET /customers/me), and links to order history
-// (Milestone 4B). Nothing else here — loyalty, favorites, profile editing,
-// etc. remain out of scope for this slice.
+// resolved from the API (GET /customers/me), and links to profile
+// (Milestone 4E) and order history (Milestone 4B). Nothing else here —
+// loyalty, favorites, preferences, etc. remain out of scope.
 export default async function AccountPage() {
   const session = await getCustomerSession();
   if (!session) {
@@ -39,6 +39,14 @@ export default async function AccountPage() {
           <span className="text-text-primary">{STATUS_LABEL[session.status]}</span>
         </div>
       </Card>
+
+      <Link
+        href="/account/profile"
+        className="flex min-h-11 items-center justify-between rounded-xl border border-border-default bg-surface-card px-4 py-3 text-base font-medium text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+      >
+        Profile
+        <span aria-hidden="true">→</span>
+      </Link>
 
       <Link
         href="/account/orders"

@@ -1,10 +1,18 @@
-import { Injectable } from '@nestjs/common';
-import type { CustomerProfile } from '@mocha-house/contracts';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import type {
+  CustomerProfile,
+  CustomerUpdateProfileRequest,
+} from '@mocha-house/contracts';
 import { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 
 type CustomerRow = Prisma.CustomerGetPayload<Record<string, never>>;
+
+// Upper bound on a stored display name. Generous for real names while
+// still ruling out abuse; the customer-auth boundary keeps the provider's
+// own limits separate — this is purely the Mocha House profile field.
+const DISPLAY_NAME_MAX_LENGTH = 80;
 
 @Injectable()
 export class CustomersService {
@@ -21,6 +29,14 @@ export class CustomersService {
   // Fields are only overwritten when the identity actually supplied a
   // value, so a claim set missing email/name (e.g. the dev auth boundary
   // for a non-email identifier) never blanks out a previously known value.
+  //
+  // displayName is deliberately NOT in the `update` clause: the provider's
+  // name claim seeds it once, at creation, and from then on it is a
+  // Mocha-House-owned, customer-editable field (see updateProfile) that a
+  // later sign-in must never silently overwrite with the (lower-authority)
+  // provider value. `email` stays authoritative to the provider identity —
+  // it is not customer-editable in this milestone — and `emailVerifiedAt`
+  // is only ever set by AuthController.verify, never here on update.
   async resolveOrCreateFromIdentity(
     identity: CustomerIdentity,
   ): Promise<CustomerRow> {
@@ -50,8 +66,24 @@ export class CustomersService {
       },
       update: {
         ...(identity.email ? { email: identity.email } : {}),
-        ...(identity.name ? { displayName: identity.name } : {}),
       },
+    });
+  }
+
+  // Applies a customer-initiated profile edit (Milestone 4E). Only ever
+  // writes `displayName` — the provider identity (externalProvider/
+  // externalSubject), account status, email, and email-verification
+  // timestamp are structurally untouchable here because they are never in
+  // the `data` payload. The caller passes the Customer.id resolved from the
+  // authenticated identity, so a customer can only ever update their own
+  // record. Unknown request fields are ignored, never persisted.
+  async updateProfile(
+    customerId: string,
+    request: CustomerUpdateProfileRequest,
+  ): Promise<CustomerRow> {
+    return this.prisma.customer.update({
+      where: { id: customerId },
+      data: { displayName: normalizeDisplayName(request?.displayName) },
     });
   }
 
@@ -61,6 +93,7 @@ export class CustomersService {
       email: customer.email,
       displayName: customer.displayName,
       status: customer.status,
+      emailVerified: customer.emailVerifiedAt !== null,
       createdAt: customer.createdAt.toISOString(),
     };
   }
@@ -106,4 +139,37 @@ export class CustomersService {
       data: { emailVerifiedAt: new Date() },
     });
   }
+}
+
+// The single, deliberate rule for a submitted display name:
+//   - the field must be present and be a string or explicitly null
+//     (a missing field, or any other type, is a bad request — a one-field
+//     PATCH with nothing in it must not silently clear the name)
+//   - leading/trailing whitespace trimmed; internal whitespace runs
+//     collapsed to a single space
+//   - once normalized, an empty result is stored as null ("no display
+//     name") rather than an empty string, so a blank submission is never
+//     silently persisted as data
+//   - capped at DISPLAY_NAME_MAX_LENGTH characters
+function normalizeDisplayName(value: unknown): string | null {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    throw new BadRequestException(
+      'displayName is required and must be a string or null.',
+    );
+  }
+
+  const normalized = value.trim().replace(/\s+/g, ' ');
+  if (normalized.length === 0) {
+    return null;
+  }
+  if (normalized.length > DISPLAY_NAME_MAX_LENGTH) {
+    throw new BadRequestException(
+      `Display name must be ${DISPLAY_NAME_MAX_LENGTH} characters or fewer.`,
+    );
+  }
+
+  return normalized;
 }

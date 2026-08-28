@@ -2,6 +2,7 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import type {
   CustomerForgotPasswordRequest,
   CustomerRegisterRequest,
@@ -15,7 +16,8 @@ import type {
   CustomerVerifyRequest,
   CustomerVerifyResponse,
 } from "@mocha-house/contracts";
-import { CUSTOMER_SESSION_COOKIE } from "./session";
+import { CUSTOMER_SESSION_COOKIE, getCustomerSessionToken } from "./session";
+import { updateCustomerProfile } from "./profile";
 
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;
@@ -317,6 +319,50 @@ export async function resetPasswordAction(
 
   const result = (await response.json()) as CustomerResetPasswordResponse;
   redirect(`/account/sign-in?reset=${encodeURIComponent(result.email)}`);
+}
+
+export interface ProfileFormState {
+  error: string | null;
+  success: boolean;
+}
+
+// Server Action backing /account/profile's form. Reads the bearer token
+// server-side (getCustomerSessionToken) and PATCHes /customers/me — the
+// token never reaches the browser. Stays on the page on success (shows a
+// confirmation) rather than redirecting; revalidates the account routes so
+// the refreshed display name shows everywhere.
+export async function updateProfileAction(
+  _previousState: ProfileFormState,
+  formData: FormData,
+): Promise<ProfileFormState> {
+  const token = await getCustomerSessionToken();
+  if (!token) {
+    redirect("/account/sign-in");
+  }
+
+  const raw = String(formData.get("displayName") ?? "");
+  // A blank submission is a deliberate "clear my display name" — sent as
+  // null so the API stores null rather than an empty string.
+  const displayName = raw.trim().length === 0 ? null : raw;
+
+  const result = await updateCustomerProfile(token, { displayName });
+
+  if (result.outcome === "unauthorized") {
+    redirect("/account/sign-in");
+  }
+  if (result.outcome === "invalid") {
+    return { error: result.message, success: false };
+  }
+  if (result.outcome === "error") {
+    return {
+      error: "Could not save your profile. Please try again.",
+      success: false,
+    };
+  }
+
+  revalidatePath("/account/profile");
+  revalidatePath("/account");
+  return { error: null, success: true };
 }
 
 // Clears the Mocha House browser session (the httpOnly cookie) — after

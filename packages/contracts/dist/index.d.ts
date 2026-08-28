@@ -124,7 +124,11 @@ export interface CustomerProfile {
     email: string | null;
     displayName: string | null;
     status: CustomerAccountStatus;
+    emailVerified: boolean;
     createdAt: string;
+}
+export interface CustomerUpdateProfileRequest {
+    displayName: string | null;
 }
 export interface CustomerSignInRequest {
     identifier: string;

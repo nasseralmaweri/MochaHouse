@@ -160,7 +160,24 @@ export interface CustomerProfile {
   email: string | null;
   displayName: string | null;
   status: CustomerAccountStatus;
+  // Whether the identity provider has confirmed this account's email
+  // (derived from the Mocha House Customer's emailVerifiedAt — the
+  // timestamp itself is never exposed). Read-only here: verification is
+  // driven by the Register -> Verify flow, never by a profile update.
+  emailVerified: boolean;
   createdAt: string;
+}
+
+// --- Customer profile management (Milestone 4E) ------------------------
+// The Mocha House Customer record is the authoritative application
+// profile. This request carries ONLY the customer-editable fields — never
+// email, account status, verification state, or the provider identity
+// (externalProvider/externalSubject), which a profile update can never
+// change. `displayName: null` explicitly clears the stored name (the
+// account UI then falls back to the email); a blank/whitespace-only string
+// is normalized to null rather than stored.
+export interface CustomerUpdateProfileRequest {
+  displayName: string | null;
 }
 
 export interface CustomerSignInRequest {
