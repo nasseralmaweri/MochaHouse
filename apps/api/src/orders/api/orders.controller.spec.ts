@@ -13,6 +13,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsModule } from '../../locations/locations.module';
 import { CustomerAuthModule } from '../../customer-auth/customer-auth.module';
+import { InternalAuthModule } from '../../internal-auth/internal-auth.module';
 import { CustomersModule } from '../../customers/customers.module';
 import { signDevJwt } from '../../customer-auth/infrastructure/dev-jwt';
 import { CheckoutService } from '../application/checkout.service';
@@ -46,6 +47,7 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
         PrismaModule,
         LocationsModule,
         CustomerAuthModule,
+        InternalAuthModule,
         CustomersModule,
       ],
       controllers: [OrdersController],

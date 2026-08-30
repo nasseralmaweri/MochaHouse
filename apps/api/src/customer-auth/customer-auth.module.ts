@@ -23,8 +23,8 @@ import { LocalDevCustomerDirectory } from './infrastructure/local-dev-customer-d
 // Both the Cognito and dev/test implementations of every provider are
 // always wired up; which one actually runs is decided per-request from
 // AUTH_PROVIDER/NODE_ENV (see infrastructure/auth-provider-mode.ts) rather
-// than at module-construction time, the same fail-closed-every-time
-// convention orders/infrastructure/dev-internal.guard.ts already uses.
+// than at module-construction time — the same fail-closed-every-time
+// convention the internal-auth boundary uses.
 //
 // LocalDevCustomerDirectory is the one piece of state shared across two
 // otherwise-independent dev providers (registration and sign-in) — see its

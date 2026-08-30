@@ -135,9 +135,28 @@ async function safeJson(response: Response): Promise<{ outcome?: string; message
   }
 }
 
-// --- Store queue (DEV-ONLY / INTERNAL — see AdminOrdersController) -----
-// No authentication exists yet. These calls assume a trusted internal
-// caller, exactly like the API endpoints they hit.
+// --- Store queue (INTERNAL — protected by InternalAuthGuard, Milestone 5A)
+// These calls run in the browser (the queue is location-picker driven), so
+// they go through this app's own server-side proxy
+// (/api/internal/admin/*, see app/api/internal/admin/[...path]/route.ts)
+// rather than hitting the API directly: the proxy reads the HttpOnly
+// mh_internal_session cookie and forwards it as the internal Bearer token,
+// which client-side JS can never see. A 401 here means the internal session
+// is gone/expired — bounce to the internal sign-in page (the /admin layout
+// already gate-keeps the first render).
+
+const INTERNAL_ADMIN_PROXY = "/api/internal/admin";
+
+function redirectToInternalSignIn(): void {
+  if (typeof window !== "undefined") {
+    // A full-document navigation is intentional here: the internal session
+    // has expired, so we want the browser to drop all client state and
+    // re-run the server-side /admin auth boundary from scratch. A soft
+    // router push would keep stale state around.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.href = "/internal/sign-in";
+  }
+}
 
 export async function getLocationsFromBrowser(): Promise<LocationSummary[]> {
   const response = await fetch(`${getPublicApiUrl()}/locations`);
@@ -151,8 +170,12 @@ export async function getActiveStoreOrdersFromBrowser(
   locationId: string,
 ): Promise<StoreOrderSummary[]> {
   const response = await fetch(
-    `${getPublicApiUrl()}/admin/orders?locationId=${encodeURIComponent(locationId)}`,
+    `${INTERNAL_ADMIN_PROXY}/orders?locationId=${encodeURIComponent(locationId)}`,
   );
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    throw new Error("Your internal session has expired. Sign in again.");
+  }
   if (!response.ok) {
     throw new Error(`Failed to load active orders (${response.status}).`);
   }
@@ -164,8 +187,12 @@ export async function getStoreOrderDetailFromBrowser(
   locationId: string,
 ): Promise<StoreOrderDetail | null> {
   const response = await fetch(
-    `${getPublicApiUrl()}/admin/orders/${orderId}?locationId=${encodeURIComponent(locationId)}`,
+    `${INTERNAL_ADMIN_PROXY}/orders/${orderId}?locationId=${encodeURIComponent(locationId)}`,
   );
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    throw new Error("Your internal session has expired. Sign in again.");
+  }
   if (response.status === 404) {
     return null;
   }
@@ -187,13 +214,21 @@ export async function advanceStoreOrderStatusFromBrowser(
 ): Promise<AdvanceResult> {
   let response: Response;
   try {
-    response = await fetch(`${getPublicApiUrl()}/admin/orders/${orderId}/advance`, {
+    response = await fetch(`${INTERNAL_ADMIN_PROXY}/orders/${orderId}/advance`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ locationId, expectedStatus }),
     });
   } catch {
     return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
   }
 
   if (response.status === 409) {

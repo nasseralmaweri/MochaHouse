@@ -8,6 +8,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import { OrdersModule } from './orders/orders.module';
 import { CustomerAuthModule } from './customer-auth/customer-auth.module';
 import { CustomersModule } from './customers/customers.module';
+import { InternalAuthModule } from './internal-auth/internal-auth.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { CustomersModule } from './customers/customers.module';
     OrdersModule,
     CustomerAuthModule,
     CustomersModule,
+    InternalAuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -397,8 +397,10 @@ export interface ReorderPreparation {
 }
 
 // --- Store Queue / operational lifecycle (Milestone 3, next slice) -----
-// DEV-ONLY NOTE: these endpoints have no authentication/authorization yet
-// (see AdminOrdersController). Deliberately excludes guest accessToken and
+// As of Milestone 5A every /api/v1/admin/* route (this one included) is
+// protected by InternalAuthGuard — a valid internal identity mapped to an
+// ACTIVE Mocha House InternalUser. There is still no role/permission/scope
+// model (Milestone 5B). Deliberately excludes guest accessToken and
 // guestEmail — staff never need the guest's own bearer credential, and
 // email isn't operationally necessary at the counter.
 
@@ -435,4 +437,52 @@ export interface AdvanceOrderStatusResponse {
   // (an idempotent replay of a retried request) rather than performing the
   // transition itself.
   advanced: boolean;
+}
+
+// --- Internal identity & admin authentication (Milestone 5A) -----------
+// A SEPARATE security boundary from customer authentication. These shapes
+// share nothing with CustomerProfile / CustomerSignInResponse and must
+// never be substituted for them. The production internal identity provider
+// is a dedicated Cognito user pool + app client (distinct from the customer
+// pool); a fail-closed local-dev provider stands in when no pool is
+// provisioned. Mocha House remains authoritative for the InternalUser
+// record, its lifecycle status, and (from Milestone 5B) its permissions
+// and scope — none of which live here yet.
+//
+// CRITICAL: a valid internal identity token proves identity only. Internal/
+// Admin access is granted solely when the identity maps to an existing
+// Mocha House InternalUser whose status is ACTIVE. INVITED, SUSPENDED and
+// DISABLED are all denied even with an otherwise-valid token, and an
+// unknown identity is never provisioned just-in-time.
+export type InternalUserStatus =
+  | "INVITED"
+  | "ACTIVE"
+  | "SUSPENDED"
+  | "DISABLED";
+
+export interface InternalSignInRequest {
+  identifier: string;
+  password: string;
+}
+
+// idToken is a bearer credential for the internal boundary only
+// (Authorization: Bearer <idToken> against /api/v1/internal/* and
+// /api/v1/admin/*). It is expected to be stored only in the HttpOnly
+// `mh_internal_session` cookie, never in browser-readable storage, and is
+// never interchangeable with a customer session token.
+export interface InternalSignInResponse {
+  idToken: string;
+  expiresInSeconds: number;
+}
+
+// GET /api/v1/internal/me — the mapped InternalUser for the authenticated
+// internal identity. Only ever returned for an ACTIVE user (the guard
+// rejects every other state before the controller runs), so `status` is
+// always "ACTIVE" here; it is included for symmetry and forward
+// compatibility, not as a branch the caller must handle.
+export interface InternalUserProfile {
+  id: string;
+  email: string;
+  displayName: string | null;
+  status: InternalUserStatus;
 }

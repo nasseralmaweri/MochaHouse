@@ -14,9 +14,11 @@ import { formatPrice } from "@/lib/money";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 
-// DEV-ONLY / INTERNAL: no staff authentication exists yet, so this page is
-// reachable by anyone who navigates here and lets them act on whichever
-// location they pick — the same trust assumption as AdminOrdersController.
+// INTERNAL: the /admin server layout (app/admin/layout.tsx) gate-keeps this
+// route to an ACTIVE internal user (Milestone 5A), and every API call below
+// goes through the server-side proxy that forwards the HttpOnly internal
+// session cookie. There is no role/permission/scope model yet (5B), so any
+// ACTIVE internal user can act on any location they pick.
 
 const NEXT_ACTION_LABEL: Record<OrderStatus, string | null> = {
   RECEIVED: "Accept",

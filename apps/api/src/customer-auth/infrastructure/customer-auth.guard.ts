@@ -19,8 +19,8 @@ import type { CustomerAuthenticatedRequest } from './customer-identity';
 //
 // Every failure — missing header, malformed token, expired token, invalid
 // signature, unknown issuer — collapses to the same generic 401. Customer
-// authentication is intentionally a separate guard from any internal/Admin
-// authorization boundary (see orders/infrastructure/dev-internal.guard.ts)
+// authentication is intentionally a separate boundary from internal/Admin
+// authentication (see internal-auth/infrastructure/internal-auth.guard.ts)
 // and must never be applied to admin/store routes.
 @Injectable()
 export class CustomerAuthGuard implements CanActivate {

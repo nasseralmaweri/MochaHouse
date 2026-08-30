@@ -28,8 +28,8 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   COMPLETED: "Completed",
 };
 
-// DEV-ONLY / INTERNAL: see AdminOrdersController — no staff authentication
-// exists yet.
+// INTERNAL: gate-kept by the /admin server layout to an ACTIVE internal
+// user (Milestone 5A); API calls go through the server-side internal proxy.
 export default function AdminOrderDetailPage() {
   const params = useParams<{ orderId: string }>();
   const searchParams = useSearchParams();

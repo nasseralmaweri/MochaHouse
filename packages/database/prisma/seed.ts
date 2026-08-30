@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '../generated/prisma/client';
+import { PrismaClient } from '../src/generated/prisma/client';
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL!,
@@ -212,6 +212,28 @@ async function main() {
       productId: product.id,
       modifierGroupId: sizeGroup.id,
       displayOrder: 1,
+    },
+  });
+
+  // Milestone 5A — one explicitly ACTIVE internal user for exercising the
+  // local-dev internal-auth flow (INTERNAL_AUTH_PROVIDER=dev). The external
+  // subject matches the deterministic marker the local-dev internal token
+  // verifier derives from this identifier, so InternalAuthGuard resolves
+  // this row directly. This is local-development test data only — never a
+  // production credential (the local-dev provider performs no password
+  // check) and never created in production, where a real Cognito internal
+  // pool and an administrative invitation flow (Milestone 5B) apply.
+  const internalAdminEmail = 'admin@mochahouse.test';
+  await prisma.internalUser.upsert({
+    where: { email: internalAdminEmail },
+    update: { status: 'ACTIVE' },
+    create: {
+      externalProvider: 'internal-dev',
+      externalSubject: `internal-dev:${internalAdminEmail}`,
+      email: internalAdminEmail,
+      displayName: 'Local Dev Admin',
+      status: 'ACTIVE',
+      activatedAt: new Date(),
     },
   });
 }

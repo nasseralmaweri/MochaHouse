@@ -254,4 +254,19 @@ export interface AdvanceOrderStatusResponse {
     status: OrderStatus;
     advanced: boolean;
 }
+export type InternalUserStatus = "INVITED" | "ACTIVE" | "SUSPENDED" | "DISABLED";
+export interface InternalSignInRequest {
+    identifier: string;
+    password: string;
+}
+export interface InternalSignInResponse {
+    idToken: string;
+    expiresInSeconds: number;
+}
+export interface InternalUserProfile {
+    id: string;
+    email: string;
+    displayName: string | null;
+    status: InternalUserStatus;
+}
 //# sourceMappingURL=index.d.ts.map

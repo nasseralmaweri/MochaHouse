@@ -1,7 +1,8 @@
-// Mirrors orders/infrastructure/dev-internal.guard.ts's fail-closed
-// convention: the local/test-only auth boundary (no live AWS Cognito
-// required) is only ever selected when BOTH conditions hold, checked fresh
-// on every call — never cached, never assumed from a previous check.
+// Fail-closed convention (shared with the internal-auth boundary's
+// internal-auth-provider-mode.ts): the local/test-only auth boundary (no
+// live AWS Cognito required) is only ever selected when BOTH conditions
+// hold, checked fresh on every call — never cached, never assumed from a
+// previous check.
 //   - NODE_ENV is not "production" — an absolute floor, not overridable.
 //   - AUTH_PROVIDER is exactly "dev" — being non-production is never
 //     sufficient by itself.

@@ -9,16 +9,16 @@ import {
 } from '@nestjs/common';
 import type { AdvanceOrderStatusRequest } from '@mocha-house/contracts';
 import { AdminOrdersService } from '../application/admin-orders.service';
-import { DevInternalGuard } from '../infrastructure/dev-internal.guard';
+import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 
-// DEV-ONLY / INTERNAL: DevInternalGuard is a placeholder that allows every
-// request through — there is no Role/Permission/Scope enforcement yet.
-// This controller must not be exposed beyond a trusted internal caller
-// until that exists. Every route is already location-scoped (path param
-// or request body) specifically so a real guard can check "is this caller
-// permitted to act on this location" later without touching the service
-// layer or the routes themselves.
-@UseGuards(DevInternalGuard)
+// Protected by InternalAuthGuard (Milestone 5A): the caller must present a
+// valid internal identity token that maps to an ACTIVE Mocha House
+// InternalUser. There is still no Role/Permission/Scope enforcement
+// (Milestone 5B) — ACTIVE internal-user authentication is the entire gate.
+// Every route is already location-scoped (path param or request body)
+// specifically so a real scope check can be added later without touching
+// the service layer or the routes themselves.
+@UseGuards(InternalAuthGuard)
 @Controller('api/v1/admin/orders')
 export class AdminOrdersController {
   constructor(private readonly adminOrdersService: AdminOrdersService) {}

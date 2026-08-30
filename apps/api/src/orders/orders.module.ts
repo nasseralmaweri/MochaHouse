@@ -11,7 +11,6 @@ import { AdminOrdersService } from './application/admin-orders.service';
 import { CustomerOrdersService } from './application/customer-orders.service';
 import { CustomerReorderService } from './application/customer-reorder.service';
 import { PAYMENT_PROVIDER } from './infrastructure/payment-provider.token';
-import { DevInternalGuard } from './infrastructure/dev-internal.guard';
 
 // apps/api stays synchronous request/response only — OutboxEvent rows are
 // written here (see CheckoutService) and read here (see
@@ -38,7 +37,6 @@ import { DevInternalGuard } from './infrastructure/dev-internal.guard';
     // ever depends on the PaymentProvider interface, so a real processor
     // is a one-line swap in this provider list, not an orchestration change.
     { provide: PAYMENT_PROVIDER, useClass: FakePaymentProvider },
-    DevInternalGuard,
   ],
 })
 export class OrdersModule {}

@@ -5,8 +5,10 @@ import {
   Param,
   Patch,
   Put,
+  UseGuards,
 } from '@nestjs/common';
 import { CatalogService } from '../application/catalog.service';
+import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 
 interface UpdateProductBody {
   name?: string;
@@ -27,6 +29,11 @@ interface UpdateMenuProductAssignmentBody {
   isActive: boolean;
 }
 
+// Protected by InternalAuthGuard (Milestone 5A) — every route here mutates
+// catalog state (product fields, per-location price and availability
+// overrides), so it must never be reachable without an ACTIVE internal
+// user. No Role/Permission/Scope checks yet (Milestone 5B).
+@UseGuards(InternalAuthGuard)
 @Controller('api/v1/admin/catalog')
 export class AdminCatalogController {
   constructor(private readonly catalogService: CatalogService) {}

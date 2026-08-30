@@ -425,3 +425,51 @@ model OutboxEvent {
   @@index([status])
   @@index([aggregateType, aggregateId])
 }
+
+// --- Milestone 5A, internal identity & admin authentication -----------
+// A deliberately separate identity boundary from Customer. A production
+// internal user authenticates against a dedicated Cognito user pool + app
+// client (never the customer pool); the local-dev provider stands in when
+// none is provisioned. Mocha House is authoritative for this record and
+// its lifecycle. NO password or provider token is stored here.
+//
+// externalProvider + externalSubject is the provider-agnostic identity
+// mapping (a plain string pair, never a provider SDK payload), mirroring
+// Customer. externalSubject is nullable so an InternalUser can be created
+// in the INVITED state before the person has ever authenticated — it is
+// bound on the first successful authentication of an already-ACTIVE user
+// and is never, on its own, treated as activation.
+//
+// Lifecycle: INVITED -> ACTIVE -> SUSPENDED/DISABLED (and back). Only
+// ACTIVE confers internal/Admin access. Authentication never promotes
+// INVITED to ACTIVE — that is an explicit administrative action (Milestone
+// 5B). No Role/Permission/Scope tables exist yet, by design.
+enum InternalUserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+model InternalUser {
+  id               String             @id @default(uuid(7))
+  externalProvider String
+  externalSubject  String?
+  email            String             @unique
+  displayName      String?
+  status           InternalUserStatus @default(INVITED)
+
+  // When the invitation record was created. `activatedAt` is set the first
+  // time the account is moved to ACTIVE (administratively — Milestone 5B —
+  // or by the local seed), never by authentication. `lastAuthenticatedAt`
+  // is updated only on a successful ACTIVE authentication and is purely
+  // observational — it can never widen access.
+  invitedAt           DateTime  @default(now())
+  activatedAt         DateTime?
+  lastAuthenticatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([externalProvider, externalSubject])
+}
