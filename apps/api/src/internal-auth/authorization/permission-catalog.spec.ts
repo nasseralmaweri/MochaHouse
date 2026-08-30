@@ -12,6 +12,8 @@ describe('internal permission catalog', () => {
         'catalog.menu.manage',
         'catalog.overrides.manage',
         'catalog.products.edit',
+        // Milestone 5D-3
+        'catalog.view',
         // Milestone 5D-1
         'locations.view',
         'locations.edit',
@@ -39,6 +41,9 @@ describe('internal permission catalog', () => {
       'CORPORATE',
     ]);
     expect(allowedScopeTypesFor('catalog.menu.manage')).toEqual(['CORPORATE']);
+    // catalog.view — the master catalog is shared, so viewing it in Admin
+    // is a corporate capability (Milestone 5D-3).
+    expect(allowedScopeTypesFor('catalog.view')).toEqual(['CORPORATE']);
     // locations.edit is a corporate-scoped operation (Milestone 5D-2).
     expect(allowedScopeTypesFor('locations.edit')).toEqual(['CORPORATE']);
   });

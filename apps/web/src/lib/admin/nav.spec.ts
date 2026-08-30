@@ -49,13 +49,31 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(adminNavItems(caps).map((i) => i.key)).toEqual(["dashboard"]);
   });
 
-  it("does not add Catalog / Menu / Users / anything without a shipped page", () => {
+  it("shows Menu & Products when the user holds catalog.view", () => {
+    const items = adminNavItems({
+      "catalog.view": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual(["dashboard", "menu"]);
+    expect(items.find((i) => i.key === "menu")?.href).toBe("/admin/menu");
+    expect(items.find((i) => i.key === "menu")?.label).toBe("Menu & Products");
+  });
+
+  it("hides Menu & Products for catalog.products.edit without catalog.view", () => {
+    const caps: AdminCapabilities = {
+      "catalog.products.edit": { corporate: true, locationIds: [] },
+      "catalog.menu.manage": { corporate: true, locationIds: [] },
+    };
+    expect(adminNavItems(caps).map((i) => i.key)).toEqual(["dashboard"]);
+  });
+
+  it("does not add Categories / Modifiers / Users / anything without a shipped page", () => {
     const caps: AdminCapabilities = {
       "orders.view": { corporate: true, locationIds: [] },
       "orders.manage_status": { corporate: true, locationIds: [] },
       "catalog.products.edit": { corporate: true, locationIds: [] },
       "catalog.menu.manage": { corporate: true, locationIds: [] },
       "catalog.overrides.manage": { corporate: true, locationIds: [] },
+      "catalog.view": { corporate: true, locationIds: [] },
       "locations.view": { corporate: true, locationIds: [] },
       "locations.edit": { corporate: true, locationIds: [] },
       "locations.manage_digital_ordering": { corporate: true, locationIds: [] },
@@ -63,6 +81,7 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(adminNavItems(caps).map((i) => i.key).sort()).toEqual([
       "dashboard",
       "locations",
+      "menu",
       "orders",
     ]);
   });
@@ -105,5 +124,13 @@ describe("isNavItemActive", () => {
     expect(isNavItemActive(locations, "/admin/locations/loc-123")).toBe(true);
     expect(isNavItemActive(locations, "/admin")).toBe(false);
     expect(isNavItemActive(locations, "/admin/orders")).toBe(false);
+  });
+
+  it("Menu & Products is active across every product sub-route", () => {
+    const menu = { key: "menu", label: "Menu & Products", href: "/admin/menu" };
+    expect(isNavItemActive(menu, "/admin/menu")).toBe(true);
+    expect(isNavItemActive(menu, "/admin/menu/products")).toBe(true);
+    expect(isNavItemActive(menu, "/admin/menu/products/p-1/edit")).toBe(true);
+    expect(isNavItemActive(menu, "/admin")).toBe(false);
   });
 });

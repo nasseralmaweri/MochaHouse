@@ -76,6 +76,27 @@ export interface AdminUpdateLocationRequest {
     name?: string;
     isActive?: boolean;
 }
+export interface AdminProductCategoryRef {
+    id: string;
+    name: string;
+}
+export interface AdminProductSummary {
+    id: string;
+    name: string;
+    slug: string;
+    description: string | null;
+    basePrice: number | null;
+    currency: string;
+    isActive: boolean;
+    category: AdminProductCategoryRef;
+}
+export type AdminProductDetail = AdminProductSummary;
+export interface AdminUpdateProductRequest {
+    name?: string;
+    description?: string | null;
+    basePrice?: number | null;
+    isActive?: boolean;
+}
 export type PaymentAttemptStatus = "PENDING" | "SUCCEEDED" | "DECLINED" | "FAILED";
 export type OrderStatus = "RECEIVED" | "ACCEPTED" | "PREPARING" | "READY" | "COMPLETED";
 export interface GuestContactInput {
@@ -304,7 +325,7 @@ export interface InternalMeResponse {
     user: InternalUserProfile;
     authorization: InternalAuthorizationSummary;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "locations.view", "locations.edit", "locations.manage_digital_ordering"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];

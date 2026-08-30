@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { AdminLocationDetail } from "@mocha-house/contracts";
 import { updateLocationFromBrowser } from "@/lib/api-client";
 import { Button, ButtonLink } from "./Button";
+import { ADMIN_FIELD_CLASS, ActiveStatusField, FormField } from "./form";
 
 // The minimal Edit Location form (Milestone 5D-2). Only a location's name
 // and whether it's active can be changed here; the web address (slug) is
@@ -74,13 +75,7 @@ export function LocationEditForm({
 
   return (
     <form onSubmit={handleSubmit} className="flex max-w-lg flex-col gap-6">
-      <div className="flex flex-col gap-1.5">
-        <label
-          htmlFor="location-name"
-          className="text-sm font-medium text-text-primary"
-        >
-          Location name
-        </label>
+      <FormField label="Location name" htmlFor="location-name">
         <input
           id="location-name"
           name="name"
@@ -90,41 +85,21 @@ export function LocationEditForm({
             setError(null);
           }}
           autoComplete="off"
-          className="min-h-11 rounded-xl border border-border-default bg-surface-card px-3 py-2 text-sm text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+          className={`${ADMIN_FIELD_CLASS} min-h-11`}
         />
-      </div>
+      </FormField>
 
-      <fieldset className="flex flex-col gap-2">
-        <legend className="text-sm font-medium text-text-primary">Status</legend>
-        <p className="text-sm text-text-secondary">
-          Whether this location appears in the Mocha House app for customers.
-        </p>
-        <label className="flex items-center gap-2 text-sm text-text-primary">
-          <input
-            type="radio"
-            name="status"
-            checked={isActive}
-            onChange={() => {
-              setIsActive(true);
-              setConfirmingDeactivate(false);
-              setError(null);
-            }}
-          />
-          Active
-        </label>
-        <label className="flex items-center gap-2 text-sm text-text-primary">
-          <input
-            type="radio"
-            name="status"
-            checked={!isActive}
-            onChange={() => {
-              setIsActive(false);
-              setError(null);
-            }}
-          />
-          Inactive
-        </label>
-      </fieldset>
+      <ActiveStatusField
+        isActive={isActive}
+        onChange={(next) => {
+          setIsActive(next);
+          if (next) {
+            setConfirmingDeactivate(false);
+          }
+          setError(null);
+        }}
+        hint="Whether this location appears in the Mocha House app for customers."
+      />
 
       <p className="text-xs text-text-muted">
         Web address: {location.slug} — this can&apos;t be changed.

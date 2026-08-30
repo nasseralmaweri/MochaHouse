@@ -111,6 +111,49 @@ export interface AdminUpdateLocationRequest {
   isActive?: boolean;
 }
 
+// --- Admin products: master catalog management (Milestone 5D-3) -------
+// The Admin view of a master Product. Served only from the guarded
+// `/api/v1/admin/catalog/products*` routes (InternalAuthGuard +
+// PermissionGuard + `catalog.view`, which is CORPORATE-only — the master
+// catalog is shared across every location, not location-owned). Unlike the
+// public `ProductSummary` this exposes `isActive` (an Admin sees and edits
+// inactive products too) and omits `category.slug` / `displayOrder` (not
+// used by this screen). `basePrice` is integer minor units (cents) or null;
+// null means "no standard price" — the item is only orderable at a location
+// that sets its own price. No menu / modifier / override / POS fields.
+export interface AdminProductCategoryRef {
+  id: string;
+  name: string;
+}
+
+export interface AdminProductSummary {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  basePrice: number | null;
+  currency: string;
+  isActive: boolean;
+  category: AdminProductCategoryRef;
+}
+
+// Currently identical to the summary — a distinct name so the detail route
+// (and the PATCH response) can carry more later without a breaking rename.
+export type AdminProductDetail = AdminProductSummary;
+
+// PATCH /api/v1/admin/catalog/products/:productId — permission
+// `catalog.products.edit` (CORPORATE-only). Only these fields are editable.
+// `slug`, `categoryId`, `currency`, and everything else are deliberately not
+// accepted (the controller reads only the fields below — nothing is spread
+// into Prisma). Every field is optional; `description` / `basePrice` accept
+// null to clear them. Response is the full `AdminProductDetail`.
+export interface AdminUpdateProductRequest {
+  name?: string;
+  description?: string | null;
+  basePrice?: number | null;
+  isActive?: boolean;
+}
+
 // --- Checkout / orders (Milestone 3, first transaction slice) ----------
 
 export type PaymentAttemptStatus = "PENDING" | "SUCCEEDED" | "DECLINED" | "FAILED";
@@ -610,6 +653,7 @@ export const INTERNAL_PERMISSION_KEYS = [
   "catalog.products.edit",
   "catalog.menu.manage",
   "catalog.overrides.manage",
+  "catalog.view",
   "locations.view",
   "locations.edit",
   "locations.manage_digital_ordering",
@@ -672,6 +716,12 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     description:
       "Set or clear a location's price and availability overrides.",
     allowedScopeTypes: ["CORPORATE", "LOCATION"],
+  },
+  "catalog.view": {
+    key: "catalog.view",
+    description:
+      "View the master product catalog in Admin, including inactive products. The catalog is shared across every location, so this is a corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
   },
   "locations.view": {
     key: "locations.view",

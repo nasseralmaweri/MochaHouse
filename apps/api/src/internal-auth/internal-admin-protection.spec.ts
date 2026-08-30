@@ -257,6 +257,12 @@ describe('Internal admin authentication + baseline authorization (integration)',
       { locationId: BOGUS_LOCATION, expectedStatus: 'RECEIVED' },
     ],
     ['PATCH', '/api/v1/admin/catalog/products/nonexistent', { isActive: true }],
+    ['GET', '/api/v1/admin/catalog/products', undefined],
+    [
+      'GET',
+      `/api/v1/admin/catalog/products/${BOGUS_LOCATION}`,
+      undefined,
+    ],
     [
       'PATCH',
       '/api/v1/admin/locations/nonexistent/digital-ordering',

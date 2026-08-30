@@ -4,6 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  AdminProductDetail,
+  AdminProductSummary,
   CategorySummary,
   MenuSummary,
   ModifierGroupSummary,
@@ -17,6 +19,42 @@ interface UpdateProductInput {
   description?: string | null;
   basePrice?: number | null;
   isActive?: boolean;
+}
+
+// The row shape every Admin product read/write returns. `isActive` is
+// included (Admin sees inactive products); category is trimmed to identity
+// + name (this screen shows nothing else about the category).
+const ADMIN_PRODUCT_SELECT = {
+  id: true,
+  name: true,
+  slug: true,
+  description: true,
+  basePrice: true,
+  currency: true,
+  isActive: true,
+  category: { select: { id: true, name: true } },
+} as const;
+
+function toAdminProductDetail(row: {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  basePrice: number | null;
+  currency: string;
+  isActive: boolean;
+  category: { id: string; name: string };
+}): AdminProductDetail {
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    description: row.description,
+    basePrice: row.basePrice,
+    currency: row.currency,
+    isActive: row.isActive,
+    category: { id: row.category.id, name: row.category.name },
+  };
 }
 
 @Injectable()
@@ -116,11 +154,53 @@ export class CatalogService {
     });
   }
 
+  // --- Admin master-catalog reads (Milestone 5D-3) -------------------
+  // Guarded by InternalAuthGuard + PermissionGuard + `catalog.view` at the
+  // controller. `catalog.view` is CORPORATE-only (the product catalog is
+  // shared across every location), so this is not the public active-only
+  // `findProducts` — it returns inactive products too and is authorization-
+  // gated. `assertCorporate` here is the matching service-layer defense.
+  async listAdminProducts(
+    authorization: AuthorizationContext,
+  ): Promise<AdminProductSummary[]> {
+    authorization.assertCorporate('catalog.view');
+
+    const products = await this.prisma.product.findMany({
+      select: ADMIN_PRODUCT_SELECT,
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    });
+
+    return products.map(toAdminProductDetail);
+  }
+
+  async getAdminProductDetail(
+    productId: string,
+    authorization: AuthorizationContext,
+  ): Promise<AdminProductDetail> {
+    authorization.assertCorporate('catalog.view');
+
+    const detail = await this.loadAdminProductDetail(productId);
+    if (!detail) {
+      throw new NotFoundException('Product not found.');
+    }
+    return detail;
+  }
+
+  private async loadAdminProductDetail(
+    productId: string,
+  ): Promise<AdminProductDetail | null> {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: ADMIN_PRODUCT_SELECT,
+    });
+    return product ? toAdminProductDetail(product) : null;
+  }
+
   async updateProduct(
     productId: string,
     input: UpdateProductInput,
     authorization: AuthorizationContext,
-  ): Promise<ProductSummary> {
+  ): Promise<AdminProductDetail> {
     // A master product is global — editing it must be a corporate-scoped
     // capability. PermissionGuard already rejects a caller who lacks
     // `catalog.products.edit` at corporate scope (the permission is
@@ -182,7 +262,7 @@ export class CatalogService {
       throw new NotFoundException('Product not found.');
     }
 
-    return this.prisma.product.update({
+    await this.prisma.product.update({
       where: {
         id: productId,
       },
@@ -200,23 +280,10 @@ export class CatalogService {
           ? { isActive: input.isActive }
           : {}),
       },
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        description: true,
-        basePrice: true,
-        currency: true,
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            displayOrder: true,
-          },
-        },
-      },
     });
+
+    // Never null — existence was just confirmed above.
+    return (await this.loadAdminProductDetail(productId))!;
   }
 
   async updateMenuProductAssignment(

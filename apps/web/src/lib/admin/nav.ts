@@ -13,9 +13,11 @@ export interface AdminNavItem {
 //     somewhere.
 //   - Locations: shown only if the user effectively holds `locations.view`
 //     somewhere (Milestone 5D-1 — list + detail only).
+//   - Menu & Products: shown only if the user holds `catalog.view`
+//     (Milestone 5D-3 — products list/detail/edit; categories, menus and
+//     modifiers join this same destination in later slices).
 // Driven by the capability map, never a role name. No "coming soon" items,
-// no fake routes — future modules (Catalog, Menu, Users, …) are added here
-// only when their pages ship.
+// no fake routes — future modules are added here only when their pages ship.
 export function adminNavItems(
   capabilities: AdminCapabilities,
 ): AdminNavItem[] {
@@ -32,6 +34,14 @@ export function adminNavItems(
       key: "locations",
       label: "Locations",
       href: "/admin/locations",
+    });
+  }
+
+  if (can(capabilities, "catalog.view")) {
+    items.push({
+      key: "menu",
+      label: "Menu & Products",
+      href: "/admin/menu",
     });
   }
 

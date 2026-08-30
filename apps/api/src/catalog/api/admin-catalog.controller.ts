@@ -2,24 +2,19 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   Param,
   Patch,
   Put,
   Req,
   UseGuards,
 } from '@nestjs/common';
+import type { AdminUpdateProductRequest } from '@mocha-house/contracts';
 import { CatalogService } from '../application/catalog.service';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
-
-interface UpdateProductBody {
-  name?: string;
-  description?: string | null;
-  basePrice?: number | null;
-  isActive?: boolean;
-}
 
 interface SetPriceOverrideBody {
   price: number;
@@ -49,16 +44,45 @@ interface UpdateMenuProductAssignmentBody {
 export class AdminCatalogController {
   constructor(private readonly catalogService: CatalogService) {}
 
+  // --- Admin master-catalog reads (Milestone 5D-3) -----------------
+  // `catalog.view` is CORPORATE-only. The list and detail both include
+  // inactive products; the service asserts corporate scope before reading.
+  @RequirePermission('catalog.view')
+  @Get('products')
+  listProducts(@Req() request: InternalAuthenticatedRequest) {
+    return this.catalogService.listAdminProducts(request.authorization!);
+  }
+
+  @RequirePermission('catalog.view')
+  @Get('products/:productId')
+  getProduct(
+    @Param('productId') productId: string,
+    @Req() request: InternalAuthenticatedRequest,
+  ) {
+    return this.catalogService.getAdminProductDetail(
+      productId,
+      request.authorization!,
+    );
+  }
+
   @RequirePermission('catalog.products.edit')
   @Patch('products/:productId')
   updateProduct(
     @Param('productId') productId: string,
-    @Body() body: UpdateProductBody,
+    @Body() body: AdminUpdateProductRequest,
     @Req() request: InternalAuthenticatedRequest,
   ) {
+    // Explicit fields only — the request body is never spread into the
+    // service / Prisma, so `slug`, `categoryId`, `currency` etc. in the
+    // payload are inert.
     return this.catalogService.updateProduct(
       productId,
-      body,
+      {
+        name: body.name,
+        description: body.description,
+        basePrice: body.basePrice,
+        isActive: body.isActive,
+      },
       request.authorization!,
     );
   }

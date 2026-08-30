@@ -1,6 +1,8 @@
 import type {
   AdminLocationDetail,
+  AdminProductDetail,
   AdminUpdateLocationRequest,
+  AdminUpdateProductRequest,
   AdvanceOrderStatusResponse,
   CheckoutRequest,
   LocationMenuResponse,
@@ -405,5 +407,69 @@ export async function updateLocationFromBrowser(
   return {
     outcome: "success",
     location: (await response.json()) as AdminLocationDetail,
+  };
+}
+
+// --- Admin catalog: product edit (Milestone 5D-3) ------------------
+// Goes through the same server-side proxy; the API (`catalog.products.edit`,
+// CORPORATE-only) remains the authority. The caller sends dollars-parsed
+// integer cents for basePrice (or null to clear it).
+
+export type UpdateProductResult =
+  | { outcome: "success"; product: AdminProductDetail }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function updateProductFromBrowser(
+  productId: string,
+  input: AdminUpdateProductRequest,
+): Promise<UpdateProductResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/catalog/products/${encodeURIComponent(productId)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const body = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: body?.message ?? "Please check the form and try again.",
+    };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+
+  return {
+    outcome: "success",
+    product: (await response.json()) as AdminProductDetail,
   };
 }

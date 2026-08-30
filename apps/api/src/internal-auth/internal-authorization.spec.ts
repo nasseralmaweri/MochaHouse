@@ -42,6 +42,9 @@ describe('Internal admin authorization matrix (integration)', () => {
   let locEdit: string;
   let menuId: string;
   let productId: string;
+  // Throwaway products the 5D-3 Admin catalog tests read / mutate.
+  let prodEdit: string;
+  let prodInactive: string;
   let orderIdA: string;
   let paymentAttemptIdA: string;
 
@@ -127,6 +130,34 @@ describe('Internal admin authorization matrix (integration)', () => {
     });
     menuId = menu.id;
     productId = product.id;
+
+    // Throwaway products for the 5D-3 Admin catalog tests, so the seeded
+    // drip-coffee product stays untouched for every other test here.
+    prodEdit = (
+      await prisma.product.create({
+        data: {
+          name: `Authz Edit Product ${suffix}`,
+          slug: `authz-edit-product-${suffix}`,
+          description: 'editable',
+          basePrice: 500,
+          currency: 'USD',
+          isActive: true,
+          categoryId: product.categoryId,
+        },
+      })
+    ).id;
+    prodInactive = (
+      await prisma.product.create({
+        data: {
+          name: `Authz Inactive Product ${suffix}`,
+          slug: `authz-inactive-product-${suffix}`,
+          basePrice: null,
+          currency: 'USD',
+          isActive: false,
+          categoryId: product.categoryId,
+        },
+      })
+    ).id;
 
     locA = (
       await prisma.location.create({
@@ -267,6 +298,23 @@ describe('Internal admin authorization matrix (integration)', () => {
         scopeId: locA,
       },
     );
+    // catalog.view at CORPORATE — can browse the master catalog but cannot
+    // edit it (Milestone 5D-3).
+    const catalogViewer = await createUser(`catalogViewer-${suffix}`, 'ACTIVE');
+    await grant(catalogViewer, ['catalog.view'], {
+      scopeType: 'CORPORATE',
+      scopeId: null,
+    });
+    // catalog.view granted at LOCATION scope — must NOT satisfy the
+    // CORPORATE-only permission.
+    const catalogViewLoc = await createUser(
+      `catalogViewLoc-${suffix}`,
+      'ACTIVE',
+    );
+    await grant(catalogViewLoc, ['catalog.view'], {
+      scopeType: 'LOCATION',
+      scopeId: locA,
+    });
   }, 30_000);
 
   afterAll(async () => {
@@ -301,6 +349,9 @@ describe('Internal admin authorization matrix (integration)', () => {
     });
     await prisma.location.deleteMany({
       where: { id: { in: [locA, locB, locCInactive, locEdit] } },
+    });
+    await prisma.product.deleteMany({
+      where: { id: { in: [prodEdit, prodInactive] } },
     });
     await app.close();
     process.env = { ...originalEnv };
@@ -655,6 +706,194 @@ describe('Internal admin authorization matrix (integration)', () => {
         .set('Authorization', `Bearer ${token(`suspended-${suffix}`)}`)
         .send({ name: 'Nope' })
         .expect(403);
+    });
+  });
+
+  // ---- Admin master-catalog: products (Milestone 5D-3) ---------------
+
+  describe('admin catalog products: read', () => {
+    it('corporate catalog.view can list products, including inactive ones', async () => {
+      const res = await http()
+        .get('/api/v1/admin/catalog/products')
+        .set('Authorization', `Bearer ${token(`catalogViewer-${suffix}`)}`)
+        .expect(200);
+      const body = res.body as Array<{
+        id: string;
+        isActive: boolean;
+        category: { id: string; name: string };
+      }>;
+      const byId = new Map(body.map((p) => [p.id, p]));
+      expect(byId.get(prodEdit)?.isActive).toBe(true);
+      expect(byId.get(prodInactive)?.isActive).toBe(false);
+      expect(byId.get(prodEdit)?.category.name).toBeTruthy();
+      // Deterministic order: name then id.
+      const sorted = [...body].sort(
+        (a, b) =>
+          (a as { name: string }).name.localeCompare(
+            (b as { name: string }).name,
+          ) || a.id.localeCompare(b.id),
+      );
+      expect(body).toEqual(sorted);
+    });
+
+    it('corporate catalog.view can open an inactive product detail (200)', async () => {
+      const res = await http()
+        .get(`/api/v1/admin/catalog/products/${prodInactive}`)
+        .set('Authorization', `Bearer ${token(`catalogViewer-${suffix}`)}`)
+        .expect(200);
+      const body = res.body as { isActive: boolean; basePrice: number | null };
+      expect(body.isActive).toBe(false);
+      expect(body.basePrice).toBeNull();
+    });
+
+    it('unknown product id => 404', async () => {
+      await http()
+        .get(`/api/v1/admin/catalog/products/${randomUUID()}`)
+        .set('Authorization', `Bearer ${token(`catalogViewer-${suffix}`)}`)
+        .expect(404);
+    });
+
+    it('a user without catalog.view is denied (403)', async () => {
+      await http()
+        .get('/api/v1/admin/catalog/products')
+        .set('Authorization', `Bearer ${token(`ordersA-${suffix}`)}`)
+        .expect(403);
+    });
+
+    it('a LOCATION-scoped catalog.view grant cannot satisfy the CORPORATE-only permission (403)', async () => {
+      await http()
+        .get('/api/v1/admin/catalog/products')
+        .set('Authorization', `Bearer ${token(`catalogViewLoc-${suffix}`)}`)
+        .expect(403);
+      await http()
+        .get(`/api/v1/admin/catalog/products/${prodEdit}`)
+        .set('Authorization', `Bearer ${token(`catalogViewLoc-${suffix}`)}`)
+        .expect(403);
+    });
+
+    it('a customer token is rejected (401)', async () => {
+      await http()
+        .get('/api/v1/admin/catalog/products')
+        .set('Authorization', `Bearer ${customerToken()}`)
+        .expect(401);
+    });
+
+    it('a SUSPENDED user with a full corporate role is still denied (403)', async () => {
+      await http()
+        .get('/api/v1/admin/catalog/products')
+        .set('Authorization', `Bearer ${token(`suspended-${suffix}`)}`)
+        .expect(403);
+    });
+  });
+
+  describe('admin catalog products: edit', () => {
+    it('corporate catalog.products.edit updates name / description / basePrice / isActive and gets AdminProductDetail back', async () => {
+      const res = await http()
+        .patch(`/api/v1/admin/catalog/products/${prodEdit}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({
+          name: `  Renamed Product ${suffix}  `,
+          description: 'a new description',
+          basePrice: 425,
+          isActive: false,
+        })
+        .expect(200);
+      const body = res.body as {
+        name: string;
+        description: string | null;
+        basePrice: number | null;
+        isActive: boolean;
+        category: { id: string; name: string };
+      };
+      expect(body.name).toBe(`Renamed Product ${suffix}`);
+      expect(body.description).toBe('a new description');
+      expect(body.basePrice).toBe(425);
+      expect(body.isActive).toBe(false);
+      expect(body.category).toEqual({
+        id: expect.any(String),
+        name: expect.any(String),
+      });
+
+      // restore
+      await http()
+        .patch(`/api/v1/admin/catalog/products/${prodEdit}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ isActive: true, basePrice: 500 })
+        .expect(200);
+    });
+
+    it('base price can be cleared to null', async () => {
+      const res = await http()
+        .patch(`/api/v1/admin/catalog/products/${prodEdit}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ basePrice: null })
+        .expect(200);
+      expect((res.body as { basePrice: number | null }).basePrice).toBeNull();
+      await http()
+        .patch(`/api/v1/admin/catalog/products/${prodEdit}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ basePrice: 500 })
+        .expect(200);
+    });
+
+    it('an empty / whitespace-only name is rejected (400)', async () => {
+      await http()
+        .patch(`/api/v1/admin/catalog/products/${prodEdit}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ name: '   ' })
+        .expect(400);
+    });
+
+    it('a negative or non-integer base price is rejected (400)', async () => {
+      await http()
+        .patch(`/api/v1/admin/catalog/products/${prodEdit}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ basePrice: -1 })
+        .expect(400);
+      await http()
+        .patch(`/api/v1/admin/catalog/products/${prodEdit}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ basePrice: 3.5 })
+        .expect(400);
+    });
+
+    it('slug and category cannot be changed through this endpoint (unknown fields are inert)', async () => {
+      const before = await prisma.product.findUniqueOrThrow({
+        where: { id: prodEdit },
+      });
+      await http()
+        .patch(`/api/v1/admin/catalog/products/${prodEdit}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({
+          slug: `hacked-${suffix}`,
+          categoryId: randomUUID(),
+          currency: 'EUR',
+          name: `Field Guard ${suffix}`,
+        })
+        .expect(200);
+      const after = await prisma.product.findUniqueOrThrow({
+        where: { id: prodEdit },
+      });
+      expect(after.slug).toBe(before.slug);
+      expect(after.categoryId).toBe(before.categoryId);
+      expect(after.currency).toBe(before.currency);
+      expect(after.name).toBe(`Field Guard ${suffix}`);
+    });
+
+    it('catalog.view alone cannot edit (403)', async () => {
+      await http()
+        .patch(`/api/v1/admin/catalog/products/${prodEdit}`)
+        .set('Authorization', `Bearer ${token(`catalogViewer-${suffix}`)}`)
+        .send({ name: 'Nope' })
+        .expect(403);
+    });
+
+    it('unknown product => 404', async () => {
+      await http()
+        .patch(`/api/v1/admin/catalog/products/${randomUUID()}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ name: 'Ghost' })
+        .expect(404);
     });
   });
 
