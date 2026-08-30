@@ -72,6 +72,10 @@ export interface AdminLocationAssignedMenu {
 export interface AdminLocationDetail extends AdminLocationSummary {
     assignedMenu: AdminLocationAssignedMenu | null;
 }
+export interface AdminUpdateLocationRequest {
+    name?: string;
+    isActive?: boolean;
+}
 export type PaymentAttemptStatus = "PENDING" | "SUCCEEDED" | "DECLINED" | "FAILED";
 export type OrderStatus = "RECEIVED" | "ACCEPTED" | "PREPARING" | "READY" | "COMPLETED";
 export interface GuestContactInput {

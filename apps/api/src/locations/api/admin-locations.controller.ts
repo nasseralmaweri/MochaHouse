@@ -7,6 +7,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import type { AdminUpdateLocationRequest } from '@mocha-house/contracts';
 import { LocationsService } from '../application/locations.service';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
@@ -45,6 +46,25 @@ export class AdminLocationsController {
   ) {
     return this.locationsService.getAdminLocationDetail(
       locationId,
+      request.authorization!,
+    );
+  }
+
+  // --- Minimal edit (Milestone 5D-2) -------------------------------
+  // A CORPORATE-only edit (`locations.edit`), deliberately separate from
+  // the digital-ordering control below — different permission, different
+  // scope model. Only `name` and `isActive` are read from the body; `slug`
+  // and every other field are ignored, so they cannot be changed here.
+  @RequirePermission('locations.edit')
+  @Patch(':locationId')
+  updateLocation(
+    @Param('locationId') locationId: string,
+    @Body() body: AdminUpdateLocationRequest,
+    @Req() request: InternalAuthenticatedRequest,
+  ) {
+    return this.locationsService.updateLocation(
+      locationId,
+      { name: body.name, isActive: body.isActive },
       request.authorization!,
     );
   }

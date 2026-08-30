@@ -236,6 +236,19 @@ export class LocationsService {
     // whether the id exists.
     authorization.assertCanActOnLocation('locations.view', locationId);
 
+    const detail = await this.loadAdminLocationDetail(locationId);
+    if (!detail) {
+      throw new NotFoundException('Location not found.');
+    }
+    return detail;
+  }
+
+  // The row read + assigned-menu shaping, without any authorization — every
+  // caller here has already asserted scope. Returns null when the id does
+  // not exist so callers choose their own 404 message.
+  private async loadAdminLocationDetail(
+    locationId: string,
+  ): Promise<AdminLocationDetail | null> {
     const location = await this.prisma.location.findUnique({
       where: { id: locationId },
       include: {
@@ -248,7 +261,7 @@ export class LocationsService {
     });
 
     if (!location) {
-      throw new NotFoundException('Location not found.');
+      return null;
     }
 
     const activeAssignment = location.menus[0] ?? null;
@@ -270,6 +283,62 @@ export class LocationsService {
       ...toAdminLocationSummary(location),
       assignedMenu,
     };
+  }
+
+  // --- Admin minimal edit (Milestone 5D-2) --------------------------
+  // PATCH /api/v1/admin/locations/:locationId — CORPORATE-only, guarded by
+  // `locations.edit`. Editing a location's identity (its name) or removing
+  // it from the platform (isActive) affects every store view, so — like the
+  // master-catalog edits — it is a corporate operation and can never be
+  // done through a single-location grant. Online ordering is NOT touched
+  // here: it has its own control and its own permission
+  // (`locations.manage_digital_ordering`), and the two must not be merged.
+  async updateLocation(
+    locationId: string,
+    input: { name?: string; isActive?: boolean },
+    authorization: AuthorizationContext,
+  ): Promise<AdminLocationDetail> {
+    // Matching service-layer defense: PermissionGuard already rejects a
+    // caller who does not hold `locations.edit` at corporate scope (the
+    // permission is CORPORATE-only in the catalog).
+    authorization.assertCorporate('locations.edit');
+
+    const data: { name?: string; isActive?: boolean } = {};
+
+    if (input.name !== undefined) {
+      if (
+        typeof input.name !== 'string' ||
+        input.name.trim().length === 0
+      ) {
+        throw new BadRequestException('Location name cannot be empty.');
+      }
+      data.name = input.name.trim();
+    }
+
+    if (input.isActive !== undefined) {
+      if (typeof input.isActive !== 'boolean') {
+        throw new BadRequestException(
+          'Location active state must be true or false.',
+        );
+      }
+      data.isActive = input.isActive;
+    }
+
+    const existing = await this.prisma.location.findUnique({
+      where: { id: locationId },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Location not found.');
+    }
+
+    await this.prisma.location.update({
+      where: { id: locationId },
+      data,
+    });
+
+    // Never null here — we just confirmed the row exists and updated it.
+    return (await this.loadAdminLocationDetail(locationId))!;
   }
 
   async updateDigitalOrdering(

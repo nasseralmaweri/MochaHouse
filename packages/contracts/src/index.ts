@@ -97,6 +97,20 @@ export interface AdminLocationDetail extends AdminLocationSummary {
   assignedMenu: AdminLocationAssignedMenu | null;
 }
 
+// --- Admin locations: minimal edit (Milestone 5D-2) -------------------
+// PATCH /api/v1/admin/locations/:locationId — a CORPORATE-only edit
+// (`locations.edit`). Only these two fields are editable; `slug` and
+// `isDigitalOrderingEnabled` are deliberately NOT accepted here (slug is a
+// stable public identifier; online ordering has its own control and
+// permission). Every field is optional; omitting all of them is a no-op
+// that returns the unchanged record. The response is the full
+// `AdminLocationDetail` so the caller can refresh the screen without a
+// second request.
+export interface AdminUpdateLocationRequest {
+  name?: string;
+  isActive?: boolean;
+}
+
 // --- Checkout / orders (Milestone 3, first transaction slice) ----------
 
 export type PaymentAttemptStatus = "PENDING" | "SUCCEEDED" | "DECLINED" | "FAILED";

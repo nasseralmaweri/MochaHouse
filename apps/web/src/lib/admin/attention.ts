@@ -36,8 +36,12 @@ export function digitalOrderingAttentionItems(
       items.push({
         id: `digital-ordering-${location.id}`,
         severity: "warning",
-        title: "Digital ordering is off",
+        title: "Online ordering is off",
         description: `${location.name} — customers can't place online orders here.`,
+        // Milestone 5D-2: link straight to the location so an authorized
+        // user can turn it back on. The location detail page carries the
+        // Online Ordering control for anyone who can manage it here.
+        href: `/admin/locations/${location.id}`,
       });
     }
   }

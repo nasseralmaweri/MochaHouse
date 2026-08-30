@@ -37,6 +37,9 @@ describe('Internal admin authorization matrix (integration)', () => {
   // An INACTIVE location, for asserting an authorized Admin read still sees
   // it (Milestone 5D-1) — the public endpoints filter inactive rows out.
   let locCInactive: string;
+  // A throwaway location the 5D-2 edit tests mutate (rename / deactivate),
+  // so locA/locB stay stable for every other test in this file.
+  let locEdit: string;
   let menuId: string;
   let productId: string;
   let orderIdA: string;
@@ -155,6 +158,16 @@ describe('Internal admin authorization matrix (integration)', () => {
         },
       })
     ).id;
+    locEdit = (
+      await prisma.location.create({
+        data: {
+          name: `Authz Edit ${suffix}`,
+          slug: `authz-edit-${suffix}`,
+          isActive: true,
+          isDigitalOrderingEnabled: true,
+        },
+      })
+    ).id;
     await prisma.locationMenu.create({
       data: { locationId: locA, menuId, isActive: true },
     });
@@ -235,6 +248,14 @@ describe('Internal admin authorization matrix (integration)', () => {
       scopeType: 'LOCATION',
       scopeId: locA,
     });
+    // locations.edit granted at LOCATION scope — must NOT authorize the
+    // edit (the permission is CORPORATE-only). Also holds locations.view so
+    // it can read but not edit (Milestone 5D-2).
+    const editLocScoped = await createUser(`editLocScoped-${suffix}`, 'ACTIVE');
+    await grant(editLocScoped, ['locations.view', 'locations.edit'], {
+      scopeType: 'LOCATION',
+      scopeId: locEdit,
+    });
     // catalog.products.edit granted at LOCATION scope — must NOT authorize a
     // master edit (the permission is CORPORATE-only).
     const productsLocA = await createUser(`productsLocA-${suffix}`, 'ACTIVE');
@@ -279,7 +300,7 @@ describe('Internal admin authorization matrix (integration)', () => {
       where: { id: { in: Object.values(users) } },
     });
     await prisma.location.deleteMany({
-      where: { id: { in: [locA, locB, locCInactive] } },
+      where: { id: { in: [locA, locB, locCInactive, locEdit] } },
     });
     await app.close();
     process.env = { ...originalEnv };
@@ -514,6 +535,125 @@ describe('Internal admin authorization matrix (integration)', () => {
       await http()
         .get('/api/v1/admin/locations')
         .set('Authorization', `Bearer ${token(`suspended-${suffix}`)}`)
+        .expect(403);
+    });
+  });
+
+  // ---- Locations: minimal edit (Milestone 5D-2) ----------------------
+
+  describe('locations edit', () => {
+    it('corporate locations.edit can rename a location', async () => {
+      const newName = `Renamed ${suffix}`;
+      const res = await http()
+        .patch(`/api/v1/admin/locations/${locEdit}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ name: `  ${newName}  ` })
+        .expect(200);
+      expect((res.body as { name: string }).name).toBe(newName);
+
+      const check = await prisma.location.findUniqueOrThrow({
+        where: { id: locEdit },
+      });
+      expect(check.name).toBe(newName);
+    });
+
+    it('corporate locations.edit can deactivate then reactivate a location', async () => {
+      await http()
+        .patch(`/api/v1/admin/locations/${locEdit}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ isActive: false })
+        .expect(200);
+      expect(
+        (await prisma.location.findUniqueOrThrow({ where: { id: locEdit } }))
+          .isActive,
+      ).toBe(false);
+
+      const res = await http()
+        .patch(`/api/v1/admin/locations/${locEdit}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ isActive: true })
+        .expect(200);
+      expect((res.body as { isActive: boolean }).isActive).toBe(true);
+    });
+
+    it('a LOCATION-scoped locations.edit grant CANNOT edit (permission is corporate-only) => 403', async () => {
+      await http()
+        .patch(`/api/v1/admin/locations/${locEdit}`)
+        .set('Authorization', `Bearer ${token(`editLocScoped-${suffix}`)}`)
+        .send({ name: 'Should Not Apply' })
+        .expect(403);
+    });
+
+    it('locations.view without locations.edit cannot edit (403)', async () => {
+      await http()
+        .patch(`/api/v1/admin/locations/${locA}`)
+        .set('Authorization', `Bearer ${token(`viewA-${suffix}`)}`)
+        .send({ name: 'Nope' })
+        .expect(403);
+    });
+
+    it('slug is ignored — it cannot be changed through this endpoint', async () => {
+      const before = await prisma.location.findUniqueOrThrow({
+        where: { id: locEdit },
+      });
+      await http()
+        .patch(`/api/v1/admin/locations/${locEdit}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ slug: `hacked-${suffix}`, name: `Slug Guard ${suffix}` })
+        .expect(200);
+      const after = await prisma.location.findUniqueOrThrow({
+        where: { id: locEdit },
+      });
+      expect(after.slug).toBe(before.slug);
+      expect(after.name).toBe(`Slug Guard ${suffix}`);
+    });
+
+    it('isDigitalOrderingEnabled is ignored — online ordering has its own endpoint', async () => {
+      const before = await prisma.location.findUniqueOrThrow({
+        where: { id: locEdit },
+      });
+      await http()
+        .patch(`/api/v1/admin/locations/${locEdit}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ isDigitalOrderingEnabled: !before.isDigitalOrderingEnabled })
+        .expect(200);
+      const after = await prisma.location.findUniqueOrThrow({
+        where: { id: locEdit },
+      });
+      expect(after.isDigitalOrderingEnabled).toBe(
+        before.isDigitalOrderingEnabled,
+      );
+    });
+
+    it('an empty / whitespace-only name is rejected (400)', async () => {
+      await http()
+        .patch(`/api/v1/admin/locations/${locEdit}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ name: '   ' })
+        .expect(400);
+    });
+
+    it('a nonexistent location => 404', async () => {
+      await http()
+        .patch(`/api/v1/admin/locations/${randomUUID()}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ name: 'Ghost' })
+        .expect(404);
+    });
+
+    it('a customer token is rejected (401) on the edit endpoint', async () => {
+      await http()
+        .patch(`/api/v1/admin/locations/${locEdit}`)
+        .set('Authorization', `Bearer ${customerToken()}`)
+        .send({ name: 'Nope' })
+        .expect(401);
+    });
+
+    it('a SUSPENDED user with a full corporate role is still denied the edit (403)', async () => {
+      await http()
+        .patch(`/api/v1/admin/locations/${locEdit}`)
+        .set('Authorization', `Bearer ${token(`suspended-${suffix}`)}`)
+        .send({ name: 'Nope' })
         .expect(403);
     });
   });

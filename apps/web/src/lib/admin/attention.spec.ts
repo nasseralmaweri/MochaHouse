@@ -25,6 +25,14 @@ describe("digitalOrderingAttentionItems", () => {
     expect(items[0].description).toContain("Alpha");
   });
 
+  it("links each item to that location's detail page (Milestone 5D-2)", () => {
+    const capabilities: AdminCapabilities = {
+      "locations.manage_digital_ordering": { corporate: true, locationIds: [] },
+    };
+    const items = digitalOrderingAttentionItems([A], capabilities);
+    expect(items[0].href).toBe("/admin/locations/loc-a");
+  });
+
   it("shows nothing when the user lacks locations.manage_digital_ordering entirely", () => {
     const capabilities: AdminCapabilities = {
       "orders.view": { corporate: true, locationIds: [] },

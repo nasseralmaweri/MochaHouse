@@ -1,7 +1,10 @@
 import type {
+  AdminLocationDetail,
+  AdminUpdateLocationRequest,
   AdvanceOrderStatusResponse,
   CheckoutRequest,
   LocationMenuResponse,
+  LocationSummary,
   OrderConfirmation,
   OrderStatus,
   OrderStatusResponse,
@@ -285,5 +288,122 @@ export async function advanceStoreOrderStatusFromBrowser(
   return {
     outcome: "success",
     result: (await response.json()) as AdvanceOrderStatusResponse,
+  };
+}
+
+// --- Admin locations: controls (Milestone 5D-2) ---------------------
+// Both go through the same server-side proxy as the order-queue calls
+// above, so the internal session cookie is attached server-side and never
+// exposed to client JS. The API stays the sole authorization authority —
+// these helpers only shape the outcome for the page.
+
+export type UpdateLocationOrderingResult =
+  | { outcome: "success"; isDigitalOrderingEnabled: boolean }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "error"; message: string };
+
+export async function updateLocationDigitalOrderingFromBrowser(
+  locationId: string,
+  isDigitalOrderingEnabled: boolean,
+): Promise<UpdateLocationOrderingResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/locations/${encodeURIComponent(locationId)}/digital-ordering`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isDigitalOrderingEnabled }),
+      },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+
+  const location = (await response.json()) as LocationSummary;
+  return {
+    outcome: "success",
+    isDigitalOrderingEnabled: location.isDigitalOrderingEnabled,
+  };
+}
+
+export type UpdateLocationResult =
+  | { outcome: "success"; location: AdminLocationDetail }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function updateLocationFromBrowser(
+  locationId: string,
+  input: AdminUpdateLocationRequest,
+): Promise<UpdateLocationResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/locations/${encodeURIComponent(locationId)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const body = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: body?.message ?? "Please check the form and try again.",
+    };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+
+  return {
+    outcome: "success",
+    location: (await response.json()) as AdminLocationDetail,
   };
 }
