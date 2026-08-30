@@ -35,7 +35,7 @@ const NEXT_ACTION_LABEL: Record<OrderStatus, string | null> = {
 // unchanged from the predecessor.
 export default function AdminOrderDetailPage() {
   const params = useParams<{ orderId: string }>();
-  const { can, locationContext } = useAdminContext();
+  const { can, canAtLocation, locationContext } = useAdminContext();
 
   if (!can("orders.view")) {
     return (
@@ -57,6 +57,19 @@ export default function AdminOrderDetailPage() {
         <AdminForbidden
           title="Pick a location first"
           description="Open this order from its location's queue so the right scope is applied."
+        />
+        <BackLink href="/admin/orders">Back to orders</BackLink>
+      </AdminPage>
+    );
+  }
+
+  if (!canAtLocation("orders.view", locationContext.location.id)) {
+    return (
+      <AdminPage>
+        <AdminPageHeader title="Order" />
+        <AdminForbidden
+          title="Not in your scope for orders"
+          description="You can view orders at some locations, but not this one."
         />
         <BackLink href="/admin/orders">Back to orders</BackLink>
       </AdminPage>

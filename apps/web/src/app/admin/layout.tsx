@@ -28,7 +28,8 @@ export default async function AdminLayout({
   const cookieLocationId =
     cookieStore.get(ADMIN_LOCATION_COOKIE)?.value ?? null;
 
-  const navItems = adminNavItems(session.authorization.permissions);
+  const { capabilities, isCorporate, locations } = session.authorization;
+  const navItems = adminNavItems(capabilities);
 
   return (
     // <AdminShell> reads useSearchParams() for the current ?location; the
@@ -36,9 +37,9 @@ export default async function AdminLayout({
     <Suspense fallback={<div className="min-h-dvh bg-surface-page" />}>
       <AdminShell
         user={session.user}
-        permissions={session.authorization.permissions}
-        isCorporate={session.authorization.isCorporate}
-        locations={session.authorization.locations}
+        capabilities={capabilities}
+        isCorporate={isCorporate}
+        locations={locations}
         navItems={navItems}
         cookieLocationId={cookieLocationId}
       >

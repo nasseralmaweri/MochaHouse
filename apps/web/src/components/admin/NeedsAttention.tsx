@@ -1,17 +1,8 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
+import type { AttentionItem } from "@/lib/admin/attention";
 
-export interface AttentionItem {
-  id: string;
-  // Milestone 5C only surfaces "warning" (digital ordering disabled) and
-  // "info". No fabricated "critical" severity — there is no data source for
-  // one yet.
-  severity: "info" | "warning";
-  title: string;
-  description: string;
-  // Omitted in 5C where the responsible module doesn't exist yet.
-  href?: string;
-}
+export type { AttentionItem };
 
 const SEVERITY_LABEL: Record<AttentionItem["severity"], string> = {
   info: "Info",

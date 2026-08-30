@@ -91,21 +91,53 @@ describe('AuthorizationContext', () => {
         permissions: [],
         isCorporate: false,
         locationIds: [],
+        capabilities: {},
       });
     });
 
-    it('mixed corporate + location grants', () => {
+    it('keeps each permission scope distinct — no cross-inference', () => {
       const ctx = AuthorizationContext.of({
         'orders.view': [
-          { scopeType: 'LOCATION', scopeId: 'loc-2' },
-          { scopeType: 'LOCATION', scopeId: 'loc-1' },
+          { scopeType: 'LOCATION', scopeId: 'loc-b' },
+          { scopeType: 'LOCATION', scopeId: 'loc-a' },
         ],
+        'locations.manage_digital_ordering': [
+          { scopeType: 'LOCATION', scopeId: 'loc-a' },
+        ],
+      });
+      const summary = ctx.summarize();
+
+      expect(summary.permissions).toEqual([
+        'locations.manage_digital_ordering',
+        'orders.view',
+      ]);
+      // union across all grants, for the general selector
+      expect(summary.locationIds).toEqual(['loc-a', 'loc-b']);
+      // per-permission scope stays separate
+      expect(summary.capabilities).toEqual({
+        'orders.view': { corporate: false, locationIds: ['loc-a', 'loc-b'] },
+        'locations.manage_digital_ordering': {
+          corporate: false,
+          locationIds: ['loc-a'],
+        },
+      });
+      expect(summary.isCorporate).toBe(false);
+    });
+
+    it('CORPORATE grant => corporate:true for that permission (and isCorporate:true overall)', () => {
+      const ctx = AuthorizationContext.of({
+        'orders.view': [{ scopeType: 'LOCATION', scopeId: 'loc-a' }],
         'catalog.products.edit': [{ scopeType: 'CORPORATE', scopeId: null }],
       });
-      expect(ctx.summarize()).toEqual({
-        permissions: ['catalog.products.edit', 'orders.view'],
-        isCorporate: true,
-        locationIds: ['loc-1', 'loc-2'],
+      const summary = ctx.summarize();
+      expect(summary.isCorporate).toBe(true);
+      expect(summary.capabilities['orders.view']).toEqual({
+        corporate: false,
+        locationIds: ['loc-a'],
+      });
+      expect(summary.capabilities['catalog.products.edit']).toEqual({
+        corporate: true,
+        locationIds: [],
       });
     });
 
@@ -117,6 +149,20 @@ describe('AuthorizationContext', () => {
         permissions: [],
         isCorporate: false,
         locationIds: [],
+        capabilities: {},
+      });
+    });
+
+    it('a LOCATION grant with a null scopeId contributes nothing to a capability', () => {
+      const ctx = AuthorizationContext.of({
+        'orders.view': [
+          { scopeType: 'LOCATION', scopeId: null },
+          { scopeType: 'LOCATION', scopeId: 'loc-a' },
+        ],
+      });
+      expect(ctx.summarize().capabilities['orders.view']).toEqual({
+        corporate: false,
+        locationIds: ['loc-a'],
       });
     });
   });

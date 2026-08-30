@@ -1,5 +1,4 @@
-import type { InternalPermissionKey } from "@mocha-house/contracts";
-import { can } from "./permissions";
+import { can, type AdminCapabilities } from "./capabilities";
 
 export interface AdminNavItem {
   key: string;
@@ -11,18 +10,19 @@ export interface AdminNavItem {
 // pages:
 //   - Dashboard: any authenticated ACTIVE internal user (even one with no
 //     role assignments) can reach it.
-//   - Orders: shown only if the user effectively holds `orders.view`.
-// No role-name checks. No "coming soon" items, no fake routes — future
-// modules (Catalog, Locations, Users, …) are added here only when their
-// pages ship.
+//   - Orders: shown only if the user effectively holds `orders.view`
+//     somewhere.
+// Driven by the capability map, never a role name. No "coming soon" items,
+// no fake routes — future modules (Catalog, Locations, Users, …) are added
+// here only when their pages ship.
 export function adminNavItems(
-  permissions: readonly InternalPermissionKey[],
+  capabilities: AdminCapabilities,
 ): AdminNavItem[] {
   const items: AdminNavItem[] = [
     { key: "dashboard", label: "Dashboard", href: "/admin" },
   ];
 
-  if (can(permissions, "orders.view")) {
+  if (can(capabilities, "orders.view")) {
     items.push({ key: "orders", label: "Orders", href: "/admin/orders" });
   }
 

@@ -4,11 +4,11 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import type {
-  InternalPermissionKey,
   InternalUserProfile,
   LocationSummary,
 } from "@mocha-house/contracts";
 import type { AdminNavItem } from "@/lib/admin/nav";
+import type { AdminCapabilities } from "@/lib/admin/capabilities";
 import {
   locationContextValue,
   resolveLocationContext,
@@ -26,7 +26,7 @@ import { LocationSwitcher } from "./LocationSwitcher";
 // every Admin page.
 export function AdminShell({
   user,
-  permissions,
+  capabilities,
   isCorporate,
   locations,
   navItems,
@@ -34,7 +34,7 @@ export function AdminShell({
   children,
 }: {
   user: InternalUserProfile;
-  permissions: InternalPermissionKey[];
+  capabilities: AdminCapabilities;
   isCorporate: boolean;
   locations: LocationSummary[];
   navItems: AdminNavItem[];
@@ -55,7 +55,7 @@ export function AdminShell({
   return (
     <AdminContextProvider
       user={user}
-      permissions={permissions}
+      capabilities={capabilities}
       isCorporate={isCorporate}
       locations={locations}
       locationContext={locationContext}

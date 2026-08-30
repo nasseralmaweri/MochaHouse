@@ -136,23 +136,45 @@ export class AuthorizationContext {
   }
 
   // A DERIVED, read-only projection for the Admin shell (Milestone 5C). It
-  // never exposes role names/ids or raw grant rows — only:
-  //   permissions  — the effective keys the user holds through a valid
-  //                  scope type (same "held" definition the guard uses).
-  //   isCorporate  — the user has at least one CORPORATE-scoped grant.
-  //   locationIds  — the union of Location ids referenced by the user's
-  //                  LOCATION grants (the caller resolves these to active
-  //                  Location rows; a CORPORATE user is given every active
-  //                  location instead).
+  // never exposes role names/ids or raw grant rows. It carries, per
+  // EFFECTIVE permission (same "held" definition the guard uses), whether
+  // the permission is held corporately and the specific Location ids it is
+  // held at — so the web can answer "does this user hold X *at this
+  // location*" without inferring it from the union.
+  //   capabilities — key -> { corporate, locationIds } for every effective
+  //                  key. `corporate: true` means the permission applies at
+  //                  every location; `locationIds` then need not be
+  //                  enumerated.
+  //   permissions  — Object.keys(capabilities); a flat convenience view.
+  //   isCorporate  — the user has at least one CORPORATE-scoped grant of
+  //                  any permission (drives the "Corporate / All locations"
+  //                  option in the shell, independent of any one key).
+  //   locationIds  — the union of Location ids across all LOCATION grants
+  //                  (the general operational-scope set for the location
+  //                  selector). The caller resolves these to active
+  //                  Location rows.
   // This changes no authorization decision — it only summarises the context
-  // that assertCanActOnLocation / assertCorporate already enforce.
+  // that assertCanActOnLocation / assertCorporate already enforce. A
+  // CORPORATE-only permission held only via LOCATION scope is filtered by
+  // effectiveGrants() exactly as in 5B and never appears here.
   summarize(): {
     permissions: InternalPermissionKey[];
     isCorporate: boolean;
     locationIds: string[];
+    capabilities: Partial<
+      Record<
+        InternalPermissionKey,
+        { corporate: boolean; locationIds: string[] }
+      >
+    >;
   } {
-    const permissions: InternalPermissionKey[] = [];
-    const locationIds = new Set<string>();
+    const capabilities: Partial<
+      Record<
+        InternalPermissionKey,
+        { corporate: boolean; locationIds: string[] }
+      >
+    > = {};
+    const unionLocationIds = new Set<string>();
     let isCorporate = false;
 
     for (const key of this.grants.keys()) {
@@ -160,20 +182,34 @@ export class AuthorizationContext {
       if (effective.length === 0) {
         continue;
       }
-      permissions.push(key);
+
+      let corporate = false;
+      const keyLocationIds = new Set<string>();
       for (const grant of effective) {
         if (grant.scopeType === 'CORPORATE') {
+          corporate = true;
           isCorporate = true;
         } else if (grant.scopeType === 'LOCATION' && grant.scopeId) {
-          locationIds.add(grant.scopeId);
+          keyLocationIds.add(grant.scopeId);
+          unionLocationIds.add(grant.scopeId);
         }
       }
+
+      capabilities[key] = {
+        corporate,
+        locationIds: [...keyLocationIds].sort(),
+      };
     }
 
+    const permissions = (
+      Object.keys(capabilities) as InternalPermissionKey[]
+    ).sort();
+
     return {
-      permissions: permissions.sort(),
+      permissions,
       isCorporate,
-      locationIds: [...locationIds].sort(),
+      locationIds: [...unionLocationIds].sort(),
+      capabilities,
     };
   }
 }

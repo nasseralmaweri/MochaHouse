@@ -487,6 +487,21 @@ export interface InternalUserProfile {
   status: InternalUserStatus;
 }
 
+// The scope at which a single permission is EFFECTIVE for the user.
+//   corporate  — the permission applies at every location (a CORPORATE
+//                grant). When true, `locationIds` need not be consulted.
+//   locationIds — the specific active Location ids the permission is held
+//                at through LOCATION grants. Empty when the permission is
+//                only held corporately.
+// A permission appears in `capabilities` only if it is effective (held
+// through a scope type the permission actually allows — a CORPORATE-only
+// permission held only via LOCATION scope never appears, exactly as 5B
+// enforcement rejects it).
+export interface InternalPermissionCapability {
+  corporate: boolean;
+  locationIds: string[];
+}
+
 // The minimum authorization summary the Admin shell needs to render a
 // personalized workspace (Milestone 5C). It is a DERIVED, read-only view of
 // the 5B authorization model — never the model itself. It deliberately
@@ -494,19 +509,29 @@ export interface InternalUserProfile {
 // the backend remains the sole authorization authority and every Admin API
 // call is still guarded server-side regardless of what the shell renders.
 //
-//   permissions  — the effective InternalPermissionKey values the user
-//                  holds through at least one valid scope (flat; drives
-//                  UI nav/control visibility only). [] for a user with no
-//                  role assignments.
-//   isCorporate  — the user holds at least one CORPORATE-scoped grant.
-//   locations    — the ACTIVE locations the user may operate on: every
-//                  active location when isCorporate, otherwise only the
-//                  active locations referenced by the user's LOCATION
-//                  grants. [] when neither applies.
+//   capabilities — per effective permission, the scope it is effective at
+//                  (see InternalPermissionCapability). This is the
+//                  authoritative "does the user hold X, and where" source
+//                  for the shell — components must not infer a permission's
+//                  scope from `locations` below. Empty object for a user
+//                  with no role assignments.
+//   permissions  — Object.keys(capabilities); a flat convenience view for
+//                  simple "holds X anywhere" checks (e.g. nav visibility).
+//   isCorporate  — the user holds at least one CORPORATE-scoped grant of
+//                  ANY permission; drives whether the shell offers a
+//                  "Corporate / All locations" context. Not a per-permission
+//                  signal — use capabilities[key].corporate for that.
+//   locations    — the ACTIVE locations the user may operate on at all
+//                  (the union across every LOCATION grant, plus every
+//                  active location when isCorporate). This is the general
+//                  location-selector set, NOT a per-permission scope.
 export interface InternalAuthorizationSummary {
   permissions: InternalPermissionKey[];
   isCorporate: boolean;
   locations: LocationSummary[];
+  capabilities: Partial<
+    Record<InternalPermissionKey, InternalPermissionCapability>
+  >;
 }
 
 // GET /api/v1/internal/me — the authenticated internal user plus the

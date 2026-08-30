@@ -36,7 +36,7 @@ const NEXT_ACTION_LABEL: Record<OrderStatus, string | null> = {
 // generic error. The order lifecycle / advance / conflict-resync behaviour
 // is unchanged from Milestone 5A/5E's predecessor.
 export default function AdminOrdersPage() {
-  const { can, locationContext } = useAdminContext();
+  const { can, canAtLocation, locationContext } = useAdminContext();
 
   if (!can("orders.view")) {
     return (
@@ -81,6 +81,23 @@ export default function AdminOrdersPage() {
         <AdminEmptyState
           title="Select a location"
           description="The order queue is per location. Choose one from the selector in the top bar."
+        />
+      </AdminPage>
+    );
+  }
+
+  // `orders.view` is held somewhere, but not necessarily for THIS location
+  // (the location context comes from the general operational-scope set).
+  if (!canAtLocation("orders.view", locationContext.location.id)) {
+    return (
+      <AdminPage>
+        <AdminPageHeader
+          title="Orders"
+          context={{ label: locationContext.location.name, kind: "location" }}
+        />
+        <AdminForbidden
+          title="Not in your scope for orders"
+          description="You can view orders at some locations, but not this one. Switch to one of your order locations from the selector above."
         />
       </AdminPage>
     );

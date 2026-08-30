@@ -2,7 +2,8 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getInternalSession, ADMIN_LOCATION_COOKIE } from "@/lib/internal-auth/session";
 import { getActiveStoreOrders } from "@/lib/internal-auth/admin-orders";
-import { can } from "@/lib/admin/permissions";
+import { can, canAtLocation } from "@/lib/admin/capabilities";
+import { digitalOrderingAttentionItems } from "@/lib/admin/attention";
 import { resolveLocationContext } from "@/lib/admin/location-context";
 import { AdminPage, AdminSection } from "@/components/admin/AdminPage";
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
@@ -11,7 +12,7 @@ import {
   AdminErrorState,
   AdminForbidden,
 } from "@/components/admin/states";
-import { NeedsAttention, type AttentionItem } from "@/components/admin/NeedsAttention";
+import { NeedsAttention } from "@/components/admin/NeedsAttention";
 import { Card } from "@/components/Card";
 import { ButtonLink } from "@/components/admin/Button";
 import { isActiveOrderStatus } from "@mocha-house/domain";
@@ -39,7 +40,8 @@ export default async function AdminDashboardPage({
     redirect("/internal/sign-in");
   }
 
-  const { permissions, isCorporate, locations } = session.authorization;
+  const { permissions, isCorporate, locations, capabilities } =
+    session.authorization;
   const { location: urlLocationId } = await searchParams;
   const cookieStore = await cookies();
   const cookieLocationId = cookieStore.get(ADMIN_LOCATION_COOKIE)?.value ?? null;
@@ -88,24 +90,18 @@ export default async function AdminDashboardPage({
         : undefined;
 
   // --- Needs Attention: digital ordering disabled ---------------------
-  const attention: AttentionItem[] = [];
-  if (can(permissions, "locations.manage_digital_ordering")) {
-    for (const location of locations) {
-      if (!location.isDigitalOrderingEnabled) {
-        attention.push({
-          id: `digital-ordering-${location.id}`,
-          severity: "warning",
-          title: "Digital ordering is off",
-          description: `${location.name} — customers can't place online orders here.`,
-        });
-      }
-    }
-  }
+  // Scoped per-location (see digitalOrderingAttentionItems): a manager whose
+  // locations.manage_digital_ordering only covers Location A never sees
+  // Location B here, even when B is disabled and visible.
+  const attention = digitalOrderingAttentionItems(locations, capabilities);
 
   // --- Store snapshot -------------------------------------------------
   let snapshot: React.ReactNode = null;
-  if (can(permissions, "orders.view")) {
-    if (locationContext.kind === "location") {
+  if (can(capabilities, "orders.view")) {
+    if (
+      locationContext.kind === "location" &&
+      canAtLocation(capabilities, "orders.view", locationContext.location.id)
+    ) {
       const locationId = locationContext.location.id;
       const result = await getActiveStoreOrders(locationId);
       if (result.outcome === "success") {

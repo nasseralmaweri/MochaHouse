@@ -240,6 +240,15 @@ describe('GET /api/v1/internal/me — authorization summary (integration)', () =
     // needs for Needs Attention.
     const b = body.authorization.locations.find((l) => l.id === locB);
     expect(b?.isDigitalOrderingEnabled).toBe(false);
+
+    // Per-permission scope: orders.view is at locA (the inactive-location
+    // grant is filtered out), catalog.overrides.manage is at locB — the two
+    // scopes stay distinct, so the web can't infer overrides.manage at locA
+    // or orders.view at locB.
+    expect(body.authorization.capabilities).toEqual({
+      'orders.view': { corporate: false, locationIds: [locA] },
+      'catalog.overrides.manage': { corporate: false, locationIds: [locB] },
+    });
   });
 
   it('NO-ROLE ACTIVE user: 200 with empty summary', async () => {
@@ -254,6 +263,22 @@ describe('GET /api/v1/internal/me — authorization summary (integration)', () =
       permissions: [],
       isCorporate: false,
       locations: [],
+      capabilities: {},
     });
+  });
+
+  it('CORPORATE user: every capability is corporate:true across all active locations', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/internal/me')
+      .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+      .expect(200);
+    const body = res.body as InternalMeResponse;
+
+    for (const key of INTERNAL_PERMISSION_KEYS) {
+      expect(body.authorization.capabilities[key]).toEqual({
+        corporate: true,
+        locationIds: [],
+      });
+    }
   });
 });

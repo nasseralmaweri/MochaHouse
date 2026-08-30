@@ -269,10 +269,15 @@ export interface InternalUserProfile {
     displayName: string | null;
     status: InternalUserStatus;
 }
+export interface InternalPermissionCapability {
+    corporate: boolean;
+    locationIds: string[];
+}
 export interface InternalAuthorizationSummary {
     permissions: InternalPermissionKey[];
     isCorporate: boolean;
     locations: LocationSummary[];
+    capabilities: Partial<Record<InternalPermissionKey, InternalPermissionCapability>>;
 }
 export interface InternalMeResponse {
     user: InternalUserProfile;

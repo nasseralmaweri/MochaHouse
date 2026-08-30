@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import type {
   InternalMeResponse,
+  InternalPermissionCapability,
+  InternalPermissionKey,
   LocationSummary,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -40,12 +42,35 @@ export class InternalSessionService {
           })
         : [];
 
+    // Every per-permission locationId is intersected with the active
+    // locations the user can actually see, so a capability never references
+    // an inactive or invisible location.
+    const activeLocationIds = new Set(
+      locationRows.map((location) => location.id),
+    );
+
+    const capabilities: Partial<
+      Record<InternalPermissionKey, InternalPermissionCapability>
+    > = {};
+    for (const [key, capability] of Object.entries(summary.capabilities)) {
+      if (!capability) {
+        continue;
+      }
+      capabilities[key as InternalPermissionKey] = {
+        corporate: capability.corporate,
+        locationIds: capability.locationIds.filter((id) =>
+          activeLocationIds.has(id),
+        ),
+      };
+    }
+
     return {
       user: this.internalUsers.toProfile(user),
       authorization: {
         permissions: summary.permissions,
         isCorporate: summary.isCorporate,
         locations: locationRows.map(toLocationSummary),
+        capabilities,
       },
     };
   }
