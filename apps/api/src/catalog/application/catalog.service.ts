@@ -10,6 +10,7 @@ import type {
   ProductSummary,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 
 interface UpdateProductInput {
   name?: string;
@@ -118,7 +119,15 @@ export class CatalogService {
   async updateProduct(
     productId: string,
     input: UpdateProductInput,
+    authorization: AuthorizationContext,
   ): Promise<ProductSummary> {
+    // A master product is global — editing it must be a corporate-scoped
+    // capability. PermissionGuard already rejects a caller who lacks
+    // `catalog.products.edit` at corporate scope (the permission is
+    // CORPORATE-only in the catalog); this is the matching service-layer
+    // defense.
+    authorization.assertCorporate('catalog.products.edit');
+
     if (input.name !== undefined) {
       if (
         typeof input.name !== 'string' ||
@@ -214,7 +223,12 @@ export class CatalogService {
     menuId: string,
     productId: string,
     isActive: boolean,
+    authorization: AuthorizationContext,
   ) {
+    // Menu composition is shared across every location a menu is assigned
+    // to — corporate-scoped capability only.
+    authorization.assertCorporate('catalog.menu.manage');
+
     if (typeof isActive !== 'boolean') {
       throw new BadRequestException(
         'Menu product assignment active state must be a boolean.',
@@ -264,7 +278,12 @@ export class CatalogService {
     menuId: string,
     productId: string,
     price: number,
+    authorization: AuthorizationContext,
   ) {
+    // A per-location override — a LOCATION-scoped manager may set it for
+    // their own location(s); CORPORATE covers any. Checked before any read.
+    authorization.assertCanActOnLocation('catalog.overrides.manage', locationId);
+
     if (!Number.isInteger(price) || price < 0) {
       throw new BadRequestException(
         'Price override must be a non-negative integer.',
@@ -342,7 +361,10 @@ export class CatalogService {
     locationId: string,
     menuId: string,
     productId: string,
+    authorization: AuthorizationContext,
   ) {
+    authorization.assertCanActOnLocation('catalog.overrides.manage', locationId);
+
     const existingOverride =
       await this.prisma.locationProductPriceOverride.findUnique({
         where: {
@@ -386,7 +408,10 @@ export class CatalogService {
     menuId: string,
     productId: string,
     isAvailable: boolean,
+    authorization: AuthorizationContext,
   ) {
+    authorization.assertCanActOnLocation('catalog.overrides.manage', locationId);
+
     if (typeof isAvailable !== 'boolean') {
       throw new BadRequestException(
         'Availability override must be a boolean.',
@@ -464,7 +489,10 @@ export class CatalogService {
     locationId: string,
     menuId: string,
     productId: string,
+    authorization: AuthorizationContext,
   ) {
+    authorization.assertCanActOnLocation('catalog.overrides.manage', locationId);
+
     const existingOverride =
       await this.prisma.locationProductAvailabilityOverride.findUnique({
         where: {

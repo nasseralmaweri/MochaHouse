@@ -442,8 +442,8 @@ model OutboxEvent {
 //
 // Lifecycle: INVITED -> ACTIVE -> SUSPENDED/DISABLED (and back). Only
 // ACTIVE confers internal/Admin access. Authentication never promotes
-// INVITED to ACTIVE — that is an explicit administrative action (Milestone
-// 5B). No Role/Permission/Scope tables exist yet, by design.
+// INVITED to ACTIVE — that is an explicit administrative action, never a
+// side effect of signing in.
 enum InternalUserStatus {
   INVITED
   ACTIVE
@@ -460,10 +460,10 @@ model InternalUser {
   status           InternalUserStatus @default(INVITED)
 
   // When the invitation record was created. `activatedAt` is set the first
-  // time the account is moved to ACTIVE (administratively — Milestone 5B —
-  // or by the local seed), never by authentication. `lastAuthenticatedAt`
-  // is updated only on a successful ACTIVE authentication and is purely
-  // observational — it can never widen access.
+  // time the account is moved to ACTIVE (administratively, or by the local
+  // seed), never by authentication. `lastAuthenticatedAt` is updated only
+  // on a successful ACTIVE authentication and is purely observational — it
+  // can never widen access.
   invitedAt           DateTime  @default(now())
   activatedAt         DateTime?
   lastAuthenticatedAt DateTime?
@@ -471,5 +471,84 @@ model InternalUser {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  roleAssignments InternalUserRoleAssignment[]
+
   @@unique([externalProvider, externalSubject])
+}
+
+// --- Milestone 5B, internal authorization (roles, permissions, scope) --
+// The authorization backbone. An authorization decision is:
+//   ACTIVE internal user  +  required permission  +  authorized scope.
+// Never a role-name check. Role names are business configuration; the
+// decision is made purely from effective permission keys and the scopes
+// they are granted through.
+//
+// Permission VOCABULARY is a closed set defined in code
+// (@mocha-house/contracts INTERNAL_PERMISSION_KEYS) — there is deliberately
+// no Permission table, so a permission string only means something if
+// server code checks that exact key. Roles, their permission keys, and
+// user assignments are the data below.
+
+// Only the scope types the application currently resolves. Additional
+// organizational scope types are added here only once their domain models
+// (e.g. location groups, franchise organizations) exist.
+enum InternalScopeType {
+  CORPORATE
+  LOCATION
+}
+
+// A reusable bundle of permission keys. `key` is the stable programmatic
+// identifier (e.g. "platform-administrator"); `displayName` is for humans.
+// `isSystem` marks a built-in role that a future administration UI must
+// protect from destructive edits — it is metadata ONLY and confers no
+// authorization by itself.
+model InternalRole {
+  id          String   @id @default(uuid(7))
+  key         String   @unique
+  displayName String
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  permissions InternalRolePermission[]
+  assignments InternalUserRoleAssignment[]
+}
+
+// One permission key granted by one role. `permissionKey` is a plain string
+// validated against the code vocabulary at read time — an unknown key never
+// grants a capability (there is no code path that honours it) and is
+// dropped defensively when building an authorization context.
+model InternalRolePermission {
+  roleId        String
+  permissionKey String
+  createdAt     DateTime @default(now())
+
+  role InternalRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionKey])
+  @@index([permissionKey])
+}
+
+// A role granted to an internal user within one scope. The same user may
+// hold the same role at several LOCATION scopes and a different role at
+// CORPORATE scope simultaneously — each is its own row. Scope invariants
+// (CORPORATE => scopeId null; LOCATION => scopeId is a Location id) are
+// enforced in application logic, not the schema, because scopeId is a
+// deliberately polymorphic reference.
+model InternalUserRoleAssignment {
+  id             String           @id @default(uuid(7))
+  internalUserId String
+  roleId         String
+  scopeType      InternalScopeType
+  scopeId        String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  internalUser InternalUser @relation(fields: [internalUserId], references: [id], onDelete: Cascade)
+  role         InternalRole @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@unique([internalUserId, roleId, scopeType, scopeId])
+  @@index([internalUserId])
+  @@index([roleId])
 }

@@ -1,7 +1,11 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { FakePaymentProvider } from '@mocha-house/integrations';
 import type { CheckoutRequest } from '@mocha-house/contracts';
 import { PrismaModule } from '../../prisma/prisma.module';
@@ -13,6 +17,18 @@ import { InternalAuthModule } from '../../internal-auth/internal-auth.module';
 import { CheckoutService } from './checkout.service';
 import { AdminOrdersService } from './admin-orders.service';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
+import { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
+
+// This suite exercises AdminOrdersService's own logic (store-queue
+// visibility, location cross-checks, status advancement, concurrency). The
+// permission/scope gate is covered separately (permission.guard.spec.ts,
+// internal-authorization.spec.ts); here every call is made with a corporate
+// context so the service runs its non-authorization behaviour unchanged.
+// The dedicated cross-location authorization denial is asserted below.
+const corporate = AuthorizationContext.of({
+  'orders.view': [{ scopeType: 'CORPORATE', scopeId: null }],
+  'orders.manage_status': [{ scopeType: 'CORPORATE', scopeId: null }],
+});
 
 // Integration test against the real local Postgres instance, exercising
 // the store queue exactly as AdminOrdersController would: checkout creates
@@ -171,14 +187,20 @@ describe('AdminOrdersService (integration)', () => {
     const confirmation = await checkoutService.checkout(buildCheckoutRequest());
     createdOrderIds.push(confirmation.orderId);
 
-    const beforeProcessing = await adminOrdersService.listActive(locationId);
+    const beforeProcessing = await adminOrdersService.listActive(
+      locationId,
+      corporate,
+    );
     expect(
       beforeProcessing.some((o) => o.orderId === confirmation.orderId),
     ).toBe(false);
 
     await publishOrder(confirmation.orderId);
 
-    const afterProcessing = await adminOrdersService.listActive(locationId);
+    const afterProcessing = await adminOrdersService.listActive(
+      locationId,
+      corporate,
+    );
     expect(
       afterProcessing.some((o) => o.orderId === confirmation.orderId),
     ).toBe(true);
@@ -187,7 +209,7 @@ describe('AdminOrdersService (integration)', () => {
   it('does not expose guest access token or email in the store list/detail', async () => {
     const confirmation = await createPublishedOrder();
 
-    const list = await adminOrdersService.listActive(locationId);
+    const list = await adminOrdersService.listActive(locationId, corporate);
     const summary = list.find((o) => o.orderId === confirmation.orderId)!;
     expect(summary).not.toHaveProperty('accessToken');
     expect(summary).not.toHaveProperty('guestEmail');
@@ -195,6 +217,7 @@ describe('AdminOrdersService (integration)', () => {
     const detail = await adminOrdersService.getDetail(
       confirmation.orderId,
       locationId,
+      corporate,
     );
     expect(detail).not.toHaveProperty('accessToken');
     expect(detail.guestPhone).toBe('5556660000');
@@ -203,15 +226,70 @@ describe('AdminOrdersService (integration)', () => {
   it('is not visible from a different location', async () => {
     const confirmation = await createPublishedOrder();
 
-    const otherLocationOrders =
-      await adminOrdersService.listActive(otherLocationId);
+    const otherLocationOrders = await adminOrdersService.listActive(
+      otherLocationId,
+      corporate,
+    );
     expect(
       otherLocationOrders.some((o) => o.orderId === confirmation.orderId),
     ).toBe(false);
 
     await expect(
-      adminOrdersService.getDetail(confirmation.orderId, otherLocationId),
+      adminOrdersService.getDetail(
+        confirmation.orderId,
+        otherLocationId,
+        corporate,
+      ),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('denies a LOCATION-scoped caller acting on a location they are not assigned to (403, before any data)', async () => {
+    const confirmation = await createPublishedOrder();
+    // Scoped to `otherLocationId` only — must not touch `locationId`.
+    const scopedElsewhere = AuthorizationContext.of({
+      'orders.view': [{ scopeType: 'LOCATION', scopeId: otherLocationId }],
+      'orders.manage_status': [
+        { scopeType: 'LOCATION', scopeId: otherLocationId },
+      ],
+    });
+
+    await expect(
+      adminOrdersService.listActive(locationId, scopedElsewhere),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      adminOrdersService.getDetail(
+        confirmation.orderId,
+        locationId,
+        scopedElsewhere,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      adminOrdersService.advance(
+        confirmation.orderId,
+        locationId,
+        'RECEIVED',
+        scopedElsewhere,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('a LOCATION-scoped caller CAN act on their own assigned location', async () => {
+    const confirmation = await createPublishedOrder();
+    const scopedHere = AuthorizationContext.of({
+      'orders.view': [{ scopeType: 'LOCATION', scopeId: locationId }],
+      'orders.manage_status': [{ scopeType: 'LOCATION', scopeId: locationId }],
+    });
+
+    const list = await adminOrdersService.listActive(locationId, scopedHere);
+    expect(list.some((o) => o.orderId === confirmation.orderId)).toBe(true);
+
+    const advanced = await adminOrdersService.advance(
+      confirmation.orderId,
+      locationId,
+      'RECEIVED',
+      scopedHere,
+    );
+    expect(advanced.advanced).toBe(true);
   });
 
   it('advances through the full lifecycle, one immutable history row per step, payment status untouched', async () => {
@@ -229,6 +307,7 @@ describe('AdminOrdersService (integration)', () => {
         confirmation.orderId,
         locationId,
         expected,
+        corporate,
       );
       expect(result.advanced).toBe(true);
       expect(result.status).toBe(expectedNext);
@@ -261,11 +340,17 @@ describe('AdminOrdersService (integration)', () => {
         confirmation.orderId,
         locationId,
         expected,
+        corporate,
       );
     }
 
     await expect(
-      adminOrdersService.advance(confirmation.orderId, locationId, 'COMPLETED'),
+      adminOrdersService.advance(
+        confirmation.orderId,
+        locationId,
+        'COMPLETED',
+        corporate,
+      ),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
@@ -276,6 +361,7 @@ describe('AdminOrdersService (integration)', () => {
       confirmation.orderId,
       locationId,
       'RECEIVED',
+      corporate,
     );
     expect(first.advanced).toBe(true);
 
@@ -285,6 +371,7 @@ describe('AdminOrdersService (integration)', () => {
       confirmation.orderId,
       locationId,
       'RECEIVED',
+      corporate,
     );
     expect(retry.advanced).toBe(false);
     expect(retry.status).toBe('ACCEPTED');
@@ -301,16 +388,23 @@ describe('AdminOrdersService (integration)', () => {
       confirmation.orderId,
       locationId,
       'RECEIVED',
+      corporate,
     );
     await adminOrdersService.advance(
       confirmation.orderId,
       locationId,
       'ACCEPTED',
+      corporate,
     );
     // Order is now PREPARING. A caller still expecting RECEIVED (two steps
     // behind) is a real conflict, not a retry of the immediately-prior step.
     await expect(
-      adminOrdersService.advance(confirmation.orderId, locationId, 'RECEIVED'),
+      adminOrdersService.advance(
+        confirmation.orderId,
+        locationId,
+        'RECEIVED',
+        corporate,
+      ),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
@@ -318,8 +412,18 @@ describe('AdminOrdersService (integration)', () => {
     const confirmation = await createPublishedOrder();
 
     const results = await Promise.allSettled([
-      adminOrdersService.advance(confirmation.orderId, locationId, 'RECEIVED'),
-      adminOrdersService.advance(confirmation.orderId, locationId, 'RECEIVED'),
+      adminOrdersService.advance(
+        confirmation.orderId,
+        locationId,
+        'RECEIVED',
+        corporate,
+      ),
+      adminOrdersService.advance(
+        confirmation.orderId,
+        locationId,
+        'RECEIVED',
+        corporate,
+      ),
     ]);
 
     expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
@@ -342,10 +446,14 @@ describe('AdminOrdersService (integration)', () => {
         confirmation.orderId,
         locationId,
         expected,
+        corporate,
       );
     }
 
-    const activeOrders = await adminOrdersService.listActive(locationId);
+    const activeOrders = await adminOrdersService.listActive(
+      locationId,
+      corporate,
+    );
     expect(activeOrders.some((o) => o.orderId === confirmation.orderId)).toBe(
       false,
     );
@@ -364,6 +472,7 @@ describe('AdminOrdersService (integration)', () => {
       confirmation.orderId,
       locationId,
       'RECEIVED',
+      corporate,
     );
 
     status = await checkoutService.getStatus(

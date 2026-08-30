@@ -4,7 +4,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
-import type { InternalUserProfile } from '@mocha-house/contracts';
+import {
+  INTERNAL_PERMISSION_KEYS,
+  type InternalUserProfile,
+} from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { CustomerAuthModule } from '../customer-auth/customer-auth.module';
@@ -16,20 +19,24 @@ import { InternalAuthModule } from './internal-auth.module';
 import { signInternalDevJwt } from './infrastructure/internal-dev-jwt';
 import { signDevJwt } from '../customer-auth/infrastructure/dev-jwt';
 
-// Full HTTP integration: every /api/v1/admin/* controller plus the internal
-// sign-in / me namespace, wired exactly as AppModule wires them, exercised
-// over real HTTP. Proves the InternalAuthGuard boundary end to end and that
-// a customer token can never cross it.
-describe('Internal admin authentication boundary (integration)', () => {
+// Full HTTP integration for the authentication + lifecycle boundary
+// (InternalAuthGuard) and customer isolation, plus the 5B fact that an
+// ACTIVE internal user with no role assignments is denied by PermissionGuard
+// on every admin route. The exhaustive permission/scope matrix lives in
+// internal-authorization.spec.ts.
+describe('Internal admin authentication + baseline authorization (integration)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
   const originalEnv = { ...process.env };
   const internalSecret = 'admin-protection-spec-internal-secret';
   const customerSecret = 'admin-protection-spec-customer-secret';
 
-  const activeEmail = `admin-protection-active-${randomUUID()}@example.com`;
+  const activeNoRolesEmail = `admin-protection-noroles-${randomUUID()}@example.com`;
+  const grantedEmail = `admin-protection-granted-${randomUUID()}@example.com`;
   const invitedEmail = `admin-protection-invited-${randomUUID()}@example.com`;
-  const createdEmails = [activeEmail, invitedEmail];
+  const createdEmails = [activeNoRolesEmail, grantedEmail, invitedEmail];
+  const roleKey = `admin-protection-all-${randomUUID()}`;
+  let roleId: string;
 
   beforeAll(async () => {
     process.env.NODE_ENV = 'development';
@@ -54,12 +61,22 @@ describe('Internal admin authentication boundary (integration)', () => {
     await app.init();
     prisma = moduleFixture.get(PrismaService);
 
-    await prisma.internalUser.create({
+    const activeNoRoles = await prisma.internalUser.create({
       data: {
         externalProvider: 'internal-dev',
-        externalSubject: `internal-dev:${activeEmail}`,
-        email: activeEmail,
-        displayName: 'Active Admin',
+        externalSubject: `internal-dev:${activeNoRolesEmail}`,
+        email: activeNoRolesEmail,
+        status: 'ACTIVE',
+        activatedAt: new Date(),
+      },
+    });
+    void activeNoRoles;
+
+    const granted = await prisma.internalUser.create({
+      data: {
+        externalProvider: 'internal-dev',
+        externalSubject: `internal-dev:${grantedEmail}`,
+        email: grantedEmail,
         status: 'ACTIVE',
         activatedAt: new Date(),
       },
@@ -69,13 +86,36 @@ describe('Internal admin authentication boundary (integration)', () => {
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${invitedEmail}`,
         email: invitedEmail,
-        displayName: 'Invited Admin',
         status: 'INVITED',
+      },
+    });
+
+    const role = await prisma.internalRole.create({
+      data: {
+        key: roleKey,
+        displayName: 'Admin Protection Spec — all permissions',
+        permissions: {
+          create: INTERNAL_PERMISSION_KEYS.map((permissionKey) => ({
+            permissionKey,
+          })),
+        },
+      },
+    });
+    roleId = role.id;
+    await prisma.internalUserRoleAssignment.create({
+      data: {
+        internalUserId: granted.id,
+        roleId: role.id,
+        scopeType: 'CORPORATE',
+        scopeId: null,
       },
     });
   });
 
   afterAll(async () => {
+    await prisma.internalUserRoleAssignment.deleteMany({ where: { roleId } });
+    await prisma.internalRolePermission.deleteMany({ where: { roleId } });
+    await prisma.internalRole.deleteMany({ where: { id: roleId } });
     await prisma.internalUser.deleteMany({
       where: { email: { in: createdEmails } },
     });
@@ -112,7 +152,7 @@ describe('Internal admin authentication boundary (integration)', () => {
     it('mints an internal token for valid dev credentials', async () => {
       const res = await request(app.getHttpServer())
         .post('/api/v1/internal/auth/sign-in')
-        .send({ identifier: activeEmail, password: 'anything-in-dev' })
+        .send({ identifier: grantedEmail, password: 'anything-in-dev' })
         .expect(201);
       expect(typeof (res.body as { idToken: string }).idToken).toBe('string');
       expect(
@@ -121,7 +161,7 @@ describe('Internal admin authentication boundary (integration)', () => {
     });
   });
 
-  describe('GET /api/v1/internal/me', () => {
+  describe('GET /api/v1/internal/me (authentication + lifecycle only — no permission required)', () => {
     it('401 with no token', async () => {
       await request(app.getHttpServer()).get('/api/v1/internal/me').expect(401);
     });
@@ -157,15 +197,14 @@ describe('Internal admin authentication boundary (integration)', () => {
         .expect(403);
     });
 
-    it('200 with the profile for an ACTIVE internal user', async () => {
+    it('200 for an ACTIVE internal user even with no role assignments (me needs no permission)', async () => {
       const res = await request(app.getHttpServer())
         .get('/api/v1/internal/me')
-        .set('Authorization', `Bearer ${internalToken(activeEmail)}`)
+        .set('Authorization', `Bearer ${internalToken(activeNoRolesEmail)}`)
         .expect(200);
       const body = res.body as InternalUserProfile;
-      expect(body.email).toBe(activeEmail);
+      expect(body.email).toBe(activeNoRolesEmail);
       expect(body.status).toBe('ACTIVE');
-      expect(typeof body.id).toBe('string');
     });
 
     it('suspending an ACTIVE user immediately blocks a still-valid token', async () => {
@@ -201,8 +240,7 @@ describe('Internal admin authentication boundary (integration)', () => {
 
   const BOGUS_LOCATION = '00000000-0000-0000-0000-000000000000';
 
-  // Every entry is a REAL route on one of the three admin controllers, so
-  // route matching always succeeds and the guard always runs.
+  // Every entry is a REAL route on one of the three admin controllers.
   describe.each([
     ['GET', `/api/v1/admin/orders?locationId=${BOGUS_LOCATION}`, undefined],
     [
@@ -237,23 +275,25 @@ describe('Internal admin authentication boundary (integration)', () => {
       await send(customerToken()).expect(401);
     });
 
-    it('403 with an internal token for an INVITED user', async () => {
+    it('403 with an internal token for an INVITED user (lifecycle)', async () => {
       await send(internalToken(invitedEmail)).expect(403);
     });
 
-    it('passes the guard (not 401/403) with an ACTIVE internal token', async () => {
-      const res = await send(internalToken(activeEmail));
+    it('403 with an ACTIVE internal token that has NO role assignments (authorization)', async () => {
+      await send(internalToken(activeNoRolesEmail)).expect(403);
+    });
+
+    it('passes both guards (not 401/403) with an ACTIVE corporate-granted internal token', async () => {
+      const res = await send(internalToken(grantedEmail));
       expect(res.status).not.toBe(401);
       expect(res.status).not.toBe(403);
     });
   });
 
-  it('GET /api/v1/admin/orders returns 200 for an ACTIVE internal user', async () => {
+  it('GET /api/v1/admin/orders returns 200 for a corporate-granted internal user', async () => {
     const res = await request(app.getHttpServer())
-      .get(
-        '/api/v1/admin/orders?locationId=00000000-0000-0000-0000-000000000000',
-      )
-      .set('Authorization', `Bearer ${internalToken(activeEmail)}`)
+      .get(`/api/v1/admin/orders?locationId=${BOGUS_LOCATION}`)
+      .set('Authorization', `Bearer ${internalToken(grantedEmail)}`)
       .expect(200);
     expect(Array.isArray(res.body)).toBe(true);
   });

@@ -1,5 +1,8 @@
 import type { Request } from 'express';
 import type { Prisma } from '@mocha-house/database';
+// Type-only import (erased at compile time) — no runtime dependency from
+// the infrastructure layer on the authorization layer.
+import type { AuthorizationContext } from '../authorization/authorization-context';
 
 // The plain InternalUser row shape, mirroring how the customer domain types
 // its own rows (see customers.service.ts).
@@ -34,4 +37,9 @@ export interface InternalIdentity {
 export interface InternalAuthenticatedRequest extends Request {
   internalIdentity?: InternalIdentity;
   internalUser?: InternalUserRow;
+  // Set by PermissionGuard (Milestone 5B), never by InternalAuthGuard. Its
+  // presence means the route's required permission has been checked and the
+  // effective grants are available to the service layer for
+  // resource/location-specific authorization.
+  authorization?: AuthorizationContext;
 }

@@ -9,6 +9,7 @@ import type {
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { Prisma } from '@mocha-house/database';
+import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 
 // Same shape PrismaService and a $transaction callback both satisfy, for
 // the query methods below that checkout re-runs inside a protected
@@ -197,12 +198,19 @@ export class LocationsService {
   async updateDigitalOrdering(
     locationId: string,
     isDigitalOrderingEnabled: boolean,
+    authorization: AuthorizationContext,
   ): Promise<LocationSummary> {
     if (typeof isDigitalOrderingEnabled !== 'boolean') {
       throw new BadRequestException(
         'Digital ordering state must be a boolean.',
       );
     }
+    // Authorized for THIS location (CORPORATE covers all; LOCATION only an
+    // assigned one) before the location is read or written.
+    authorization.assertCanActOnLocation(
+      'locations.manage_digital_ordering',
+      locationId,
+    );
 
     const existingLocation = await this.prisma.location.findUnique({
       where: {

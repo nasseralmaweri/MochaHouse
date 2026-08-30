@@ -486,3 +486,88 @@ export interface InternalUserProfile {
   displayName: string | null;
   status: InternalUserStatus;
 }
+
+// --- Internal authorization: permissions & scope (Milestone 5B) --------
+// The CLOSED permission vocabulary. This is the single source of truth for
+// what internal/Admin capabilities exist: a permission string only grants
+// anything if server code checks that exact key, so roles configured in the
+// database can never invent an unimplemented capability — they can only
+// select from this list. Roles and role→permission and user→role→scope
+// assignments are database data; this vocabulary is code.
+//
+// Keep this minimal: only permissions that a CURRENT Admin route needs.
+// Milestone 5B deliberately does not pre-declare a future permission
+// catalog.
+export const INTERNAL_PERMISSION_KEYS = [
+  "orders.view",
+  "orders.manage_status",
+  "catalog.products.edit",
+  "catalog.menu.manage",
+  "catalog.overrides.manage",
+  "locations.manage_digital_ordering",
+] as const;
+
+export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
+
+// Scope types the application currently supports operationally. The Prisma
+// enum mirrors exactly this set — additional organizational scope types
+// (location groups, franchise organizations) are added only when their
+// domain models exist.
+//
+//   CORPORATE — assignment.scopeId is null; grants the permission for every
+//               current location.
+//   LOCATION  — assignment.scopeId is a Location id; grants the permission
+//               for that one location only.
+export const INTERNAL_SCOPE_TYPES = ["CORPORATE", "LOCATION"] as const;
+
+export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
+
+export interface InternalPermissionMetadata {
+  key: InternalPermissionKey;
+  description: string;
+  // The scope types through which this permission may be granted. A
+  // permission held only through an assignment whose scopeType is not in
+  // this list does NOT authorize the action. Master/global catalog
+  // operations are CORPORATE-only precisely so a location-scoped manager
+  // can never change a master product or menu for every store.
+  allowedScopeTypes: readonly InternalScopeType[];
+}
+
+export const INTERNAL_PERMISSION_METADATA: Record<
+  InternalPermissionKey,
+  InternalPermissionMetadata
+> = {
+  "orders.view": {
+    key: "orders.view",
+    description: "View the store order queue and individual order detail.",
+    allowedScopeTypes: ["CORPORATE", "LOCATION"],
+  },
+  "orders.manage_status": {
+    key: "orders.manage_status",
+    description: "Advance an order through its operational lifecycle.",
+    allowedScopeTypes: ["CORPORATE", "LOCATION"],
+  },
+  "catalog.products.edit": {
+    key: "catalog.products.edit",
+    description:
+      "Edit a master product (name, description, base price, active state). Affects every location.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "catalog.menu.manage": {
+    key: "catalog.menu.manage",
+    description:
+      "Change which products appear on a menu. Menus are shared across locations.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "catalog.overrides.manage": {
+    key: "catalog.overrides.manage",
+    description:
+      "Set or clear a location's price and availability overrides.",
+    allowedScopeTypes: ["CORPORATE", "LOCATION"],
+  },
+  "locations.manage_digital_ordering": {
+    key: "locations.manage_digital_ordering",
+    description: "Toggle a location's digital-ordering availability.",
+    allowedScopeTypes: ["CORPORATE", "LOCATION"],
+  },
+};

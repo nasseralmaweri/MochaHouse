@@ -8,6 +8,8 @@ import { InternalCognitoTokenVerifier } from './infrastructure/internal-cognito-
 import { InternalLocalDevTokenVerifier } from './infrastructure/internal-local-dev-token-verifier';
 import { InternalCognitoAuthProvider } from './infrastructure/internal-cognito-auth.provider';
 import { InternalLocalDevAuthProvider } from './infrastructure/internal-local-dev-auth.provider';
+import { AuthorizationService } from './authorization/authorization.service';
+import { PermissionGuard } from './authorization/permission.guard';
 
 // The internal-authentication boundary: internal sign-in (InternalAuthController,
 // POST /api/v1/internal/auth/sign-in), the authenticated internal identity
@@ -38,6 +40,9 @@ import { InternalLocalDevAuthProvider } from './infrastructure/internal-local-de
     InternalLocalDevTokenVerifier,
     InternalCognitoAuthProvider,
     InternalLocalDevAuthProvider,
+    // Milestone 5B — authorization layer, applied after InternalAuthGuard.
+    AuthorizationService,
+    PermissionGuard,
   ],
   // The guard's own constructor dependencies (the two verifiers and
   // InternalUsersService) must be exported too — an importing module
@@ -48,6 +53,8 @@ import { InternalLocalDevAuthProvider } from './infrastructure/internal-local-de
     InternalCognitoTokenVerifier,
     InternalLocalDevTokenVerifier,
     InternalUsersService,
+    AuthorizationService,
+    PermissionGuard,
   ],
 })
 export class InternalAuthModule {}

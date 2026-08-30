@@ -13,6 +13,7 @@ import { nextOrderStatus } from '@mocha-house/domain';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@mocha-house/database';
 import { toOrderLineSummary } from '../infrastructure/order-line-mapper';
+import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 
 type OrderWithLines = Prisma.OrderGetPayload<{ include: { lines: true } }>;
 
@@ -40,10 +41,19 @@ function assertValidOrderStatus(value: string): asserts value is OrderStatus {
 export class AdminOrdersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async listActive(locationId: string): Promise<StoreOrderSummary[]> {
+  async listActive(
+    locationId: string,
+    authorization: AuthorizationContext,
+  ): Promise<StoreOrderSummary[]> {
     if (typeof locationId !== 'string' || locationId.trim().length === 0) {
       throw new BadRequestException('locationId is required.');
     }
+    // Authorization for THIS location before any order data is read. A
+    // CORPORATE grant passes for any location; a LOCATION grant only for an
+    // assigned one. The query below is already constrained to this single
+    // locationId, so an authorized caller can never see another store's
+    // orders through this endpoint.
+    authorization.assertCanActOnLocation('orders.view', locationId);
 
     const candidates = await this.prisma.order.findMany({
       where: { locationId, status: { not: 'COMPLETED' } },
@@ -63,10 +73,12 @@ export class AdminOrdersService {
   async getDetail(
     orderId: string,
     locationId: string,
+    authorization: AuthorizationContext,
   ): Promise<StoreOrderDetail> {
     if (typeof locationId !== 'string' || locationId.trim().length === 0) {
       throw new BadRequestException('locationId is required.');
     }
+    authorization.assertCanActOnLocation('orders.view', locationId);
 
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
@@ -92,6 +104,7 @@ export class AdminOrdersService {
     orderId: string,
     locationId: string,
     expectedStatus: string,
+    authorization: AuthorizationContext,
   ): Promise<{ orderId: string; status: OrderStatus; advanced: boolean }> {
     if (typeof locationId !== 'string' || locationId.trim().length === 0) {
       throw new BadRequestException('locationId is required.');
@@ -103,12 +116,17 @@ export class AdminOrdersService {
       throw new BadRequestException('expectedStatus is required.');
     }
     assertValidOrderStatus(expectedStatus);
+    // Authorized for the claimed location first (403 before any read)...
+    authorization.assertCanActOnLocation('orders.manage_status', locationId);
 
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       select: { id: true, locationId: true, status: true },
     });
 
+    // ...then the persisted cross-check: the order must actually belong to
+    // that location. A caller cannot advance another location's order by
+    // supplying a locationId they happen to be authorized for.
     if (!order || order.locationId !== locationId) {
       throw new NotFoundException('Order not found for this location.');
     }

@@ -269,4 +269,14 @@ export interface InternalUserProfile {
     displayName: string | null;
     status: InternalUserStatus;
 }
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "locations.manage_digital_ordering"];
+export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
+export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
+export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
+export interface InternalPermissionMetadata {
+    key: InternalPermissionKey;
+    description: string;
+    allowedScopeTypes: readonly InternalScopeType[];
+}
+export declare const INTERNAL_PERMISSION_METADATA: Record<InternalPermissionKey, InternalPermissionMetadata>;
 //# sourceMappingURL=index.d.ts.map

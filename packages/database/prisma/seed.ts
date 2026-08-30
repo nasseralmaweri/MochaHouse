@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { INTERNAL_PERMISSION_KEYS } from '@mocha-house/contracts';
 import { PrismaClient } from '../src/generated/prisma/client';
 
 const adapter = new PrismaPg({
@@ -224,7 +225,7 @@ async function main() {
   // check) and never created in production, where a real Cognito internal
   // pool and an administrative invitation flow (Milestone 5B) apply.
   const internalAdminEmail = 'admin@mochahouse.test';
-  await prisma.internalUser.upsert({
+  const internalAdmin = await prisma.internalUser.upsert({
     where: { email: internalAdminEmail },
     update: { status: 'ACTIVE' },
     create: {
@@ -236,6 +237,63 @@ async function main() {
       activatedAt: new Date(),
     },
   });
+
+  // Milestone 5B — data-driven bootstrap. The platform-administrator role
+  // holds EVERY permission in the code vocabulary; the seed re-synchronises
+  // its permission rows to that vocabulary on every run, so a permission
+  // added to INTERNAL_PERMISSION_KEYS is picked up by re-seeding. `isSystem`
+  // is protective metadata only — this role is evaluated by exactly the
+  // same AuthorizationService and PermissionGuard as any other role, with
+  // no special-casing anywhere (no email check, no wildcard, no bypass).
+  const platformAdminRole = await prisma.internalRole.upsert({
+    where: { key: 'platform-administrator' },
+    update: { displayName: 'Platform Administrator', isSystem: true },
+    create: {
+      key: 'platform-administrator',
+      displayName: 'Platform Administrator',
+      description:
+        'Built-in role holding every internal permission. Granted at corporate scope for platform operators.',
+      isSystem: true,
+    },
+  });
+
+  await prisma.internalRolePermission.deleteMany({
+    where: {
+      roleId: platformAdminRole.id,
+      permissionKey: { notIn: [...INTERNAL_PERMISSION_KEYS] },
+    },
+  });
+  for (const permissionKey of INTERNAL_PERMISSION_KEYS) {
+    await prisma.internalRolePermission.upsert({
+      where: {
+        roleId_permissionKey: { roleId: platformAdminRole.id, permissionKey },
+      },
+      update: {},
+      create: { roleId: platformAdminRole.id, permissionKey },
+    });
+  }
+
+  // Assign the local-dev internal admin the platform-administrator role at
+  // CORPORATE scope (scopeId null). Idempotent: CORPORATE scope has no
+  // scopeId, so it is matched by (user, role, scopeType).
+  const existingAssignment =
+    await prisma.internalUserRoleAssignment.findFirst({
+      where: {
+        internalUserId: internalAdmin.id,
+        roleId: platformAdminRole.id,
+        scopeType: 'CORPORATE',
+      },
+    });
+  if (!existingAssignment) {
+    await prisma.internalUserRoleAssignment.create({
+      data: {
+        internalUserId: internalAdmin.id,
+        roleId: platformAdminRole.id,
+        scopeType: 'CORPORATE',
+        scopeId: null,
+      },
+    });
+  }
 }
 
 main()
