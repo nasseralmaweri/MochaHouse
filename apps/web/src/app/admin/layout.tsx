@@ -1,16 +1,19 @@
+import { Suspense } from "react";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { getInternalSession } from "@/lib/internal-auth/session";
-import { internalSignOutAction } from "@/lib/internal-auth/actions";
+import {
+  getInternalSession,
+  ADMIN_LOCATION_COOKIE,
+} from "@/lib/internal-auth/session";
+import { adminNavItems } from "@/lib/admin/nav";
+import { AdminShell } from "@/components/admin/AdminShell";
 
-// The server-side auth boundary for every /admin page (Milestone 5A).
-// Rendered on the server before any Admin page, it resolves the internal
-// session against the authoritative API (GET /internal/me) — so an expired
-// token, or an internal user who is no longer ACTIVE, is turned away here,
-// not merely hidden from a nav. Anything but an ACTIVE internal user is
-// redirected to the internal sign-in page.
-//
-// Deliberately minimal: a thin identity strip with a sign-out control, not
-// an Admin shell/navigation (that is a later Milestone 5 slice).
+// The server-side boundary for every /admin page (Milestone 5A + 5C). It
+// resolves the internal session AND the 5C authorization summary once
+// (React-cached, shared with the page rendered inside), redirects anything
+// that is not an ACTIVE internal user to the internal sign-in page, then
+// renders the shared Admin shell. All interaction lives in the client
+// <AdminShell> island — the layout itself is a server component.
 export default async function AdminLayout({
   children,
 }: {
@@ -21,27 +24,26 @@ export default async function AdminLayout({
     redirect("/internal/sign-in");
   }
 
+  const cookieStore = await cookies();
+  const cookieLocationId =
+    cookieStore.get(ADMIN_LOCATION_COOKIE)?.value ?? null;
+
+  const navItems = adminNavItems(session.authorization.permissions);
+
   return (
-    <div className="flex flex-1 flex-col">
-      <header className="border-b border-border-default bg-surface-card">
-        <div className="mx-auto flex w-full max-w-2xl items-center justify-between gap-4 px-4 py-3">
-          <span className="text-sm text-text-secondary">
-            Signed in as{" "}
-            <span className="text-text-primary">
-              {session.displayName ?? session.email}
-            </span>
-          </span>
-          <form action={internalSignOutAction}>
-            <button
-              type="submit"
-              className="text-sm font-medium text-text-primary underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-            >
-              Sign out
-            </button>
-          </form>
-        </div>
-      </header>
-      {children}
-    </div>
+    // <AdminShell> reads useSearchParams() for the current ?location; the
+    // Suspense boundary keeps that from opting the whole route into CSR.
+    <Suspense fallback={<div className="min-h-dvh bg-surface-page" />}>
+      <AdminShell
+        user={session.user}
+        permissions={session.authorization.permissions}
+        isCorporate={session.authorization.isCorporate}
+        locations={session.authorization.locations}
+        navItems={navItems}
+        cookieLocationId={cookieLocationId}
+      >
+        {children}
+      </AdminShell>
+    </Suspense>
   );
 }

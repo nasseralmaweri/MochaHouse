@@ -6,7 +6,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import {
   INTERNAL_PERMISSION_KEYS,
-  type InternalUserProfile,
+  type InternalMeResponse,
 } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
@@ -202,9 +202,12 @@ describe('Internal admin authentication + baseline authorization (integration)',
         .get('/api/v1/internal/me')
         .set('Authorization', `Bearer ${internalToken(activeNoRolesEmail)}`)
         .expect(200);
-      const body = res.body as InternalUserProfile;
-      expect(body.email).toBe(activeNoRolesEmail);
-      expect(body.status).toBe('ACTIVE');
+      const body = res.body as InternalMeResponse;
+      expect(body.user.email).toBe(activeNoRolesEmail);
+      expect(body.user.status).toBe('ACTIVE');
+      expect(body.authorization.permissions).toEqual([]);
+      expect(body.authorization.isCorporate).toBe(false);
+      expect(body.authorization.locations).toEqual([]);
     });
 
     it('suspending an ACTIVE user immediately blocks a still-valid token', async () => {

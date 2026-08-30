@@ -1,24 +1,26 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import type { LocationSummary, OrderStatus, StoreOrderSummary } from "@mocha-house/contracts";
+import type { OrderStatus, StoreOrderSummary } from "@mocha-house/contracts";
 import { isActiveOrderStatus } from "@mocha-house/domain";
 import {
   advanceStoreOrderStatusFromBrowser,
   getActiveStoreOrdersFromBrowser,
-  getLocationsFromBrowser,
 } from "@/lib/api-client";
 import { formatPrice } from "@/lib/money";
 import { Card } from "@/components/Card";
-import { PageHeader } from "@/components/PageHeader";
-
-// INTERNAL: the /admin server layout (app/admin/layout.tsx) gate-keeps this
-// route to an ACTIVE internal user (Milestone 5A), and every API call below
-// goes through the server-side proxy that forwards the HttpOnly internal
-// session cookie. There is no role/permission/scope model yet (5B), so any
-// ACTIVE internal user can act on any location they pick.
+import { AdminPage } from "@/components/admin/AdminPage";
+import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
+import {
+  AdminEmptyState,
+  AdminErrorState,
+  AdminForbidden,
+  AdminLoading,
+} from "@/components/admin/states";
+import { Button } from "@/components/admin/Button";
+import { OrderStatusBadge } from "@/components/admin/StatusBadge";
+import { useAdminContext } from "@/components/admin/AdminContext";
 
 const NEXT_ACTION_LABEL: Record<OrderStatus, string | null> = {
   RECEIVED: "Accept",
@@ -28,104 +30,137 @@ const NEXT_ACTION_LABEL: Record<OrderStatus, string | null> = {
   COMPLETED: null,
 };
 
-const STATUS_LABEL: Record<OrderStatus, string> = {
-  RECEIVED: "Received",
-  ACCEPTED: "Accepted",
-  PREPARING: "Preparing",
-  READY: "Ready",
-  COMPLETED: "Completed",
-};
-
+// The store order queue, now rendered inside the shared Admin shell. The
+// location comes from the shell's authorization-aware context (never the
+// public /locations endpoint), and 403 renders AdminForbidden rather than a
+// generic error. The order lifecycle / advance / conflict-resync behaviour
+// is unchanged from Milestone 5A/5E's predecessor.
 export default function AdminOrdersPage() {
+  const { can, locationContext } = useAdminContext();
+
+  if (!can("orders.view")) {
+    return (
+      <AdminPage>
+        <AdminPageHeader title="Orders" />
+        <AdminForbidden />
+      </AdminPage>
+    );
+  }
+
+  if (locationContext.kind === "forbidden") {
+    return (
+      <AdminPage>
+        <AdminPageHeader title="Orders" />
+        <AdminForbidden
+          title="You're not assigned to that location"
+          description="The location in this link isn't in your assigned scope. Pick one of your locations from the selector above."
+        />
+      </AdminPage>
+    );
+  }
+
+  if (locationContext.kind === "none") {
+    return (
+      <AdminPage>
+        <AdminPageHeader title="Orders" />
+        <AdminEmptyState
+          title="No location assigned"
+          description="You don't have any locations in your scope yet. An administrator needs to assign one."
+        />
+      </AdminPage>
+    );
+  }
+
+  if (locationContext.kind === "corporate") {
+    return (
+      <AdminPage>
+        <AdminPageHeader
+          title="Orders"
+          context={{ label: "All locations", kind: "corporate" }}
+        />
+        <AdminEmptyState
+          title="Select a location"
+          description="The order queue is per location. Choose one from the selector in the top bar."
+        />
+      </AdminPage>
+    );
+  }
+
   return (
-    <Suspense
-      fallback={
-        <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-8">
-          <PageHeader title="Store orders" />
-        </main>
-      }
-    >
-      <AdminOrdersPageContent />
-    </Suspense>
+    // Keyed on the location id so switching location gives OrdersQueue a
+    // fresh mount (fresh state) rather than resetting state in an effect.
+    <OrdersQueue
+      key={locationContext.location.id}
+      locationId={locationContext.location.id}
+      locationName={locationContext.location.name}
+    />
   );
 }
 
-function AdminOrdersPageContent() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const locationId = searchParams.get("location");
-
-  const [locations, setLocations] = useState<LocationSummary[]>([]);
+function OrdersQueue({
+  locationId,
+  locationName,
+}: {
+  locationId: string;
+  locationName: string;
+}) {
   // null = not loaded yet for the current location (distinct from "loaded,
-  // zero results"), which is what drives the loading/empty text below
-  // without a separate boolean flag being set synchronously in an effect.
+  // zero results").
   const [orders, setOrders] = useState<StoreOrderSummary[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [state, setState] = useState<"ok" | "forbidden" | "error">("ok");
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const result = await getActiveStoreOrdersFromBrowser(locationId);
+    if (result.outcome === "forbidden") {
+      setState("forbidden");
+      return;
+    }
+    if (result.outcome === "error") {
+      setState("error");
+      return;
+    }
+    setState("ok");
+    setNotice(null);
+    setOrders(result.orders);
+  }, [locationId]);
 
   useEffect(() => {
-    getLocationsFromBrowser()
-      .then(setLocations)
-      .catch(() => setLoadError("Could not load locations."));
-  }, []);
-
-  useEffect(() => {
-    if (!locationId) return;
     let cancelled = false;
-    getActiveStoreOrdersFromBrowser(locationId)
-      .then((result) => {
-        if (cancelled) return;
-        setOrders(result);
-        setLoadError(null);
-      })
-      .catch(() => {
-        if (!cancelled) setLoadError("Could not load orders for this location.");
-      });
+    getActiveStoreOrdersFromBrowser(locationId).then((result) => {
+      if (cancelled) return;
+      if (result.outcome === "forbidden") {
+        setState("forbidden");
+      } else if (result.outcome === "error") {
+        setState("error");
+      } else {
+        setOrders(result.orders);
+      }
+    });
     return () => {
       cancelled = true;
     };
   }, [locationId]);
 
-  // Only for explicit user-triggered refreshes (button click, or after a
-  // conflict) — never called from the effect above, so setting state
-  // synchronously here is a normal event-handler update, not an effect one.
-  async function refreshOrders() {
-    if (!locationId) return;
-    try {
-      const result = await getActiveStoreOrdersFromBrowser(locationId);
-      setOrders(result);
-      setLoadError(null);
-    } catch {
-      setLoadError("Could not load orders for this location.");
-    }
-  }
-
-  function handleLocationChange(nextLocationId: string) {
-    const params = new URLSearchParams(searchParams.toString());
-    if (nextLocationId) {
-      params.set("location", nextLocationId);
-    } else {
-      params.delete("location");
-    }
-    router.push(`/admin/orders?${params.toString()}`);
-  }
-
   async function handleAdvance(order: StoreOrderSummary) {
-    if (!locationId) return;
     const outcome = await advanceStoreOrderStatusFromBrowser(
       order.orderId,
       locationId,
       order.status,
     );
 
+    if (outcome.outcome === "forbidden") {
+      setState("forbidden");
+      return;
+    }
     if (outcome.outcome === "conflict") {
-      // Someone else already acted on this order — resync with the server
-      // rather than guessing what the current state is.
-      setLoadError(outcome.message);
-      await refreshOrders();
+      // Someone else already acted — resync rather than guess.
+      setNotice(outcome.message);
+      await load();
       return;
     }
     if (outcome.outcome === "error") {
-      setLoadError(outcome.message);
+      setNotice(outcome.message);
       return;
     }
 
@@ -133,8 +168,6 @@ function AdminOrdersPageContent() {
     setOrders((current) => {
       if (!current) return current;
       if (!isActiveOrderStatus(nextStatus)) {
-        // Completed orders leave the active queue immediately, without
-        // waiting on a full refetch.
         return current.filter((o) => o.orderId !== order.orderId);
       }
       return current.map((o) =>
@@ -143,78 +176,72 @@ function AdminOrdersPageContent() {
     });
   }
 
-  const selectedLocation = locations.find((l) => l.id === locationId);
+  const header = (
+    <AdminPageHeader
+      title="Orders"
+      description="Work the live queue for this location."
+      context={{ label: locationName, kind: "location" }}
+      actions={
+        state === "ok" ? (
+          <Button variant="secondary" onClick={() => void load()}>
+            Refresh
+          </Button>
+        ) : undefined
+      }
+    />
+  );
+
+  if (state === "forbidden") {
+    return (
+      <AdminPage>
+        {header}
+        <AdminForbidden />
+      </AdminPage>
+    );
+  }
+  if (state === "error") {
+    return (
+      <AdminPage>
+        {header}
+        <AdminErrorState
+          description="Couldn't load the order queue for this location."
+          onRetry={() => void load()}
+        />
+      </AdminPage>
+    );
+  }
 
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-8">
-      <PageHeader
-        title="Store orders"
-        subtitle={selectedLocation ? selectedLocation.name : "Select a location"}
-      />
+    <AdminPage>
+      {header}
 
-      <Card className="flex flex-col gap-2">
-        <label className="flex flex-col gap-1 text-sm text-text-secondary">
-          Location
-          <select
-            value={locationId ?? ""}
-            onChange={(event) => handleLocationChange(event.target.value)}
-            className="min-h-11 rounded-xl border border-border-default bg-surface-card px-3 py-2 text-base text-text-primary"
-          >
-            <option value="">Select a location…</option>
-            {locations.map((location) => (
-              <option key={location.id} value={location.id}>
-                {location.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </Card>
+      {notice ? (
+        <Card tone="subtle" className="text-sm text-status-warning">
+          {notice}
+        </Card>
+      ) : null}
 
-      {!locationId ? (
-        <p className="text-sm text-text-muted">
-          Choose a location above to see its active orders.
-        </p>
+      {orders === null ? (
+        <AdminLoading label="Loading orders" />
+      ) : orders.length === 0 ? (
+        <AdminEmptyState
+          title="No active orders"
+          description="Nothing is in the queue for this location right now."
+        />
       ) : (
-        <>
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-text-muted">
-              {orders === null
-                ? "Loading…"
-                : `${orders.length} active order${orders.length === 1 ? "" : "s"}`}
-            </p>
-            <button
-              type="button"
-              onClick={refreshOrders}
-              className="text-sm font-medium text-text-primary underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-            >
-              Refresh
-            </button>
-          </div>
-
-          {loadError ? (
-            <Card tone="subtle" className="text-sm text-status-warning">
-              {loadError}
-            </Card>
-          ) : null}
-
-          {orders !== null && orders.length === 0 && !loadError ? (
-            <p className="text-sm text-text-muted">No active orders right now.</p>
-          ) : (
-            <ul className="flex flex-col gap-3">
-              {(orders ?? []).map((order) => (
-                <li key={order.orderId}>
-                  <OrderCard
-                    order={order}
-                    locationId={locationId}
-                    onAdvance={() => handleAdvance(order)}
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
+        <ul className="flex flex-col gap-3">
+          {orders.map((order) => (
+            <li key={order.orderId}>
+              <OrderCard
+                order={order}
+                locationId={locationId}
+                onAdvance={() => handleAdvance(order)}
+              />
+            </li>
+          ))}
+        </ul>
       )}
-    </main>
+    </AdminPage>
   );
 }
 
@@ -244,8 +271,8 @@ function OrderCard({
       <div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
           <Link
-            href={`/admin/orders/${order.orderId}?location=${locationId}`}
-            className="text-base font-semibold text-text-primary underline-offset-2 hover:underline"
+            href={`/admin/orders/${order.orderId}?location=${encodeURIComponent(locationId)}`}
+            className="text-base font-semibold text-text-primary underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
           >
             #{order.orderNumber}
           </Link>
@@ -257,7 +284,7 @@ function OrderCard({
             })}
           </span>
         </div>
-        <StatusBadge status={order.status} />
+        <OrderStatusBadge status={order.status} />
       </div>
 
       <ul className="flex flex-col gap-1">
@@ -279,24 +306,11 @@ function OrderCard({
           {formatPrice(order.subtotal, order.currency)}
         </span>
         {nextActionLabel ? (
-          <button
-            type="button"
-            onClick={handleClick}
-            disabled={advancing}
-            className="flex min-h-11 items-center justify-center rounded-xl bg-status-success/10 px-4 py-2 text-sm font-semibold text-status-success disabled:bg-surface-subtle disabled:text-text-muted"
-          >
+          <Button onClick={handleClick} disabled={advancing}>
             {advancing ? "Updating…" : nextActionLabel}
-          </button>
+          </Button>
         ) : null}
       </div>
     </Card>
-  );
-}
-
-function StatusBadge({ status }: { status: OrderStatus }) {
-  return (
-    <span className="inline-flex shrink-0 items-center rounded-full bg-surface-subtle px-2.5 py-1 text-xs font-medium text-text-secondary">
-      {STATUS_LABEL[status]}
-    </span>
   );
 }

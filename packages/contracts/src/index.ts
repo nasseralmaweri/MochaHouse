@@ -475,16 +475,46 @@ export interface InternalSignInResponse {
   expiresInSeconds: number;
 }
 
-// GET /api/v1/internal/me — the mapped InternalUser for the authenticated
-// internal identity. Only ever returned for an ACTIVE user (the guard
-// rejects every other state before the controller runs), so `status` is
-// always "ACTIVE" here; it is included for symmetry and forward
-// compatibility, not as a branch the caller must handle.
+// The mapped InternalUser for the authenticated internal identity. Only
+// ever returned for an ACTIVE user (the guard rejects every other state
+// before the controller runs), so `status` is always "ACTIVE" here; it is
+// included for symmetry and forward compatibility, not as a branch the
+// caller must handle.
 export interface InternalUserProfile {
   id: string;
   email: string;
   displayName: string | null;
   status: InternalUserStatus;
+}
+
+// The minimum authorization summary the Admin shell needs to render a
+// personalized workspace (Milestone 5C). It is a DERIVED, read-only view of
+// the 5B authorization model — never the model itself. It deliberately
+// exposes NO role names/keys/ids, NO assignment ids, and NO raw scope rows;
+// the backend remains the sole authorization authority and every Admin API
+// call is still guarded server-side regardless of what the shell renders.
+//
+//   permissions  — the effective InternalPermissionKey values the user
+//                  holds through at least one valid scope (flat; drives
+//                  UI nav/control visibility only). [] for a user with no
+//                  role assignments.
+//   isCorporate  — the user holds at least one CORPORATE-scoped grant.
+//   locations    — the ACTIVE locations the user may operate on: every
+//                  active location when isCorporate, otherwise only the
+//                  active locations referenced by the user's LOCATION
+//                  grants. [] when neither applies.
+export interface InternalAuthorizationSummary {
+  permissions: InternalPermissionKey[];
+  isCorporate: boolean;
+  locations: LocationSummary[];
+}
+
+// GET /api/v1/internal/me — the authenticated internal user plus the
+// authorization summary above. Guarded by InternalAuthGuard only (any
+// ACTIVE internal user may read their own summary — no PermissionGuard).
+export interface InternalMeResponse {
+  user: InternalUserProfile;
+  authorization: InternalAuthorizationSummary;
 }
 
 // --- Internal authorization: permissions & scope (Milestone 5B) --------

@@ -269,6 +269,15 @@ export interface InternalUserProfile {
     displayName: string | null;
     status: InternalUserStatus;
 }
+export interface InternalAuthorizationSummary {
+    permissions: InternalPermissionKey[];
+    isCorporate: boolean;
+    locations: LocationSummary[];
+}
+export interface InternalMeResponse {
+    user: InternalUserProfile;
+    authorization: InternalAuthorizationSummary;
+}
 export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "locations.manage_digital_ordering"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];

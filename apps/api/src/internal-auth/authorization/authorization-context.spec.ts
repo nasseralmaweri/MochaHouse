@@ -84,4 +84,40 @@ describe('AuthorizationContext', () => {
     expect(ctx.has('orders.view')).toBe(false);
     expect(ctx.authorizedLocations('orders.view')).toEqual({ kind: 'none' });
   });
+
+  describe('summarize() (Milestone 5C shell projection)', () => {
+    it('empty context', () => {
+      expect(AuthorizationContext.empty().summarize()).toEqual({
+        permissions: [],
+        isCorporate: false,
+        locationIds: [],
+      });
+    });
+
+    it('mixed corporate + location grants', () => {
+      const ctx = AuthorizationContext.of({
+        'orders.view': [
+          { scopeType: 'LOCATION', scopeId: 'loc-2' },
+          { scopeType: 'LOCATION', scopeId: 'loc-1' },
+        ],
+        'catalog.products.edit': [{ scopeType: 'CORPORATE', scopeId: null }],
+      });
+      expect(ctx.summarize()).toEqual({
+        permissions: ['catalog.products.edit', 'orders.view'],
+        isCorporate: true,
+        locationIds: ['loc-1', 'loc-2'],
+      });
+    });
+
+    it('a CORPORATE-only permission held only via LOCATION scope is not summarised as held', () => {
+      const ctx = AuthorizationContext.of({
+        'catalog.products.edit': [{ scopeType: 'LOCATION', scopeId: 'loc-1' }],
+      });
+      expect(ctx.summarize()).toEqual({
+        permissions: [],
+        isCorporate: false,
+        locationIds: [],
+      });
+    });
+  });
 });

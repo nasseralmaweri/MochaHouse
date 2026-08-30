@@ -2,7 +2,6 @@ import type {
   AdvanceOrderStatusResponse,
   CheckoutRequest,
   LocationMenuResponse,
-  LocationSummary,
   OrderConfirmation,
   OrderStatus,
   OrderStatusResponse,
@@ -135,76 +134,108 @@ async function safeJson(response: Response): Promise<{ outcome?: string; message
   }
 }
 
-// --- Store queue (INTERNAL — protected by InternalAuthGuard, Milestone 5A)
-// These calls run in the browser (the queue is location-picker driven), so
-// they go through this app's own server-side proxy
-// (/api/internal/admin/*, see app/api/internal/admin/[...path]/route.ts)
-// rather than hitting the API directly: the proxy reads the HttpOnly
-// mh_internal_session cookie and forwards it as the internal Bearer token,
-// which client-side JS can never see. A 401 here means the internal session
-// is gone/expired — bounce to the internal sign-in page (the /admin layout
-// already gate-keeps the first render).
+// --- Admin store queue (INTERNAL — InternalAuthGuard + PermissionGuard)
+// These calls run in the browser and go through this app's server-side
+// proxy (/api/internal/admin/*, see app/api/internal/admin/[...path]/route.ts):
+// the proxy reads the HttpOnly mh_internal_session cookie and forwards it
+// as the internal Bearer token, which client-side JS can never see.
+//
+// Failure modes are kept distinct (Milestone 5C):
+//   401 -> the internal session is gone; bounce to the internal sign-in
+//          page (a full navigation, so the server /admin boundary re-runs).
+//   403 -> a permission/scope limit; surfaced as { outcome: "forbidden" }
+//          so the page can render AdminForbidden (NOT a login prompt).
+//   404 -> resource-not-found.
+//   5xx / network -> recoverable error.
+//
+// The authorization-aware location list is NOT fetched here any more — the
+// Admin shell gets it from GET /internal/me (see lib/internal-auth/session).
 
 const INTERNAL_ADMIN_PROXY = "/api/internal/admin";
 
 function redirectToInternalSignIn(): void {
   if (typeof window !== "undefined") {
-    // A full-document navigation is intentional here: the internal session
-    // has expired, so we want the browser to drop all client state and
-    // re-run the server-side /admin auth boundary from scratch. A soft
-    // router push would keep stale state around.
+    // A full-document navigation is intentional: the internal session has
+    // expired, so the browser should drop all client state and re-run the
+    // server-side /admin auth boundary from scratch.
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.href = "/internal/sign-in";
   }
 }
 
-export async function getLocationsFromBrowser(): Promise<LocationSummary[]> {
-  const response = await fetch(`${getPublicApiUrl()}/locations`);
-  if (!response.ok) {
-    throw new Error(`Failed to load locations (${response.status}).`);
-  }
-  return response.json() as Promise<LocationSummary[]>;
-}
+export type StoreOrdersResult =
+  | { outcome: "success"; orders: StoreOrderSummary[] }
+  | { outcome: "forbidden" }
+  | { outcome: "error" };
 
 export async function getActiveStoreOrdersFromBrowser(
   locationId: string,
-): Promise<StoreOrderSummary[]> {
-  const response = await fetch(
-    `${INTERNAL_ADMIN_PROXY}/orders?locationId=${encodeURIComponent(locationId)}`,
-  );
+): Promise<StoreOrdersResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/orders?locationId=${encodeURIComponent(locationId)}`,
+    );
+  } catch {
+    return { outcome: "error" };
+  }
   if (response.status === 401) {
     redirectToInternalSignIn();
-    throw new Error("Your internal session has expired. Sign in again.");
+    return { outcome: "error" };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
   }
   if (!response.ok) {
-    throw new Error(`Failed to load active orders (${response.status}).`);
+    return { outcome: "error" };
   }
-  return response.json() as Promise<StoreOrderSummary[]>;
+  return {
+    outcome: "success",
+    orders: (await response.json()) as StoreOrderSummary[],
+  };
 }
+
+export type StoreOrderDetailResult =
+  | { outcome: "success"; order: StoreOrderDetail }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "error" };
 
 export async function getStoreOrderDetailFromBrowser(
   orderId: string,
   locationId: string,
-): Promise<StoreOrderDetail | null> {
-  const response = await fetch(
-    `${INTERNAL_ADMIN_PROXY}/orders/${orderId}?locationId=${encodeURIComponent(locationId)}`,
-  );
+): Promise<StoreOrderDetailResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/orders/${orderId}?locationId=${encodeURIComponent(locationId)}`,
+    );
+  } catch {
+    return { outcome: "error" };
+  }
   if (response.status === 401) {
     redirectToInternalSignIn();
-    throw new Error("Your internal session has expired. Sign in again.");
+    return { outcome: "error" };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
   }
   if (response.status === 404) {
-    return null;
+    return { outcome: "not-found" };
   }
   if (!response.ok) {
-    throw new Error(`Failed to load order detail (${response.status}).`);
+    return { outcome: "error" };
   }
-  return response.json() as Promise<StoreOrderDetail>;
+  return {
+    outcome: "success",
+    order: (await response.json()) as StoreOrderDetail,
+  };
 }
 
 export type AdvanceResult =
   | { outcome: "success"; result: AdvanceOrderStatusResponse }
   | { outcome: "conflict"; message: string }
+  | { outcome: "forbidden" }
   | { outcome: "error"; message: string };
 
 export async function advanceStoreOrderStatusFromBrowser(
@@ -229,6 +260,10 @@ export async function advanceStoreOrderStatusFromBrowser(
       outcome: "error",
       message: "Your internal session has expired. Sign in again.",
     };
+  }
+
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
   }
 
   if (response.status === 409) {

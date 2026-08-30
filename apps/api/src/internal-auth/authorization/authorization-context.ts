@@ -134,4 +134,46 @@ export class AuthorizationContext {
       );
     }
   }
+
+  // A DERIVED, read-only projection for the Admin shell (Milestone 5C). It
+  // never exposes role names/ids or raw grant rows — only:
+  //   permissions  — the effective keys the user holds through a valid
+  //                  scope type (same "held" definition the guard uses).
+  //   isCorporate  — the user has at least one CORPORATE-scoped grant.
+  //   locationIds  — the union of Location ids referenced by the user's
+  //                  LOCATION grants (the caller resolves these to active
+  //                  Location rows; a CORPORATE user is given every active
+  //                  location instead).
+  // This changes no authorization decision — it only summarises the context
+  // that assertCanActOnLocation / assertCorporate already enforce.
+  summarize(): {
+    permissions: InternalPermissionKey[];
+    isCorporate: boolean;
+    locationIds: string[];
+  } {
+    const permissions: InternalPermissionKey[] = [];
+    const locationIds = new Set<string>();
+    let isCorporate = false;
+
+    for (const key of this.grants.keys()) {
+      const effective = this.effectiveGrants(key);
+      if (effective.length === 0) {
+        continue;
+      }
+      permissions.push(key);
+      for (const grant of effective) {
+        if (grant.scopeType === 'CORPORATE') {
+          isCorporate = true;
+        } else if (grant.scopeType === 'LOCATION' && grant.scopeId) {
+          locationIds.add(grant.scopeId);
+        }
+      }
+    }
+
+    return {
+      permissions: permissions.sort(),
+      isCorporate,
+      locationIds: [...locationIds].sort(),
+    };
+  }
 }
