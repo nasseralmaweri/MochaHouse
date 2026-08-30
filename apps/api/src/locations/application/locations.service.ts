@@ -4,6 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  AdminLocationDetail,
+  AdminLocationSummary,
   LocationMenuResponse,
   LocationSummary,
 } from '@mocha-house/contracts';
@@ -195,6 +197,81 @@ export class LocationsService {
     };
   }
 
+  // --- Admin read experience (Milestone 5D-1) -------------------------
+  // Guarded by InternalAuthGuard + PermissionGuard + `locations.view` at
+  // the controller. This is the Admin-authoritative location read: it must
+  // NOT be the public `findAll` (that is unauthenticated and active-only).
+  // Scope is resource-level, from the caller's authorization context:
+  //   CORPORATE `locations.view` -> every location, active or not.
+  //   LOCATION  `locations.view` -> only the granted location ids.
+  // PermissionGuard has already proven the permission is held through some
+  // valid scope, so `authorizedLocations` is never `none` here; it is still
+  // handled defensively.
+  async listAdminLocations(
+    authorization: AuthorizationContext,
+  ): Promise<AdminLocationSummary[]> {
+    const authorized = authorization.authorizedLocations('locations.view');
+
+    const where =
+      authorized.kind === 'all'
+        ? {}
+        : authorized.kind === 'locations'
+          ? { id: { in: [...authorized.locationIds] } }
+          : { id: { in: [] as string[] } };
+
+    const locations = await this.prisma.location.findMany({
+      where,
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    });
+
+    return locations.map(toAdminLocationSummary);
+  }
+
+  async getAdminLocationDetail(
+    locationId: string,
+    authorization: AuthorizationContext,
+  ): Promise<AdminLocationDetail> {
+    // Resource-level authorization BEFORE the row is read — a caller not
+    // authorized for this location gets 403, never a 404 that would leak
+    // whether the id exists.
+    authorization.assertCanActOnLocation('locations.view', locationId);
+
+    const location = await this.prisma.location.findUnique({
+      where: { id: locationId },
+      include: {
+        menus: {
+          where: { isActive: true, menu: { isActive: true } },
+          orderBy: { menuId: 'asc' },
+          include: { menu: true },
+        },
+      },
+    });
+
+    if (!location) {
+      throw new NotFoundException('Location not found.');
+    }
+
+    const activeAssignment = location.menus[0] ?? null;
+    let assignedMenu: AdminLocationDetail['assignedMenu'] = null;
+    if (activeAssignment) {
+      const productCount = await this.prisma.menuProduct.count({
+        where: { menuId: activeAssignment.menuId, isActive: true },
+      });
+      assignedMenu = {
+        id: activeAssignment.menu.id,
+        name: activeAssignment.menu.name,
+        slug: activeAssignment.menu.slug,
+        isActive: activeAssignment.menu.isActive,
+        productCount,
+      };
+    }
+
+    return {
+      ...toAdminLocationSummary(location),
+      assignedMenu,
+    };
+  }
+
   async updateDigitalOrdering(
     locationId: string,
     isDigitalOrderingEnabled: boolean,
@@ -240,4 +317,20 @@ export class LocationsService {
       },
     });
   }
+}
+
+function toAdminLocationSummary(location: {
+  id: string;
+  name: string;
+  slug: string;
+  isActive: boolean;
+  isDigitalOrderingEnabled: boolean;
+}): AdminLocationSummary {
+  return {
+    id: location.id,
+    name: location.name,
+    slug: location.slug,
+    isActive: location.isActive,
+    isDigitalOrderingEnabled: location.isDigitalOrderingEnabled,
+  };
 }

@@ -28,17 +28,41 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(adminNavItems(caps).map((i) => i.key)).toEqual(["dashboard"]);
   });
 
-  it("does not add Catalog / Locations / Users / anything else in 5C", () => {
+  it("shows Locations when the user holds locations.view (any scope)", () => {
+    const items = adminNavItems({
+      "locations.view": { corporate: false, locationIds: ["loc-a"] },
+    });
+    expect(items.map((i) => i.key)).toEqual(["dashboard", "locations"]);
+    expect(items.find((i) => i.key === "locations")?.href).toBe(
+      "/admin/locations",
+    );
+  });
+
+  it("hides Locations without locations.view even with adjacent location permissions", () => {
+    const caps: AdminCapabilities = {
+      "locations.manage_digital_ordering": {
+        corporate: false,
+        locationIds: ["loc-a"],
+      },
+      "locations.edit": { corporate: true, locationIds: [] },
+    };
+    expect(adminNavItems(caps).map((i) => i.key)).toEqual(["dashboard"]);
+  });
+
+  it("does not add Catalog / Menu / Users / anything without a shipped page", () => {
     const caps: AdminCapabilities = {
       "orders.view": { corporate: true, locationIds: [] },
       "orders.manage_status": { corporate: true, locationIds: [] },
       "catalog.products.edit": { corporate: true, locationIds: [] },
       "catalog.menu.manage": { corporate: true, locationIds: [] },
       "catalog.overrides.manage": { corporate: true, locationIds: [] },
+      "locations.view": { corporate: true, locationIds: [] },
+      "locations.edit": { corporate: true, locationIds: [] },
       "locations.manage_digital_ordering": { corporate: true, locationIds: [] },
     };
     expect(adminNavItems(caps).map((i) => i.key).sort()).toEqual([
       "dashboard",
+      "locations",
       "orders",
     ]);
   });
@@ -69,5 +93,17 @@ describe("isNavItemActive", () => {
     expect(isNavItemActive(orders, "/admin/orders")).toBe(true);
     expect(isNavItemActive(orders, "/admin/orders/abc123")).toBe(true);
     expect(isNavItemActive(orders, "/admin")).toBe(false);
+  });
+
+  it("Locations is active on the list and any detail route", () => {
+    const locations = {
+      key: "locations",
+      label: "Locations",
+      href: "/admin/locations",
+    };
+    expect(isNavItemActive(locations, "/admin/locations")).toBe(true);
+    expect(isNavItemActive(locations, "/admin/locations/loc-123")).toBe(true);
+    expect(isNavItemActive(locations, "/admin")).toBe(false);
+    expect(isNavItemActive(locations, "/admin/orders")).toBe(false);
   });
 });

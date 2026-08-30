@@ -6,15 +6,16 @@ export interface AdminNavItem {
   href: string;
 }
 
-// The Admin sidebar for Milestone 5C. Only two destinations exist as real
-// pages:
+// The Admin sidebar. Destinations that exist as real pages:
 //   - Dashboard: any authenticated ACTIVE internal user (even one with no
 //     role assignments) can reach it.
 //   - Orders: shown only if the user effectively holds `orders.view`
 //     somewhere.
+//   - Locations: shown only if the user effectively holds `locations.view`
+//     somewhere (Milestone 5D-1 — list + detail only).
 // Driven by the capability map, never a role name. No "coming soon" items,
-// no fake routes — future modules (Catalog, Locations, Users, …) are added
-// here only when their pages ship.
+// no fake routes — future modules (Catalog, Menu, Users, …) are added here
+// only when their pages ship.
 export function adminNavItems(
   capabilities: AdminCapabilities,
 ): AdminNavItem[] {
@@ -24,6 +25,14 @@ export function adminNavItems(
 
   if (can(capabilities, "orders.view")) {
     items.push({ key: "orders", label: "Orders", href: "/admin/orders" });
+  }
+
+  if (can(capabilities, "locations.view")) {
+    items.push({
+      key: "locations",
+      label: "Locations",
+      href: "/admin/locations",
+    });
   }
 
   return items;

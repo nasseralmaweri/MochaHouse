@@ -63,6 +63,40 @@ export interface LocationMenuResponse {
   };
 }
 
+// --- Admin locations: read experience (Milestone 5D-1) ----------------
+// The Admin-facing view of a Location record. Distinct from the customer
+// `LocationSummary` above: this is served only from the guarded
+// `/api/v1/admin/locations*` routes (InternalAuthGuard + PermissionGuard +
+// `locations.view` + resource-level scope), and it deliberately exposes
+// `isActive` — an Admin user may see and open inactive locations, which the
+// public endpoints filter out entirely. No address / hours / timezone /
+// contact / fulfillment fields: those are not modeled yet and are out of
+// scope for this slice.
+export interface AdminLocationSummary {
+  id: string;
+  name: string;
+  slug: string;
+  isActive: boolean;
+  isDigitalOrderingEnabled: boolean;
+}
+
+// The menu currently assigned to a location through an active LocationMenu
+// row (active menu only). Null when the location has no active assigned
+// menu. `productCount` is the number of active MenuProduct rows on that
+// menu — a cheap count from the same relationship, not a second traversal
+// of the effective-menu resolver.
+export interface AdminLocationAssignedMenu {
+  id: string;
+  name: string;
+  slug: string;
+  isActive: boolean;
+  productCount: number;
+}
+
+export interface AdminLocationDetail extends AdminLocationSummary {
+  assignedMenu: AdminLocationAssignedMenu | null;
+}
+
 // --- Checkout / orders (Milestone 3, first transaction slice) ----------
 
 export type PaymentAttemptStatus = "PENDING" | "SUCCEEDED" | "DECLINED" | "FAILED";
@@ -550,15 +584,20 @@ export interface InternalMeResponse {
 // select from this list. Roles and role→permission and user→role→scope
 // assignments are database data; this vocabulary is code.
 //
-// Keep this minimal: only permissions that a CURRENT Admin route needs.
-// Milestone 5B deliberately does not pre-declare a future permission
-// catalog.
+// Keep this minimal: only permissions a CURRENT Admin route needs, or one
+// approved to land alongside its slice. `locations.edit` is the single
+// deliberate exception — an approved Milestone 5D product decision that is
+// declared here in 5D-1 but not wired to a route until 5D-2, so the
+// vocabulary and the seed role sync are ready. This is not licence to
+// pre-declare a speculative future catalog.
 export const INTERNAL_PERMISSION_KEYS = [
   "orders.view",
   "orders.manage_status",
   "catalog.products.edit",
   "catalog.menu.manage",
   "catalog.overrides.manage",
+  "locations.view",
+  "locations.edit",
   "locations.manage_digital_ordering",
 ] as const;
 
@@ -619,6 +658,18 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     description:
       "Set or clear a location's price and availability overrides.",
     allowedScopeTypes: ["CORPORATE", "LOCATION"],
+  },
+  "locations.view": {
+    key: "locations.view",
+    description:
+      "View Admin location records (including inactive) within the granted scope. A LOCATION grant sees only its own locations; a CORPORATE grant sees all.",
+    allowedScopeTypes: ["CORPORATE", "LOCATION"],
+  },
+  "locations.edit": {
+    key: "locations.edit",
+    description:
+      "Edit a location record (name, active state). A corporate-scoped operation — it is not yet wired to any route (Milestone 5D-2).",
+    allowedScopeTypes: ["CORPORATE"],
   },
   "locations.manage_digital_ordering": {
     key: "locations.manage_digital_ordering",

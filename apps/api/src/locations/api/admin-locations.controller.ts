@@ -1,4 +1,12 @@
-import { Body, Controller, Param, Patch, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { LocationsService } from '../application/locations.service';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
@@ -17,6 +25,29 @@ interface UpdateDigitalOrderingBody {
 @Controller('api/v1/admin/locations')
 export class AdminLocationsController {
   constructor(private readonly locationsService: LocationsService) {}
+
+  // --- Admin read experience (Milestone 5D-1) -----------------------
+  // `locations.view` is valid at CORPORATE or LOCATION scope. The list is
+  // scope-filtered in the service from `request.authorization`; the detail
+  // route calls `assertCanActOnLocation` before the row is read, so a
+  // cross-location request is a 403 and never leaks through a 404.
+  @RequirePermission('locations.view')
+  @Get()
+  listLocations(@Req() request: InternalAuthenticatedRequest) {
+    return this.locationsService.listAdminLocations(request.authorization!);
+  }
+
+  @RequirePermission('locations.view')
+  @Get(':locationId')
+  getLocation(
+    @Param('locationId') locationId: string,
+    @Req() request: InternalAuthenticatedRequest,
+  ) {
+    return this.locationsService.getAdminLocationDetail(
+      locationId,
+      request.authorization!,
+    );
+  }
 
   @RequirePermission('locations.manage_digital_ordering')
   @Patch(':locationId/digital-ordering')

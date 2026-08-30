@@ -55,6 +55,23 @@ export interface LocationMenuResponse {
         products: EffectiveMenuProduct[];
     };
 }
+export interface AdminLocationSummary {
+    id: string;
+    name: string;
+    slug: string;
+    isActive: boolean;
+    isDigitalOrderingEnabled: boolean;
+}
+export interface AdminLocationAssignedMenu {
+    id: string;
+    name: string;
+    slug: string;
+    isActive: boolean;
+    productCount: number;
+}
+export interface AdminLocationDetail extends AdminLocationSummary {
+    assignedMenu: AdminLocationAssignedMenu | null;
+}
 export type PaymentAttemptStatus = "PENDING" | "SUCCEEDED" | "DECLINED" | "FAILED";
 export type OrderStatus = "RECEIVED" | "ACCEPTED" | "PREPARING" | "READY" | "COMPLETED";
 export interface GuestContactInput {
@@ -283,7 +300,7 @@ export interface InternalMeResponse {
     user: InternalUserProfile;
     authorization: InternalAuthorizationSummary;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "locations.manage_digital_ordering"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "locations.view", "locations.edit", "locations.manage_digital_ordering"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];

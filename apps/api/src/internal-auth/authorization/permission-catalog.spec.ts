@@ -6,12 +6,15 @@ import {
 } from './permission-catalog';
 
 describe('internal permission catalog', () => {
-  it('is exactly the approved Milestone 5B vocabulary — nothing more', () => {
+  it('is exactly the approved vocabulary — nothing more', () => {
     expect([...INTERNAL_PERMISSION_KEYS].sort()).toEqual(
       [
         'catalog.menu.manage',
         'catalog.overrides.manage',
         'catalog.products.edit',
+        // Milestone 5D-1
+        'locations.view',
+        'locations.edit',
         'locations.manage_digital_ordering',
         'orders.manage_status',
         'orders.view',
@@ -36,6 +39,8 @@ describe('internal permission catalog', () => {
       'CORPORATE',
     ]);
     expect(allowedScopeTypesFor('catalog.menu.manage')).toEqual(['CORPORATE']);
+    // locations.edit is a corporate-scoped operation (Milestone 5D-2).
+    expect(allowedScopeTypesFor('locations.edit')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {
@@ -43,6 +48,7 @@ describe('internal permission catalog', () => {
       'orders.view',
       'orders.manage_status',
       'catalog.overrides.manage',
+      'locations.view',
       'locations.manage_digital_ordering',
     ] as const) {
       expect([...allowedScopeTypesFor(key)].sort()).toEqual([

@@ -34,6 +34,9 @@ describe('Internal admin authorization matrix (integration)', () => {
 
   let locA: string;
   let locB: string;
+  // An INACTIVE location, for asserting an authorized Admin read still sees
+  // it (Milestone 5D-1) — the public endpoints filter inactive rows out.
+  let locCInactive: string;
   let menuId: string;
   let productId: string;
   let orderIdA: string;
@@ -142,6 +145,16 @@ describe('Internal admin authorization matrix (integration)', () => {
         },
       })
     ).id;
+    locCInactive = (
+      await prisma.location.create({
+        data: {
+          name: `Authz C ${suffix}`,
+          slug: `authz-c-${suffix}`,
+          isActive: false,
+          isDigitalOrderingEnabled: false,
+        },
+      })
+    ).id;
     await prisma.locationMenu.create({
       data: { locationId: locA, menuId, isActive: true },
     });
@@ -216,6 +229,12 @@ describe('Internal admin authorization matrix (integration)', () => {
       scopeType: 'LOCATION',
       scopeId: locA,
     });
+    // locations.view @ locA only (Milestone 5D-1).
+    const viewA = await createUser(`viewA-${suffix}`, 'ACTIVE');
+    await grant(viewA, ['locations.view'], {
+      scopeType: 'LOCATION',
+      scopeId: locA,
+    });
     // catalog.products.edit granted at LOCATION scope — must NOT authorize a
     // master edit (the permission is CORPORATE-only).
     const productsLocA = await createUser(`productsLocA-${suffix}`, 'ACTIVE');
@@ -259,7 +278,9 @@ describe('Internal admin authorization matrix (integration)', () => {
     await prisma.internalUser.deleteMany({
       where: { id: { in: Object.values(users) } },
     });
-    await prisma.location.deleteMany({ where: { id: { in: [locA, locB] } } });
+    await prisma.location.deleteMany({
+      where: { id: { in: [locA, locB, locCInactive] } },
+    });
     await app.close();
     process.env = { ...originalEnv };
   });
@@ -396,6 +417,103 @@ describe('Internal admin authorization matrix (integration)', () => {
         .patch(`/api/v1/admin/locations/${locA}/digital-ordering`)
         .set('Authorization', `Bearer ${token(`ordersA-${suffix}`)}`)
         .send({ isDigitalOrderingEnabled: true })
+        .expect(403);
+    });
+  });
+
+  // ---- Locations: Admin read experience (Milestone 5D-1) --------------
+
+  describe('locations read', () => {
+    it('a user without locations.view is denied on both read routes (403)', async () => {
+      const t = token(`digitalA-${suffix}`); // has manage_digital_ordering, not view
+      await http()
+        .get('/api/v1/admin/locations')
+        .set('Authorization', `Bearer ${t}`)
+        .expect(403);
+      await http()
+        .get(`/api/v1/admin/locations/${locA}`)
+        .set('Authorization', `Bearer ${t}`)
+        .expect(403);
+    });
+
+    it('corporate locations.view lists every location including inactive ones', async () => {
+      const t = token(`corp-${suffix}`);
+      const res = await http()
+        .get('/api/v1/admin/locations')
+        .set('Authorization', `Bearer ${t}`)
+        .expect(200);
+      const body = res.body as Array<{ id: string; isActive: boolean }>;
+      const ids = body.map((l) => l.id);
+      expect(ids).toEqual(expect.arrayContaining([locA, locB, locCInactive]));
+      expect(body.find((l) => l.id === locCInactive)?.isActive).toBe(false);
+      // Deterministic ordering: sorted by name then id.
+      const sorted = [...body].sort(
+        (a, b) =>
+          (a as { name: string }).name.localeCompare(
+            (b as { name: string }).name,
+          ) || a.id.localeCompare(b.id),
+      );
+      expect(body).toEqual(sorted);
+    });
+
+    it('LOCATION-scoped locations.view lists only the authorized location', async () => {
+      const res = await http()
+        .get('/api/v1/admin/locations')
+        .set('Authorization', `Bearer ${token(`viewA-${suffix}`)}`)
+        .expect(200);
+      const ids = (res.body as Array<{ id: string }>).map((l) => l.id);
+      expect(ids).toEqual([locA]);
+    });
+
+    it('LOCATION-scoped locations.view can open its own location detail with assigned menu', async () => {
+      const res = await http()
+        .get(`/api/v1/admin/locations/${locA}`)
+        .set('Authorization', `Bearer ${token(`viewA-${suffix}`)}`)
+        .expect(200);
+      const body = res.body as {
+        id: string;
+        assignedMenu: { id: string; productCount: number } | null;
+      };
+      expect(body.id).toBe(locA);
+      expect(body.assignedMenu?.id).toBe(menuId);
+      expect(typeof body.assignedMenu?.productCount).toBe('number');
+    });
+
+    it('LOCATION-scoped locations.view is 403 (not 404) on another location detail', async () => {
+      await http()
+        .get(`/api/v1/admin/locations/${locB}`)
+        .set('Authorization', `Bearer ${token(`viewA-${suffix}`)}`)
+        .expect(403);
+    });
+
+    it('corporate locations.view can open an inactive location detail', async () => {
+      const res = await http()
+        .get(`/api/v1/admin/locations/${locCInactive}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .expect(200);
+      const body = res.body as { isActive: boolean; assignedMenu: unknown };
+      expect(body.isActive).toBe(false);
+      expect(body.assignedMenu).toBeNull();
+    });
+
+    it('corporate locations.view gets 404 for a well-formed but unknown location id', async () => {
+      await http()
+        .get(`/api/v1/admin/locations/${randomUUID()}`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .expect(404);
+    });
+
+    it('a customer token is rejected (401) on the Admin locations read', async () => {
+      await http()
+        .get('/api/v1/admin/locations')
+        .set('Authorization', `Bearer ${customerToken()}`)
+        .expect(401);
+    });
+
+    it('a SUSPENDED user with a full corporate role is still denied the read (403)', async () => {
+      await http()
+        .get('/api/v1/admin/locations')
+        .set('Authorization', `Bearer ${token(`suspended-${suffix}`)}`)
         .expect(403);
     });
   });

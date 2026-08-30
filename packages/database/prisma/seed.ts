@@ -26,6 +26,28 @@ async function main() {
     },
   });
 
+  // A second representative location. Milestone 5D-1 introduces the Admin
+  // locations read experience and its CORPORATE-vs-LOCATION scope model; a
+  // single seeded location cannot demonstrate that a LOCATION-scoped user
+  // sees only their own location. This one is intentionally left without an
+  // assigned menu so the Admin detail view's "no assigned menu" state is
+  // also exercisable locally. It is not wired into any customer flow.
+  await prisma.location.upsert({
+    where: {
+      slug: 'ann-arbor',
+    },
+    update: {
+      isActive: true,
+      isDigitalOrderingEnabled: true,
+    },
+    create: {
+      name: 'Mocha House - Ann Arbor',
+      slug: 'ann-arbor',
+      isActive: true,
+      isDigitalOrderingEnabled: true,
+    },
+  });
+
   const category = await prisma.category.upsert({
     where: {
       slug: 'coffee',
