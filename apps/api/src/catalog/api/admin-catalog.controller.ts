@@ -65,6 +65,44 @@ export class AdminCatalogController {
     );
   }
 
+  // --- Admin menu reads (Milestone 5D-4) --------------------------
+  // `catalog.view` (CORPORATE-only). Both include inactive menus and
+  // inactive menu placements — an Admin manages both.
+  @RequirePermission('catalog.view')
+  @Get('menus')
+  listMenus(@Req() request: InternalAuthenticatedRequest) {
+    return this.catalogService.listAdminMenus(request.authorization!);
+  }
+
+  @RequirePermission('catalog.view')
+  @Get('menus/:menuId')
+  getMenu(
+    @Param('menuId') menuId: string,
+    @Req() request: InternalAuthenticatedRequest,
+  ) {
+    return this.catalogService.getAdminMenuDetail(
+      menuId,
+      request.authorization!,
+    );
+  }
+
+  // --- Admin location menu / pricing read (Milestone 5D-4) --------
+  // `catalog.overrides.manage` (CORPORATE or LOCATION). Resolves the
+  // location's assigned menu; the service checks the caller is authorized
+  // for this specific location before any read. 404 when the location has
+  // no menu.
+  @RequirePermission('catalog.overrides.manage')
+  @Get('locations/:locationId/menu')
+  getLocationMenu(
+    @Param('locationId') locationId: string,
+    @Req() request: InternalAuthenticatedRequest,
+  ) {
+    return this.catalogService.getAdminLocationMenu(
+      locationId,
+      request.authorization!,
+    );
+  }
+
   @RequirePermission('catalog.products.edit')
   @Patch('products/:productId')
   updateProduct(

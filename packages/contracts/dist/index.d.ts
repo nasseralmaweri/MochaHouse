@@ -97,6 +97,49 @@ export interface AdminUpdateProductRequest {
     basePrice?: number | null;
     isActive?: boolean;
 }
+export interface AdminMenuSummary {
+    id: string;
+    name: string;
+    slug: string;
+    isActive: boolean;
+}
+export interface AdminMenuProduct {
+    productId: string;
+    productName: string;
+    productIsActive: boolean;
+    categoryName: string;
+    standardPrice: number | null;
+    currency: string;
+    shownOnMenu: boolean;
+    displayOrder: number;
+}
+export interface AdminMenuDetail extends AdminMenuSummary {
+    products: AdminMenuProduct[];
+}
+export interface AdminLocationMenuProduct {
+    productId: string;
+    productName: string;
+    productIsActive: boolean;
+    categoryName: string;
+    currency: string;
+    shownOnMenu: boolean;
+    standardPrice: number | null;
+    locationPrice: number | null;
+    resultingPrice: number | null;
+    locationAvailability: boolean | null;
+    resultingAvailability: boolean;
+}
+export interface AdminLocationMenuResponse {
+    location: {
+        id: string;
+        name: string;
+    };
+    menu: {
+        id: string;
+        name: string;
+    };
+    products: AdminLocationMenuProduct[];
+}
 export type PaymentAttemptStatus = "PENDING" | "SUCCEEDED" | "DECLINED" | "FAILED";
 export type OrderStatus = "RECEIVED" | "ACCEPTED" | "PREPARING" | "READY" | "COMPLETED";
 export interface GuestContactInput {

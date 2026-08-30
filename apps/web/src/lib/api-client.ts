@@ -473,3 +473,139 @@ export async function updateProductFromBrowser(
     product: (await response.json()) as AdminProductDetail,
   };
 }
+
+// --- Admin menu composition + location price / availability (5D-4) -
+// These all reuse EXISTING backend routes and return nothing meaningful on
+// success (the page re-reads afterwards). One shared helper keeps the six
+// thin wrappers honest about the failure modes.
+
+export type AdminMutationResult =
+  | { outcome: "success" }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+async function adminProxyMutate(
+  path: string,
+  method: "PATCH" | "PUT" | "DELETE",
+  body?: unknown,
+): Promise<AdminMutationResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${INTERNAL_ADMIN_PROXY}${path}`, {
+      method,
+      headers:
+        body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "Please check the value and try again.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return { outcome: "success" };
+}
+
+function overridePath(
+  locationId: string,
+  menuId: string,
+  productId: string,
+  kind: "price-override" | "availability-override",
+): string {
+  return `/catalog/locations/${encodeURIComponent(locationId)}/menus/${encodeURIComponent(
+    menuId,
+  )}/products/${encodeURIComponent(productId)}/${kind}`;
+}
+
+// Turn a product's placement on a menu on / off (MenuProduct — surfaced as
+// "Shown on menu").
+export function setMenuProductShownFromBrowser(
+  menuId: string,
+  productId: string,
+  shownOnMenu: boolean,
+): Promise<AdminMutationResult> {
+  return adminProxyMutate(
+    `/catalog/menus/${encodeURIComponent(menuId)}/products/${encodeURIComponent(
+      productId,
+    )}/assignment`,
+    "PATCH",
+    { isActive: shownOnMenu },
+  );
+}
+
+// Set / clear a location-specific price (integer cents).
+export function setLocationPriceFromBrowser(
+  locationId: string,
+  menuId: string,
+  productId: string,
+  priceCents: number,
+): Promise<AdminMutationResult> {
+  return adminProxyMutate(
+    overridePath(locationId, menuId, productId, "price-override"),
+    "PUT",
+    { price: priceCents },
+  );
+}
+
+export function useStandardPriceFromBrowser(
+  locationId: string,
+  menuId: string,
+  productId: string,
+): Promise<AdminMutationResult> {
+  return adminProxyMutate(
+    overridePath(locationId, menuId, productId, "price-override"),
+    "DELETE",
+  );
+}
+
+// Set / clear a location-specific availability.
+export function setLocationAvailabilityFromBrowser(
+  locationId: string,
+  menuId: string,
+  productId: string,
+  isAvailable: boolean,
+): Promise<AdminMutationResult> {
+  return adminProxyMutate(
+    overridePath(locationId, menuId, productId, "availability-override"),
+    "PUT",
+    { isAvailable },
+  );
+}
+
+export function useStandardAvailabilityFromBrowser(
+  locationId: string,
+  menuId: string,
+  productId: string,
+): Promise<AdminMutationResult> {
+  return adminProxyMutate(
+    overridePath(locationId, menuId, productId, "availability-override"),
+    "DELETE",
+  );
+}

@@ -45,6 +45,12 @@ describe('Internal admin authorization matrix (integration)', () => {
   // Throwaway products the 5D-3 Admin catalog tests read / mutate.
   let prodEdit: string;
   let prodInactive: string;
+  // 5D-4 fixtures: an inactive menu (Admin still sees it), plus an isolated
+  // menu + product wired only to locB, so the location price/availability
+  // regression tests never touch the seeded main-menu / drip-coffee.
+  let menuInactive: string;
+  let menuPricing: string;
+  let prodPricing: string;
   let orderIdA: string;
   let paymentAttemptIdA: string;
 
@@ -159,6 +165,50 @@ describe('Internal admin authorization matrix (integration)', () => {
       })
     ).id;
 
+    // 5D-4: an inactive menu (Admin reads still include it).
+    menuInactive = (
+      await prisma.menu.create({
+        data: {
+          name: `Authz Inactive Menu ${suffix}`,
+          slug: `authz-inactive-menu-${suffix}`,
+          isActive: false,
+        },
+      })
+    ).id;
+
+    // 5D-4: an isolated menu + product assigned only to locB, so the
+    // location price / availability regression tests are fully self-contained.
+    menuPricing = (
+      await prisma.menu.create({
+        data: {
+          name: `Authz Pricing Menu ${suffix}`,
+          slug: `authz-pricing-menu-${suffix}`,
+          isActive: true,
+        },
+      })
+    ).id;
+    prodPricing = (
+      await prisma.product.create({
+        data: {
+          name: `Authz Pricing Product ${suffix}`,
+          slug: `authz-pricing-product-${suffix}`,
+          basePrice: 300,
+          currency: 'USD',
+          isActive: true,
+          categoryId: product.categoryId,
+        },
+      })
+    ).id;
+    await prisma.menuProduct.create({
+      data: {
+        menuId: menuPricing,
+        productId: prodPricing,
+        displayOrder: 1,
+        isActive: true,
+      },
+    });
+    // menuPricing is wired to locB below, once locB exists.
+
     locA = (
       await prisma.location.create({
         data: {
@@ -201,6 +251,10 @@ describe('Internal admin authorization matrix (integration)', () => {
     ).id;
     await prisma.locationMenu.create({
       data: { locationId: locA, menuId, isActive: true },
+    });
+    // 5D-4: the isolated pricing menu is assigned only to locB.
+    await prisma.locationMenu.create({
+      data: { locationId: locB, menuId: menuPricing, isActive: true },
     });
 
     // A published, active order in locA.
@@ -337,6 +391,12 @@ describe('Internal admin authorization matrix (integration)', () => {
     await prisma.locationMenu.deleteMany({
       where: { locationId: { in: [locA, locB] } },
     });
+    await prisma.menuProduct.deleteMany({
+      where: { menuId: { in: [menuPricing, menuInactive] } },
+    });
+    await prisma.menu.deleteMany({
+      where: { id: { in: [menuPricing, menuInactive] } },
+    });
     await prisma.internalUserRoleAssignment.deleteMany({
       where: { internalUserId: { in: Object.values(users) } },
     });
@@ -351,7 +411,7 @@ describe('Internal admin authorization matrix (integration)', () => {
       where: { id: { in: [locA, locB, locCInactive, locEdit] } },
     });
     await prisma.product.deleteMany({
-      where: { id: { in: [prodEdit, prodInactive] } },
+      where: { id: { in: [prodEdit, prodInactive, prodPricing] } },
     });
     await app.close();
     process.env = { ...originalEnv };
@@ -894,6 +954,374 @@ describe('Internal admin authorization matrix (integration)', () => {
         .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
         .send({ name: 'Ghost' })
         .expect(404);
+    });
+  });
+
+  // ---- Admin menus + location pricing (Milestone 5D-4) ---------------
+
+  describe('admin catalog menus: read', () => {
+    it('corporate catalog.view lists menus, including inactive ones', async () => {
+      const res = await http()
+        .get('/api/v1/admin/catalog/menus')
+        .set('Authorization', `Bearer ${token(`catalogViewer-${suffix}`)}`)
+        .expect(200);
+      const body = res.body as Array<{ id: string; isActive: boolean }>;
+      const byId = new Map(body.map((m) => [m.id, m]));
+      expect(byId.get(menuInactive)?.isActive).toBe(false);
+      expect(byId.get(menuId)?.isActive).toBe(true);
+      const sorted = [...body].sort(
+        (a, b) =>
+          (a as { name: string }).name.localeCompare(
+            (b as { name: string }).name,
+          ) || a.id.localeCompare(b.id),
+      );
+      expect(body).toEqual(sorted);
+    });
+
+    it('corporate catalog.view opens a menu detail with its products', async () => {
+      const res = await http()
+        .get(`/api/v1/admin/catalog/menus/${menuPricing}`)
+        .set('Authorization', `Bearer ${token(`catalogViewer-${suffix}`)}`)
+        .expect(200);
+      const body = res.body as {
+        id: string;
+        isActive: boolean;
+        products: Array<{
+          productId: string;
+          shownOnMenu: boolean;
+          standardPrice: number | null;
+          categoryName: string;
+        }>;
+      };
+      expect(body.id).toBe(menuPricing);
+      const placement = body.products.find(
+        (p) => p.productId === prodPricing,
+      );
+      expect(placement?.shownOnMenu).toBe(true);
+      expect(placement?.standardPrice).toBe(300);
+      expect(placement?.categoryName).toBeTruthy();
+    });
+
+    it('corporate catalog.view can open an inactive menu detail (200)', async () => {
+      const res = await http()
+        .get(`/api/v1/admin/catalog/menus/${menuInactive}`)
+        .set('Authorization', `Bearer ${token(`catalogViewer-${suffix}`)}`)
+        .expect(200);
+      expect((res.body as { isActive: boolean }).isActive).toBe(false);
+    });
+
+    it('unknown menu => 404', async () => {
+      await http()
+        .get(`/api/v1/admin/catalog/menus/${randomUUID()}`)
+        .set('Authorization', `Bearer ${token(`catalogViewer-${suffix}`)}`)
+        .expect(404);
+    });
+
+    it('a LOCATION-scoped catalog.view grant cannot satisfy the CORPORATE-only permission (403)', async () => {
+      await http()
+        .get('/api/v1/admin/catalog/menus')
+        .set('Authorization', `Bearer ${token(`catalogViewLoc-${suffix}`)}`)
+        .expect(403);
+      await http()
+        .get(`/api/v1/admin/catalog/menus/${menuId}`)
+        .set('Authorization', `Bearer ${token(`catalogViewLoc-${suffix}`)}`)
+        .expect(403);
+    });
+
+    it('a user without catalog.view is denied (403)', async () => {
+      await http()
+        .get('/api/v1/admin/catalog/menus')
+        .set('Authorization', `Bearer ${token(`ordersA-${suffix}`)}`)
+        .expect(403);
+    });
+
+    it('a customer token is rejected (401)', async () => {
+      await http()
+        .get('/api/v1/admin/catalog/menus')
+        .set('Authorization', `Bearer ${customerToken()}`)
+        .expect(401);
+    });
+
+    it('a SUSPENDED user with a full corporate role is still denied (403)', async () => {
+      await http()
+        .get('/api/v1/admin/catalog/menus')
+        .set('Authorization', `Bearer ${token(`suspended-${suffix}`)}`)
+        .expect(403);
+    });
+  });
+
+  describe('admin menu composition: toggle "shown on menu"', () => {
+    it('corporate catalog.menu.manage toggles a placement and the menu detail reflects it', async () => {
+      const shownOnMenu = async () => {
+        const res = await http()
+          .get(`/api/v1/admin/catalog/menus/${menuPricing}`)
+          .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+          .expect(200);
+        const body = res.body as {
+          products: Array<{ productId: string; shownOnMenu: boolean }>;
+        };
+        return body.products.find((p) => p.productId === prodPricing)
+          ?.shownOnMenu;
+      };
+
+      await http()
+        .patch(
+          `/api/v1/admin/catalog/menus/${menuPricing}/products/${prodPricing}/assignment`,
+        )
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ isActive: false })
+        .expect(200);
+      expect(await shownOnMenu()).toBe(false);
+
+      await http()
+        .patch(
+          `/api/v1/admin/catalog/menus/${menuPricing}/products/${prodPricing}/assignment`,
+        )
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .send({ isActive: true })
+        .expect(200);
+      expect(await shownOnMenu()).toBe(true);
+    });
+
+    it('a user lacking catalog.menu.manage is denied (403)', async () => {
+      await http()
+        .patch(
+          `/api/v1/admin/catalog/menus/${menuPricing}/products/${prodPricing}/assignment`,
+        )
+        .set('Authorization', `Bearer ${token(`catalogViewer-${suffix}`)}`)
+        .send({ isActive: false })
+        .expect(403);
+    });
+  });
+
+  describe('admin location menu: read', () => {
+    it('corporate catalog.overrides.manage reads a location menu', async () => {
+      const res = await http()
+        .get(`/api/v1/admin/catalog/locations/${locB}/menu`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .expect(200);
+      const body = res.body as {
+        location: { id: string };
+        menu: { id: string };
+        products: Array<{
+          productId: string;
+          standardPrice: number | null;
+          locationPrice: number | null;
+          resultingPrice: number | null;
+          locationAvailability: boolean | null;
+          resultingAvailability: boolean;
+        }>;
+      };
+      expect(body.location.id).toBe(locB);
+      expect(body.menu.id).toBe(menuPricing);
+      const p = body.products.find((x) => x.productId === prodPricing)!;
+      expect(p.standardPrice).toBe(300);
+      expect(p.locationPrice).toBeNull();
+      expect(p.resultingPrice).toBe(300);
+      expect(p.locationAvailability).toBeNull();
+      expect(p.resultingAvailability).toBe(true);
+    });
+
+    it('LOCATION(locA) catalog.overrides.manage can read locA', async () => {
+      await http()
+        .get(`/api/v1/admin/catalog/locations/${locA}/menu`)
+        .set('Authorization', `Bearer ${token(`overridesA-${suffix}`)}`)
+        .expect(200);
+    });
+
+    it('LOCATION(locA) catalog.overrides.manage cannot read locB (403, not 404)', async () => {
+      await http()
+        .get(`/api/v1/admin/catalog/locations/${locB}/menu`)
+        .set('Authorization', `Bearer ${token(`overridesA-${suffix}`)}`)
+        .expect(403);
+    });
+
+    it('a user without catalog.overrides.manage is denied (403)', async () => {
+      await http()
+        .get(`/api/v1/admin/catalog/locations/${locA}/menu`)
+        .set('Authorization', `Bearer ${token(`ordersA-${suffix}`)}`)
+        .expect(403);
+    });
+
+    it('a location with no assigned menu => 404', async () => {
+      await http()
+        .get(`/api/v1/admin/catalog/locations/${locEdit}/menu`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .expect(404);
+    });
+
+    it('a customer token is rejected (401)', async () => {
+      await http()
+        .get(`/api/v1/admin/catalog/locations/${locB}/menu`)
+        .set('Authorization', `Bearer ${customerToken()}`)
+        .expect(401);
+    });
+  });
+
+  describe('admin location menu: price behavior (regression)', () => {
+    const priceOf = async (): Promise<{
+      standardPrice: number | null;
+      locationPrice: number | null;
+      resultingPrice: number | null;
+    }> => {
+      const res = await http()
+        .get(`/api/v1/admin/catalog/locations/${locB}/menu`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .expect(200);
+      const body = res.body as {
+        products: Array<{
+          productId: string;
+          standardPrice: number | null;
+          locationPrice: number | null;
+          resultingPrice: number | null;
+        }>;
+      };
+      const p = body.products.find((x) => x.productId === prodPricing)!;
+      return {
+        standardPrice: p.standardPrice,
+        locationPrice: p.locationPrice,
+        resultingPrice: p.resultingPrice,
+      };
+    };
+    // Built lazily — locB / menuPricing / prodPricing are only set in
+    // beforeAll, which runs AFTER this describe body is collected.
+    const priceBase = () =>
+      `/api/v1/admin/catalog/locations/${locB}/menus/${menuPricing}/products/${prodPricing}/price-override`;
+    const H = () => `Bearer ${token(`corp-${suffix}`)}`;
+
+    afterAll(async () => {
+      await http().delete(priceBase()).set('Authorization', H());
+      await http()
+        .patch(`/api/v1/admin/catalog/products/${prodPricing}`)
+        .set('Authorization', H())
+        .send({ basePrice: 300 });
+    });
+
+    it('no location price => resulting price is the standard price', async () => {
+      expect(await priceOf()).toEqual({
+        standardPrice: 300,
+        locationPrice: null,
+        resultingPrice: 300,
+      });
+    });
+
+    it('a location price overrides the standard price for the result', async () => {
+      await http()
+        .put(priceBase())
+        .set('Authorization', H())
+        .send({ price: 375 })
+        .expect(200);
+      expect(await priceOf()).toEqual({
+        standardPrice: 300,
+        locationPrice: 375,
+        resultingPrice: 375,
+      });
+    });
+
+    it('using the standard price again returns the result to it', async () => {
+      await http().delete(priceBase()).set('Authorization', H()).expect(200);
+      expect(await priceOf()).toEqual({
+        standardPrice: 300,
+        locationPrice: null,
+        resultingPrice: 300,
+      });
+    });
+
+    it('no standard price + a location price => the location price is used', async () => {
+      await http()
+        .patch(`/api/v1/admin/catalog/products/${prodPricing}`)
+        .set('Authorization', H())
+        .send({ basePrice: null })
+        .expect(200);
+      await http()
+        .put(priceBase())
+        .set('Authorization', H())
+        .send({ price: 375 })
+        .expect(200);
+      expect(await priceOf()).toEqual({
+        standardPrice: null,
+        locationPrice: 375,
+        resultingPrice: 375,
+      });
+    });
+
+    it('no standard price + no location price => no usable price (resultingPrice null)', async () => {
+      await http().delete(priceBase()).set('Authorization', H()).expect(200);
+      expect(await priceOf()).toEqual({
+        standardPrice: null,
+        locationPrice: null,
+        resultingPrice: null,
+      });
+    });
+  });
+
+  describe('admin location menu: availability behavior (regression)', () => {
+    const availOf = async (): Promise<{
+      locationAvailability: boolean | null;
+      resultingAvailability: boolean;
+    }> => {
+      const res = await http()
+        .get(`/api/v1/admin/catalog/locations/${locB}/menu`)
+        .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
+        .expect(200);
+      const body = res.body as {
+        products: Array<{
+          productId: string;
+          locationAvailability: boolean | null;
+          resultingAvailability: boolean;
+        }>;
+      };
+      const p = body.products.find((x) => x.productId === prodPricing)!;
+      return {
+        locationAvailability: p.locationAvailability,
+        resultingAvailability: p.resultingAvailability,
+      };
+    };
+    const availBase = () =>
+      `/api/v1/admin/catalog/locations/${locB}/menus/${menuPricing}/products/${prodPricing}/availability-override`;
+    const H = () => `Bearer ${token(`corp-${suffix}`)}`;
+
+    afterAll(async () => {
+      await http().delete(availBase()).set('Authorization', H());
+    });
+
+    it('no location availability setting => available by default', async () => {
+      expect(await availOf()).toEqual({
+        locationAvailability: null,
+        resultingAvailability: true,
+      });
+    });
+
+    it('marking unavailable makes the result unavailable', async () => {
+      await http()
+        .put(availBase())
+        .set('Authorization', H())
+        .send({ isAvailable: false })
+        .expect(200);
+      expect(await availOf()).toEqual({
+        locationAvailability: false,
+        resultingAvailability: false,
+      });
+    });
+
+    it('marking available makes the result available', async () => {
+      await http()
+        .put(availBase())
+        .set('Authorization', H())
+        .send({ isAvailable: true })
+        .expect(200);
+      expect(await availOf()).toEqual({
+        locationAvailability: true,
+        resultingAvailability: true,
+      });
+    });
+
+    it('using standard availability again returns to the default (available)', async () => {
+      await http().delete(availBase()).set('Authorization', H()).expect(200);
+      expect(await availOf()).toEqual({
+        locationAvailability: null,
+        resultingAvailability: true,
+      });
     });
   });
 

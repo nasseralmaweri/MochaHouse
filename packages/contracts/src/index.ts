@@ -154,6 +154,80 @@ export interface AdminUpdateProductRequest {
   isActive?: boolean;
 }
 
+// --- Admin menus & location pricing (Milestone 5D-4) -----------------
+// Read models for the two Admin screens that manage EXISTING menu
+// composition and EXISTING per-location price / availability. The field
+// names are deliberately business-facing: "standard price" (the master
+// product price), "location price" (a price set for one location, or null
+// when the location uses the standard price), "resulting price" (what
+// actually applies). No override / resolver / join terminology, and no
+// modifier internals.
+
+// Served from `/api/v1/admin/catalog/menus*` (InternalAuthGuard +
+// PermissionGuard + `catalog.view`, CORPORATE-only). Includes inactive
+// menus and inactive menu placements — an Admin manages both.
+export interface AdminMenuSummary {
+  id: string;
+  name: string;
+  slug: string;
+  isActive: boolean;
+}
+
+// One product placed on a menu. `shownOnMenu` is whether that placement is
+// currently on (the only thing 5D-4 can change here); `productIsActive` is
+// the master product's own state — the two are independent, and an inactive
+// product never reaches customers even when it is "shown on menu".
+export interface AdminMenuProduct {
+  productId: string;
+  productName: string;
+  productIsActive: boolean;
+  categoryName: string;
+  standardPrice: number | null;
+  currency: string;
+  shownOnMenu: boolean;
+  // Internal ordering only — the UI renders products in this order.
+  displayOrder: number;
+}
+
+export interface AdminMenuDetail extends AdminMenuSummary {
+  products: AdminMenuProduct[];
+}
+
+// Served from `GET /api/v1/admin/catalog/locations/:locationId/menu`
+// (InternalAuthGuard + PermissionGuard + `catalog.overrides.manage`, valid
+// at CORPORATE or LOCATION scope). Resolves the location's assigned menu
+// and, per product, the standard price/availability, any location-specific
+// setting, and the resulting value. 404 when the location has no menu.
+export interface AdminLocationMenuProduct {
+  productId: string;
+  productName: string;
+  productIsActive: boolean;
+  categoryName: string;
+  currency: string;
+  shownOnMenu: boolean;
+  // The master product price.
+  standardPrice: number | null;
+  // A price set just for this location, or null when this location uses the
+  // standard price.
+  locationPrice: number | null;
+  // What a customer at this location is actually charged: the location
+  // price when one is set, otherwise the standard price. Null only when
+  // neither exists — the item then has no usable price here.
+  resultingPrice: number | null;
+  // An availability set just for this location, or null when this location
+  // uses the standard behavior (available).
+  locationAvailability: boolean | null;
+  // Whether the item can currently be ordered here: the location setting
+  // when present, otherwise available.
+  resultingAvailability: boolean;
+}
+
+export interface AdminLocationMenuResponse {
+  location: { id: string; name: string };
+  menu: { id: string; name: string };
+  products: AdminLocationMenuProduct[];
+}
+
 // --- Checkout / orders (Milestone 3, first transaction slice) ----------
 
 export type PaymentAttemptStatus = "PENDING" | "SUCCEEDED" | "DECLINED" | "FAILED";

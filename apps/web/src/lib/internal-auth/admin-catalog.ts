@@ -1,5 +1,8 @@
 import "server-only";
 import type {
+  AdminLocationMenuResponse,
+  AdminMenuDetail,
+  AdminMenuSummary,
   AdminProductDetail,
   AdminProductSummary,
 } from "@mocha-house/contracts";
@@ -104,4 +107,71 @@ export async function getAdminProduct(
     outcome: "success",
     product: (await response.json()) as AdminProductDetail,
   };
+}
+
+// --- Admin menus & location pricing (Milestone 5D-4) ---------------
+// Shared read helper for the 5D-4 endpoints — same server-side token
+// attachment and outcome mapping as above, one place.
+type AdminReadResult<T> =
+  | { outcome: "success"; data: T }
+  | { outcome: "unauthenticated" }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "error" };
+
+async function adminCatalogGet<T>(
+  path: string,
+): Promise<AdminReadResult<T>> {
+  const token = await getInternalSessionToken();
+  if (!token) {
+    return { outcome: "unauthenticated" };
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${getApiUrl()}${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+  } catch {
+    return { outcome: "error" };
+  }
+
+  if (response.status === 401) {
+    return { outcome: "unauthenticated" };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (!response.ok) {
+    return { outcome: "error" };
+  }
+
+  return { outcome: "success", data: (await response.json()) as T };
+}
+
+export function getAdminMenus(): Promise<AdminReadResult<AdminMenuSummary[]>> {
+  return adminCatalogGet<AdminMenuSummary[]>("/admin/catalog/menus");
+}
+
+export function getAdminMenu(
+  menuId: string,
+): Promise<AdminReadResult<AdminMenuDetail>> {
+  return adminCatalogGet<AdminMenuDetail>(
+    `/admin/catalog/menus/${encodeURIComponent(menuId)}`,
+  );
+}
+
+// Resolves the location's assigned menu and its per-product price /
+// availability. Guarded by `catalog.overrides.manage` (CORPORATE or
+// LOCATION) — a location manager reaches this WITHOUT `catalog.view`.
+export function getAdminLocationMenu(
+  locationId: string,
+): Promise<AdminReadResult<AdminLocationMenuResponse>> {
+  return adminCatalogGet<AdminLocationMenuResponse>(
+    `/admin/catalog/locations/${encodeURIComponent(locationId)}/menu`,
+  );
 }

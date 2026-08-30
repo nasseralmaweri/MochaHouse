@@ -98,6 +98,11 @@ export default async function AdminLocationDetailPage({
     location.id,
   );
   const canEdit = can(capabilities, "locations.edit");
+  const canManagePricing = canAtLocation(
+    capabilities,
+    "catalog.overrides.manage",
+    location.id,
+  );
 
   return (
     <AdminPage>
@@ -168,14 +173,24 @@ export default async function AdminLocationDetailPage({
         description="The menu customers see when ordering from this location."
       >
         {location.assignedMenu ? (
-          <Card className="flex flex-col gap-1">
-            <span className="text-base font-medium text-text-primary">
-              {location.assignedMenu.name}
-            </span>
-            <span className="text-sm text-text-secondary">
-              {location.assignedMenu.productCount} active{" "}
-              {location.assignedMenu.productCount === 1 ? "item" : "items"}
-            </span>
+          <Card className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-base font-medium text-text-primary">
+                {location.assignedMenu.name}
+              </span>
+              <span className="text-sm text-text-secondary">
+                {location.assignedMenu.productCount} active{" "}
+                {location.assignedMenu.productCount === 1 ? "item" : "items"}
+              </span>
+            </div>
+            {canManagePricing ? (
+              <ButtonLink
+                href={`/admin/locations/${location.id}/menu`}
+                variant="secondary"
+              >
+                Manage menu &amp; pricing
+              </ButtonLink>
+            ) : null}
           </Card>
         ) : (
           <AdminEmptyState

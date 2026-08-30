@@ -4,6 +4,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  AdminLocationMenuProduct,
+  AdminLocationMenuResponse,
+  AdminMenuDetail,
+  AdminMenuProduct,
+  AdminMenuSummary,
   AdminProductDetail,
   AdminProductSummary,
   CategorySummary,
@@ -284,6 +289,161 @@ export class CatalogService {
 
     // Never null — existence was just confirmed above.
     return (await this.loadAdminProductDetail(productId))!;
+  }
+
+  // --- Admin menu reads (Milestone 5D-4) ---------------------------
+  // Guarded by `catalog.view` (CORPORATE-only) at the controller. Includes
+  // inactive menus and inactive menu placements — an Admin manages both.
+  async listAdminMenus(
+    authorization: AuthorizationContext,
+  ): Promise<AdminMenuSummary[]> {
+    authorization.assertCorporate('catalog.view');
+
+    const menus = await this.prisma.menu.findMany({
+      select: { id: true, name: true, slug: true, isActive: true },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    });
+    return menus;
+  }
+
+  async getAdminMenuDetail(
+    menuId: string,
+    authorization: AuthorizationContext,
+  ): Promise<AdminMenuDetail> {
+    authorization.assertCorporate('catalog.view');
+
+    const menu = await this.prisma.menu.findUnique({
+      where: { id: menuId },
+      include: {
+        products: {
+          include: { product: { include: { category: true } } },
+          orderBy: [{ displayOrder: 'asc' }, { productId: 'asc' }],
+        },
+      },
+    });
+
+    if (!menu) {
+      throw new NotFoundException('Menu not found.');
+    }
+
+    return {
+      id: menu.id,
+      name: menu.name,
+      slug: menu.slug,
+      isActive: menu.isActive,
+      products: menu.products.map(
+        (placement): AdminMenuProduct => ({
+          productId: placement.product.id,
+          productName: placement.product.name,
+          productIsActive: placement.product.isActive,
+          categoryName: placement.product.category.name,
+          standardPrice: placement.product.basePrice,
+          currency: placement.product.currency,
+          shownOnMenu: placement.isActive,
+          displayOrder: placement.displayOrder,
+        }),
+      ),
+    };
+  }
+
+  // --- Admin location menu / pricing read (Milestone 5D-4) ---------
+  // Guarded by `catalog.overrides.manage` (CORPORATE or LOCATION). Resolves
+  // the location's assigned menu and, per product, the standard price /
+  // availability, any location-specific setting, and the resulting value.
+  //
+  // The location's single active assigned menu is resolved with findFirst
+  // (ordered for determinism) — the SAME assumption the customer effective-
+  // menu resolver makes. 5D-4 does not manage menu assignment and does not
+  // change this behavior; see the milestone report for the open question of
+  // whether more than one active menu per location should ever be allowed.
+  async getAdminLocationMenu(
+    locationId: string,
+    authorization: AuthorizationContext,
+  ): Promise<AdminLocationMenuResponse> {
+    // Resource-level check BEFORE any read — a caller not authorized for
+    // this location gets 403, never a 404 that would leak its existence.
+    authorization.assertCanActOnLocation(
+      'catalog.overrides.manage',
+      locationId,
+    );
+
+    const locationMenu = await this.prisma.locationMenu.findFirst({
+      where: {
+        locationId,
+        isActive: true,
+        location: { isActive: true },
+        menu: { isActive: true },
+      },
+      orderBy: { menuId: 'asc' },
+      include: {
+        location: { select: { id: true, name: true } },
+        menu: {
+          include: {
+            products: {
+              include: { product: { include: { category: true } } },
+              orderBy: [{ displayOrder: 'asc' }, { productId: 'asc' }],
+            },
+          },
+        },
+      },
+    });
+
+    if (!locationMenu) {
+      throw new NotFoundException(
+        'This location does not have a menu yet.',
+      );
+    }
+
+    const menuId = locationMenu.menu.id;
+    const [priceRows, availabilityRows] = await Promise.all([
+      this.prisma.locationProductPriceOverride.findMany({
+        where: { locationId, menuId },
+        select: { productId: true, price: true },
+      }),
+      this.prisma.locationProductAvailabilityOverride.findMany({
+        where: { locationId, menuId },
+        select: { productId: true, isAvailable: true },
+      }),
+    ]);
+    const priceByProduct = new Map(
+      priceRows.map((row) => [row.productId, row.price]),
+    );
+    const availabilityByProduct = new Map(
+      availabilityRows.map((row) => [row.productId, row.isAvailable]),
+    );
+
+    return {
+      location: {
+        id: locationMenu.location.id,
+        name: locationMenu.location.name,
+      },
+      menu: { id: locationMenu.menu.id, name: locationMenu.menu.name },
+      products: locationMenu.menu.products.map(
+        (placement): AdminLocationMenuProduct => {
+          const standardPrice = placement.product.basePrice;
+          const locationPrice =
+            priceByProduct.get(placement.product.id) ?? null;
+          const locationAvailability = availabilityByProduct.has(
+            placement.product.id,
+          )
+            ? availabilityByProduct.get(placement.product.id)!
+            : null;
+          return {
+            productId: placement.product.id,
+            productName: placement.product.name,
+            productIsActive: placement.product.isActive,
+            categoryName: placement.product.category.name,
+            currency: placement.product.currency,
+            shownOnMenu: placement.isActive,
+            standardPrice,
+            locationPrice,
+            resultingPrice: locationPrice ?? standardPrice,
+            locationAvailability,
+            resultingAvailability: locationAvailability ?? true,
+          };
+        },
+      ),
+    };
   }
 
   async updateMenuProductAssignment(
