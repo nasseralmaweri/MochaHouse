@@ -28,6 +28,8 @@ describe('internal permission catalog', () => {
         'users.manage_status',
         // Milestone 5E-4
         'users.manage_roles',
+        // Milestone 5F
+        'audit.view',
       ].sort(),
     );
   });
@@ -62,6 +64,8 @@ describe('internal permission catalog', () => {
     expect(allowedScopeTypesFor('users.manage_status')).toEqual(['CORPORATE']);
     // users.manage_roles — access assignment is a corporate write (5E-4).
     expect(allowedScopeTypesFor('users.manage_roles')).toEqual(['CORPORATE']);
+    // audit.view — the activity log is a corporate read (5F).
+    expect(allowedScopeTypesFor('audit.view')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {

@@ -437,6 +437,40 @@ export interface AdminAssignInternalUserRoleRequest {
 export interface AdminRemoveInternalUserRoleAssignmentRequest {
     reason: string;
 }
+export type AdminAuditActivityType = "admin_access_status_changed" | "admin_access_granted" | "admin_access_removed";
+export interface AdminAuditEventSummary {
+    id: string;
+    occurredAt: string;
+    activityType: AdminAuditActivityType | "other";
+    activityLabel: string;
+    actor: {
+        id: string;
+        name: string;
+        email: string;
+    };
+    subject: {
+        kind: "admin_user";
+        label: string;
+    };
+    location: {
+        name: string;
+    } | null;
+    reason: string;
+    details: {
+        label: string;
+        value: string;
+    }[];
+}
+export interface AdminAuditEventPage {
+    events: AdminAuditEventSummary[];
+    nextCursor: string | null;
+}
+export interface AdminAuditFilterOptions {
+    activityTypes: {
+        value: AdminAuditActivityType;
+        label: string;
+    }[];
+}
 export interface AdminRoleSummary {
     id: string;
     displayName: string;
@@ -451,7 +485,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];

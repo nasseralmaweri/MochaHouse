@@ -7,9 +7,10 @@ import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import { AdminForbidden } from "@/components/admin/states";
 import { Card } from "@/components/Card";
 
-// Administration home (Milestone 5E). Real capability cards only — Users
-// (5E-1) and Access Levels (5E-2) — each shown only for the permission that
-// backs it. No "coming soon" cards for Audit / Configuration / Integration.
+// Administration home (Milestone 5E, 5F). Real capability cards only —
+// Users (5E-1), Access Levels (5E-2), Activity log (5F) — each shown only
+// for the permission that backs it. No "coming soon" cards for
+// Configuration / Integration.
 export default async function AdministrationHomePage() {
   const session = await getInternalSession();
   if (!session) {
@@ -19,8 +20,9 @@ export default async function AdministrationHomePage() {
   const capabilities = session.authorization.capabilities;
   const canViewUsers = can(capabilities, "users.view");
   const canViewRoles = can(capabilities, "roles.view");
+  const canViewAudit = can(capabilities, "audit.view");
 
-  if (!canViewUsers && !canViewRoles) {
+  if (!canViewUsers && !canViewRoles && !canViewAudit) {
     return (
       <AdminPage>
         <AdminPageHeader title="Administration" />
@@ -51,6 +53,15 @@ export default async function AdministrationHomePage() {
               href="/admin/administration/roles"
               title="Access levels"
               description="See the types of Admin access and what each one allows."
+            />
+          </li>
+        ) : null}
+        {canViewAudit ? (
+          <li>
+            <AdministrationCard
+              href="/admin/administration/audit"
+              title="Activity log"
+              description="Review important changes to Admin access and permissions."
             />
           </li>
         ) : null}

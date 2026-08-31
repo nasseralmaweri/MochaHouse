@@ -107,6 +107,12 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Assign and remove access levels',
     definition: 'Assign and remove access levels',
   },
+  'audit.view': {
+    group: 'Administration',
+    effectiveAll: 'View the activity log',
+    effectiveScoped: 'View the activity log',
+    definition: 'View the activity log',
+  },
 };
 
 const GROUP_ORDER = [
@@ -131,6 +137,7 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'locations.manage_digital_ordering',
   'users.view',
   'roles.view',
+  'audit.view',
   'users.manage_status',
   'users.manage_roles',
 ];

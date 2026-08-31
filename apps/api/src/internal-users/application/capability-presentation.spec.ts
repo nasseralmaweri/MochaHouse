@@ -87,6 +87,7 @@ describe('capability presentation (Milestone 5E)', () => {
       expect(groups.find((g) => g.group === 'Administration')?.items).toEqual([
         'View Admin users',
         'View access levels',
+        'View the activity log',
         'Suspend, reactivate or disable Admin users',
         'Assign and remove access levels',
       ]);

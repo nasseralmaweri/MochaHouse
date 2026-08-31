@@ -823,6 +823,53 @@ export interface AdminRemoveInternalUserRoleAssignmentRequest {
   reason: string;
 }
 
+// --- Admin: activity log (Milestone 5F) -----------------------------
+// The business-facing, read-only projection of InternalAuditEvent. Served
+// only from `GET /api/v1/admin/audit` (InternalAuthGuard + PermissionGuard
+// + `audit.view`, CORPORATE-only). The API constructs every field
+// explicitly — it NEVER returns a raw audit row, `beforeData` / `afterData`,
+// a raw `action` / `targetType` string, or any UUID other than the opaque
+// event id / actor id.
+export type AdminAuditActivityType =
+  | "admin_access_status_changed"
+  | "admin_access_granted"
+  | "admin_access_removed";
+
+export interface AdminAuditEventSummary {
+  // Opaque event id — also the forward-pagination cursor.
+  id: string;
+  // ISO 8601 timestamp of when the activity happened.
+  occurredAt: string;
+  // The business category. A row whose stored action is not recognised is
+  // still returned, projected as a safe generic activity (see
+  // `activityLabel`) but with no `activityType` — clients must tolerate a
+  // value outside the union or, in practice, filter on the ones they know.
+  activityType: AdminAuditActivityType | "other";
+  // A complete plain-language sentence, e.g.
+  // "Nasser gave Sarah Store Manager access for Dearborn Heights".
+  activityLabel: string;
+  actor: { id: string; name: string; email: string };
+  // Who the activity was about, already resolved to a display label.
+  subject: { kind: "admin_user"; label: string };
+  // Present only for location-scoped access changes.
+  location: { name: string } | null;
+  reason: string;
+  // Small, business-worded extra lines for inline disclosure (e.g. previous
+  // / new access state on a status change). Empty for most events.
+  details: { label: string; value: string }[];
+}
+
+export interface AdminAuditEventPage {
+  events: AdminAuditEventSummary[];
+  // Forward cursor: pass as `?cursor=` to fetch the next (older) page.
+  // Null when there are no older events in the current filtered set.
+  nextCursor: string | null;
+}
+
+export interface AdminAuditFilterOptions {
+  activityTypes: { value: AdminAuditActivityType; label: string }[];
+}
+
 // --- Admin: access levels (roles) review (Milestone 5E-2) ------------
 // The business-facing read model for the Administration → Access Levels
 // screens. Served only from `/api/v1/admin/internal-roles*` (InternalAuthGuard
@@ -893,6 +940,8 @@ export const INTERNAL_PERMISSION_KEYS = [
   "users.manage_status",
   // Milestone 5E-4
   "users.manage_roles",
+  // Milestone 5F
+  "audit.view",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -998,6 +1047,12 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "users.manage_roles",
     description:
       "Assign or remove internal-user access levels and their location scope. Highly privileged; corporate-only.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "audit.view": {
+    key: "audit.view",
+    description:
+      "View the Admin activity log — the recorded history of administrative access changes. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
