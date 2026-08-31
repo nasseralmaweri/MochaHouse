@@ -66,7 +66,7 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(adminNavItems(caps).map((i) => i.key)).toEqual(["dashboard"]);
   });
 
-  it("shows Administration when the user holds users.view", () => {
+  it("shows Administration when the user holds users.view only", () => {
     const items = adminNavItems({
       "users.view": { corporate: true, locationIds: [] },
     });
@@ -79,7 +79,25 @@ describe("adminNavItems (permission-aware navigation)", () => {
     );
   });
 
-  it("does not add Categories / Modifiers / Roles / anything without a shipped page", () => {
+  it("shows Administration when the user holds roles.view only", () => {
+    const items = adminNavItems({
+      "roles.view": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual(["dashboard", "administration"]);
+  });
+
+  it("hides Administration when the user has neither users.view nor roles.view", () => {
+    const caps: AdminCapabilities = {
+      "orders.view": { corporate: true, locationIds: [] },
+      "catalog.view": { corporate: true, locationIds: [] },
+      "locations.view": { corporate: true, locationIds: [] },
+    };
+    expect(adminNavItems(caps).map((i) => i.key)).not.toContain(
+      "administration",
+    );
+  });
+
+  it("does not add Categories / Modifiers / anything without a shipped page", () => {
     const caps: AdminCapabilities = {
       "orders.view": { corporate: true, locationIds: [] },
       "orders.manage_status": { corporate: true, locationIds: [] },
@@ -91,6 +109,7 @@ describe("adminNavItems (permission-aware navigation)", () => {
       "locations.edit": { corporate: true, locationIds: [] },
       "locations.manage_digital_ordering": { corporate: true, locationIds: [] },
       "users.view": { corporate: true, locationIds: [] },
+      "roles.view": { corporate: true, locationIds: [] },
     };
     expect(adminNavItems(caps).map((i) => i.key).sort()).toEqual([
       "administration",

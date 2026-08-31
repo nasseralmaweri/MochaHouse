@@ -37,6 +37,12 @@ export function accessLevelsLabel(accessLevels: string[]): string {
     : accessLevels.join(", ");
 }
 
+// "0 people" / "1 person" / "N people" — for the Access Levels screens
+// (Milestone 5E-2).
+export function peopleCountLabel(count: number): string {
+  return count === 1 ? "1 person" : `${count} people`;
+}
+
 // Compact, business-friendly. Names for up to two locations; a count beyond
 // that.
 export function locationAccessLabel(access: AdminUserLocationAccess): string {

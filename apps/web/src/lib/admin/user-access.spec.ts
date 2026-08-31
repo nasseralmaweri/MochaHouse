@@ -2,6 +2,7 @@ import type { AdminUserLocationAccess } from "@mocha-house/contracts";
 import {
   accessLevelsLabel,
   locationAccessLabel,
+  peopleCountLabel,
   userStatusLabel,
   userStatusTone,
 } from "./user-access";
@@ -35,6 +36,15 @@ describe("accessLevelsLabel", () => {
     expect(accessLevelsLabel(["Alpha Access", "Bravo Access"])).toBe(
       "Alpha Access, Bravo Access",
     );
+  });
+});
+
+describe("peopleCountLabel", () => {
+  it("pluralises around 1", () => {
+    expect(peopleCountLabel(0)).toBe("0 people");
+    expect(peopleCountLabel(1)).toBe("1 person");
+    expect(peopleCountLabel(2)).toBe("2 people");
+    expect(peopleCountLabel(9)).toBe("9 people");
   });
 });
 

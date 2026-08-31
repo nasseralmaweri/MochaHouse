@@ -1,86 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import {
-  INTERNAL_PERMISSION_KEYS,
-  type AdminInternalUserDetail,
-  type AdminInternalUserSummary,
-  type AdminUserCapabilityGroup,
-  type AdminUserLocationAccess,
-  type InternalPermissionKey,
+import type {
+  AdminInternalUserDetail,
+  AdminInternalUserSummary,
+  AdminUserLocationAccess,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorizationService } from '../../internal-auth/authorization/authorization.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
-
-// Plain-language wording for the "What they can do" list. Keyed by the
-// closed permission vocabulary — NOT by role name. `corporate` wording is
-// used when the person holds the permission for every location; `scoped`
-// wording when they hold it only for specific locations. For the
-// CORPORATE-only keys the two are identical (they can never be location-
-// scoped). If a permission is ever added to the vocabulary without an entry
-// here, the API build fails (Record is exhaustive) — a deliberate
-// forcing-function so no capability ships without human wording.
-const CAPABILITY_WORDING: Record<
-  InternalPermissionKey,
-  { group: string; corporate: string; scoped: string }
-> = {
-  'orders.view': {
-    group: 'Orders',
-    corporate: 'View orders at all locations',
-    scoped: 'View orders at their locations',
-  },
-  'orders.manage_status': {
-    group: 'Orders',
-    corporate: 'Update order status at all locations',
-    scoped: 'Update order status at their locations',
-  },
-  'catalog.view': {
-    group: 'Menu & Products',
-    corporate: 'View the full product catalogue',
-    scoped: 'View the full product catalogue',
-  },
-  'catalog.products.edit': {
-    group: 'Menu & Products',
-    corporate: 'Edit standard product information',
-    scoped: 'Edit standard product information',
-  },
-  'catalog.menu.manage': {
-    group: 'Menu & Products',
-    corporate: 'Manage which products are shown on menus',
-    scoped: 'Manage which products are shown on menus',
-  },
-  'catalog.overrides.manage': {
-    group: 'Menu & Products',
-    corporate: 'Set prices and availability for all locations',
-    scoped: 'Set prices and availability for their locations',
-  },
-  'locations.view': {
-    group: 'Locations',
-    corporate: 'View all locations',
-    scoped: 'View their locations',
-  },
-  'locations.edit': {
-    group: 'Locations',
-    corporate: 'Edit location information',
-    scoped: 'Edit location information',
-  },
-  'locations.manage_digital_ordering': {
-    group: 'Locations',
-    corporate: 'Turn online ordering on or off for all locations',
-    scoped: 'Turn online ordering on or off for their locations',
-  },
-  'users.view': {
-    group: 'Administration',
-    corporate: 'View Admin users',
-    scoped: 'View Admin users',
-  },
-};
-
-const CAPABILITY_GROUP_ORDER = [
-  'Orders',
-  'Menu & Products',
-  'Locations',
-  'Administration',
-];
+import { describeEffectiveCapabilities } from './capability-presentation';
 
 type AssignmentRow = {
   scopeType: 'CORPORATE' | 'LOCATION';
@@ -129,7 +56,9 @@ export class AdminInternalUsersService {
     );
 
     return users
-      .map((user) => this.toSummary(user, user.roleAssignments, locationNameById))
+      .map((user) =>
+        this.toSummary(user, user.roleAssignments, locationNameById),
+      )
       .sort(compareSummaries);
   }
 
@@ -169,10 +98,11 @@ export class AdminInternalUsersService {
 
     // Effective authorization, exactly as the guards resolve it. Unknown
     // stored permission keys are already dropped by AuthorizationService, so
-    // they can never reach the wording map or the UI.
-    const context =
-      await this.authorizationService.loadContext(internalUserId);
-    const capabilities = buildCapabilityGroups(context.summarize().capabilities);
+    // they can never reach the presentation layer or the UI.
+    const context = await this.authorizationService.loadContext(internalUserId);
+    const capabilities = describeEffectiveCapabilities(
+      context.summarize().capabilities,
+    );
 
     return { ...summary, capabilities };
   }
@@ -253,30 +183,6 @@ function resolveLocationAccess(
     .map((id) => ({ id, name: locationNameById.get(id) as string }))
     .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   return { kind: 'selected', locations };
-}
-
-function buildCapabilityGroups(
-  capabilities: Partial<
-    Record<InternalPermissionKey, { corporate: boolean; locationIds: string[] }>
-  >,
-): AdminUserCapabilityGroup[] {
-  const itemsByGroup = new Map<string, string[]>();
-  // Iterate the vocabulary (not Object.keys) so the order within a group is
-  // deterministic regardless of grant order.
-  for (const key of INTERNAL_PERMISSION_KEYS) {
-    const capability = capabilities[key];
-    if (!capability) {
-      continue;
-    }
-    const wording = CAPABILITY_WORDING[key];
-    const line = capability.corporate ? wording.corporate : wording.scoped;
-    const list = itemsByGroup.get(wording.group) ?? [];
-    list.push(line);
-    itemsByGroup.set(wording.group, list);
-  }
-  return CAPABILITY_GROUP_ORDER.filter((group) => itemsByGroup.has(group)).map(
-    (group) => ({ group, items: itemsByGroup.get(group) as string[] }),
-  );
 }
 
 function compareSummaries(

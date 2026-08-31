@@ -394,7 +394,17 @@ export interface AdminUserCapabilityGroup {
 export interface AdminInternalUserDetail extends AdminInternalUserSummary {
     capabilities: AdminUserCapabilityGroup[];
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view"];
+export interface AdminRoleSummary {
+    id: string;
+    displayName: string;
+    description: string | null;
+    isBuiltIn: boolean;
+    userCount: number;
+}
+export interface AdminRoleDetail extends AdminRoleSummary {
+    capabilities: AdminUserCapabilityGroup[];
+}
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];

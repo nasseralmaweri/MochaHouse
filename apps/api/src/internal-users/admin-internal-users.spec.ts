@@ -260,7 +260,9 @@ describe('Admin internal users read (integration)', () => {
 
   const http = () => request(app.getHttpServer());
   const listAs = (key: string) =>
-    http().get('/api/v1/admin/internal-users').set('Authorization', `Bearer ${token(key)}`);
+    http()
+      .get('/api/v1/admin/internal-users')
+      .set('Authorization', `Bearer ${token(key)}`);
   const detailAs = (key: string, id: string) =>
     http()
       .get(`/api/v1/admin/internal-users/${id}`)

@@ -22,6 +22,8 @@ describe('internal permission catalog', () => {
         'orders.view',
         // Milestone 5E-1
         'users.view',
+        // Milestone 5E-2
+        'roles.view',
       ].sort(),
     );
   });
@@ -50,6 +52,8 @@ describe('internal permission catalog', () => {
     expect(allowedScopeTypesFor('locations.edit')).toEqual(['CORPORATE']);
     // users.view — user administration is corporate (Milestone 5E-1).
     expect(allowedScopeTypesFor('users.view')).toEqual(['CORPORATE']);
+    // roles.view — access-level administration is corporate (Milestone 5E-2).
+    expect(allowedScopeTypesFor('roles.view')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {

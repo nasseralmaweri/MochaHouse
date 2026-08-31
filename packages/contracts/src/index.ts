@@ -753,6 +753,33 @@ export interface AdminInternalUserDetail extends AdminInternalUserSummary {
   capabilities: AdminUserCapabilityGroup[];
 }
 
+// --- Admin: access levels (roles) review (Milestone 5E-2) ------------
+// The business-facing read model for the Administration → Access Levels
+// screens. Served only from `/api/v1/admin/internal-roles*` (InternalAuthGuard
+// + PermissionGuard + `roles.view`, CORPORATE-only). An "access level" is an
+// InternalRole; this contract deliberately exposes no role key, no raw
+// permission keys, and no assignment rows.
+export interface AdminRoleSummary {
+  id: string;
+  displayName: string;
+  description: string | null;
+  // Presentation metadata only, mapped from InternalRole.isSystem. It marks
+  // a role the platform ships with — it currently confers and enforces
+  // NOTHING (no edit protection exists yet).
+  isBuiltIn: boolean;
+  // The number of distinct people who hold this access level (a person who
+  // holds it at several locations counts once).
+  userCount: number;
+}
+
+export interface AdminRoleDetail extends AdminRoleSummary {
+  // What this access level ALLOWS, in plain language — the capability
+  // template, scope-agnostic ("View orders", not "…at all locations").
+  // Only groups/items backed by a KNOWN permission on the role appear;
+  // unknown stored permission keys are omitted (fail-closed).
+  capabilities: AdminUserCapabilityGroup[];
+}
+
 // --- Internal authorization: permissions & scope (Milestone 5B) --------
 // The CLOSED permission vocabulary. This is the single source of truth for
 // what internal/Admin capabilities exist: a permission string only grants
@@ -778,6 +805,7 @@ export const INTERNAL_PERMISSION_KEYS = [
   "locations.edit",
   "locations.manage_digital_ordering",
   "users.view",
+  "roles.view",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -865,6 +893,12 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "users.view",
     description:
       "View internal Admin users, their status, access levels and location access. User administration is a corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "roles.view": {
+    key: "roles.view",
+    description:
+      "View Admin access levels (roles) and the capabilities included in each. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
