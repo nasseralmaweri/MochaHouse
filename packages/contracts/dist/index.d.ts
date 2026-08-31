@@ -368,7 +368,33 @@ export interface InternalMeResponse {
     user: InternalUserProfile;
     authorization: InternalAuthorizationSummary;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering"];
+export type AdminUserLocationAccess = {
+    kind: "all";
+} | {
+    kind: "selected";
+    locations: {
+        id: string;
+        name: string;
+    }[];
+} | {
+    kind: "none";
+};
+export interface AdminInternalUserSummary {
+    id: string;
+    displayName: string | null;
+    email: string;
+    status: InternalUserStatus;
+    accessLevels: string[];
+    locationAccess: AdminUserLocationAccess;
+}
+export interface AdminUserCapabilityGroup {
+    group: string;
+    items: string[];
+}
+export interface AdminInternalUserDetail extends AdminInternalUserSummary {
+    capabilities: AdminUserCapabilityGroup[];
+}
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];

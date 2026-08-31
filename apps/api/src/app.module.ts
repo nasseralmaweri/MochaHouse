@@ -9,6 +9,7 @@ import { OrdersModule } from './orders/orders.module';
 import { CustomerAuthModule } from './customer-auth/customer-auth.module';
 import { CustomersModule } from './customers/customers.module';
 import { InternalAuthModule } from './internal-auth/internal-auth.module';
+import { InternalUsersModule } from './internal-users/internal-users.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { InternalAuthModule } from './internal-auth/internal-auth.module';
     CustomerAuthModule,
     CustomersModule,
     InternalAuthModule,
+    InternalUsersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

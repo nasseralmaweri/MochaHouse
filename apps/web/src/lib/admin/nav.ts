@@ -16,6 +16,8 @@ export interface AdminNavItem {
 //   - Menu & Products: shown only if the user holds `catalog.view`
 //     (Milestone 5D-3 — products list/detail/edit; categories, menus and
 //     modifiers join this same destination in later slices).
+//   - Administration: shown only if the user holds `users.view`
+//     (Milestone 5E-1 — user access review, read-only).
 // Driven by the capability map, never a role name. No "coming soon" items,
 // no fake routes — future modules are added here only when their pages ship.
 export function adminNavItems(
@@ -42,6 +44,14 @@ export function adminNavItems(
       key: "menu",
       label: "Menu & Products",
       href: "/admin/menu",
+    });
+  }
+
+  if (can(capabilities, "users.view")) {
+    items.push({
+      key: "administration",
+      label: "Administration",
+      href: "/admin/administration",
     });
   }
 

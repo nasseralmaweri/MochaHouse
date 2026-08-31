@@ -707,6 +707,52 @@ export interface InternalMeResponse {
   authorization: InternalAuthorizationSummary;
 }
 
+// --- Admin: internal user access review (Milestone 5E-1) --------------
+// The business-facing read model for the Administration → Users screens.
+// Served only from `/api/v1/admin/internal-users*` (InternalAuthGuard +
+// PermissionGuard + `users.view`, CORPORATE-only). Deliberately exposes NO
+// externalProvider / externalSubject / scopeId / raw permission keys /
+// assignment ids — an administrator answers "who has access, are they
+// active, what can they do, where" without RBAC vocabulary.
+
+// Where a person can operate, as a whole:
+//   all      — they hold at least one corporate role assignment.
+//   selected — only specific locations (the union of their location
+//              assignments), resolved to names.
+//   none     — they have no role assignments at all.
+// This reflects the SCOPE of their assignments, not a per-permission
+// intersection — see the "What they can do" list for per-capability detail.
+export type AdminUserLocationAccess =
+  | { kind: "all" }
+  | { kind: "selected"; locations: { id: string; name: string }[] }
+  | { kind: "none" };
+
+export interface AdminInternalUserSummary {
+  id: string;
+  displayName: string | null;
+  email: string;
+  status: InternalUserStatus;
+  // The display names of the roles assigned to this person (deduplicated;
+  // a role held at several locations appears once). Empty when the person
+  // has no role assignments.
+  accessLevels: string[];
+  locationAccess: AdminUserLocationAccess;
+}
+
+// One heading of the "What they can do" list, with its plain-language
+// lines. Groups with no lines are omitted entirely.
+export interface AdminUserCapabilityGroup {
+  group: string;
+  items: string[];
+}
+
+export interface AdminInternalUserDetail extends AdminInternalUserSummary {
+  // Derived from the SAME effective-authorization resolution the guards use
+  // (permission + scope), never from a role name. Empty when the person has
+  // no effective permissions.
+  capabilities: AdminUserCapabilityGroup[];
+}
+
 // --- Internal authorization: permissions & scope (Milestone 5B) --------
 // The CLOSED permission vocabulary. This is the single source of truth for
 // what internal/Admin capabilities exist: a permission string only grants
@@ -731,6 +777,7 @@ export const INTERNAL_PERMISSION_KEYS = [
   "locations.view",
   "locations.edit",
   "locations.manage_digital_ordering",
+  "users.view",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -806,12 +853,18 @@ export const INTERNAL_PERMISSION_METADATA: Record<
   "locations.edit": {
     key: "locations.edit",
     description:
-      "Edit a location record (name, active state). A corporate-scoped operation — it is not yet wired to any route (Milestone 5D-2).",
+      "Edit a location record (name, active state). A corporate-scoped operation.",
     allowedScopeTypes: ["CORPORATE"],
   },
   "locations.manage_digital_ordering": {
     key: "locations.manage_digital_ordering",
     description: "Toggle a location's digital-ordering availability.",
     allowedScopeTypes: ["CORPORATE", "LOCATION"],
+  },
+  "users.view": {
+    key: "users.view",
+    description:
+      "View internal Admin users, their status, access levels and location access. User administration is a corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
   },
 };

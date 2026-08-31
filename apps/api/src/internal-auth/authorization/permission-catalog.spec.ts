@@ -20,6 +20,8 @@ describe('internal permission catalog', () => {
         'locations.manage_digital_ordering',
         'orders.manage_status',
         'orders.view',
+        // Milestone 5E-1
+        'users.view',
       ].sort(),
     );
   });
@@ -46,6 +48,8 @@ describe('internal permission catalog', () => {
     expect(allowedScopeTypesFor('catalog.view')).toEqual(['CORPORATE']);
     // locations.edit is a corporate-scoped operation (Milestone 5D-2).
     expect(allowedScopeTypesFor('locations.edit')).toEqual(['CORPORATE']);
+    // users.view — user administration is corporate (Milestone 5E-1).
+    expect(allowedScopeTypesFor('users.view')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {

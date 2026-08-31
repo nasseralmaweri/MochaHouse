@@ -66,7 +66,20 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(adminNavItems(caps).map((i) => i.key)).toEqual(["dashboard"]);
   });
 
-  it("does not add Categories / Modifiers / Users / anything without a shipped page", () => {
+  it("shows Administration when the user holds users.view", () => {
+    const items = adminNavItems({
+      "users.view": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual(["dashboard", "administration"]);
+    expect(items.find((i) => i.key === "administration")?.href).toBe(
+      "/admin/administration",
+    );
+    expect(items.find((i) => i.key === "administration")?.label).toBe(
+      "Administration",
+    );
+  });
+
+  it("does not add Categories / Modifiers / Roles / anything without a shipped page", () => {
     const caps: AdminCapabilities = {
       "orders.view": { corporate: true, locationIds: [] },
       "orders.manage_status": { corporate: true, locationIds: [] },
@@ -77,8 +90,10 @@ describe("adminNavItems (permission-aware navigation)", () => {
       "locations.view": { corporate: true, locationIds: [] },
       "locations.edit": { corporate: true, locationIds: [] },
       "locations.manage_digital_ordering": { corporate: true, locationIds: [] },
+      "users.view": { corporate: true, locationIds: [] },
     };
     expect(adminNavItems(caps).map((i) => i.key).sort()).toEqual([
+      "administration",
       "dashboard",
       "locations",
       "menu",
@@ -132,5 +147,19 @@ describe("isNavItemActive", () => {
     expect(isNavItemActive(menu, "/admin/menu/products")).toBe(true);
     expect(isNavItemActive(menu, "/admin/menu/products/p-1/edit")).toBe(true);
     expect(isNavItemActive(menu, "/admin")).toBe(false);
+  });
+
+  it("Administration is active across every administration sub-route", () => {
+    const admin = {
+      key: "administration",
+      label: "Administration",
+      href: "/admin/administration",
+    };
+    expect(isNavItemActive(admin, "/admin/administration")).toBe(true);
+    expect(isNavItemActive(admin, "/admin/administration/users")).toBe(true);
+    expect(isNavItemActive(admin, "/admin/administration/users/u-1")).toBe(
+      true,
+    );
+    expect(isNavItemActive(admin, "/admin")).toBe(false);
   });
 });
