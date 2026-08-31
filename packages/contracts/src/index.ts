@@ -979,6 +979,8 @@ export const INTERNAL_PERMISSION_KEYS = [
   "audit.view",
   // Milestone 5G
   "platform.view",
+  // Milestone 6A
+  "operations.view",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1097,5 +1099,17 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     description:
       "View platform status and configuration — a read-only, high-level view of the platform's environment, authentication, payment and location posture. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
+  },
+  // Milestone 6A — the entry point to the Store Operations workspace. Held
+  // at CORPORATE (an operations user works across every store) or at
+  // LOCATION (a store manager works their own stores). It gates only the
+  // Operations area's read views; it never, on its own, grants any other
+  // capability — order information shown there is still governed by
+  // `orders.view`, exactly as on every other screen.
+  "operations.view": {
+    key: "operations.view",
+    description:
+      "View the Store Operations workspace for a location — the day's operational picture. Held at corporate or per location.",
+    allowedScopeTypes: ["CORPORATE", "LOCATION"],
   },
 };

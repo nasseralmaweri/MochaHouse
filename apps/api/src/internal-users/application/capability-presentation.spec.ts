@@ -63,15 +63,19 @@ describe('capability presentation (Milestone 5E)', () => {
       ]);
     });
 
-    it('orders groups Orders → Menu & Products → Locations → Administration, "view" first within a group', () => {
+    it('orders groups Orders → Operations → Menu & Products → Locations → Administration, "view" first within a group', () => {
       const groups = describeAccessLevelCapabilities(
         new Set([...INTERNAL_PERMISSION_KEYS]),
       );
       expect(groups.map((g) => g.group)).toEqual([
         'Orders',
+        'Operations',
         'Menu & Products',
         'Locations',
         'Administration',
+      ]);
+      expect(groups.find((g) => g.group === 'Operations')?.items).toEqual([
+        'View store operations',
       ]);
       expect(groups.find((g) => g.group === 'Menu & Products')?.items).toEqual([
         'View products and menus',

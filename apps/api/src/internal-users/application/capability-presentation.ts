@@ -41,6 +41,12 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Update order status at their locations',
     definition: 'Update order status',
   },
+  'operations.view': {
+    group: 'Operations',
+    effectiveAll: 'View store operations at all locations',
+    effectiveScoped: 'View store operations at their locations',
+    definition: 'View store operations',
+  },
   'catalog.view': {
     group: 'Menu & Products',
     effectiveAll: 'View the full product catalogue',
@@ -123,6 +129,7 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
 
 const GROUP_ORDER = [
   'Orders',
+  'Operations',
   'Menu & Products',
   'Locations',
   'Administration',
@@ -134,6 +141,7 @@ const GROUP_ORDER = [
 const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'orders.view',
   'orders.manage_status',
+  'operations.view',
   'catalog.view',
   'catalog.products.edit',
   'catalog.menu.manage',

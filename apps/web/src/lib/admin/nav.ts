@@ -9,6 +9,9 @@ export interface AdminNavItem {
 // The Admin sidebar. Destinations that exist as real pages:
 //   - Dashboard: any authenticated ACTIVE internal user (even one with no
 //     role assignments) can reach it.
+//   - Operations: shown only if the user effectively holds `operations.view`
+//     somewhere (Milestone 6A — the Store Operations "Today" workspace; a
+//     single page for now).
 //   - Orders: shown only if the user effectively holds `orders.view`
 //     somewhere.
 //   - Locations: shown only if the user effectively holds `locations.view`
@@ -29,6 +32,14 @@ export function adminNavItems(
   const items: AdminNavItem[] = [
     { key: "dashboard", label: "Dashboard", href: "/admin" },
   ];
+
+  if (can(capabilities, "operations.view")) {
+    items.push({
+      key: "operations",
+      label: "Operations",
+      href: "/admin/operations",
+    });
+  }
 
   if (can(capabilities, "orders.view")) {
     items.push({ key: "orders", label: "Orders", href: "/admin/orders" });

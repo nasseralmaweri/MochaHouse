@@ -8,6 +8,45 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(items[0].href).toBe("/admin");
   });
 
+  it("shows Operations when the user holds operations.view (any scope)", () => {
+    const items = adminNavItems({
+      "operations.view": { corporate: false, locationIds: ["loc-a"] },
+    });
+    expect(items.map((i) => i.key)).toEqual(["dashboard", "operations"]);
+    expect(items.find((i) => i.key === "operations")?.href).toBe(
+      "/admin/operations",
+    );
+    expect(items.find((i) => i.key === "operations")?.label).toBe("Operations");
+  });
+
+  it("shows Operations for a corporate operations.view grant", () => {
+    const items = adminNavItems({
+      "operations.view": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toContain("operations");
+  });
+
+  it("hides Operations without operations.view even with other operational permissions", () => {
+    const caps: AdminCapabilities = {
+      "orders.view": { corporate: false, locationIds: ["loc-a"] },
+      "orders.manage_status": { corporate: false, locationIds: ["loc-a"] },
+      "locations.view": { corporate: false, locationIds: ["loc-a"] },
+    };
+    expect(adminNavItems(caps).map((i) => i.key)).not.toContain("operations");
+  });
+
+  it("orders Operations immediately after Dashboard, before Orders", () => {
+    const items = adminNavItems({
+      "operations.view": { corporate: true, locationIds: [] },
+      "orders.view": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual([
+      "dashboard",
+      "operations",
+      "orders",
+    ]);
+  });
+
   it("shows Orders when the user holds orders.view (any scope)", () => {
     const items = adminNavItems({
       "orders.view": { corporate: false, locationIds: ["loc-a"] },
@@ -111,8 +150,9 @@ describe("adminNavItems (permission-aware navigation)", () => {
     );
   });
 
-  it("does not add Categories / Modifiers / anything without a shipped page", () => {
+  it("does not add Tasks / Checklists / Issues / Tickets / anything without a shipped page", () => {
     const caps: AdminCapabilities = {
+      "operations.view": { corporate: true, locationIds: [] },
       "orders.view": { corporate: true, locationIds: [] },
       "orders.manage_status": { corporate: true, locationIds: [] },
       "catalog.products.edit": { corporate: true, locationIds: [] },
@@ -130,6 +170,7 @@ describe("adminNavItems (permission-aware navigation)", () => {
       "dashboard",
       "locations",
       "menu",
+      "operations",
       "orders",
     ]);
   });
@@ -180,6 +221,18 @@ describe("isNavItemActive", () => {
     expect(isNavItemActive(menu, "/admin/menu/products")).toBe(true);
     expect(isNavItemActive(menu, "/admin/menu/products/p-1/edit")).toBe(true);
     expect(isNavItemActive(menu, "/admin")).toBe(false);
+  });
+
+  it("Operations is active on the workspace and any future sub-route", () => {
+    const operations = {
+      key: "operations",
+      label: "Operations",
+      href: "/admin/operations",
+    };
+    expect(isNavItemActive(operations, "/admin/operations")).toBe(true);
+    expect(isNavItemActive(operations, "/admin/operations/today")).toBe(true);
+    expect(isNavItemActive(operations, "/admin")).toBe(false);
+    expect(isNavItemActive(operations, "/admin/orders")).toBe(false);
   });
 
   it("Administration is active across every administration sub-route", () => {

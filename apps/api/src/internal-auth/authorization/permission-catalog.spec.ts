@@ -32,6 +32,8 @@ describe('internal permission catalog', () => {
         'audit.view',
         // Milestone 5G
         'platform.view',
+        // Milestone 6A
+        'operations.view',
       ].sort(),
     );
   });
@@ -79,6 +81,8 @@ describe('internal permission catalog', () => {
       'catalog.overrides.manage',
       'locations.view',
       'locations.manage_digital_ordering',
+      // Milestone 6A — a store manager holds operations.view per location.
+      'operations.view',
     ] as const) {
       expect([...allowedScopeTypesFor(key)].sort()).toEqual([
         'CORPORATE',

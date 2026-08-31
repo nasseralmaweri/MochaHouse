@@ -333,6 +333,10 @@ async function main() {
     'orders.manage_status',
     'catalog.overrides.manage',
     'locations.manage_digital_ordering',
+    // Milestone 6A — a Store Manager's home is the Store Operations
+    // workspace for the locations they run. Held here as a LOCATION-scoped
+    // capability (the role is only ever assigned per location).
+    'operations.view',
   ] as const;
 
   const storeManagerRole = await prisma.internalRole.upsert({

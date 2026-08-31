@@ -226,12 +226,16 @@ describe('Admin internal user access assignment (integration)', () => {
     ).id;
 
     roles.assigner = await makeRole('Access Assigner', ['users.manage_roles']);
+    // Mirrors the built-in Store Manager permission set exactly, so the
+    // privilege-ceiling cases below (this actor granting Store Manager) test
+    // scope, not a missing capability.
     roles.storeOps = await makeRole('Store Ops', [
       'locations.view',
       'orders.view',
       'orders.manage_status',
       'catalog.overrides.manage',
       'locations.manage_digital_ordering',
+      'operations.view',
     ]);
     roles.usersView = await makeRole('Users View', ['users.view']);
     roles.unknownKey = await makeRole('Legacy Role', [
@@ -387,6 +391,7 @@ describe('Admin internal user access assignment (integration)', () => {
         'catalog.overrides.manage',
         'locations.manage_digital_ordering',
         'locations.view',
+        'operations.view',
         'orders.manage_status',
         'orders.view',
       ].sort(),
