@@ -17,9 +17,10 @@ export interface AdminNavItem {
 //     (Milestone 5D-3 — products list/detail/edit; categories, menus and
 //     modifiers join this same destination in later slices).
 //   - Administration: shown if the user holds `users.view` OR `roles.view`
-//     OR `audit.view` (Milestone 5E — user access review + access levels;
-//     Milestone 5F — the activity log, all read-only). Each card inside the
-//     section gates on its own permission.
+//     OR `audit.view` OR `platform.view` (Milestone 5E — user access review
+//     + access levels; Milestone 5F — the activity log; Milestone 5G —
+//     platform status, all read-only). Each card inside the section gates on
+//     its own permission.
 // Driven by the capability map, never a role name. No "coming soon" items,
 // no fake routes — future modules are added here only when their pages ship.
 export function adminNavItems(
@@ -52,7 +53,8 @@ export function adminNavItems(
   if (
     can(capabilities, "users.view") ||
     can(capabilities, "roles.view") ||
-    can(capabilities, "audit.view")
+    can(capabilities, "audit.view") ||
+    can(capabilities, "platform.view")
   ) {
     items.push({
       key: "administration",

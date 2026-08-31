@@ -471,6 +471,24 @@ export interface AdminAuditFilterOptions {
         label: string;
     }[];
 }
+export interface AdminPlatformStatus {
+    environmentLabel: string;
+    isProduction: boolean;
+    authentication: {
+        adminLabel: string;
+        customerLabel: string;
+    };
+    payments: {
+        providerLabel: string;
+        isDevelopmentStandIn: boolean;
+    };
+    locations: {
+        activeCount: number;
+        inactiveCount: number;
+        digitalOrderingEnabledCount: number;
+        digitalOrderingDisabledCount: number;
+    };
+}
 export interface AdminRoleSummary {
     id: string;
     displayName: string;
@@ -485,7 +503,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];

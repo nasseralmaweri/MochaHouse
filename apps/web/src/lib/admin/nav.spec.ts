@@ -93,7 +93,14 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(items.map((i) => i.key)).toEqual(["dashboard", "administration"]);
   });
 
-  it("hides Administration without users.view, roles.view or audit.view", () => {
+  it("shows Administration when the user holds platform.view only (Milestone 5G)", () => {
+    const items = adminNavItems({
+      "platform.view": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual(["dashboard", "administration"]);
+  });
+
+  it("hides Administration without users.view, roles.view, audit.view or platform.view", () => {
     const caps: AdminCapabilities = {
       "orders.view": { corporate: true, locationIds: [] },
       "catalog.view": { corporate: true, locationIds: [] },

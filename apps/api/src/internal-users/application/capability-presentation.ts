@@ -113,6 +113,12 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'View the activity log',
     definition: 'View the activity log',
   },
+  'platform.view': {
+    group: 'Administration',
+    effectiveAll: 'View platform status',
+    effectiveScoped: 'View platform status',
+    definition: 'View platform status',
+  },
 };
 
 const GROUP_ORDER = [
@@ -138,6 +144,7 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'users.view',
   'roles.view',
   'audit.view',
+  'platform.view',
   'users.manage_status',
   'users.manage_roles',
 ];

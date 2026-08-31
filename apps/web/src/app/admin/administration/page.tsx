@@ -7,10 +7,10 @@ import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import { AdminForbidden } from "@/components/admin/states";
 import { Card } from "@/components/Card";
 
-// Administration home (Milestone 5E, 5F). Real capability cards only —
-// Users (5E-1), Access Levels (5E-2), Activity log (5F) — each shown only
-// for the permission that backs it. No "coming soon" cards for
-// Configuration / Integration.
+// Administration home (Milestone 5E, 5F, 5G). Real capability cards only —
+// Users (5E-1), Access Levels (5E-2), Activity log (5F), Platform status
+// (5G) — each shown only for the permission that backs it. No "coming soon"
+// cards.
 export default async function AdministrationHomePage() {
   const session = await getInternalSession();
   if (!session) {
@@ -21,8 +21,9 @@ export default async function AdministrationHomePage() {
   const canViewUsers = can(capabilities, "users.view");
   const canViewRoles = can(capabilities, "roles.view");
   const canViewAudit = can(capabilities, "audit.view");
+  const canViewPlatform = can(capabilities, "platform.view");
 
-  if (!canViewUsers && !canViewRoles && !canViewAudit) {
+  if (!canViewUsers && !canViewRoles && !canViewAudit && !canViewPlatform) {
     return (
       <AdminPage>
         <AdminPageHeader title="Administration" />
@@ -62,6 +63,15 @@ export default async function AdministrationHomePage() {
               href="/admin/administration/audit"
               title="Activity log"
               description="Review important changes to Admin access and permissions."
+            />
+          </li>
+        ) : null}
+        {canViewPlatform ? (
+          <li>
+            <AdministrationCard
+              href="/admin/administration/platform"
+              title="Platform status"
+              description="See how the Mocha House platform is configured and which integrations are connected."
             />
           </li>
         ) : null}

@@ -38,5 +38,10 @@ import { PAYMENT_PROVIDER } from './infrastructure/payment-provider.token';
     // is a one-line swap in this provider list, not an orchestration change.
     { provide: PAYMENT_PROVIDER, useClass: FakePaymentProvider },
   ],
+  // Exported so the Milestone 5G platform-status read can report the
+  // payment-integration posture through the SAME boundary token — it
+  // depends only on the PaymentProvider interface, never on
+  // FakePaymentProvider by name.
+  exports: [PAYMENT_PROVIDER],
 })
 export class OrdersModule {}

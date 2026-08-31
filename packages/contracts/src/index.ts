@@ -870,6 +870,41 @@ export interface AdminAuditFilterOptions {
   activityTypes: { value: AdminAuditActivityType; label: string }[];
 }
 
+// --- Admin: platform status (Milestone 5G) --------------------------
+// A small, read-only, business-facing view of the platform's current
+// high-level posture. Served only from `GET /api/v1/admin/platform/status`
+// (InternalAuthGuard + PermissionGuard + `platform.view`, CORPORATE-only).
+//
+// It is INFORMATIONAL ONLY — there is no write endpoint and no persisted
+// configuration. Every field is constructed explicitly from information the
+// application already holds (provider mode, the payment boundary, aggregate
+// location counts). It NEVER exposes a secret, credential, connection
+// string, ARN, pool/client id, raw environment-variable name or value, or
+// any other infrastructure identifier — `label` fields carry plain business
+// language, not implementation detail.
+export interface AdminPlatformStatus {
+  // "Development" or "Production".
+  environmentLabel: string;
+  isProduction: boolean;
+  authentication: {
+    // e.g. "Amazon Cognito" or "Local development authentication".
+    adminLabel: string;
+    customerLabel: string;
+  };
+  payments: {
+    // e.g. "Development payment provider" or "Live payment provider".
+    providerLabel: string;
+    isDevelopmentStandIn: boolean;
+  };
+  locations: {
+    activeCount: number;
+    inactiveCount: number;
+    // Among ACTIVE locations only.
+    digitalOrderingEnabledCount: number;
+    digitalOrderingDisabledCount: number;
+  };
+}
+
 // --- Admin: access levels (roles) review (Milestone 5E-2) ------------
 // The business-facing read model for the Administration → Access Levels
 // screens. Served only from `/api/v1/admin/internal-roles*` (InternalAuthGuard
@@ -942,6 +977,8 @@ export const INTERNAL_PERMISSION_KEYS = [
   "users.manage_roles",
   // Milestone 5F
   "audit.view",
+  // Milestone 5G
+  "platform.view",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1053,6 +1090,12 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "audit.view",
     description:
       "View the Admin activity log — the recorded history of administrative access changes. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "platform.view": {
+    key: "platform.view",
+    description:
+      "View platform status and configuration — a read-only, high-level view of the platform's environment, authentication, payment and location posture. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };

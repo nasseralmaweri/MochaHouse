@@ -30,6 +30,8 @@ describe('internal permission catalog', () => {
         'users.manage_roles',
         // Milestone 5F
         'audit.view',
+        // Milestone 5G
+        'platform.view',
       ].sort(),
     );
   });
@@ -66,6 +68,8 @@ describe('internal permission catalog', () => {
     expect(allowedScopeTypesFor('users.manage_roles')).toEqual(['CORPORATE']);
     // audit.view — the activity log is a corporate read (5F).
     expect(allowedScopeTypesFor('audit.view')).toEqual(['CORPORATE']);
+    // platform.view — platform status is a corporate read (5G).
+    expect(allowedScopeTypesFor('platform.view')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {
