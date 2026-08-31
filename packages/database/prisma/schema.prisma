@@ -471,9 +471,47 @@ model InternalUser {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  roleAssignments InternalUserRoleAssignment[]
+  roleAssignments  InternalUserRoleAssignment[]
+  auditEventsActed InternalAuditEvent[]         @relation("InternalAuditEventActor")
 
   @@unique([externalProvider, externalSubject])
+}
+
+// --- Milestone 5E-3, access-control audit foundation ------------------
+// The durable, synchronous history of security-sensitive Admin writes. Not
+// an OutboxEvent (that is an async processing queue) and not an event bus —
+// this is application history, written in the SAME transaction as the change
+// it records, so "the change happened" and "the change was recorded" can
+// never disagree.
+//
+// Deliberately minimal and general-purpose: `action` names the event
+// (e.g. "user.status_changed"), `targetType` + `targetId` are a polymorphic
+// reference (no FK — a future event may target a role or an assignment), and
+// before/after are small JSON snapshots. `reason` is required for every
+// event. No IP/device metadata, no diff engine, no retention policy — those
+// are not needed for the foundation.
+//
+// The ACTOR is always an InternalUser and the relation is onDelete: Restrict:
+// an internal user who has authored audit events cannot be deleted, so audit
+// history can never be orphaned or silently destroyed. The product never
+// hard-deletes internal users anyway (DISABLED is terminal), so Restrict
+// creates no real operational problem and gives the strongest integrity.
+model InternalAuditEvent {
+  id                  String   @id @default(uuid(7))
+  actorInternalUserId String
+  action              String
+  targetType          String
+  targetId            String
+  beforeData          Json?
+  afterData           Json?
+  reason              String
+  createdAt           DateTime @default(now())
+
+  actorInternalUser InternalUser @relation("InternalAuditEventActor", fields: [actorInternalUserId], references: [id], onDelete: Restrict)
+
+  @@index([targetType, targetId])
+  @@index([actorInternalUserId])
+  @@index([createdAt])
 }
 
 // --- Milestone 5B, internal authorization (roles, permissions, scope) --
@@ -537,13 +575,13 @@ model InternalRolePermission {
 // enforced in application logic, not the schema, because scopeId is a
 // deliberately polymorphic reference.
 model InternalUserRoleAssignment {
-  id             String           @id @default(uuid(7))
+  id             String            @id @default(uuid(7))
   internalUserId String
   roleId         String
   scopeType      InternalScopeType
   scopeId        String?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 
   internalUser InternalUser @relation(fields: [internalUserId], references: [id], onDelete: Cascade)
   role         InternalRole @relation(fields: [roleId], references: [id], onDelete: Restrict)

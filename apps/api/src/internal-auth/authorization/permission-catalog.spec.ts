@@ -24,6 +24,8 @@ describe('internal permission catalog', () => {
         'users.view',
         // Milestone 5E-2
         'roles.view',
+        // Milestone 5E-3
+        'users.manage_status',
       ].sort(),
     );
   });
@@ -54,6 +56,8 @@ describe('internal permission catalog', () => {
     expect(allowedScopeTypesFor('users.view')).toEqual(['CORPORATE']);
     // roles.view — access-level administration is corporate (Milestone 5E-2).
     expect(allowedScopeTypesFor('roles.view')).toEqual(['CORPORATE']);
+    // users.manage_status — a highly privileged corporate write (5E-3).
+    expect(allowedScopeTypesFor('users.manage_status')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {

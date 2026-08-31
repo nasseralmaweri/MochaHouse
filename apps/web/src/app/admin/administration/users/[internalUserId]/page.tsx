@@ -4,8 +4,10 @@ import { getAdminUser } from "@/lib/internal-auth/admin-users";
 import { can } from "@/lib/admin/capabilities";
 import {
   accessLevelsLabel,
+  canShowStatusActions,
   locationAccessLabel,
   userStatusLabel,
+  userStatusSentence,
   userStatusTone,
 } from "@/lib/admin/user-access";
 import { AdminPage, AdminSection } from "@/components/admin/AdminPage";
@@ -17,13 +19,15 @@ import {
   AdminNotFound,
 } from "@/components/admin/states";
 import { StatusBadge } from "@/components/admin/StatusBadge";
+import { UserStatusControl } from "@/components/admin/UserStatusControl";
 import { BackLink } from "@/components/BackLink";
 import { Card } from "@/components/Card";
 
-// Administration → Users → detail (Milestone 5E-1). Read-only. The
-// "What they can do" list is produced by the API from effective
-// authorization (permission + scope), never a role name. No mutation
-// controls in this slice.
+// Administration → Users → detail. The "What they can do" list is produced
+// by the API from effective authorization (permission + scope), never a
+// role name. Milestone 5E-3 adds the status control (Suspend / Reactivate /
+// Disable), shown only when the viewer holds `users.manage_status` and is
+// not looking at their own record; the API is the authority for every rule.
 export default async function AdminUserDetailPage({
   params,
 }: {
@@ -90,6 +94,15 @@ export default async function AdminUserDetailPage({
 
   const user = result.data;
   const name = user.displayName ?? user.email;
+  const isSelf = user.id === session.user.id;
+  const showStatusActions = canShowStatusActions({
+    hasManageStatusPermission: can(
+      session.authorization.capabilities,
+      "users.manage_status",
+    ),
+    isSelf,
+    status: user.status,
+  });
 
   return (
     <AdminPage>
@@ -102,12 +115,25 @@ export default async function AdminUserDetailPage({
         ]}
       />
 
-      <div>
-        <StatusBadge
-          label={userStatusLabel(user.status)}
-          tone={userStatusTone(user.status)}
-        />
-      </div>
+      <AdminSection title="Status">
+        <Card className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge
+              label={userStatusLabel(user.status)}
+              tone={userStatusTone(user.status)}
+            />
+            <span className="text-sm text-text-secondary">
+              {userStatusSentence(user.status)}
+            </span>
+          </div>
+          {showStatusActions ? (
+            <UserStatusControl
+              internalUserId={user.id}
+              status={user.status}
+            />
+          ) : null}
+        </Card>
+      </AdminSection>
 
       <AdminSection title="Account">
         <Card className="flex flex-col gap-4">

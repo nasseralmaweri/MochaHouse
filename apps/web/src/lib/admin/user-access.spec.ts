@@ -1,9 +1,13 @@
 import type { AdminUserLocationAccess } from "@mocha-house/contracts";
 import {
   accessLevelsLabel,
+  canShowStatusActions,
+  checkStatusChangeReason,
   locationAccessLabel,
   peopleCountLabel,
+  userStatusActions,
   userStatusLabel,
+  userStatusSentence,
   userStatusTone,
 } from "./user-access";
 
@@ -36,6 +40,102 @@ describe("accessLevelsLabel", () => {
     expect(accessLevelsLabel(["Alpha Access", "Bravo Access"])).toBe(
       "Alpha Access, Bravo Access",
     );
+  });
+});
+
+describe("userStatusSentence", () => {
+  it("has a plain sentence for every status and never implies invitation works", () => {
+    expect(userStatusSentence("ACTIVE")).toBe(
+      "Can use the Admin according to their assigned access.",
+    );
+    expect(userStatusSentence("SUSPENDED")).toBe("Access is temporarily paused.");
+    expect(userStatusSentence("DISABLED")).toBe(
+      "This account can no longer use the Admin.",
+    );
+    expect(userStatusSentence("INVITED")).toBe(
+      "Access has not been activated yet.",
+    );
+  });
+});
+
+describe("userStatusActions", () => {
+  it("offers Suspend + Disable for an active person", () => {
+    expect(userStatusActions("ACTIVE").map((a) => a.key)).toEqual([
+      "suspend",
+      "disable",
+    ]);
+    expect(userStatusActions("ACTIVE")[0].targetStatus).toBe("SUSPENDED");
+  });
+  it("offers Reactivate + Disable for a suspended person", () => {
+    expect(userStatusActions("SUSPENDED").map((a) => a.key)).toEqual([
+      "reactivate",
+      "disable",
+    ]);
+  });
+  it("offers nothing for a disabled or invited person", () => {
+    expect(userStatusActions("DISABLED")).toEqual([]);
+    expect(userStatusActions("INVITED")).toEqual([]);
+  });
+});
+
+describe("canShowStatusActions", () => {
+  it("needs the permission, a non-self target, and an actionable status", () => {
+    expect(
+      canShowStatusActions({
+        hasManageStatusPermission: true,
+        isSelf: false,
+        status: "ACTIVE",
+      }),
+    ).toBe(true);
+  });
+  it("is false without the permission", () => {
+    expect(
+      canShowStatusActions({
+        hasManageStatusPermission: false,
+        isSelf: false,
+        status: "ACTIVE",
+      }),
+    ).toBe(false);
+  });
+  it("is false for your own record", () => {
+    expect(
+      canShowStatusActions({
+        hasManageStatusPermission: true,
+        isSelf: true,
+        status: "ACTIVE",
+      }),
+    ).toBe(false);
+  });
+  it("is false when the target status has no actions", () => {
+    expect(
+      canShowStatusActions({
+        hasManageStatusPermission: true,
+        isSelf: false,
+        status: "DISABLED",
+      }),
+    ).toBe(false);
+    expect(
+      canShowStatusActions({
+        hasManageStatusPermission: true,
+        isSelf: false,
+        status: "INVITED",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("checkStatusChangeReason", () => {
+  it("trims and accepts a real reason", () => {
+    expect(checkStatusChangeReason("  moved teams  ")).toEqual({
+      ok: true,
+      reason: "moved teams",
+    });
+  });
+  it("rejects a blank reason", () => {
+    expect(checkStatusChangeReason("   ").ok).toBe(false);
+  });
+  it("rejects an over-long reason", () => {
+    expect(checkStatusChangeReason("x".repeat(1001)).ok).toBe(false);
   });
 });
 

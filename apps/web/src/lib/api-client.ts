@@ -1,6 +1,8 @@
 import type {
+  AdminInternalUserDetail,
   AdminLocationDetail,
   AdminProductDetail,
+  AdminUpdateInternalUserStatusRequest,
   AdminUpdateLocationRequest,
   AdminUpdateProductRequest,
   AdvanceOrderStatusResponse,
@@ -608,4 +610,77 @@ export function useStandardAvailabilityFromBrowser(
     overridePath(locationId, menuId, productId, "availability-override"),
     "DELETE",
   );
+}
+
+// --- Admin: internal user status (Milestone 5E-3) -----------------
+// Suspend / reactivate / disable another internal user. The API
+// (`users.manage_status`, CORPORATE-only) is the authority — it enforces
+// self-protection, transitions and last-administrator loss. 409 covers a
+// no-op transition, a terminal (disabled) source, and last-admin
+// protection; the message is business-safe and shown as-is.
+export type UpdateInternalUserStatusResult =
+  | { outcome: "success"; user: AdminInternalUserDetail }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "conflict"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function updateInternalUserStatusFromBrowser(
+  internalUserId: string,
+  input: AdminUpdateInternalUserStatusRequest,
+): Promise<UpdateInternalUserStatusResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/internal-users/${encodeURIComponent(internalUserId)}/status`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const body = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: body?.message ?? "That status change isn’t allowed.",
+    };
+  }
+  if (response.status === 409) {
+    const body = await safeJson(response);
+    return {
+      outcome: "conflict",
+      message: body?.message ?? "That status change isn’t possible right now.",
+    };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+
+  return {
+    outcome: "success",
+    user: (await response.json()) as AdminInternalUserDetail,
+  };
 }

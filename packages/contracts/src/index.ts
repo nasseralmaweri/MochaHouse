@@ -780,6 +780,20 @@ export interface AdminRoleDetail extends AdminRoleSummary {
   capabilities: AdminUserCapabilityGroup[];
 }
 
+// --- Admin: internal user status management (Milestone 5E-3) ---------
+// PATCH /api/v1/admin/internal-users/:id/status — a highly privileged,
+// audited write (`users.manage_status`, CORPORATE-only). Only these three
+// statuses are settable: INVITED is never accepted here (invitation /
+// activation is a later slice), and DISABLED is terminal (a disabled
+// account can only be viewed, never re-enabled through this endpoint).
+// `reason` is REQUIRED for every change and is stored on the audit event.
+// The response is the updated AdminInternalUserDetail so the screen can
+// refresh in place.
+export interface AdminUpdateInternalUserStatusRequest {
+  status: "ACTIVE" | "SUSPENDED" | "DISABLED";
+  reason: string;
+}
+
 // --- Internal authorization: permissions & scope (Milestone 5B) --------
 // The CLOSED permission vocabulary. This is the single source of truth for
 // what internal/Admin capabilities exist: a permission string only grants
@@ -806,6 +820,7 @@ export const INTERNAL_PERMISSION_KEYS = [
   "locations.manage_digital_ordering",
   "users.view",
   "roles.view",
+  "users.manage_status",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -899,6 +914,12 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "roles.view",
     description:
       "View Admin access levels (roles) and the capabilities included in each. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "users.manage_status": {
+    key: "users.manage_status",
+    description:
+      "Suspend, reactivate, or disable an internal Admin user. Highly privileged; corporate-only.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };

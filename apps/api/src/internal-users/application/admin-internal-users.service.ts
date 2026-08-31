@@ -1,13 +1,26 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type {
   AdminInternalUserDetail,
   AdminInternalUserSummary,
+  AdminUpdateInternalUserStatusRequest,
   AdminUserLocationAccess,
+  InternalUserStatus,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorizationService } from '../../internal-auth/authorization/authorization.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
+import { InternalAuditService } from '../../audit/internal-audit.service';
 import { describeEffectiveCapabilities } from './capability-presentation';
+import {
+  checkStatusTransition,
+  removesActiveAccess,
+} from './internal-user-status-transition';
 
 type AssignmentRow = {
   scopeType: 'CORPORATE' | 'LOCATION';
@@ -15,19 +28,41 @@ type AssignmentRow = {
   role: { displayName: string };
 };
 
-// Read-only Admin view of internal users (Milestone 5E-1). Guarded by
-// InternalAuthGuard + PermissionGuard + `users.view` (CORPORATE-only) at the
-// controller; `assertCorporate` here is the matching service-layer defense.
+const REASON_MAX_LENGTH = 1000;
+
+// The `where` clause matching an ACTIVE internal user who EFFECTIVELY holds
+// `users.manage_status` at CORPORATE scope — i.e. someone who can administer
+// internal-user access. It mirrors AuthorizationService.toValidScopeGrant:
+// only a well-formed CORPORATE assignment (scopeId IS NULL) counts, and only
+// if the role actually stores the exact permission key. A LOCATION grant, a
+// malformed CORPORATE-with-scopeId row, an unknown permission key, and a
+// non-ACTIVE user all fail this filter — never a role display name.
+const ACTIVE_CORPORATE_STATUS_ADMIN = {
+  status: 'ACTIVE' as const,
+  roleAssignments: {
+    some: {
+      scopeType: 'CORPORATE' as const,
+      scopeId: null,
+      role: {
+        permissions: { some: { permissionKey: 'users.manage_status' } },
+      },
+    },
+  },
+};
+
+// Admin view of internal users: read (Milestone 5E-1) and status management
+// (Milestone 5E-3). Guarded by InternalAuthGuard + PermissionGuard at the
+// controller; each method re-asserts the corporate permission it needs.
 //
-// This is NOT a second authorization engine: the "What they can do" list is
-// derived from the SAME AuthorizationService / AuthorizationContext the
-// guards use. Role display names are shown as labels only and never
-// influence the capability list.
+// This is NOT a second authorization engine: the "What they can do" list and
+// the last-administrator check both come from the SAME permission + scope
+// data AuthorizationService uses. Role display names are labels only.
 @Injectable()
 export class AdminInternalUsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly authorizationService: AuthorizationService,
+    private readonly audit: InternalAuditService,
   ) {}
 
   async listUsers(
@@ -67,7 +102,126 @@ export class AdminInternalUsersService {
     authorization: AuthorizationContext,
   ): Promise<AdminInternalUserDetail> {
     authorization.assertCorporate('users.view');
+    return this.buildUserDetail(internalUserId);
+  }
 
+  // --- Status management (Milestone 5E-3) -------------------------
+  // A highly privileged, audited write. `users.manage_status` is
+  // CORPORATE-only, so PermissionGuard already rejects a LOCATION grant;
+  // `assertCorporate` here is the matching service-layer defense.
+  //
+  // The order matters: reject self-management and validate the request
+  // shape OUTSIDE the transaction (cheap, no locks); then do the
+  // existence re-check, the transition check, the last-administrator
+  // check, the status update and the audit insert ALL inside one
+  // Serializable transaction so they cannot be split by a concurrent
+  // write.
+  async updateStatus(
+    internalUserId: string,
+    request: AdminUpdateInternalUserStatusRequest,
+    actorInternalUserId: string,
+    authorization: AuthorizationContext,
+  ): Promise<AdminInternalUserDetail> {
+    authorization.assertCorporate('users.manage_status');
+
+    if (internalUserId === actorInternalUserId) {
+      throw new ForbiddenException('You can’t change your own status.');
+    }
+
+    const reason = this.validateReason(request?.reason);
+    // Raw value from the request body — validated against the settable set
+    // by checkStatusTransition below, so an unknown/INVITED value is a 400.
+    const requestedStatus = String(request?.status) as InternalUserStatus;
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        const target = await tx.internalUser.findUnique({
+          where: { id: internalUserId },
+          select: { id: true, status: true },
+        });
+        if (!target) {
+          throw new NotFoundException('Internal user not found.');
+        }
+
+        const transition = checkStatusTransition(
+          target.status,
+          requestedStatus,
+        );
+        if (!transition.ok) {
+          throw transition.kind === 'no-op'
+            ? new ConflictException(transition.message)
+            : new BadRequestException(transition.message);
+        }
+        // checkStatusTransition({ ok: true }) guarantees this is a real,
+        // settable status (ACTIVE / SUSPENDED / DISABLED).
+        const nextStatus = requestedStatus;
+
+        if (removesActiveAccess(target.status, nextStatus)) {
+          const targetIsProtectedAdmin =
+            (await tx.internalUser.count({
+              where: { id: target.id, ...ACTIVE_CORPORATE_STATUS_ADMIN },
+            })) > 0;
+
+          if (targetIsProtectedAdmin) {
+            // Require an INDEPENDENT administrator to remain — one who is
+            // neither the target nor the acting administrator. The actor is
+            // excluded deliberately: an administrator must not be able to
+            // demote another administrator down to where the actor is the
+            // sole remaining point of administrative control. This is
+            // stricter than "never reach zero admins" and is what keeps a
+            // spare in place after every demotion.
+            const independentProtectedAdmins =
+              await tx.internalUser.count({
+                where: {
+                  id: { notIn: [target.id, actorInternalUserId] },
+                  ...ACTIVE_CORPORATE_STATUS_ADMIN,
+                },
+              });
+            if (independentProtectedAdmins === 0) {
+              throw new ConflictException(
+                'At least one other active Platform Administrator is required before this person can be suspended or disabled.',
+              );
+            }
+          }
+        }
+
+        await tx.internalUser.update({
+          where: { id: target.id },
+          data: { status: nextStatus },
+        });
+
+        // Same transaction — the status change and its audit record commit
+        // or roll back together.
+        await this.audit.recordUserStatusChanged(tx, {
+          actorInternalUserId,
+          targetInternalUserId: target.id,
+          before: target.status,
+          after: nextStatus,
+          reason,
+        });
+      },
+      { isolationLevel: 'Serializable' },
+    );
+
+    return this.buildUserDetail(internalUserId);
+  }
+
+  private validateReason(raw: unknown): string {
+    if (typeof raw !== 'string' || raw.trim().length === 0) {
+      throw new BadRequestException('A reason is required.');
+    }
+    const reason = raw.trim();
+    if (reason.length > REASON_MAX_LENGTH) {
+      throw new BadRequestException(
+        `Reason is too long (maximum ${REASON_MAX_LENGTH} characters).`,
+      );
+    }
+    return reason;
+  }
+
+  private async buildUserDetail(
+    internalUserId: string,
+  ): Promise<AdminInternalUserDetail> {
     const user = await this.prisma.internalUser.findUnique({
       where: { id: internalUserId },
       select: {
@@ -90,11 +244,7 @@ export class AdminInternalUsersService {
     }
 
     const locationNameById = await this.loadLocationNames(user.roleAssignments);
-    const summary = this.toSummary(
-      user,
-      user.roleAssignments,
-      locationNameById,
-    );
+    const summary = this.toSummary(user, user.roleAssignments, locationNameById);
 
     // Effective authorization, exactly as the guards resolve it. Unknown
     // stored permission keys are already dropped by AuthorizationService, so
