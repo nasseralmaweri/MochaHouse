@@ -1,4 +1,5 @@
 import type {
+  AdminAssignInternalUserRoleRequest,
   AdminInternalUserDetail,
   AdminLocationDetail,
   AdminProductDetail,
@@ -490,7 +491,7 @@ export type AdminMutationResult =
 
 async function adminProxyMutate(
   path: string,
-  method: "PATCH" | "PUT" | "DELETE",
+  method: "POST" | "PATCH" | "PUT" | "DELETE",
   body?: unknown,
 ): Promise<AdminMutationResult> {
   let response: Response;
@@ -683,4 +684,98 @@ export async function updateInternalUserStatusFromBrowser(
     outcome: "success",
     user: (await response.json()) as AdminInternalUserDetail,
   };
+}
+
+// --- Admin: access level + location assignment (Milestone 5E-4) ---
+// Grant / remove a person's access. The API (`users.manage_roles`,
+// CORPORATE-only) is the authority — it enforces self-protection, the
+// privilege ceiling, assignment policy and last-administrator protection.
+// 409 covers a duplicate grant and last-administrator protection; its
+// message is business-safe and shown as-is. Both return the refreshed
+// AdminInternalUserDetail so the screen can update in place.
+export type InternalUserAccessMutationResult =
+  | { outcome: "success"; user: AdminInternalUserDetail }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "conflict"; message: string }
+  | { outcome: "error"; message: string };
+
+async function internalUserAccessMutate(
+  path: string,
+  body: unknown,
+): Promise<InternalUserAccessMutationResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${INTERNAL_ADMIN_PROXY}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "Please check the form and try again.",
+    };
+  }
+  if (response.status === 409) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "conflict",
+      message: parsed?.message ?? "That access change isn’t possible right now.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+
+  return {
+    outcome: "success",
+    user: (await response.json()) as AdminInternalUserDetail,
+  };
+}
+
+export function assignInternalUserRoleFromBrowser(
+  internalUserId: string,
+  input: AdminAssignInternalUserRoleRequest,
+): Promise<InternalUserAccessMutationResult> {
+  return internalUserAccessMutate(
+    `/internal-users/${encodeURIComponent(internalUserId)}/role-assignments`,
+    input,
+  );
+}
+
+export function removeInternalUserRoleAssignmentFromBrowser(
+  internalUserId: string,
+  assignmentId: string,
+  reason: string,
+): Promise<InternalUserAccessMutationResult> {
+  return internalUserAccessMutate(
+    `/internal-users/${encodeURIComponent(internalUserId)}/role-assignments/${encodeURIComponent(
+      assignmentId,
+    )}/remove`,
+    { reason },
+  );
 }

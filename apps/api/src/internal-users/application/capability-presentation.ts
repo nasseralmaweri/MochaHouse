@@ -101,6 +101,12 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Suspend, reactivate or disable Admin users',
     definition: 'Suspend, reactivate or disable Admin users',
   },
+  'users.manage_roles': {
+    group: 'Administration',
+    effectiveAll: 'Assign and remove access levels',
+    effectiveScoped: 'Assign and remove access levels',
+    definition: 'Assign and remove access levels',
+  },
 };
 
 const GROUP_ORDER = [
@@ -126,6 +132,7 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'users.view',
   'roles.view',
   'users.manage_status',
+  'users.manage_roles',
 ];
 
 function groupLines(

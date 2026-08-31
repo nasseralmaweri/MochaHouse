@@ -1,5 +1,6 @@
 import "server-only";
 import type {
+  AdminAccessAssignmentOptions,
   AdminInternalUserDetail,
   AdminInternalUserSummary,
 } from "@mocha-house/contracts";
@@ -71,5 +72,16 @@ export function getAdminUser(
 ): Promise<AdminReadResult<AdminInternalUserDetail>> {
   return adminUsersGet<AdminInternalUserDetail>(
     `/admin/internal-users/${encodeURIComponent(internalUserId)}`,
+  );
+}
+
+// The access-assignment picker data (Milestone 5E-4). Gated server-side by
+// `users.manage_roles`; a viewer without it gets `forbidden` and the page
+// simply omits the assignment controls.
+export function getAdminAccessOptions(): Promise<
+  AdminReadResult<AdminAccessAssignmentOptions>
+> {
+  return adminUsersGet<AdminAccessAssignmentOptions>(
+    "/admin/internal-users/access-options",
   );
 }

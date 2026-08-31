@@ -1,4 +1,5 @@
 import type {
+  AdminInternalUserAccessAssignment,
   AdminUserLocationAccess,
   InternalUserStatus,
 } from "@mocha-house/contracts";
@@ -120,6 +121,40 @@ export function checkStatusChangeReason(raw: string): ReasonCheck {
     };
   }
   return { ok: true, reason };
+}
+
+// --- Access assignments (Milestone 5E-4) -----------------------------
+// Whether the "Manage access" controls (Add access / Remove access) render
+// at all: the viewer holds `users.manage_roles` and is not looking at their
+// own record. Security is still enforced server-side.
+export function canManageAccess(input: {
+  hasManageRolesPermission: boolean;
+  isSelf: boolean;
+}): boolean {
+  return input.hasManageRolesPermission && !input.isSelf;
+}
+
+// Where one concrete grant applies, in plain language.
+export function assignmentWhereLabel(
+  assignment: AdminInternalUserAccessAssignment,
+): string {
+  if (assignment.isCorporate) {
+    return "All locations";
+  }
+  return assignment.location?.name ?? "Unknown location";
+}
+
+// "Platform Administrator · All locations" / "Store Manager · Ann Arbor".
+export function assignmentSummary(
+  assignment: AdminInternalUserAccessAssignment,
+): string {
+  return `${assignment.accessLevel.displayName} · ${assignmentWhereLabel(assignment)}`;
+}
+
+// A reason is required for granting and removing access too, with the same
+// rules as a status change.
+export function checkAccessChangeReason(raw: string): ReasonCheck {
+  return checkStatusChangeReason(raw);
 }
 
 // Compact, business-friendly. Names for up to two locations; a count beyond

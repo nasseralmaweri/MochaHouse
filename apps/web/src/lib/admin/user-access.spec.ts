@@ -1,7 +1,14 @@
-import type { AdminUserLocationAccess } from "@mocha-house/contracts";
+import type {
+  AdminInternalUserAccessAssignment,
+  AdminUserLocationAccess,
+} from "@mocha-house/contracts";
 import {
   accessLevelsLabel,
+  assignmentSummary,
+  assignmentWhereLabel,
+  canManageAccess,
   canShowStatusActions,
+  checkAccessChangeReason,
   checkStatusChangeReason,
   locationAccessLabel,
   peopleCountLabel,
@@ -145,6 +152,53 @@ describe("peopleCountLabel", () => {
     expect(peopleCountLabel(1)).toBe("1 person");
     expect(peopleCountLabel(2)).toBe("2 people");
     expect(peopleCountLabel(9)).toBe("9 people");
+  });
+});
+
+describe("access assignments (Milestone 5E-4)", () => {
+  const corporate: AdminInternalUserAccessAssignment = {
+    id: "a1",
+    accessLevel: { id: "r1", displayName: "Platform Administrator", isBuiltIn: true },
+    location: null,
+    isCorporate: true,
+  };
+  const scoped: AdminInternalUserAccessAssignment = {
+    id: "a2",
+    accessLevel: { id: "r2", displayName: "Store Manager", isBuiltIn: true },
+    location: { id: "l1", name: "Ann Arbor" },
+    isCorporate: false,
+  };
+
+  it("canManageAccess needs the permission and a non-self target", () => {
+    expect(
+      canManageAccess({ hasManageRolesPermission: true, isSelf: false }),
+    ).toBe(true);
+    expect(
+      canManageAccess({ hasManageRolesPermission: false, isSelf: false }),
+    ).toBe(false);
+    expect(
+      canManageAccess({ hasManageRolesPermission: true, isSelf: true }),
+    ).toBe(false);
+  });
+
+  it("assignmentWhereLabel reads 'All locations' for corporate, the name otherwise", () => {
+    expect(assignmentWhereLabel(corporate)).toBe("All locations");
+    expect(assignmentWhereLabel(scoped)).toBe("Ann Arbor");
+  });
+
+  it("assignmentSummary joins the access level and where", () => {
+    expect(assignmentSummary(corporate)).toBe(
+      "Platform Administrator · All locations",
+    );
+    expect(assignmentSummary(scoped)).toBe("Store Manager · Ann Arbor");
+  });
+
+  it("checkAccessChangeReason applies the same rules as a status reason", () => {
+    expect(checkAccessChangeReason("  moved  ")).toEqual({
+      ok: true,
+      reason: "moved",
+    });
+    expect(checkAccessChangeReason("   ").ok).toBe(false);
   });
 });
 

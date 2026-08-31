@@ -393,6 +393,49 @@ export interface AdminUserCapabilityGroup {
 }
 export interface AdminInternalUserDetail extends AdminInternalUserSummary {
     capabilities: AdminUserCapabilityGroup[];
+    assignments: AdminInternalUserAccessAssignment[];
+}
+export interface AdminInternalUserAccessAssignment {
+    id: string;
+    accessLevel: {
+        id: string;
+        displayName: string;
+        isBuiltIn: boolean;
+    };
+    location: {
+        id: string;
+        name: string;
+    } | null;
+    isCorporate: boolean;
+}
+export type AdminAccessAssignmentShape = "corporate-only" | "location-only";
+export interface AdminAssignableAccessLevel {
+    id: string;
+    displayName: string;
+    description: string | null;
+    isBuiltIn: boolean;
+    assignmentShape: AdminAccessAssignmentShape;
+    capabilities: AdminUserCapabilityGroup[];
+}
+export interface AdminAccessAssignmentOptions {
+    accessLevels: AdminAssignableAccessLevel[];
+    locations: {
+        id: string;
+        name: string;
+    }[];
+}
+export interface AdminAssignInternalUserRoleRequest {
+    roleId: string;
+    scope: {
+        kind: "corporate";
+    } | {
+        kind: "locations";
+        locationIds: string[];
+    };
+    reason: string;
+}
+export interface AdminRemoveInternalUserRoleAssignmentRequest {
+    reason: string;
 }
 export interface AdminRoleSummary {
     id: string;
@@ -408,7 +451,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];

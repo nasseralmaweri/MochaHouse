@@ -316,6 +316,57 @@ async function main() {
       },
     });
   }
+
+  // Milestone 5E-4 — the second built-in access level. Store Manager runs a
+  // location day to day: orders, online ordering, and location price /
+  // availability for the locations it is assigned to. It is intentionally a
+  // LOCATION-scoped access level; it deliberately does NOT carry catalog
+  // editing, menu composition, location editing, or any user / role
+  // administration. Its permission rows are re-synchronised to exactly this
+  // set on every run — the same deterministic mechanism as
+  // platform-administrator above — so a change here converges by re-seeding.
+  // The seed assigns it to NOBODY (not even the Local Dev Admin): who holds
+  // Store Manager, and where, is decided through the Administration UI.
+  const STORE_MANAGER_PERMISSION_KEYS = [
+    'locations.view',
+    'orders.view',
+    'orders.manage_status',
+    'catalog.overrides.manage',
+    'locations.manage_digital_ordering',
+  ] as const;
+
+  const storeManagerRole = await prisma.internalRole.upsert({
+    where: { key: 'store-manager' },
+    update: {
+      displayName: 'Store Manager',
+      description:
+        'Manages day-to-day orders, online ordering, prices and availability for assigned locations.',
+      isSystem: true,
+    },
+    create: {
+      key: 'store-manager',
+      displayName: 'Store Manager',
+      description:
+        'Manages day-to-day orders, online ordering, prices and availability for assigned locations.',
+      isSystem: true,
+    },
+  });
+
+  await prisma.internalRolePermission.deleteMany({
+    where: {
+      roleId: storeManagerRole.id,
+      permissionKey: { notIn: [...STORE_MANAGER_PERMISSION_KEYS] },
+    },
+  });
+  for (const permissionKey of STORE_MANAGER_PERMISSION_KEYS) {
+    await prisma.internalRolePermission.upsert({
+      where: {
+        roleId_permissionKey: { roleId: storeManagerRole.id, permissionKey },
+      },
+      update: {},
+      create: { roleId: storeManagerRole.id, permissionKey },
+    });
+  }
 }
 
 main()

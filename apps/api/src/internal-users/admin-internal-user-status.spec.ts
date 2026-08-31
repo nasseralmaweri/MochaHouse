@@ -73,7 +73,9 @@ describe('Admin internal user status management (integration)', () => {
       data: {
         key: `status-spec-${suffix}-${randomUUID()}`,
         displayName,
-        permissions: { create: permissionKeys.map((permissionKey) => ({ permissionKey })) },
+        permissions: {
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
+        },
       },
     });
     roleIds.push(role.id);
@@ -158,9 +160,18 @@ describe('Admin internal user status management (integration)', () => {
       })
     ).id;
 
-    roles.statusMgr = await makeRole('Access Manager', ['users.manage_status']);
+    // Milestone 5E-4 unified the "protected administrator" definition across
+    // the status (5E-3) and assignment-removal (5E-4) write paths: an ACTIVE
+    // user who holds BOTH users.manage_status AND users.manage_roles at
+    // CORPORATE. These fixtures therefore carry both keys so they remain
+    // protected administrators under the shared definition.
+    roles.statusMgr = await makeRole('Access Manager', [
+      'users.manage_status',
+      'users.manage_roles',
+    ]);
     roles.statusMgrOtherName = await makeRole('Regional Support', [
       'users.manage_status',
+      'users.manage_roles',
     ]);
     roles.ordersOnly = await makeRole('Orders Only', ['orders.view']);
     roles.misleadingName = await makeRole('Full System Administrator', [
@@ -447,7 +458,9 @@ describe('Admin internal user status management (integration)', () => {
       reason: 'x',
     });
     expect(suspend.status).toBe(409);
-    expect(suspend.body.message).toMatch(/other active Platform Administrator/i);
+    expect(suspend.body.message).toMatch(
+      /other active Platform Administrator/i,
+    );
 
     const disable = await setStatus(`actor-${suffix}`, soleOther, {
       status: 'DISABLED',
@@ -599,7 +612,10 @@ describe('Admin internal user status management (integration)', () => {
   it('after ACTIVE -> SUSPENDED, the target’s previously valid token is rejected on the next request (45)', async () => {
     const key = `revoke-suspend-${suffix}`;
     const t = await makeUser(key, 'ACTIVE');
-    await assign(t, roles.ordersOnly, { scopeType: 'CORPORATE', scopeId: null });
+    await assign(t, roles.ordersOnly, {
+      scopeType: 'CORPORATE',
+      scopeId: null,
+    });
 
     await request(app.getHttpServer())
       .get('/api/v1/internal/me')

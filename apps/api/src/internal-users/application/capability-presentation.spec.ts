@@ -88,6 +88,7 @@ describe('capability presentation (Milestone 5E)', () => {
         'View Admin users',
         'View access levels',
         'Suspend, reactivate or disable Admin users',
+        'Assign and remove access levels',
       ]);
     });
 

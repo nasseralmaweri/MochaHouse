@@ -751,6 +751,76 @@ export interface AdminInternalUserDetail extends AdminInternalUserSummary {
   // (permission + scope), never from a role name. Empty when the person has
   // no effective permissions.
   capabilities: AdminUserCapabilityGroup[];
+  // The CONCRETE access grants this person holds (Milestone 5E-4). A person
+  // who holds an access level at three locations has three entries here,
+  // each independently removable. Ordered corporate-first, then by location
+  // name. Empty when the person has no assignments.
+  assignments: AdminInternalUserAccessAssignment[];
+}
+
+// --- Admin: access level + location assignment (Milestone 5E-4) ------
+// One concrete access grant: an access level (InternalRole) applied either
+// to every location (corporate) or to exactly one location. Deliberately
+// exposes no scope-type enum, no scopeId, no role key, no permission keys —
+// an administrator works in "access level / where" terms.
+export interface AdminInternalUserAccessAssignment {
+  id: string;
+  accessLevel: { id: string; displayName: string; isBuiltIn: boolean };
+  // The single location this grant applies to, or null when it applies to
+  // every location.
+  location: { id: string; name: string } | null;
+  isCorporate: boolean;
+}
+
+// Where an access level may be applied, derived from the capabilities it
+// contains (their allowed scope types) and, for the access levels the
+// platform ships with, a fixed policy — never from the role's name as an
+// authorization input.
+//   "corporate-only" — applies to every location; no location choice.
+//   "location-only"  — applies to chosen locations; at least one required.
+export type AdminAccessAssignmentShape = "corporate-only" | "location-only";
+
+export interface AdminAssignableAccessLevel {
+  id: string;
+  displayName: string;
+  description: string | null;
+  isBuiltIn: boolean;
+  assignmentShape: AdminAccessAssignmentShape;
+  // Plain-language, scope-agnostic summary of what this access level
+  // allows — the same wording the access-level detail screen shows.
+  capabilities: AdminUserCapabilityGroup[];
+}
+
+// GET /api/v1/admin/internal-users/access-options — the picker data for
+// granting access. Gated by `users.manage_roles` (CORPORATE-only); holding
+// it is sufficient, `roles.view` is NOT additionally required. `locations`
+// is the active locations only.
+export interface AdminAccessAssignmentOptions {
+  accessLevels: AdminAssignableAccessLevel[];
+  locations: { id: string; name: string }[];
+}
+
+// POST /api/v1/admin/internal-users/:internalUserId/role-assignments —
+// grant an access level (`users.manage_roles`, CORPORATE-only, audited).
+// The client never sends permission keys, a role key, a scope enum or
+// assignment tuples: only an access level, where it applies, and why.
+//   scope.kind "corporate" — apply to every location (no locationIds).
+//   scope.kind "locations" — apply to each location (>= 1, de-duplicated;
+//                            each must exist and be active).
+export interface AdminAssignInternalUserRoleRequest {
+  roleId: string;
+  scope:
+    | { kind: "corporate" }
+    | { kind: "locations"; locationIds: string[] };
+  reason: string;
+}
+
+// POST /api/v1/admin/internal-users/:internalUserId/role-assignments/:assignmentId/remove
+// — remove ONE concrete access grant (`users.manage_roles`, CORPORATE-only,
+// audited). Removing one location's grant never touches the person's other
+// locations. `reason` is required.
+export interface AdminRemoveInternalUserRoleAssignmentRequest {
+  reason: string;
 }
 
 // --- Admin: access levels (roles) review (Milestone 5E-2) ------------
@@ -821,6 +891,8 @@ export const INTERNAL_PERMISSION_KEYS = [
   "users.view",
   "roles.view",
   "users.manage_status",
+  // Milestone 5E-4
+  "users.manage_roles",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -920,6 +992,12 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "users.manage_status",
     description:
       "Suspend, reactivate, or disable an internal Admin user. Highly privileged; corporate-only.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "users.manage_roles": {
+    key: "users.manage_roles",
+    description:
+      "Assign or remove internal-user access levels and their location scope. Highly privileged; corporate-only.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };

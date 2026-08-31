@@ -1,9 +1,14 @@
 import { redirect } from "next/navigation";
 import { getInternalSession } from "@/lib/internal-auth/session";
-import { getAdminUser } from "@/lib/internal-auth/admin-users";
+import {
+  getAdminAccessOptions,
+  getAdminUser,
+} from "@/lib/internal-auth/admin-users";
 import { can } from "@/lib/admin/capabilities";
 import {
   accessLevelsLabel,
+  assignmentWhereLabel,
+  canManageAccess,
   canShowStatusActions,
   locationAccessLabel,
   userStatusLabel,
@@ -20,6 +25,7 @@ import {
 } from "@/components/admin/states";
 import { StatusBadge } from "@/components/admin/StatusBadge";
 import { UserStatusControl } from "@/components/admin/UserStatusControl";
+import { UserAccessControl } from "@/components/admin/UserAccessControl";
 import { BackLink } from "@/components/BackLink";
 import { Card } from "@/components/Card";
 
@@ -104,6 +110,23 @@ export default async function AdminUserDetailPage({
     status: user.status,
   });
 
+  const showManageAccess = canManageAccess({
+    hasManageRolesPermission: can(
+      session.authorization.capabilities,
+      "users.manage_roles",
+    ),
+    isSelf,
+  });
+  // Only fetched when the controls will actually render — the endpoint is
+  // gated by `users.manage_roles`.
+  const accessOptionsResult = showManageAccess
+    ? await getAdminAccessOptions()
+    : null;
+  const accessOptions =
+    accessOptionsResult?.outcome === "success"
+      ? accessOptionsResult.data
+      : null;
+
   return (
     <AdminPage>
       <AdminPageHeader
@@ -159,6 +182,38 @@ export default async function AdminUserDetailPage({
               {locationAccessLabel(user.locationAccess)}
             </span>
           </div>
+        </Card>
+      </AdminSection>
+
+      <AdminSection title="Access">
+        <Card className="flex flex-col gap-4">
+          {showManageAccess && accessOptions ? (
+            <UserAccessControl
+              internalUserId={user.id}
+              assignments={user.assignments}
+              options={accessOptions}
+            />
+          ) : user.assignments.length === 0 ? (
+            <span className="text-sm text-text-secondary">
+              This person has no access assigned yet.
+            </span>
+          ) : (
+            <ul className="flex flex-col gap-1">
+              {user.assignments.map((assignment) => (
+                <li key={assignment.id} className="text-sm text-text-primary">
+                  <span className="font-medium">
+                    {assignment.accessLevel.displayName}
+                  </span>{" "}
+                  · {assignmentWhereLabel(assignment)}
+                </li>
+              ))}
+            </ul>
+          )}
+          {showManageAccess && !accessOptions ? (
+            <span className="text-sm text-text-secondary">
+              The tools for changing access aren’t available right now.
+            </span>
+          ) : null}
         </Card>
       </AdminSection>
 

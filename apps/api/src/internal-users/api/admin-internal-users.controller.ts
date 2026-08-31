@@ -4,10 +4,15 @@ import {
   Get,
   Param,
   Patch,
+  Post,
   Req,
   UseGuards,
 } from '@nestjs/common';
-import type { AdminUpdateInternalUserStatusRequest } from '@mocha-house/contracts';
+import type {
+  AdminAssignInternalUserRoleRequest,
+  AdminRemoveInternalUserRoleAssignmentRequest,
+  AdminUpdateInternalUserStatusRequest,
+} from '@mocha-house/contracts';
 import { AdminInternalUsersService } from '../application/admin-internal-users.service';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
@@ -32,6 +37,15 @@ export class AdminInternalUsersController {
     return this.service.listUsers(request.authorization!);
   }
 
+  // The access-assignment picker data (Milestone 5E-4). Declared BEFORE the
+  // `:internalUserId` route so the literal path is not captured as an id.
+  // Gated by `users.manage_roles` — `roles.view` is NOT also required.
+  @RequirePermission('users.manage_roles')
+  @Get('access-options')
+  getAccessOptions(@Req() request: InternalAuthenticatedRequest) {
+    return this.service.getAccessOptions(request.authorization!);
+  }
+
   @RequirePermission('users.view')
   @Get(':internalUserId')
   getUser(
@@ -54,6 +68,45 @@ export class AdminInternalUsersController {
   ) {
     return this.service.updateStatus(
       internalUserId,
+      body,
+      request.internalUser!.id,
+      request.authorization!,
+    );
+  }
+
+  // Grant an access level at corporate or specific-location scope
+  // (Milestone 5E-4). `reason` required; actor from the request; self-target
+  // rejected; privilege ceiling, assignment policy and last-administrator
+  // protection all enforced in the service, transactionally.
+  @RequirePermission('users.manage_roles')
+  @Post(':internalUserId/role-assignments')
+  assignRole(
+    @Param('internalUserId') internalUserId: string,
+    @Body() body: AdminAssignInternalUserRoleRequest,
+    @Req() request: InternalAuthenticatedRequest,
+  ) {
+    return this.service.assignRole(
+      internalUserId,
+      body,
+      request.internalUser!.id,
+      request.authorization!,
+    );
+  }
+
+  // Remove ONE concrete access grant (Milestone 5E-4). A POST-with-body
+  // removal (not DELETE-with-body) so the required `reason` always travels
+  // in a conventional place.
+  @RequirePermission('users.manage_roles')
+  @Post(':internalUserId/role-assignments/:assignmentId/remove')
+  removeRoleAssignment(
+    @Param('internalUserId') internalUserId: string,
+    @Param('assignmentId') assignmentId: string,
+    @Body() body: AdminRemoveInternalUserRoleAssignmentRequest,
+    @Req() request: InternalAuthenticatedRequest,
+  ) {
+    return this.service.removeRoleAssignment(
+      internalUserId,
+      assignmentId,
       body,
       request.internalUser!.id,
       request.authorization!,
