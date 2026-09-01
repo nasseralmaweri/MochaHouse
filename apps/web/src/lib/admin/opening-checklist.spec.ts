@@ -1,6 +1,7 @@
 import {
   buildOpeningChecklistViewModel,
   formatChecklistProgress,
+  nextChecklistLoadState,
   resolveOpeningChecklistPage,
 } from "./opening-checklist";
 import type { OpeningChecklistResponse } from "@mocha-house/contracts";
@@ -154,6 +155,26 @@ describe("formatChecklistProgress", () => {
     expect(
       formatChecklistProgress({ completed: 23, total: 23, isComplete: true }),
     ).toBe("23 of 23 complete");
+  });
+});
+
+describe("nextChecklistLoadState", () => {
+  it("a successful load is 'ok'", () => {
+    expect(nextChecklistLoadState("success")).toBe("ok");
+  });
+
+  it("a forbidden load is 'forbidden'", () => {
+    expect(nextChecklistLoadState("forbidden")).toBe("forbidden");
+  });
+
+  it("a failed load ('error') reaches 'error' — never leaves the page loading", () => {
+    // Regression guard for the review's M1 finding: the page's error/retry
+    // UI is only reachable when the failed load transitions to 'error'.
+    expect(nextChecklistLoadState("error")).toBe("error");
+  });
+
+  it("an initial 'not-found' also reaches 'error' (nothing to fall back to)", () => {
+    expect(nextChecklistLoadState("not-found")).toBe("error");
   });
 });
 

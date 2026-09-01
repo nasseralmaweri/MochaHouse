@@ -10,6 +10,7 @@ import {
 } from "@/lib/api-client";
 import {
   buildOpeningChecklistViewModel,
+  nextChecklistLoadState,
   resolveOpeningChecklistPage,
   type OpeningChecklistItemViewModel,
 } from "@/lib/admin/opening-checklist";
@@ -134,24 +135,25 @@ function OpeningChecklist({
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
 
   const applyResult = useCallback((result: OpeningChecklistResult): boolean => {
-    if (result.outcome === "forbidden") {
-      setState("forbidden");
-      return false;
+    if (result.outcome === "success") {
+      setState("ok");
+      setNotice(null);
+      setChecklist(result.checklist);
+      return true;
     }
+    // Every non-success outcome lands on a definite state — a failed load
+    // must reach the retryable AdminErrorState below, never leave the page
+    // on its loading skeleton (see `state === "error" && !checklist`).
+    setState(nextChecklistLoadState(result.outcome));
     if (result.outcome === "not-found") {
       // The instance/item moved under us (e.g. the business day rolled
-      // over). Re-load rather than guess.
+      // over). A mutation caller re-loads; the initial load falls back to
+      // the error state above.
       setNotice("This checklist has changed. Refreshing…");
-      return false;
-    }
-    if (result.outcome === "error") {
+    } else if (result.outcome === "error") {
       setNotice(result.message);
-      return false;
     }
-    setState("ok");
-    setNotice(null);
-    setChecklist(result.checklist);
-    return true;
+    return false;
   }, []);
 
   const load = useCallback(async () => {

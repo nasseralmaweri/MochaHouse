@@ -64,6 +64,35 @@ export function formatChecklistProgress(
   return `${progress.completed} of ${progress.total} complete`;
 }
 
+// The outcome of one Opening Checklist API call, as the browser client
+// reports it (mirrors OpeningChecklistResult in lib/api-client).
+export type ChecklistLoadOutcome =
+  | "success"
+  | "forbidden"
+  | "not-found"
+  | "error";
+
+// The load-state the Opening Checklist page tracks.
+export type ChecklistLoadState = "ok" | "forbidden" | "error";
+
+// Map an API outcome to the page's load-state. A failed load — a plain
+// `error`, or a `not-found` with nothing already on screen — must reach
+// `error` so the page renders its retryable error card, never staying on
+// the loading skeleton.
+export function nextChecklistLoadState(
+  outcome: ChecklistLoadOutcome,
+): ChecklistLoadState {
+  switch (outcome) {
+    case "success":
+      return "ok";
+    case "forbidden":
+      return "forbidden";
+    case "not-found":
+    case "error":
+      return "error";
+  }
+}
+
 // One checklist item, prepared for rendering. `showComplete` / `showUndo`
 // are mutually exclusive and both false for a read-only viewer.
 export interface OpeningChecklistItemViewModel {
