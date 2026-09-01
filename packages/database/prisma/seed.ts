@@ -337,6 +337,9 @@ async function main() {
     // workspace for the locations they run. Held here as a LOCATION-scoped
     // capability (the role is only ever assigned per location).
     'operations.view',
+    // Milestone 6B — a Store Manager runs the opening: completing (and
+    // undoing) checklist items for their locations.
+    'operations.tasks.complete',
   ] as const;
 
   const storeManagerRole = await prisma.internalRole.upsert({
@@ -371,6 +374,73 @@ async function main() {
       create: { roleId: storeManagerRole.id, permissionKey },
     });
   }
+
+  // Milestone 6B — the official corporate Opening Checklist, seeded from
+  // the Mocha House Operations Manual. There is ONE checklist standard for
+  // every active location in 6B (no location overrides, no per-location
+  // editing). HQ self-service editing of these items is 6B-2; here they
+  // are pure seed/configuration data. Every item starts isActive = true —
+  // only ACTIVE items are copied into a newly created daily instance.
+  //
+  // Re-sync strategy: the template row is upserted; its items are fully
+  // replaced on every run. This is safe precisely because instances
+  // snapshot by value — ChecklistInstanceItem has no foreign key to
+  // ChecklistTemplateItem, so replacing template items can never alter an
+  // existing ChecklistInstance. A template change affects only future
+  // instances.
+  const OPENING_CHECKLIST_ITEMS: {
+    section: string;
+    label: string;
+  }[] = [
+    // BUILDING & SECURITY
+    { section: 'Building & Security', label: 'Unlock employee entrance and disarm security alarm.' },
+    { section: 'Building & Security', label: 'Once inside, ensure entrance door is locked.' },
+    { section: 'Building & Security', label: 'Turn on lights, music, tablets, and digital displays.' },
+    { section: 'Building & Security', label: 'Walk through the store for safety hazards.' },
+    { section: 'Building & Security', label: 'Inspect entrances, exits, and parking lot for cleanliness.' },
+    // EQUIPMENT
+    { section: 'Equipment', label: 'Turn on espresso machine and allow warm-up.' },
+    { section: 'Equipment', label: 'Turn on grinders and verify operation.' },
+    { section: 'Equipment', label: 'Power ovens, blenders, ice machines, brewers, and refrigeration.' },
+    { section: 'Equipment', label: 'Verify hot water and refrigeration are operating correctly.' },
+    // COFFEE & BEVERAGE PREPARATION
+    { section: 'Coffee & Beverage Preparation', label: 'Brew fresh drip coffee.' },
+    { section: 'Coffee & Beverage Preparation', label: 'Calibrate espresso grinder and pull test shot.' },
+    { section: 'Coffee & Beverage Preparation', label: 'Prepare iced coffee, cold brew, and daily beverage components.' },
+    { section: 'Coffee & Beverage Preparation', label: 'Fill ice bins.' },
+    // FOOD PREPARATION & STOCKING
+    { section: 'Food Preparation & Stocking', label: 'Prepare and stock pastry display.' },
+    { section: 'Food Preparation & Stocking', label: 'Restock sandwiches, desserts, and grab-and-go items.' },
+    { section: 'Food Preparation & Stocking', label: 'Verify food products are within expiration dates and properly labeled.' },
+    { section: 'Food Preparation & Stocking', label: 'Refill essential service and beverage supplies.' },
+    // CASH & POS
+    { section: 'Cash & POS', label: 'Log into POS and verify functionality.' },
+    { section: 'Cash & POS', label: 'Count and verify opening cash drawer according to policy.' },
+    { section: 'Cash & POS', label: 'Test receipt printers, payment terminals, and kitchen printers.' },
+    // FINAL READINESS
+    { section: 'Final Readiness', label: 'Verify menu boards and promotional displays.' },
+    { section: 'Final Readiness', label: 'Verify drive-thru speaker, headset, and outside menu are operational.' },
+    { section: 'Final Readiness', label: 'Unlock front doors only when fully prepared.' },
+  ];
+
+  const openingTemplate = await prisma.checklistTemplate.upsert({
+    where: { key: 'opening' },
+    update: { name: 'Opening Checklist', isActive: true },
+    create: { key: 'opening', name: 'Opening Checklist', isActive: true },
+  });
+
+  await prisma.checklistTemplateItem.deleteMany({
+    where: { templateId: openingTemplate.id },
+  });
+  await prisma.checklistTemplateItem.createMany({
+    data: OPENING_CHECKLIST_ITEMS.map((item, index) => ({
+      templateId: openingTemplate.id,
+      section: item.section,
+      label: item.label,
+      sortOrder: index + 1,
+      isActive: true,
+    })),
+  });
 }
 
 main()

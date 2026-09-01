@@ -12,6 +12,7 @@ import { InternalAuthModule } from './internal-auth/internal-auth.module';
 import { InternalUsersModule } from './internal-users/internal-users.module';
 import { AdminAuditModule } from './admin-audit/admin-audit.module';
 import { AdminPlatformModule } from './admin-platform/admin-platform.module';
+import { OperationsModule } from './operations/operations.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { AdminPlatformModule } from './admin-platform/admin-platform.module';
     InternalUsersModule,
     AdminAuditModule,
     AdminPlatformModule,
+    OperationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -5,6 +5,8 @@ import {
   ADMIN_LOCATION_COOKIE,
 } from "@/lib/internal-auth/session";
 import { getActiveStoreOrders } from "@/lib/internal-auth/admin-orders";
+import { getOpeningChecklist } from "@/lib/internal-auth/admin-operations";
+import { formatChecklistProgress } from "@/lib/admin/opening-checklist";
 import { can } from "@/lib/admin/capabilities";
 import { digitalOrderingAttentionItems } from "@/lib/admin/attention";
 import { resolveLocationContext } from "@/lib/admin/location-context";
@@ -140,6 +142,27 @@ export default async function OperationsTodayPage({
     capabilities,
   );
 
+  // The Opening Checklist card — the first real Operations workflow
+  // (Milestone 6B). A GET lazily creates today's checklist; the card
+  // communicates progress and links into the full page.
+  const checklistResult = await getOpeningChecklist(location.id);
+  const openingChecklist = (
+    <OpeningChecklistCard
+      progressLabel={
+        checklistResult.outcome === "success"
+          ? formatChecklistProgress(checklistResult.checklist.progress)
+          : null
+      }
+      isComplete={
+        checklistResult.outcome === "success" &&
+        checklistResult.checklist.progress.isComplete
+      }
+      href={`/admin/operations/opening-checklist?location=${encodeURIComponent(
+        location.id,
+      )}`}
+    />
+  );
+
   let snapshot: React.ReactNode = null;
   if (view.showOrderSnapshot) {
     const result = await getActiveStoreOrders(location.id);
@@ -178,6 +201,8 @@ export default async function OperationsTodayPage({
         </Card>
       </AdminSection>
 
+      <AdminSection title="Opening checklist">{openingChecklist}</AdminSection>
+
       <AdminSection title="Needs attention">
         <NeedsAttention items={attention} />
       </AdminSection>
@@ -186,6 +211,39 @@ export default async function OperationsTodayPage({
         <AdminSection title="Store snapshot">{snapshot}</AdminSection>
       ) : null}
     </AdminPage>
+  );
+}
+
+function OpeningChecklistCard({
+  progressLabel,
+  isComplete,
+  href,
+}: {
+  progressLabel: string | null;
+  isComplete: boolean;
+  href: string;
+}) {
+  return (
+    <Card className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <span className="text-base font-semibold text-text-primary">
+          Opening Checklist
+        </span>
+        {progressLabel ? (
+          <span className="text-sm text-text-secondary">
+            {isComplete ? "Complete — " : ""}
+            {progressLabel}
+          </span>
+        ) : (
+          <span className="text-sm text-text-muted">
+            Open the checklist to see today&rsquo;s progress.
+          </span>
+        )}
+      </div>
+      <ButtonLink href={href} variant="secondary">
+        Open checklist
+      </ButtonLink>
+    </Card>
   );
 }
 

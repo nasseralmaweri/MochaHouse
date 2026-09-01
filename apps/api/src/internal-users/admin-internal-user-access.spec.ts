@@ -236,6 +236,7 @@ describe('Admin internal user access assignment (integration)', () => {
       'catalog.overrides.manage',
       'locations.manage_digital_ordering',
       'operations.view',
+      'operations.tasks.complete',
     ]);
     roles.usersView = await makeRole('Users View', ['users.view']);
     roles.unknownKey = await makeRole('Legacy Role', [
@@ -392,6 +393,7 @@ describe('Admin internal user access assignment (integration)', () => {
         'locations.manage_digital_ordering',
         'locations.view',
         'operations.view',
+        'operations.tasks.complete',
         'orders.manage_status',
         'orders.view',
       ].sort(),

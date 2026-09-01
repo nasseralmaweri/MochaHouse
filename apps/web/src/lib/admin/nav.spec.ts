@@ -153,6 +153,7 @@ describe("adminNavItems (permission-aware navigation)", () => {
   it("does not add Tasks / Checklists / Issues / Tickets / anything without a shipped page", () => {
     const caps: AdminCapabilities = {
       "operations.view": { corporate: true, locationIds: [] },
+      "operations.tasks.complete": { corporate: true, locationIds: [] },
       "orders.view": { corporate: true, locationIds: [] },
       "orders.manage_status": { corporate: true, locationIds: [] },
       "catalog.products.edit": { corporate: true, locationIds: [] },
@@ -231,6 +232,10 @@ describe("isNavItemActive", () => {
     };
     expect(isNavItemActive(operations, "/admin/operations")).toBe(true);
     expect(isNavItemActive(operations, "/admin/operations/today")).toBe(true);
+    // Milestone 6B — the Opening Checklist sub-route keeps Operations active.
+    expect(
+      isNavItemActive(operations, "/admin/operations/opening-checklist"),
+    ).toBe(true);
     expect(isNavItemActive(operations, "/admin")).toBe(false);
     expect(isNavItemActive(operations, "/admin/orders")).toBe(false);
   });

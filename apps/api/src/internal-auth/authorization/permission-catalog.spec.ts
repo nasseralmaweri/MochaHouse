@@ -34,6 +34,8 @@ describe('internal permission catalog', () => {
         'platform.view',
         // Milestone 6A
         'operations.view',
+        // Milestone 6B
+        'operations.tasks.complete',
       ].sort(),
     );
   });
@@ -83,6 +85,8 @@ describe('internal permission catalog', () => {
       'locations.manage_digital_ordering',
       // Milestone 6A — a store manager holds operations.view per location.
       'operations.view',
+      // Milestone 6B — completing checklist items is held per location too.
+      'operations.tasks.complete',
     ] as const) {
       expect([...allowedScopeTypesFor(key)].sort()).toEqual([
         'CORPORATE',

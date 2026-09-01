@@ -503,7 +503,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
@@ -513,4 +513,33 @@ export interface InternalPermissionMetadata {
     allowedScopeTypes: readonly InternalScopeType[];
 }
 export declare const INTERNAL_PERMISSION_METADATA: Record<InternalPermissionKey, InternalPermissionMetadata>;
+export interface OpeningChecklistItemView {
+    id: string;
+    label: string;
+    completed: boolean;
+    completedBy: {
+        name: string;
+    } | null;
+    completedAt: string | null;
+}
+export interface OpeningChecklistSectionView {
+    name: string;
+    items: OpeningChecklistItemView[];
+}
+export interface OpeningChecklistProgress {
+    completed: number;
+    total: number;
+    isComplete: boolean;
+}
+export interface OpeningChecklistResponse {
+    locationId: string;
+    locationName: string;
+    businessDate: string;
+    title: string;
+    progress: OpeningChecklistProgress;
+    sections: OpeningChecklistSectionView[];
+}
+export interface OpeningChecklistItemActionRequest {
+    locationId: string;
+}
 //# sourceMappingURL=index.d.ts.map

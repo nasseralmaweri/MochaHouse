@@ -10,6 +10,7 @@ import type {
   CheckoutRequest,
   LocationMenuResponse,
   LocationSummary,
+  OpeningChecklistResponse,
   OrderConfirmation,
   OrderStatus,
   OrderStatusResponse,
@@ -777,5 +778,93 @@ export function removeInternalUserRoleAssignmentFromBrowser(
       assignmentId,
     )}/remove`,
     { reason },
+  );
+}
+
+// --- Store Operations: Opening Checklist (Milestone 6B) -----------
+// All three go through the same server-side proxy as the order-queue calls
+// above (the internal session cookie is attached server-side, never exposed
+// to client JS). The API is the sole authority — GET requires
+// `operations.view`, Complete / Undo require `operations.tasks.complete`,
+// and every call is location-scoped there. Complete / Undo return the full
+// authoritative projection so the page reconciles from it.
+
+export type OpeningChecklistResult =
+  | { outcome: "success"; checklist: OpeningChecklistResponse }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "error"; message: string };
+
+async function openingChecklistRequest(
+  path: string,
+  init?: { method: "POST"; body: unknown },
+): Promise<OpeningChecklistResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${INTERNAL_ADMIN_PROXY}${path}`, {
+      method: init?.method ?? "GET",
+      headers: init ? { "Content-Type": "application/json" } : undefined,
+      body: init ? JSON.stringify(init.body) : undefined,
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+
+  return {
+    outcome: "success",
+    checklist: (await response.json()) as OpeningChecklistResponse,
+  };
+}
+
+export function getOpeningChecklistFromBrowser(
+  locationId: string,
+): Promise<OpeningChecklistResult> {
+  return openingChecklistRequest(
+    `/operations/opening-checklist?locationId=${encodeURIComponent(locationId)}`,
+  );
+}
+
+export function completeOpeningChecklistItemFromBrowser(
+  instanceItemId: string,
+  locationId: string,
+): Promise<OpeningChecklistResult> {
+  return openingChecklistRequest(
+    `/operations/opening-checklist/items/${encodeURIComponent(
+      instanceItemId,
+    )}/complete`,
+    { method: "POST", body: { locationId } },
+  );
+}
+
+export function undoOpeningChecklistItemFromBrowser(
+  instanceItemId: string,
+  locationId: string,
+): Promise<OpeningChecklistResult> {
+  return openingChecklistRequest(
+    `/operations/opening-checklist/items/${encodeURIComponent(
+      instanceItemId,
+    )}/undo`,
+    { method: "POST", body: { locationId } },
   );
 }

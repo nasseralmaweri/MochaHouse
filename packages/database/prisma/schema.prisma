@@ -26,6 +26,7 @@ model Location {
   productAvailabilityOverrides LocationProductAvailabilityOverride[]
   orders                       Order[]
   preferredByCustomers         CustomerPreferredLocation[]
+  checklistInstances           ChecklistInstance[]
 }
 
 model Category {
@@ -473,6 +474,11 @@ model InternalUser {
 
   roleAssignments  InternalUserRoleAssignment[]
   auditEventsActed InternalAuditEvent[]         @relation("InternalAuditEventActor")
+  // Milestone 6B — the checklist items this user is the CURRENT completion
+  // actor for. onDelete: Restrict (see ChecklistInstanceItem) mirrors the
+  // audit-actor relation: an internal user who has completed operational
+  // work cannot be hard-deleted, so that record can never be orphaned.
+  checklistItemsCompleted ChecklistInstanceItem[] @relation("ChecklistItemCompletedBy")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -589,4 +595,102 @@ model InternalUserRoleAssignment {
   @@unique([internalUserId, roleId, scopeType, scopeId])
   @@index([internalUserId])
   @@index([roleId])
+}
+
+// --- Milestone 6B, Store Operations: the Opening Checklist ------------
+// The first real Store Operations workflow. Deliberately the minimum
+// domain: a corporate template, its items, one instance per location per
+// business day, and the instance's item rows.
+//
+// HISTORICAL STRATEGY — SNAPSHOT BY VALUE. When a location first opens
+// today's checklist (lazily, on GET) the ACTIVE template items are copied
+// BY VALUE (section, label, sortOrder) into ChecklistInstanceItem rows.
+// ChecklistInstanceItem has NO foreign key back to ChecklistTemplateItem —
+// once created, an instance never re-reads the template. Future HQ edits
+// (6B-2: wording, order, turning an item off/on) therefore affect only
+// instances created afterwards. There is no template-version table.
+
+// The corporate checklist standard. 6B seeds exactly one row (key
+// "opening"). `isActive` on the template is configuration for a future HQ
+// control; there is no editing UI in 6B.
+model ChecklistTemplate {
+  id        String   @id @default(uuid(7))
+  key       String   @unique
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items     ChecklistTemplateItem[]
+  instances ChecklistInstance[]
+}
+
+// One configured line of a checklist template. `isActive` is the
+// foundation for HQ to toggle individual items on/off in 6B-2: only
+// isActive items are copied into a NEW instance. Toggling it NEVER touches
+// an already-created ChecklistInstanceItem.
+model ChecklistTemplateItem {
+  id         String   @id @default(uuid(7))
+  templateId String
+  section    String
+  label      String
+  sortOrder  Int
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  template ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+}
+
+// One location's checklist for one business day. Created lazily on the
+// first GET. `businessDate` is stored explicitly (@db.Date) — resolved
+// once, at creation, from the Mocha House business timezone
+// (America/Detroit) — never re-derived from createdAt afterwards. The
+// unique constraint is what makes lazy creation race-safe: two devices
+// opening at once collide on it, and the loser re-reads the winner.
+// `completedAt` is a derived projection of "every item is complete", kept
+// on the row so progress reads need no aggregate; it is set when the last
+// item is completed and cleared when an Undo makes the checklist
+// incomplete again. There is no status enum.
+model ChecklistInstance {
+  id           String    @id @default(uuid(7))
+  templateId   String
+  locationId   String
+  businessDate DateTime  @db.Date
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  template ChecklistTemplate       @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  location Location                @relation(fields: [locationId], references: [id])
+  items    ChecklistInstanceItem[]
+
+  @@unique([templateId, locationId, businessDate])
+  @@index([locationId, businessDate])
+}
+
+// The historical snapshot AND the current completion record for one line
+// of one instance. section/label/sortOrder are copied by value at
+// creation. completedByInternalUserId + completedAt are the CURRENT
+// completion state: both set together on Complete, both cleared together
+// on Undo. Because Undo clears them, 6B keeps no event-by-event history of
+// accidental completion/undo cycles — an accepted limitation of this
+// bounded slice.
+model ChecklistInstanceItem {
+  id                        String    @id @default(uuid(7))
+  checklistInstanceId       String
+  section                   String
+  label                     String
+  sortOrder                 Int
+  completedByInternalUserId String?
+  completedAt               DateTime?
+  createdAt                 DateTime  @default(now())
+
+  checklistInstance ChecklistInstance @relation(fields: [checklistInstanceId], references: [id], onDelete: Cascade)
+  completedBy       InternalUser?     @relation("ChecklistItemCompletedBy", fields: [completedByInternalUserId], references: [id], onDelete: Restrict)
+
+  @@index([checklistInstanceId])
+  @@index([completedByInternalUserId])
 }

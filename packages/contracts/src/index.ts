@@ -981,6 +981,8 @@ export const INTERNAL_PERMISSION_KEYS = [
   "platform.view",
   // Milestone 6A
   "operations.view",
+  // Milestone 6B
+  "operations.tasks.complete",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1112,4 +1114,73 @@ export const INTERNAL_PERMISSION_METADATA: Record<
       "View the Store Operations workspace for a location — the day's operational picture. Held at corporate or per location.",
     allowedScopeTypes: ["CORPORATE", "LOCATION"],
   },
+  // Milestone 6B — complete (and undo) operational checklist/task items for
+  // an authorized location. This is the first Operations *write*. It never
+  // grants viewing on its own (`operations.view` still gates the workspace)
+  // and, like `operations.view`, is held at corporate (an operations user
+  // working across every store) or per location (a store manager).
+  "operations.tasks.complete": {
+    key: "operations.tasks.complete",
+    description:
+      "Complete operational checklist and task items for an authorized location. Held at corporate or per location.",
+    allowedScopeTypes: ["CORPORATE", "LOCATION"],
+  },
 };
+
+// --- Store Operations: the Opening Checklist (Milestone 6B) ------------
+// The business-facing view of one location's Opening Checklist for one
+// business day. Served only from the guarded
+// `/api/v1/admin/operations/opening-checklist*` routes (InternalAuthGuard +
+// PermissionGuard + resource-level location scope). GET requires
+// `operations.view`; Complete / Undo require `operations.tasks.complete`.
+//
+// The API constructs every field explicitly — it NEVER returns a raw Prisma
+// model, a template id, an internal user id, a permission key, or a
+// technical database field. `item.id` is an opaque action/resource id (the
+// ChecklistInstanceItem id) and is the only identifier here.
+//
+// `businessDate` is `YYYY-MM-DD`, resolved in the Mocha House business
+// timezone (America/Detroit). Sections and items are already ordered; the
+// six sections come from the seeded corporate template. Progress is
+// derived: `isComplete` is `completed === total`.
+export interface OpeningChecklistItemView {
+  // Opaque ChecklistInstanceItem id — the target for Complete / Undo.
+  id: string;
+  label: string;
+  completed: boolean;
+  // The current completion actor's display name, or null when incomplete.
+  // Undo clears this — 6B keeps only the CURRENT actor, not a history.
+  completedBy: { name: string } | null;
+  // ISO 8601 timestamp of the current completion, or null when incomplete.
+  completedAt: string | null;
+}
+
+export interface OpeningChecklistSectionView {
+  name: string;
+  items: OpeningChecklistItemView[];
+}
+
+export interface OpeningChecklistProgress {
+  completed: number;
+  total: number;
+  // completed === total. There is no readiness score or threshold.
+  isComplete: boolean;
+}
+
+export interface OpeningChecklistResponse {
+  locationId: string;
+  locationName: string;
+  businessDate: string;
+  // The template name — "Opening Checklist".
+  title: string;
+  progress: OpeningChecklistProgress;
+  sections: OpeningChecklistSectionView[];
+}
+
+// POST body for both
+// `/api/v1/admin/operations/opening-checklist/items/:instanceItemId/complete`
+// and `.../undo`. `locationId` is a REQUIRED filter — it is checked against
+// the item's own instance, never trusted as proof of authorization.
+export interface OpeningChecklistItemActionRequest {
+  locationId: string;
+}
