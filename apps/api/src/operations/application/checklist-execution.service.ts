@@ -19,9 +19,12 @@ import {
   resolveBusinessDate,
 } from './business-date';
 
-// The single corporate Opening Checklist template. Shared with the HQ
-// configuration service (Milestone 6B-2), which manages the same row.
+// The `ChecklistTemplate.key` discriminator values. Each daily checklist is
+// one seeded template row; the execution and HQ-configuration services are
+// parameterised by this key so Opening (6B) and Closing (6D) share every
+// line of workflow, snapshot, concurrency and exception logic.
 export const OPENING_TEMPLATE_KEY = 'opening';
+export const CLOSING_TEMPLATE_KEY = 'closing';
 
 const EXCEPTION_REASON_MAX_LENGTH = 500;
 
@@ -44,16 +47,18 @@ interface LocationRef {
   name: string;
 }
 
-// The Opening Checklist workflow (Milestone 6B). The first real Store
-// Operations write surface.
+// The daily checklist execution workflow (Milestone 6B; Closing added in
+// 6D). One service, parameterised by the `ChecklistTemplate.key` — the
+// caller (an Opening or Closing controller) passes it to every method.
 //
 //   GET     — authorize the location, resolve today's business date
-//             (America/Detroit), find-or-create the instance (snapshotting
-//             the ACTIVE template items on creation), project it.
+//             (America/Detroit), find-or-create the instance for THIS
+//             template key (snapshotting the ACTIVE template items on
+//             creation), project it.
 //   Complete/Undo — authorize the location, verify the item belongs to
-//             THIS location's instance for TODAY, flip exactly one item
-//             with a conditional update, recompute instance completion,
-//             then reconcile the whole projection from the database.
+//             THIS checklist's instance for THIS location for TODAY, flip
+//             exactly one item with a conditional update, recompute
+//             instance completion, then reconcile the whole projection.
 //
 // Historical safety: an instance's item rows are a by-value snapshot taken
 // at creation. Nothing here re-reads ChecklistTemplateItem for an existing
@@ -65,13 +70,14 @@ interface LocationRef {
 // and Log Exception is rejected on a completed item; clear/undo back to
 // "open" first. The checklist is complete when every item is resolved.
 @Injectable()
-export class OpeningChecklistService {
+export class ChecklistExecutionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: InternalAuditService,
   ) {}
 
   async getToday(
+    templateKey: string,
     locationId: string,
     authorization: AuthorizationContext,
   ): Promise<OpeningChecklistResponse> {
@@ -79,7 +85,7 @@ export class OpeningChecklistService {
     authorization.assertCanActOnLocation('operations.view', trimmedLocationId);
 
     const location = await this.requireLocation(trimmedLocationId);
-    const template = await this.requireOpeningTemplate();
+    const template = await this.requireTemplate(templateKey);
 
     const businessDate = businessDateToStorage(resolveBusinessDate(new Date()));
     const instance = await this.findOrCreateInstance(
@@ -92,6 +98,7 @@ export class OpeningChecklistService {
   }
 
   async completeItem(
+    templateKey: string,
     instanceItemId: string,
     locationId: string,
     actorInternalUserId: string,
@@ -104,6 +111,7 @@ export class OpeningChecklistService {
     );
 
     const context = await this.loadItemContext(
+      templateKey,
       instanceItemId,
       trimmedLocationId,
     );
@@ -142,6 +150,7 @@ export class OpeningChecklistService {
   }
 
   async logException(
+    templateKey: string,
     instanceItemId: string,
     locationId: string,
     reason: unknown,
@@ -156,6 +165,7 @@ export class OpeningChecklistService {
 
     const trimmedReason = assertExceptionReason(reason);
     const context = await this.loadItemContext(
+      templateKey,
       instanceItemId,
       trimmedLocationId,
     );
@@ -203,6 +213,7 @@ export class OpeningChecklistService {
   }
 
   async clearException(
+    templateKey: string,
     instanceItemId: string,
     locationId: string,
     actorInternalUserId: string,
@@ -215,6 +226,7 @@ export class OpeningChecklistService {
     );
 
     const context = await this.loadItemContext(
+      templateKey,
       instanceItemId,
       trimmedLocationId,
     );
@@ -254,6 +266,7 @@ export class OpeningChecklistService {
   }
 
   async undoItem(
+    templateKey: string,
     instanceItemId: string,
     locationId: string,
     authorization: AuthorizationContext,
@@ -265,6 +278,7 @@ export class OpeningChecklistService {
     );
 
     const context = await this.loadItemContext(
+      templateKey,
       instanceItemId,
       trimmedLocationId,
     );
@@ -359,6 +373,7 @@ export class OpeningChecklistService {
   // --- item resource resolution --------------------------------------
 
   private async loadItemContext(
+    templateKey: string,
     instanceItemId: string,
     locationId: string,
   ): Promise<{
@@ -385,7 +400,7 @@ export class OpeningChecklistService {
             id: true,
             locationId: true,
             businessDate: true,
-            template: { select: { name: true } },
+            template: { select: { key: true, name: true } },
             location: { select: { id: true, name: true } },
           },
         },
@@ -396,12 +411,14 @@ export class OpeningChecklistService {
 
     if (
       !item ||
+      item.checklistInstance.template.key !== templateKey ||
       item.checklistInstance.locationId !== locationId ||
       item.checklistInstance.businessDate.getTime() !== today.getTime()
     ) {
-      // One response for "no such item", "another location's item" and
-      // "a prior business date" — a location-scoped caller must not be able
-      // to tell them apart (same principle as the order-detail check).
+      // One response for "no such item", "another checklist's item",
+      // "another location's item" and "a prior business date" — a
+      // location-scoped caller must not be able to tell them apart (same
+      // principle as the order-detail check).
       throw new NotFoundException(
         'Checklist item not found for this location.',
       );
@@ -481,18 +498,18 @@ export class OpeningChecklistService {
     return location;
   }
 
-  private async requireOpeningTemplate(): Promise<{
+  private async requireTemplate(templateKey: string): Promise<{
     id: string;
     name: string;
   }> {
     const template = await this.prisma.checklistTemplate.findUnique({
-      where: { key: OPENING_TEMPLATE_KEY },
+      where: { key: templateKey },
       select: { id: true, name: true },
     });
     if (!template) {
-      // Configuration error — the Opening Checklist template is seeded.
+      // Configuration error — the checklist template is seeded.
       throw new Error(
-        'The Opening Checklist template is not configured. Run the database seed.',
+        `The "${templateKey}" checklist template is not configured. Run the database seed.`,
       );
     }
     return template;

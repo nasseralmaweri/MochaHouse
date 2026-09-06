@@ -6,13 +6,14 @@ import type {
 import { canAtLocation, type AdminCapabilities } from "./capabilities";
 import type { AdminLocationContext } from "./location-context";
 
-// Framework-free view-model logic for the Opening Checklist execution page
-// (Milestone 6B; Milestone 6C adds the management exception). It makes NO
-// authorization decision of its own — every API call the page performs is
-// still guarded server-side. It only decides what the page renders from the
+// Framework-free view-model logic for a daily checklist execution page
+// (Milestone 6B Opening; 6C management exception; 6D Closing — the Opening
+// and Closing pages share this verbatim). It makes NO authorization
+// decision of its own — every API call the page performs is still guarded
+// server-side. It only decides what the page renders from the
 // already-resolved location context and capability map.
 
-export type OpeningChecklistPageState =
+export type ChecklistPageState =
   | { kind: "forbidden-location" }
   | { kind: "no-location" }
   | { kind: "pick-location" }
@@ -28,10 +29,10 @@ export type OpeningChecklistPageState =
       canLogExceptions: boolean;
     };
 
-export function resolveOpeningChecklistPage(input: {
+export function resolveChecklistPage(input: {
   locationContext: AdminLocationContext;
   capabilities: AdminCapabilities;
-}): OpeningChecklistPageState {
+}): ChecklistPageState {
   const { locationContext, capabilities } = input;
 
   switch (locationContext.kind) {
@@ -68,8 +69,8 @@ export function formatChecklistProgress(
   return `${progress.resolved} of ${progress.total} complete`;
 }
 
-// The outcome of one Opening Checklist API call, as the browser client
-// reports it (mirrors OpeningChecklistResult in lib/api-client).
+// The outcome of one checklist API call, as the browser client reports it
+// (mirrors ChecklistResult in lib/api-client).
 export type ChecklistLoadOutcome =
   | "success"
   | "forbidden"
@@ -77,7 +78,7 @@ export type ChecklistLoadOutcome =
   | "invalid"
   | "error";
 
-// The load-state the Opening Checklist page tracks.
+// The load-state the checklist page tracks.
 export type ChecklistLoadState = "ok" | "forbidden" | "error";
 
 // Map an API outcome to the page's load-state. A failed load — a plain
@@ -104,7 +105,7 @@ export function nextChecklistLoadState(
 // `showLogException` / `showClearException` reflect exactly one available
 // action for the current status and the viewer's permissions; all are
 // false for a read-only viewer.
-export interface OpeningChecklistItemViewModel {
+export interface ChecklistItemViewModel {
   id: string;
   label: string;
   status: OpeningChecklistItemStatus;
@@ -120,7 +121,7 @@ export interface OpeningChecklistItemViewModel {
   showClearException: boolean;
 }
 
-export interface OpeningChecklistViewModel {
+export interface ChecklistViewModel {
   title: string;
   businessDate: string;
   locationName: string;
@@ -132,14 +133,14 @@ export interface OpeningChecklistViewModel {
   readOnly: boolean;
   sections: {
     name: string;
-    items: OpeningChecklistItemViewModel[];
+    items: ChecklistItemViewModel[];
   }[];
 }
 
-export function buildOpeningChecklistViewModel(
+export function buildChecklistViewModel(
   checklist: OpeningChecklistResponse,
   options: { canComplete: boolean; canLogExceptions: boolean },
-): OpeningChecklistViewModel {
+): ChecklistViewModel {
   const { canComplete, canLogExceptions } = options;
 
   return {

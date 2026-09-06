@@ -7,7 +7,7 @@ import {
   nextChecklistConfigLoadState,
   validateChecklistItemLabel,
   validateChecklistSectionName,
-} from "./opening-checklist-configuration";
+} from "./checklist-configuration";
 
 function template(): OpeningChecklistTemplateConfigResponse {
   return {
@@ -52,7 +52,7 @@ function template(): OpeningChecklistTemplateConfigResponse {
   };
 }
 
-describe("opening checklist configuration view-model", () => {
+describe("checklist configuration view-model", () => {
   it("keeps the API's grouping, order and move affordances", () => {
     const vm = buildChecklistTemplateViewModel(template());
     expect(vm.title).toBe("Opening Checklist");
@@ -66,6 +66,14 @@ describe("opening checklist configuration view-model", () => {
     expect(vm.sections[1].items[0].canMoveUp).toBe(false);
   });
 
+  it("is checklist-agnostic — the title passes straight through (Closing too)", () => {
+    const vm = buildChecklistTemplateViewModel({
+      ...template(),
+      title: "Closing Checklist",
+    });
+    expect(vm.title).toBe("Closing Checklist");
+  });
+
   it("counts active / inactive items and lists section names for the add picker", () => {
     const vm = buildChecklistTemplateViewModel(template());
     expect(vm.totalItems).toBe(3);
@@ -76,7 +84,7 @@ describe("opening checklist configuration view-model", () => {
 
   it("the effect notice is instance-based, not 'tomorrow'", () => {
     expect(CHECKLIST_CONFIG_EFFECT_NOTICE).toContain(
-      "the next time a location creates its Opening Checklist",
+      "the next time a location creates this checklist",
     );
     expect(CHECKLIST_CONFIG_EFFECT_NOTICE).toContain(
       "already created are not changed",

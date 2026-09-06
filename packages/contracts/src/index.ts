@@ -1129,41 +1129,44 @@ export const INTERNAL_PERMISSION_METADATA: Record<
       "Complete operational checklist and task items for an authorized location. Held at corporate or per location.",
     allowedScopeTypes: ["CORPORATE", "LOCATION"],
   },
-  // Milestone 6B-2 — manage the single corporate Opening Checklist template
-  // that every location's daily checklist is created from (item wording,
-  // active state, ordering, sections). There is ONE corporate checklist and
-  // no per-location override, so this is CORPORATE-only — a location-scoped
-  // manager can never reconfigure the standard for every store. It is a
-  // configuration capability only: it never grants `operations.view` or
-  // `operations.tasks.complete`, and completing a store's daily checklist
-  // still requires `operations.tasks.complete`.
+  // Milestone 6B-2 — manage the corporate daily-checklist templates that
+  // every location's daily checklist is created from (item wording, active
+  // state, ordering, sections). Governs BOTH the Opening (6B-2) and Closing
+  // (6D) checklist templates — there is one corporate standard per
+  // checklist and no per-location override, so this is CORPORATE-only. It
+  // is a configuration capability only: it never grants `operations.view`
+  // or `operations.tasks.complete`, and completing a store's daily
+  // checklist still requires `operations.tasks.complete`.
   "operations.checklists.configure": {
     key: "operations.checklists.configure",
     description:
-      "Manage the corporate Opening Checklist template — item wording, active state, ordering and sections. A corporate capability.",
+      "Manage the corporate Opening and Closing Checklist templates — item wording, active state, ordering and sections. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
-  // Milestone 6C — log and clear a Management Exception on an Opening
-  // Checklist item: a manager-authorized way to RESOLVE an item that could
-  // not actually be completed, with a required reason. It is deliberately
-  // separate from `operations.tasks.complete` — waiving a standard
-  // requirement is a management decision, not a routine tick, and it is
-  // audited. Held at corporate (an operations user across every store) or
-  // per location (a store manager for their store).
+  // Milestone 6C — log and clear a Management Exception on a daily-checklist
+  // item (Opening or Closing since 6D): a manager-authorized way to RESOLVE
+  // an item that could not actually be completed, with a required reason.
+  // It is deliberately separate from `operations.tasks.complete` — waiving
+  // a standard requirement is a management decision, not a routine tick,
+  // and it is audited. Held at corporate (an operations user across every
+  // store) or per location (a store manager for their store).
   "operations.exceptions.manage": {
     key: "operations.exceptions.manage",
     description:
-      "Log and clear a management exception on an Opening Checklist item for an authorized location. Held at corporate or per location.",
+      "Log and clear a management exception on a daily-checklist item for an authorized location. Held at corporate or per location.",
     allowedScopeTypes: ["CORPORATE", "LOCATION"],
   },
 };
 
-// --- Store Operations: the Opening Checklist (Milestone 6B) ------------
-// The business-facing view of one location's Opening Checklist for one
-// business day. Served only from the guarded
-// `/api/v1/admin/operations/opening-checklist*` routes (InternalAuthGuard +
-// PermissionGuard + resource-level location scope). GET requires
-// `operations.view`; Complete / Undo require `operations.tasks.complete`.
+// --- Store Operations: the daily checklist view (Milestone 6B) ---------
+// The business-facing view of one location's daily checklist for one
+// business day. SHARED by the Opening Checklist (6B) and the Closing
+// Checklist (6D) — the two are structurally identical; `title` carries the
+// human name ("Opening Checklist" / "Closing Checklist"). Served only from
+// the guarded `/api/v1/admin/operations/{opening,closing}-checklist*`
+// routes (InternalAuthGuard + PermissionGuard + resource-level location
+// scope). GET requires `operations.view`; Complete / Undo require
+// `operations.tasks.complete`.
 //
 // The API constructs every field explicitly — it NEVER returns a raw Prisma
 // model, a template id, an internal user id, a permission key, or a
@@ -1171,8 +1174,11 @@ export const INTERNAL_PERMISSION_METADATA: Record<
 // ChecklistInstanceItem id) and is the only identifier here.
 //
 // `businessDate` is `YYYY-MM-DD`, resolved in the Mocha House business
-// timezone (America/Detroit). Sections and items are already ordered; the
-// six sections come from the seeded corporate template.
+// timezone (America/Detroit). Sections and items are already ordered and
+// come from the seeded corporate template.
+//
+// The `OpeningChecklist*` names are the established vocabulary (6B); they
+// are the shared checklist contract, not opening-specific.
 //
 // RESOLUTION (Milestone 6C): an item is "resolved" when it is completed
 // normally OR carries a management exception. `status` is the single source

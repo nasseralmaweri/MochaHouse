@@ -53,11 +53,12 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Complete operational tasks at their locations',
     definition: 'Complete operational tasks',
   },
+  // Governs both the Opening and the Closing checklist templates (6D).
   'operations.checklists.configure': {
     group: 'Operations',
-    effectiveAll: 'Manage the corporate opening checklist',
-    effectiveScoped: 'Manage the corporate opening checklist',
-    definition: 'Manage the corporate opening checklist',
+    effectiveAll: 'Manage the corporate opening and closing checklists',
+    effectiveScoped: 'Manage the corporate opening and closing checklists',
+    definition: 'Manage the corporate opening and closing checklists',
   },
   'operations.exceptions.manage': {
     group: 'Operations',

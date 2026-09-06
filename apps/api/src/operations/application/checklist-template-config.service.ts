@@ -11,7 +11,6 @@ import type {
 import { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
-import { OPENING_TEMPLATE_KEY } from './opening-checklist.service';
 
 const CONFIGURE_PERMISSION = 'operations.checklists.configure' as const;
 
@@ -26,10 +25,11 @@ type ItemRow = {
   isActive: boolean;
 };
 
-// HQ configuration of the ONE corporate Opening Checklist template
-// (Milestone 6B-2). The companion write surface to the 6B store-execution
-// service: this side manages the TEMPLATE (item wording, active state,
-// ordering, sections); that side runs a location's daily instance.
+// HQ configuration of a corporate daily-checklist template (Milestone
+// 6B-2; parameterised by `templateKey` for Opening and Closing since 6D).
+// The companion write surface to the execution service: this side manages
+// the TEMPLATE (item wording, active state, ordering, sections); that side
+// runs a location's daily instance.
 //
 //   GET            — the full template, INCLUDING inactive items, grouped
 //                    into sections in corporate display order.
@@ -64,10 +64,11 @@ export class ChecklistTemplateConfigService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getConfig(
+    templateKey: string,
     authorization: AuthorizationContext,
   ): Promise<OpeningChecklistTemplateConfigResponse> {
     authorization.assertCorporate(CONFIGURE_PERMISSION);
-    const template = await this.requireTemplate();
+    const template = await this.requireTemplate(templateKey);
     const items = await this.prisma.checklistTemplateItem.findMany({
       where: { templateId: template.id },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
@@ -77,6 +78,7 @@ export class ChecklistTemplateConfigService {
   }
 
   async updateItem(
+    templateKey: string,
     itemId: string,
     input: { label?: unknown; isActive?: unknown },
     authorization: AuthorizationContext,
@@ -110,7 +112,7 @@ export class ChecklistTemplateConfigService {
       );
     }
 
-    const template = await this.requireTemplate();
+    const template = await this.requireTemplate(templateKey);
     await this.prisma.$transaction(async (tx) => {
       await lockTemplate(tx, template.id);
       const existing = await tx.checklistTemplateItem.findFirst({
@@ -132,6 +134,7 @@ export class ChecklistTemplateConfigService {
   }
 
   async addItem(
+    templateKey: string,
     input: { section?: unknown; label?: unknown },
     authorization: AuthorizationContext,
   ): Promise<OpeningChecklistTemplateConfigResponse> {
@@ -159,7 +162,7 @@ export class ChecklistTemplateConfigService {
       );
     }
 
-    const template = await this.requireTemplate();
+    const template = await this.requireTemplate(templateKey);
     await this.prisma.$transaction(async (tx) => {
       await lockTemplate(tx, template.id);
       const items = await loadItems(tx, template.id);
@@ -194,6 +197,7 @@ export class ChecklistTemplateConfigService {
   }
 
   async moveItem(
+    templateKey: string,
     itemId: string,
     direction: unknown,
     authorization: AuthorizationContext,
@@ -201,7 +205,7 @@ export class ChecklistTemplateConfigService {
     authorization.assertCorporate(CONFIGURE_PERMISSION);
     assertDirection(direction);
 
-    const template = await this.requireTemplate();
+    const template = await this.requireTemplate(templateKey);
     await this.prisma.$transaction(async (tx) => {
       await lockTemplate(tx, template.id);
       const items = await loadItems(tx, template.id);
@@ -235,6 +239,7 @@ export class ChecklistTemplateConfigService {
   }
 
   async renameSection(
+    templateKey: string,
     input: { from?: unknown; to?: unknown },
     authorization: AuthorizationContext,
   ): Promise<OpeningChecklistTemplateConfigResponse> {
@@ -254,7 +259,7 @@ export class ChecklistTemplateConfigService {
       );
     }
 
-    const template = await this.requireTemplate();
+    const template = await this.requireTemplate(templateKey);
     await this.prisma.$transaction(async (tx) => {
       await lockTemplate(tx, template.id);
       const items = await loadItems(tx, template.id);
@@ -294,6 +299,7 @@ export class ChecklistTemplateConfigService {
   }
 
   async moveSection(
+    templateKey: string,
     input: { section?: unknown; direction?: unknown },
     authorization: AuthorizationContext,
   ): Promise<OpeningChecklistTemplateConfigResponse> {
@@ -309,7 +315,7 @@ export class ChecklistTemplateConfigService {
     const direction = input.direction;
     assertDirection(direction);
 
-    const template = await this.requireTemplate();
+    const template = await this.requireTemplate(templateKey);
     await this.prisma.$transaction(async (tx) => {
       await lockTemplate(tx, template.id);
       const items = await loadItems(tx, template.id);
@@ -354,15 +360,17 @@ export class ChecklistTemplateConfigService {
     return buildConfigResponse(templateName, items);
   }
 
-  private async requireTemplate(): Promise<{ id: string; name: string }> {
+  private async requireTemplate(
+    templateKey: string,
+  ): Promise<{ id: string; name: string }> {
     const template = await this.prisma.checklistTemplate.findUnique({
-      where: { key: OPENING_TEMPLATE_KEY },
+      where: { key: templateKey },
       select: { id: true, name: true },
     });
     if (!template) {
-      // Configuration error — the Opening Checklist template is seeded.
+      // Configuration error — the checklist template is seeded.
       throw new Error(
-        'The Opening Checklist template is not configured. Run the database seed.',
+        `The "${templateKey}" checklist template is not configured. Run the database seed.`,
       );
     }
     return template;

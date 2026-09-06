@@ -5,8 +5,8 @@ import {
   ADMIN_LOCATION_COOKIE,
 } from "@/lib/internal-auth/session";
 import { getActiveStoreOrders } from "@/lib/internal-auth/admin-orders";
-import { getOpeningChecklist } from "@/lib/internal-auth/admin-operations";
-import { formatChecklistProgress } from "@/lib/admin/opening-checklist";
+import { getChecklistSnapshot } from "@/lib/internal-auth/admin-operations";
+import { formatChecklistProgress } from "@/lib/admin/checklist-execution";
 import { can, canAtLocation } from "@/lib/admin/capabilities";
 import { digitalOrderingAttentionItems } from "@/lib/admin/attention";
 import { resolveLocationContext } from "@/lib/admin/location-context";
@@ -84,7 +84,16 @@ export default async function OperationsTodayPage({
         <AdminPage>
           {header}
           <AdminSection title="Opening checklist">
-            <ManageChecklistCard />
+            <ManageChecklistCard
+              name="Opening Checklist"
+              href="/admin/operations/opening-checklist/configuration"
+            />
+          </AdminSection>
+          <AdminSection title="Closing checklist">
+            <ManageChecklistCard
+              name="Closing Checklist"
+              href="/admin/operations/closing-checklist/configuration"
+            />
           </AdminSection>
         </AdminPage>
       );
@@ -161,22 +170,29 @@ export default async function OperationsTodayPage({
     capabilities,
   );
 
-  // The Opening Checklist card — the first real Operations workflow
-  // (Milestone 6B). A GET lazily creates today's checklist; the card
-  // communicates progress and links into the full page.
-  const checklistResult = await getOpeningChecklist(location.id);
-  const openingChecklist = (
-    <OpeningChecklistCard
+  // The daily-checklist cards (Opening — 6B; Closing — 6D). A GET lazily
+  // creates today's instance; each card communicates progress and links
+  // into the full execution page.
+  const [openingResult, closingResult] = await Promise.all([
+    getChecklistSnapshot("opening", location.id),
+    getChecklistSnapshot("closing", location.id),
+  ]);
+  const checklistCard = (
+    kind: "opening" | "closing",
+    name: string,
+    result: typeof openingResult,
+  ) => (
+    <ChecklistCard
+      name={name}
       progressLabel={
-        checklistResult.outcome === "success"
-          ? formatChecklistProgress(checklistResult.checklist.progress)
+        result.outcome === "success"
+          ? formatChecklistProgress(result.checklist.progress)
           : null
       }
       isComplete={
-        checklistResult.outcome === "success" &&
-        checklistResult.checklist.progress.isComplete
+        result.outcome === "success" && result.checklist.progress.isComplete
       }
-      href={`/admin/operations/opening-checklist?location=${encodeURIComponent(
+      href={`/admin/operations/${kind}-checklist?location=${encodeURIComponent(
         location.id,
       )}`}
     />
@@ -221,8 +237,23 @@ export default async function OperationsTodayPage({
       </AdminSection>
 
       <AdminSection title="Opening checklist">
-        {openingChecklist}
-        {canConfigureChecklist ? <ManageChecklistCard /> : null}
+        {checklistCard("opening", "Opening Checklist", openingResult)}
+        {canConfigureChecklist ? (
+          <ManageChecklistCard
+            name="Opening Checklist"
+            href="/admin/operations/opening-checklist/configuration"
+          />
+        ) : null}
+      </AdminSection>
+
+      <AdminSection title="Closing checklist">
+        {checklistCard("closing", "Closing Checklist", closingResult)}
+        {canConfigureChecklist ? (
+          <ManageChecklistCard
+            name="Closing Checklist"
+            href="/admin/operations/closing-checklist/configuration"
+          />
+        ) : null}
       </AdminSection>
 
       <AdminSection title="Today's tasks">
@@ -247,10 +278,16 @@ export default async function OperationsTodayPage({
   );
 }
 
-// HQ entry point (Milestone 6B-2) — shown only to holders of
-// `operations.checklists.configure`. Separate from the store-execution card
-// above: this manages the corporate template, not today's checklist.
-function ManageChecklistCard() {
+// HQ entry point (Milestone 6B-2; both checklists in 6D) — shown only to
+// holders of `operations.checklists.configure`. Separate from the
+// store-execution card above: this manages the corporate template.
+function ManageChecklistCard({
+  name,
+  href,
+}: {
+  name: string;
+  href: string;
+}) {
   return (
     <Card className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">
@@ -258,25 +295,24 @@ function ManageChecklistCard() {
           Manage the corporate checklist
         </span>
         <span className="text-sm text-text-secondary">
-          Edit the wording, order and sections of the Opening Checklist every
-          location uses.
+          Edit the wording, order and sections of the {name} every location
+          uses.
         </span>
       </div>
-      <ButtonLink
-        href="/admin/operations/opening-checklist/configuration"
-        variant="secondary"
-      >
+      <ButtonLink href={href} variant="secondary">
         Open configuration
       </ButtonLink>
     </Card>
   );
 }
 
-function OpeningChecklistCard({
+function ChecklistCard({
+  name,
   progressLabel,
   isComplete,
   href,
 }: {
+  name: string;
   progressLabel: string | null;
   isComplete: boolean;
   href: string;
@@ -285,7 +321,7 @@ function OpeningChecklistCard({
     <Card className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">
         <span className="text-base font-semibold text-text-primary">
-          Opening Checklist
+          {name}
         </span>
         {progressLabel ? (
           <span className="text-sm text-text-secondary">

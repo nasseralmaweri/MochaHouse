@@ -1,17 +1,18 @@
 import type { OpeningChecklistTemplateConfigResponse } from "@mocha-house/contracts";
 
-// Framework-free view-model + validation logic for the HQ Opening Checklist
-// configuration page (Milestone 6B-2), matching the rest of lib/admin. It
-// makes NO authorization decision — every API call the page performs is
-// guarded server-side by `operations.checklists.configure` (CORPORATE). It
-// only shapes what the editor renders and validates input before a request.
+// Framework-free view-model + validation logic for the HQ daily-checklist
+// configuration page (Milestone 6B-2 Opening; 6D Closing — the two editors
+// share this verbatim), matching the rest of lib/admin. It makes NO
+// authorization decision — every API call the page performs is guarded
+// server-side by `operations.checklists.configure` (CORPORATE). It only
+// shapes what the editor renders and validates input before a request.
 
 // The exact, approved wording for the persistent notice on the page. The
 // behaviour is INSTANCE-based, not "tomorrow": a location that has already
 // created today's checklist keeps its snapshot; a location that has not yet
 // created today's picks up the new template when its instance is created.
 export const CHECKLIST_CONFIG_EFFECT_NOTICE =
-  "Changes apply the next time a location creates its Opening Checklist. " +
+  "Changes apply the next time a location creates this checklist. " +
   "Checklists already created are not changed.";
 
 export const CHECKLIST_ITEM_LABEL_MAX_LENGTH = 500;

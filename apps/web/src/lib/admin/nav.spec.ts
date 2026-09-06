@@ -252,6 +252,16 @@ describe("isNavItemActive", () => {
         "/admin/operations/opening-checklist/configuration",
       ),
     ).toBe(true);
+    // Milestone 6D — the Closing Checklist sub-routes keep Operations active.
+    expect(
+      isNavItemActive(operations, "/admin/operations/closing-checklist"),
+    ).toBe(true);
+    expect(
+      isNavItemActive(
+        operations,
+        "/admin/operations/closing-checklist/configuration",
+      ),
+    ).toBe(true);
     expect(isNavItemActive(operations, "/admin")).toBe(false);
     expect(isNavItemActive(operations, "/admin/orders")).toBe(false);
   });

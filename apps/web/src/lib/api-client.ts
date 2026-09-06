@@ -783,15 +783,19 @@ export function removeInternalUserRoleAssignmentFromBrowser(
   );
 }
 
-// --- Store Operations: Opening Checklist (Milestone 6B) -----------
-// All three go through the same server-side proxy as the order-queue calls
-// above (the internal session cookie is attached server-side, never exposed
-// to client JS). The API is the sole authority — GET requires
+// --- Store Operations: daily checklist execution (6B Opening; 6D Closing)
+// All go through the same server-side proxy as the order-queue calls above
+// (the internal session cookie is attached server-side, never exposed to
+// client JS). The API is the sole authority — GET requires
 // `operations.view`, Complete / Undo require `operations.tasks.complete`,
-// and every call is location-scoped there. Complete / Undo return the full
-// authoritative projection so the page reconciles from it.
+// Log / Clear Exception require `operations.exceptions.manage`, and every
+// call is location-scoped there. Mutations return the full authoritative
+// projection so the page reconciles from it. `checklist` selects the
+// `/opening-checklist` or `/closing-checklist` route family.
 
-export type OpeningChecklistResult =
+export type ChecklistKind = "opening" | "closing";
+
+export type ChecklistResult =
   | { outcome: "success"; checklist: OpeningChecklistResponse }
   | { outcome: "forbidden" }
   | { outcome: "not-found" }
@@ -800,10 +804,10 @@ export type OpeningChecklistResult =
   | { outcome: "invalid"; message: string }
   | { outcome: "error"; message: string };
 
-async function openingChecklistRequest(
+async function checklistRequest(
   path: string,
   init?: { method: "POST"; body: unknown },
-): Promise<OpeningChecklistResult> {
+): Promise<ChecklistResult> {
   let response: Response;
   try {
     response = await fetch(`${INTERNAL_ADMIN_PROXY}${path}`, {
@@ -849,32 +853,38 @@ async function openingChecklistRequest(
   };
 }
 
-export function getOpeningChecklistFromBrowser(
+const checklistBase = (checklist: ChecklistKind) =>
+  `/operations/${checklist}-checklist`;
+
+export function getChecklistFromBrowser(
+  checklist: ChecklistKind,
   locationId: string,
-): Promise<OpeningChecklistResult> {
-  return openingChecklistRequest(
-    `/operations/opening-checklist?locationId=${encodeURIComponent(locationId)}`,
+): Promise<ChecklistResult> {
+  return checklistRequest(
+    `${checklistBase(checklist)}?locationId=${encodeURIComponent(locationId)}`,
   );
 }
 
-export function completeOpeningChecklistItemFromBrowser(
+export function completeChecklistItemFromBrowser(
+  checklist: ChecklistKind,
   instanceItemId: string,
   locationId: string,
-): Promise<OpeningChecklistResult> {
-  return openingChecklistRequest(
-    `/operations/opening-checklist/items/${encodeURIComponent(
+): Promise<ChecklistResult> {
+  return checklistRequest(
+    `${checklistBase(checklist)}/items/${encodeURIComponent(
       instanceItemId,
     )}/complete`,
     { method: "POST", body: { locationId } },
   );
 }
 
-export function undoOpeningChecklistItemFromBrowser(
+export function undoChecklistItemFromBrowser(
+  checklist: ChecklistKind,
   instanceItemId: string,
   locationId: string,
-): Promise<OpeningChecklistResult> {
-  return openingChecklistRequest(
-    `/operations/opening-checklist/items/${encodeURIComponent(
+): Promise<ChecklistResult> {
+  return checklistRequest(
+    `${checklistBase(checklist)}/items/${encodeURIComponent(
       instanceItemId,
     )}/undo`,
     { method: "POST", body: { locationId } },
@@ -883,25 +893,27 @@ export function undoOpeningChecklistItemFromBrowser(
 
 // Management Exception (Milestone 6C) — requires `operations.exceptions.manage`
 // for the location. Both return the full authoritative checklist projection.
-export function logOpeningChecklistExceptionFromBrowser(
+export function logChecklistExceptionFromBrowser(
+  checklist: ChecklistKind,
   instanceItemId: string,
   locationId: string,
   reason: string,
-): Promise<OpeningChecklistResult> {
-  return openingChecklistRequest(
-    `/operations/opening-checklist/items/${encodeURIComponent(
+): Promise<ChecklistResult> {
+  return checklistRequest(
+    `${checklistBase(checklist)}/items/${encodeURIComponent(
       instanceItemId,
     )}/exception`,
     { method: "POST", body: { locationId, reason } },
   );
 }
 
-export function clearOpeningChecklistExceptionFromBrowser(
+export function clearChecklistExceptionFromBrowser(
+  checklist: ChecklistKind,
   instanceItemId: string,
   locationId: string,
-): Promise<OpeningChecklistResult> {
-  return openingChecklistRequest(
-    `/operations/opening-checklist/items/${encodeURIComponent(
+): Promise<ChecklistResult> {
+  return checklistRequest(
+    `${checklistBase(checklist)}/items/${encodeURIComponent(
       instanceItemId,
     )}/exception/clear`,
     { method: "POST", body: { locationId } },
@@ -999,14 +1011,16 @@ export function actOnOperationsTaskFromBrowser(
   );
 }
 
-// --- HQ Opening Checklist configuration (Milestone 6B-2) -------------
+// --- HQ daily-checklist configuration (6B-2 Opening; 6D Closing) -----
 // The corporate template management surface. Same server-side proxy as
 // above. The API is the sole authority — every route requires
 // `operations.checklists.configure` at CORPORATE scope. Every mutation
 // returns the whole authoritative template projection so the editor
-// reconciles from it. There is no `locationId` — one corporate standard.
+// reconciles from it. There is no `locationId` — one corporate standard
+// per checklist. `checklist` selects the opening or closing template.
 
-const CHECKLIST_CONFIG_BASE = "/operations/opening-checklist/template";
+const checklistConfigBase = (checklist: ChecklistKind) =>
+  `/operations/${checklist}-checklist/template`;
 
 export type ChecklistTemplateConfigResult =
   | { outcome: "success"; template: OpeningChecklistTemplateConfigResponse }
@@ -1064,56 +1078,63 @@ async function checklistConfigRequest(
   };
 }
 
-export function getOpeningChecklistTemplateFromBrowser(): Promise<ChecklistTemplateConfigResult> {
-  return checklistConfigRequest(CHECKLIST_CONFIG_BASE);
+export function getChecklistTemplateFromBrowser(
+  checklist: ChecklistKind,
+): Promise<ChecklistTemplateConfigResult> {
+  return checklistConfigRequest(checklistConfigBase(checklist));
 }
 
-export function updateOpeningChecklistTemplateItemFromBrowser(
+export function updateChecklistTemplateItemFromBrowser(
+  checklist: ChecklistKind,
   itemId: string,
   patch: { label?: string; isActive?: boolean },
 ): Promise<ChecklistTemplateConfigResult> {
   return checklistConfigRequest(
-    `${CHECKLIST_CONFIG_BASE}/items/${encodeURIComponent(itemId)}`,
+    `${checklistConfigBase(checklist)}/items/${encodeURIComponent(itemId)}`,
     { method: "PATCH", body: patch },
   );
 }
 
-export function addOpeningChecklistTemplateItemFromBrowser(input: {
-  section: string;
-  label: string;
-}): Promise<ChecklistTemplateConfigResult> {
-  return checklistConfigRequest(`${CHECKLIST_CONFIG_BASE}/items`, {
+export function addChecklistTemplateItemFromBrowser(
+  checklist: ChecklistKind,
+  input: { section: string; label: string },
+): Promise<ChecklistTemplateConfigResult> {
+  return checklistConfigRequest(`${checklistConfigBase(checklist)}/items`, {
     method: "POST",
     body: input,
   });
 }
 
-export function moveOpeningChecklistTemplateItemFromBrowser(
+export function moveChecklistTemplateItemFromBrowser(
+  checklist: ChecklistKind,
   itemId: string,
   direction: "up" | "down",
 ): Promise<ChecklistTemplateConfigResult> {
   return checklistConfigRequest(
-    `${CHECKLIST_CONFIG_BASE}/items/${encodeURIComponent(itemId)}/move`,
+    `${checklistConfigBase(checklist)}/items/${encodeURIComponent(
+      itemId,
+    )}/move`,
     { method: "POST", body: { direction } },
   );
 }
 
-export function renameOpeningChecklistTemplateSectionFromBrowser(input: {
-  from: string;
-  to: string;
-}): Promise<ChecklistTemplateConfigResult> {
-  return checklistConfigRequest(`${CHECKLIST_CONFIG_BASE}/sections/rename`, {
-    method: "POST",
-    body: input,
-  });
+export function renameChecklistTemplateSectionFromBrowser(
+  checklist: ChecklistKind,
+  input: { from: string; to: string },
+): Promise<ChecklistTemplateConfigResult> {
+  return checklistConfigRequest(
+    `${checklistConfigBase(checklist)}/sections/rename`,
+    { method: "POST", body: input },
+  );
 }
 
-export function moveOpeningChecklistTemplateSectionFromBrowser(
+export function moveChecklistTemplateSectionFromBrowser(
+  checklist: ChecklistKind,
   section: string,
   direction: "up" | "down",
 ): Promise<ChecklistTemplateConfigResult> {
-  return checklistConfigRequest(`${CHECKLIST_CONFIG_BASE}/sections/move`, {
-    method: "POST",
-    body: { section, direction },
-  });
+  return checklistConfigRequest(
+    `${checklistConfigBase(checklist)}/sections/move`,
+    { method: "POST", body: { section, direction } },
+  );
 }

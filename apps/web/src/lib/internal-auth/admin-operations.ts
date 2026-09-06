@@ -2,12 +2,14 @@ import "server-only";
 import type { OpeningChecklistResponse } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
 
-// Server-only read of the authorized Opening Checklist API for the
-// Operations "Today" card. Attaches the internal bearer token server-side
-// (never exposed to the browser). A GET lazily creates today's checklist —
-// see the API — so merely viewing Today creates today's instance for the
-// location, which is the intended behaviour (there is no separate "start"
-// action).
+// Server-only read of an authorized daily-checklist API for the Operations
+// "Today" cards (Opening — 6B; Closing — 6D). Attaches the internal bearer
+// token server-side (never exposed to the browser). A GET lazily creates
+// today's checklist — see the API — so merely viewing Today creates
+// today's instance for the location, which is the intended behaviour
+// (there is no separate "start" action).
+type ChecklistKind = "opening" | "closing";
+
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;
   if (!apiUrl) {
@@ -18,15 +20,16 @@ function getApiUrl(): string {
   return apiUrl;
 }
 
-export type OpeningChecklistSnapshotResult =
+export type ChecklistSnapshotResult =
   | { outcome: "success"; checklist: OpeningChecklistResponse }
   | { outcome: "unauthenticated" }
   | { outcome: "forbidden" }
   | { outcome: "error" };
 
-export async function getOpeningChecklist(
+export async function getChecklistSnapshot(
+  checklist: ChecklistKind,
   locationId: string,
-): Promise<OpeningChecklistSnapshotResult> {
+): Promise<ChecklistSnapshotResult> {
   const token = await getInternalSessionToken();
   if (!token) {
     return { outcome: "unauthenticated" };
@@ -35,7 +38,7 @@ export async function getOpeningChecklist(
   let response: Response;
   try {
     response = await fetch(
-      `${getApiUrl()}/admin/operations/opening-checklist?locationId=${encodeURIComponent(
+      `${getApiUrl()}/admin/operations/${checklist}-checklist?locationId=${encodeURIComponent(
         locationId,
       )}`,
       { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },

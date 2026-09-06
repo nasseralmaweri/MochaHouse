@@ -78,7 +78,7 @@ describe('capability presentation (Milestone 5E)', () => {
         'View store operations',
         'Complete operational tasks',
         'Log checklist management exceptions',
-        'Manage the corporate opening checklist',
+        'Manage the corporate opening and closing checklists',
       ]);
       expect(groups.find((g) => g.group === 'Menu & Products')?.items).toEqual([
         'View products and menus',

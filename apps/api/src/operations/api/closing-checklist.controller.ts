@@ -1,20 +1,20 @@
 import { Controller, UseGuards } from '@nestjs/common';
 import {
   ChecklistExecutionService,
-  OPENING_TEMPLATE_KEY,
+  CLOSING_TEMPLATE_KEY,
 } from '../application/checklist-execution.service';
 import { ChecklistExecutionControllerBase } from './checklist-execution.controller-base';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 
-// Admin → Operations → Today → Opening Checklist (Milestone 6B). All route
-// handlers and their behaviour live in ChecklistExecutionControllerBase;
-// this only binds the base to the `opening` template and the
-// `/opening-checklist` path. The path is unchanged from 6B/6B-2/6C.
+// Admin → Operations → Today → Closing Checklist (Milestone 6D). Identical
+// to the Opening Checklist controller — same base, same permissions, same
+// Management Exception behaviour — bound to the `closing` template and the
+// `/closing-checklist` path.
 @UseGuards(InternalAuthGuard, PermissionGuard)
-@Controller('api/v1/admin/operations/opening-checklist')
-export class OpeningChecklistController extends ChecklistExecutionControllerBase {
-  protected readonly templateKey = OPENING_TEMPLATE_KEY;
+@Controller('api/v1/admin/operations/closing-checklist')
+export class ClosingChecklistController extends ChecklistExecutionControllerBase {
+  protected readonly templateKey = CLOSING_TEMPLATE_KEY;
 
   constructor(service: ChecklistExecutionService) {
     super(service);

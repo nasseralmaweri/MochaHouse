@@ -1,9 +1,9 @@
 import {
-  buildOpeningChecklistViewModel,
+  buildChecklistViewModel,
   formatChecklistProgress,
   nextChecklistLoadState,
-  resolveOpeningChecklistPage,
-} from "./opening-checklist";
+  resolveChecklistPage,
+} from "./checklist-execution";
 import type {
   OpeningChecklistItemView,
   OpeningChecklistResponse,
@@ -66,10 +66,10 @@ function checklist(
   };
 }
 
-describe("resolveOpeningChecklistPage", () => {
+describe("resolveChecklistPage", () => {
   it("forbidden context → forbidden-location", () => {
     expect(
-      resolveOpeningChecklistPage({
+      resolveChecklistPage({
         locationContext: { kind: "forbidden", requestedId: "loc-x" },
         capabilities: { "operations.view": { corporate: true, locationIds: [] } },
       }),
@@ -78,7 +78,7 @@ describe("resolveOpeningChecklistPage", () => {
 
   it("no authorized location → no-location", () => {
     expect(
-      resolveOpeningChecklistPage({
+      resolveChecklistPage({
         locationContext: { kind: "none" },
         capabilities: {},
       }),
@@ -87,7 +87,7 @@ describe("resolveOpeningChecklistPage", () => {
 
   it("corporate viewer with no location chosen → pick-location", () => {
     expect(
-      resolveOpeningChecklistPage({
+      resolveChecklistPage({
         locationContext: { kind: "corporate" },
         capabilities: { "operations.view": { corporate: true, locationIds: [] } },
       }),
@@ -96,7 +96,7 @@ describe("resolveOpeningChecklistPage", () => {
 
   it("concrete location, holds tasks.complete + exceptions.manage here → ready with both", () => {
     expect(
-      resolveOpeningChecklistPage({
+      resolveChecklistPage({
         locationContext: { kind: "location", location: LOCATION },
         capabilities: {
           "operations.view": { corporate: false, locationIds: ["loc-a"] },
@@ -114,7 +114,7 @@ describe("resolveOpeningChecklistPage", () => {
   });
 
   it("only operations.view → ready but read-only", () => {
-    const state = resolveOpeningChecklistPage({
+    const state = resolveChecklistPage({
       locationContext: { kind: "location", location: LOCATION },
       capabilities: {
         "operations.view": { corporate: false, locationIds: ["loc-a"] },
@@ -128,7 +128,7 @@ describe("resolveOpeningChecklistPage", () => {
   });
 
   it("tasks.complete without exceptions.manage → canComplete true, canLogExceptions false", () => {
-    const state = resolveOpeningChecklistPage({
+    const state = resolveChecklistPage({
       locationContext: { kind: "location", location: LOCATION },
       capabilities: {
         "operations.view": { corporate: false, locationIds: ["loc-a"] },
@@ -139,7 +139,7 @@ describe("resolveOpeningChecklistPage", () => {
   });
 
   it("exceptions.manage held only at another location → canLogExceptions false here", () => {
-    const state = resolveOpeningChecklistPage({
+    const state = resolveChecklistPage({
       locationContext: { kind: "location", location: LOCATION },
       capabilities: {
         "operations.view": { corporate: false, locationIds: ["loc-a"] },
@@ -150,7 +150,7 @@ describe("resolveOpeningChecklistPage", () => {
   });
 
   it("corporate grants cover this location", () => {
-    const state = resolveOpeningChecklistPage({
+    const state = resolveChecklistPage({
       locationContext: { kind: "location", location: LOCATION },
       capabilities: {
         "operations.view": { corporate: true, locationIds: [] },
@@ -201,11 +201,11 @@ describe("nextChecklistLoadState", () => {
   });
 });
 
-describe("buildOpeningChecklistViewModel", () => {
+describe("buildChecklistViewModel", () => {
   const both = { canComplete: true, canLogExceptions: true };
 
   it("preserves the API's section grouping and order, adding nothing", () => {
-    const vm = buildOpeningChecklistViewModel(checklist(), both);
+    const vm = buildChecklistViewModel(checklist(), both);
     expect(vm.sections.map((s) => s.name)).toEqual([
       "Building & Security",
       "Equipment",
@@ -219,7 +219,7 @@ describe("buildOpeningChecklistViewModel", () => {
   });
 
   it("Complete on open items, Undo on normally completed items", () => {
-    const vm = buildOpeningChecklistViewModel(checklist(), both);
+    const vm = buildChecklistViewModel(checklist(), both);
     const items = vm.sections.flatMap((s) => s.items);
     expect(items.find((i) => i.id === "i1")).toMatchObject({
       status: "completed",
@@ -240,7 +240,7 @@ describe("buildOpeningChecklistViewModel", () => {
   });
 
   it("an exception-resolved item shows its reason and offers only Clear Exception", () => {
-    const vm = buildOpeningChecklistViewModel(
+    const vm = buildChecklistViewModel(
       checklist({
         progress: { completed: 1, resolved: 2, total: 3, isComplete: false },
         sections: [
@@ -282,7 +282,7 @@ describe("buildOpeningChecklistViewModel", () => {
   });
 
   it("a viewer with only tasks.complete cannot log exceptions", () => {
-    const vm = buildOpeningChecklistViewModel(checklist(), {
+    const vm = buildChecklistViewModel(checklist(), {
       canComplete: true,
       canLogExceptions: false,
     });
@@ -294,7 +294,7 @@ describe("buildOpeningChecklistViewModel", () => {
   });
 
   it("a read-only viewer gets no operable controls but still sees state", () => {
-    const vm = buildOpeningChecklistViewModel(checklist(), {
+    const vm = buildChecklistViewModel(checklist(), {
       canComplete: false,
       canLogExceptions: false,
     });
@@ -312,7 +312,7 @@ describe("buildOpeningChecklistViewModel", () => {
   });
 
   it("surfaces the complete state when every item is resolved", () => {
-    const vm = buildOpeningChecklistViewModel(
+    const vm = buildChecklistViewModel(
       checklist({
         progress: { completed: 1, resolved: 1, total: 1, isComplete: true },
         sections: [

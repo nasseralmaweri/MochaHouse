@@ -378,21 +378,19 @@ async function main() {
     });
   }
 
-  // Milestone 6B — the official corporate Opening Checklist, seeded from
-  // the Mocha House Operations Manual. There is ONE checklist standard for
-  // every active location (no location overrides, no per-location editing).
-  // Every item starts isActive = true — only ACTIVE items are copied into a
-  // newly created daily instance.
+  // Milestone 6B / 6D — the official corporate daily checklists (Opening
+  // and Closing), seeded from the Mocha House Operations Manual. There is
+  // ONE standard per checklist for every active location (no location
+  // overrides). Every item starts isActive = true — only ACTIVE items are
+  // copied into a newly created daily instance.
   //
-  // SEED OWNERSHIP (Milestone 6B-2): HQ now manages these items through the
-  // Admin UI (wording, active state, ordering, sections). The seed
-  // therefore SEEDS THEM ONCE — a brand-new database receives the official
-  // 23-item standard below, and every subsequent seed run leaves the items
-  // completely alone. HQ edits, HQ-added items and HQ section changes
-  // survive reseeding; normal seed execution is NOT a reset mechanism.
-  //
-  // (Milestone 6B replaced these items on every run; that was safe only
-  // while they carried no HQ-managed state. It is not safe now.)
+  // SEED OWNERSHIP (Milestone 6B-2, applied to both checklists): HQ manages
+  // these items through the Admin UI (wording, active state, ordering,
+  // sections). The seed therefore SEEDS THEM ONCE — a brand-new database
+  // receives the official standard below, and every subsequent seed run
+  // leaves the items completely alone. HQ edits, HQ-added items and HQ
+  // section changes survive reseeding; normal seed execution is NOT a reset
+  // mechanism.
   const OPENING_CHECKLIST_ITEMS: {
     section: string;
     label: string;
@@ -428,29 +426,62 @@ async function main() {
     { section: 'Final Readiness', label: 'Unlock front doors only when fully prepared.' },
   ];
 
-  const openingTemplate = await prisma.checklistTemplate.upsert({
-    where: { key: 'opening' },
-    update: { name: 'Opening Checklist', isActive: true },
-    create: { key: 'opening', name: 'Opening Checklist', isActive: true },
-  });
+  // The official 14-item Closing Checklist (Milestone 6D).
+  const CLOSING_CHECKLIST_ITEMS: {
+    section: string;
+    label: string;
+  }[] = [
+    // END-OF-SHIFT & CLEANING
+    { section: 'End-of-Shift & Cleaning', label: 'Properly store all perishable food items using FIFO.' },
+    { section: 'End-of-Shift & Cleaning', label: 'Clean and sanitize all counters, tables, chairs, and workstations.' },
+    { section: 'End-of-Shift & Cleaning', label: 'Thoroughly sweep and mop all floors, including lobby, work area, and back area.' },
+    { section: 'End-of-Shift & Cleaning', label: 'Deep-clean the espresso machine, including group heads and steam wands.' },
+    { section: 'End-of-Shift & Cleaning', label: 'Clean blenders, rinse pitchers, and sanitize tea/coffee brewing equipment.' },
+    { section: 'End-of-Shift & Cleaning', label: 'Prepare next-day sandwiches.' },
+    { section: 'End-of-Shift & Cleaning', label: 'Restock all stations for the morning shift.' },
+    // CASH HANDLING & SECURITY
+    { section: 'Cash Handling & Security', label: 'Perform final POS end-of-day reconciliation.' },
+    { section: 'Cash Handling & Security', label: 'Count and secure cash in the safe according to company protocols.' },
+    { section: 'Cash Handling & Security', label: 'Verify the required cash float is maintained according to store policy.' },
+    // BUILDING & FINAL CLOSE
+    { section: 'Building & Final Close', label: 'Empty all trash and replace liners.' },
+    { section: 'Building & Final Close', label: 'Restock restrooms and ensure they are clean.' },
+    { section: 'Building & Final Close', label: 'Turn off unnecessary equipment, including ovens, blenders, brewers, and displays.' },
+    { section: 'Building & Final Close', label: 'Perform a final security walk-through, lock all doors, and set the alarm.' },
+  ];
 
-  // Create-once: only populate the standard items when the template has
-  // none. Once items exist they are HQ-managed and the seed never touches
-  // them again (no delete, no re-create, no wording/order/active overwrite).
-  const existingItemCount = await prisma.checklistTemplateItem.count({
-    where: { templateId: openingTemplate.id },
-  });
-  if (existingItemCount === 0) {
-    await prisma.checklistTemplateItem.createMany({
-      data: OPENING_CHECKLIST_ITEMS.map((item, index) => ({
-        templateId: openingTemplate.id,
-        section: item.section,
-        label: item.label,
-        sortOrder: index + 1,
-        isActive: true,
-      })),
+  // Create-once for each checklist: upsert the template row, then populate
+  // the standard items ONLY when the template has none. Once items exist
+  // they are HQ-managed and the seed never touches them again (no delete,
+  // no re-create, no wording/order/active overwrite).
+  async function seedChecklist(
+    key: string,
+    name: string,
+    items: { section: string; label: string }[],
+  ): Promise<void> {
+    const template = await prisma.checklistTemplate.upsert({
+      where: { key },
+      update: { name, isActive: true },
+      create: { key, name, isActive: true },
     });
+    const existingItemCount = await prisma.checklistTemplateItem.count({
+      where: { templateId: template.id },
+    });
+    if (existingItemCount === 0) {
+      await prisma.checklistTemplateItem.createMany({
+        data: items.map((item, index) => ({
+          templateId: template.id,
+          section: item.section,
+          label: item.label,
+          sortOrder: index + 1,
+          isActive: true,
+        })),
+      });
+    }
   }
+
+  await seedChecklist('opening', 'Opening Checklist', OPENING_CHECKLIST_ITEMS);
+  await seedChecklist('closing', 'Closing Checklist', CLOSING_CHECKLIST_ITEMS);
 }
 
 main()

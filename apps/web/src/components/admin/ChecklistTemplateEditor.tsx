@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import type { OpeningChecklistTemplateConfigResponse } from "@mocha-house/contracts";
 import {
-  addOpeningChecklistTemplateItemFromBrowser,
-  getOpeningChecklistTemplateFromBrowser,
-  moveOpeningChecklistTemplateItemFromBrowser,
-  moveOpeningChecklistTemplateSectionFromBrowser,
-  renameOpeningChecklistTemplateSectionFromBrowser,
-  updateOpeningChecklistTemplateItemFromBrowser,
+  addChecklistTemplateItemFromBrowser,
+  getChecklistTemplateFromBrowser,
+  moveChecklistTemplateItemFromBrowser,
+  moveChecklistTemplateSectionFromBrowser,
+  renameChecklistTemplateSectionFromBrowser,
+  updateChecklistTemplateItemFromBrowser,
+  type ChecklistKind,
   type ChecklistTemplateConfigResult,
 } from "@/lib/api-client";
 import {
@@ -20,7 +21,7 @@ import {
   validateChecklistSectionName,
   type ChecklistConfigLoadState,
   type ChecklistTemplateItemViewModel,
-} from "@/lib/admin/opening-checklist-configuration";
+} from "@/lib/admin/checklist-configuration";
 import { AdminSection } from "@/components/admin/AdminPage";
 import { AdminErrorState, AdminForbidden, AdminLoading } from "@/components/admin/states";
 import { Button } from "@/components/admin/Button";
@@ -30,13 +31,18 @@ import { StatusBadge } from "@/components/admin/StatusBadge";
 
 const NEW_SECTION = "__new__";
 
-// The HQ Opening Checklist template editor (Milestone 6B-2). A card/list
-// experience for managing a straightforward operating procedure — not a
-// dense builder. The server is the authority: every mutation returns the
-// whole template and the editor reconciles from it. Reorder and
-// Active/Inactive apply immediately; wording and section renames use an
-// explicit Save.
-export function OpeningChecklistTemplateEditor() {
+// The HQ daily-checklist template editor (Milestone 6B-2 Opening; 6D
+// Closing — the two share this verbatim, bound by the `checklist` prop). A
+// card/list experience for managing a straightforward operating procedure
+// — not a dense builder. The server is the authority: every mutation
+// returns the whole template and the editor reconciles from it. Reorder
+// and Active/Inactive apply immediately; wording and section renames use
+// an explicit Save.
+export function ChecklistTemplateEditor({
+  checklist,
+}: {
+  checklist: ChecklistKind;
+}) {
   const [template, setTemplate] =
     useState<OpeningChecklistTemplateConfigResponse | null>(null);
   const [state, setState] = useState<ChecklistConfigLoadState>("ok");
@@ -59,7 +65,7 @@ export function OpeningChecklistTemplateEditor() {
       if (result.outcome === "invalid" || result.outcome === "error") {
         setNotice(result.message);
       } else if (result.outcome === "not-found") {
-        setNotice("The Opening Checklist template could not be found.");
+        setNotice("The checklist template could not be found.");
       }
       return false;
     },
@@ -67,18 +73,18 @@ export function OpeningChecklistTemplateEditor() {
   );
 
   const load = useCallback(async () => {
-    applyResult(await getOpeningChecklistTemplateFromBrowser());
-  }, [applyResult]);
+    applyResult(await getChecklistTemplateFromBrowser(checklist));
+  }, [applyResult, checklist]);
 
   useEffect(() => {
     let cancelled = false;
-    getOpeningChecklistTemplateFromBrowser().then((result) => {
+    getChecklistTemplateFromBrowser(checklist).then((result) => {
       if (!cancelled) applyResult(result);
     });
     return () => {
       cancelled = true;
     };
-  }, [applyResult]);
+  }, [applyResult, checklist]);
 
   const run = useCallback(
     async (
@@ -109,13 +115,13 @@ export function OpeningChecklistTemplateEditor() {
   if (state === "error" && !template) {
     return (
       <AdminErrorState
-        description="Couldn't load the Opening Checklist configuration."
+        description="Couldn't load the checklist configuration."
         onRetry={() => void load()}
       />
     );
   }
   if (!template) {
-    return <AdminLoading label="Loading the Opening Checklist configuration" />;
+    return <AdminLoading label="Loading the checklist configuration" />;
   }
 
   const vm = buildChecklistTemplateViewModel(template);
@@ -148,7 +154,8 @@ export function OpeningChecklistTemplateEditor() {
                 }
                 onClick={() =>
                   void run(`section-move:${section.name}`, () =>
-                    moveOpeningChecklistTemplateSectionFromBrowser(
+                    moveChecklistTemplateSectionFromBrowser(
+                      checklist,
                       section.name,
                       "up",
                     ),
@@ -165,7 +172,8 @@ export function OpeningChecklistTemplateEditor() {
                 }
                 onClick={() =>
                   void run(`section-move:${section.name}`, () =>
-                    moveOpeningChecklistTemplateSectionFromBrowser(
+                    moveChecklistTemplateSectionFromBrowser(
+                      checklist,
                       section.name,
                       "down",
                     ),
@@ -199,7 +207,7 @@ export function OpeningChecklistTemplateEditor() {
                   void run(
                     `section-rename:${section.name}`,
                     () =>
-                      renameOpeningChecklistTemplateSectionFromBrowser({
+                      renameChecklistTemplateSectionFromBrowser(checklist, {
                         from: section.name,
                         to,
                       }),
@@ -222,22 +230,27 @@ export function OpeningChecklistTemplateEditor() {
                       void run(
                         `item:${item.id}`,
                         () =>
-                          updateOpeningChecklistTemplateItemFromBrowser(item.id, {
-                            label,
-                          }),
+                          updateChecklistTemplateItemFromBrowser(
+                            checklist,
+                            item.id,
+                            { label },
+                          ),
                         () => setEditingItemId(null),
                       )
                     }
                     onToggleActive={(isActive) =>
                       void run(`item:${item.id}`, () =>
-                        updateOpeningChecklistTemplateItemFromBrowser(item.id, {
-                          isActive,
-                        }),
+                        updateChecklistTemplateItemFromBrowser(
+                          checklist,
+                          item.id,
+                          { isActive },
+                        ),
                       )
                     }
                     onMove={(direction) =>
                       void run(`item:${item.id}`, () =>
-                        moveOpeningChecklistTemplateItemFromBrowser(
+                        moveChecklistTemplateItemFromBrowser(
+                          checklist,
                           item.id,
                           direction,
                         ),
@@ -256,7 +269,7 @@ export function OpeningChecklistTemplateEditor() {
                   void run(
                     `add:${section.name}`,
                     () =>
-                      addOpeningChecklistTemplateItemFromBrowser({
+                      addChecklistTemplateItemFromBrowser(checklist, {
                         section: section.name,
                         label,
                       }),
@@ -288,7 +301,7 @@ export function OpeningChecklistTemplateEditor() {
               void run(
                 `add:${NEW_SECTION}`,
                 () =>
-                  addOpeningChecklistTemplateItemFromBrowser({
+                  addChecklistTemplateItemFromBrowser(checklist, {
                     section: sectionName,
                     label,
                   }),
