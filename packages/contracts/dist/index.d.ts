@@ -503,7 +503,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
@@ -513,14 +513,24 @@ export interface InternalPermissionMetadata {
     allowedScopeTypes: readonly InternalScopeType[];
 }
 export declare const INTERNAL_PERMISSION_METADATA: Record<InternalPermissionKey, InternalPermissionMetadata>;
+export type OpeningChecklistItemStatus = "open" | "completed" | "exception";
 export interface OpeningChecklistItemView {
     id: string;
     label: string;
+    status: OpeningChecklistItemStatus;
+    resolved: boolean;
     completed: boolean;
     completedBy: {
         name: string;
     } | null;
     completedAt: string | null;
+    exception: {
+        reason: string;
+        by: {
+            name: string;
+        } | null;
+        at: string;
+    } | null;
 }
 export interface OpeningChecklistSectionView {
     name: string;
@@ -528,6 +538,7 @@ export interface OpeningChecklistSectionView {
 }
 export interface OpeningChecklistProgress {
     completed: number;
+    resolved: number;
     total: number;
     isComplete: boolean;
 }
@@ -540,6 +551,43 @@ export interface OpeningChecklistResponse {
     sections: OpeningChecklistSectionView[];
 }
 export interface OpeningChecklistItemActionRequest {
+    locationId: string;
+}
+export interface LogOpeningChecklistExceptionRequest {
+    locationId: string;
+    reason: string;
+}
+export interface ClearOpeningChecklistExceptionRequest {
+    locationId: string;
+}
+export interface OperationsTaskView {
+    id: string;
+    title: string;
+    note: string | null;
+    done: boolean;
+    completedBy: {
+        name: string;
+    } | null;
+    completedAt: string | null;
+    createdBy: {
+        name: string;
+    } | null;
+    createdAt: string;
+}
+export interface OperationsTasksResponse {
+    locationId: string;
+    locationName: string;
+    businessDate: string;
+    tasks: OperationsTaskView[];
+    openCount: number;
+    doneCount: number;
+}
+export interface CreateOperationsTaskRequest {
+    locationId: string;
+    title: string;
+    note?: string;
+}
+export interface OperationsTaskActionRequest {
     locationId: string;
 }
 export interface OpeningChecklistTemplateItemConfig {

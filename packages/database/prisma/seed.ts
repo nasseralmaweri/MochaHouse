@@ -340,6 +340,9 @@ async function main() {
     // Milestone 6B — a Store Manager runs the opening: completing (and
     // undoing) checklist items for their locations.
     'operations.tasks.complete',
+    // Milestone 6C — a Store Manager is the person who logs a management
+    // exception when an opening requirement genuinely could not be met.
+    'operations.exceptions.manage',
   ] as const;
 
   const storeManagerRole = await prisma.internalRole.upsert({

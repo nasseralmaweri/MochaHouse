@@ -7,7 +7,7 @@ import {
 import { getActiveStoreOrders } from "@/lib/internal-auth/admin-orders";
 import { getOpeningChecklist } from "@/lib/internal-auth/admin-operations";
 import { formatChecklistProgress } from "@/lib/admin/opening-checklist";
-import { can } from "@/lib/admin/capabilities";
+import { can, canAtLocation } from "@/lib/admin/capabilities";
 import { digitalOrderingAttentionItems } from "@/lib/admin/attention";
 import { resolveLocationContext } from "@/lib/admin/location-context";
 import {
@@ -22,6 +22,7 @@ import {
   AdminForbidden,
 } from "@/components/admin/states";
 import { NeedsAttention } from "@/components/admin/NeedsAttention";
+import { TodaysTasks } from "@/components/admin/TodaysTasks";
 import { Card } from "@/components/Card";
 import { ButtonLink } from "@/components/admin/Button";
 import { isActiveOrderStatus } from "@mocha-house/domain";
@@ -222,6 +223,17 @@ export default async function OperationsTodayPage({
       <AdminSection title="Opening checklist">
         {openingChecklist}
         {canConfigureChecklist ? <ManageChecklistCard /> : null}
+      </AdminSection>
+
+      <AdminSection title="Today's tasks">
+        <TodaysTasks
+          locationId={location.id}
+          canManage={canAtLocation(
+            capabilities,
+            "operations.tasks.complete",
+            location.id,
+          )}
+        />
       </AdminSection>
 
       <AdminSection title="Needs attention">

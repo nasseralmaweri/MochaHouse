@@ -12,6 +12,7 @@ import type {
   LocationSummary,
   OpeningChecklistResponse,
   OpeningChecklistTemplateConfigResponse,
+  OperationsTasksResponse,
   OrderConfirmation,
   OrderStatus,
   OrderStatusResponse,
@@ -794,6 +795,9 @@ export type OpeningChecklistResult =
   | { outcome: "success"; checklist: OpeningChecklistResponse }
   | { outcome: "forbidden" }
   | { outcome: "not-found" }
+  // 400 (e.g. a blank exception reason) or 409 (e.g. completing an
+  // exception-resolved item) — a business-language message the UI shows.
+  | { outcome: "invalid"; message: string }
   | { outcome: "error"; message: string };
 
 async function openingChecklistRequest(
@@ -823,6 +827,13 @@ async function openingChecklistRequest(
   }
   if (response.status === 404) {
     return { outcome: "not-found" };
+  }
+  if (response.status === 400 || response.status === 409) {
+    const body = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: body?.message ?? "That change isn't valid right now.",
+    };
   }
   if (!response.ok) {
     const body = await safeJson(response);
@@ -866,6 +877,124 @@ export function undoOpeningChecklistItemFromBrowser(
     `/operations/opening-checklist/items/${encodeURIComponent(
       instanceItemId,
     )}/undo`,
+    { method: "POST", body: { locationId } },
+  );
+}
+
+// Management Exception (Milestone 6C) — requires `operations.exceptions.manage`
+// for the location. Both return the full authoritative checklist projection.
+export function logOpeningChecklistExceptionFromBrowser(
+  instanceItemId: string,
+  locationId: string,
+  reason: string,
+): Promise<OpeningChecklistResult> {
+  return openingChecklistRequest(
+    `/operations/opening-checklist/items/${encodeURIComponent(
+      instanceItemId,
+    )}/exception`,
+    { method: "POST", body: { locationId, reason } },
+  );
+}
+
+export function clearOpeningChecklistExceptionFromBrowser(
+  instanceItemId: string,
+  locationId: string,
+): Promise<OpeningChecklistResult> {
+  return openingChecklistRequest(
+    `/operations/opening-checklist/items/${encodeURIComponent(
+      instanceItemId,
+    )}/exception/clear`,
+    { method: "POST", body: { locationId } },
+  );
+}
+
+// --- Store Operations: Today's Tasks (Milestone 6C) -----------------
+// Same server-side proxy. GET requires `operations.view`; add / complete /
+// reopen / delete require `operations.tasks.complete`. Every mutation
+// returns the whole authoritative task list so the section reconciles.
+
+export type OperationsTasksResult =
+  | { outcome: "success"; tasks: OperationsTasksResponse }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+async function operationsTasksRequest(
+  path: string,
+  init?: { method: "POST"; body: unknown },
+): Promise<OperationsTasksResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${INTERNAL_ADMIN_PROXY}${path}`, {
+      method: init?.method ?? "GET",
+      headers: init ? { "Content-Type": "application/json" } : undefined,
+      body: init ? JSON.stringify(init.body) : undefined,
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const body = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: body?.message ?? "That task change isn't valid.",
+    };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+
+  return {
+    outcome: "success",
+    tasks: (await response.json()) as OperationsTasksResponse,
+  };
+}
+
+export function getOperationsTasksFromBrowser(
+  locationId: string,
+): Promise<OperationsTasksResult> {
+  return operationsTasksRequest(
+    `/operations/tasks?locationId=${encodeURIComponent(locationId)}`,
+  );
+}
+
+export function createOperationsTaskFromBrowser(input: {
+  locationId: string;
+  title: string;
+  note?: string;
+}): Promise<OperationsTasksResult> {
+  return operationsTasksRequest(`/operations/tasks`, {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function actOnOperationsTaskFromBrowser(
+  taskId: string,
+  locationId: string,
+  action: "complete" | "reopen" | "delete",
+): Promise<OperationsTasksResult> {
+  return operationsTasksRequest(
+    `/operations/tasks/${encodeURIComponent(taskId)}/${action}`,
     { method: "POST", body: { locationId } },
   );
 }

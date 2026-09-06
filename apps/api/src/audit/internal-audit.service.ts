@@ -77,6 +77,80 @@ export class InternalAuditService {
       },
     });
   }
+
+  // Records a logged / cleared Opening Checklist management exception
+  // (Milestone 6C). Waiving a standard opening requirement is a significant
+  // management decision, so it is durable history — unlike routine task and
+  // checklist Complete/Undo, which are NOT audited. Call with the SAME `tx`
+  // that set / cleared the exception fields on the ChecklistInstanceItem.
+  // `targetType` is 'checklist_instance_item' (a new polymorphic target —
+  // the audit table has always been polymorphic by design); the Admin
+  // Activity Log, which is scoped to administrative-access changes, ignores
+  // non-`internal_user` targets.
+  async recordChecklistExceptionLogged(
+    tx: Prisma.TransactionClient,
+    input: ChecklistExceptionAuditInput & { reason: string },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'operations.checklist_exception_logged',
+        targetType: 'checklist_instance_item',
+        targetId: input.checklistInstanceItemId,
+        beforeData: { resolution: 'open' },
+        afterData: {
+          resolution: 'exception',
+          reason: input.reason,
+          ...checklistExceptionContext(input),
+        },
+        reason: input.reason,
+      },
+    });
+  }
+
+  async recordChecklistExceptionCleared(
+    tx: Prisma.TransactionClient,
+    input: ChecklistExceptionAuditInput & { previousReason: string },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'operations.checklist_exception_cleared',
+        targetType: 'checklist_instance_item',
+        targetId: input.checklistInstanceItemId,
+        beforeData: {
+          resolution: 'exception',
+          reason: input.previousReason,
+          ...checklistExceptionContext(input),
+        },
+        afterData: { resolution: 'open' },
+        // The audit `reason` column is required; the exception reason being
+        // cleared is the relevant context.
+        reason: input.previousReason,
+      },
+    });
+  }
+}
+
+interface ChecklistExceptionAuditInput {
+  actorInternalUserId: string;
+  checklistInstanceItemId: string;
+  checklistInstanceId: string;
+  locationId: string;
+  locationName: string;
+  itemLabel: string;
+}
+
+function checklistExceptionContext(input: ChecklistExceptionAuditInput): {
+  checklistInstanceId: string;
+  location: { id: string; name: string };
+  itemLabel: string;
+} {
+  return {
+    checklistInstanceId: input.checklistInstanceId,
+    location: { id: input.locationId, name: input.locationName },
+    itemLabel: input.itemLabel,
+  };
 }
 
 interface RoleAssignmentAuditInput {

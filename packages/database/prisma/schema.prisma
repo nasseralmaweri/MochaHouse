@@ -27,6 +27,7 @@ model Location {
   orders                       Order[]
   preferredByCustomers         CustomerPreferredLocation[]
   checklistInstances           ChecklistInstance[]
+  operationsTasks              OperationsTask[]
 }
 
 model Category {
@@ -472,13 +473,19 @@ model InternalUser {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  roleAssignments  InternalUserRoleAssignment[]
-  auditEventsActed InternalAuditEvent[]         @relation("InternalAuditEventActor")
+  roleAssignments          InternalUserRoleAssignment[]
+  auditEventsActed         InternalAuditEvent[]         @relation("InternalAuditEventActor")
   // Milestone 6B — the checklist items this user is the CURRENT completion
   // actor for. onDelete: Restrict (see ChecklistInstanceItem) mirrors the
   // audit-actor relation: an internal user who has completed operational
   // work cannot be hard-deleted, so that record can never be orphaned.
-  checklistItemsCompleted ChecklistInstanceItem[] @relation("ChecklistItemCompletedBy")
+  checklistItemsCompleted  ChecklistInstanceItem[]      @relation("ChecklistItemCompletedBy")
+  // Milestone 6C — the checklist items this user is the CURRENT management
+  // exception actor for, and the operational tasks they created / completed.
+  // All onDelete: Restrict, for the same integrity reason.
+  checklistItemsExcepted   ChecklistInstanceItem[]      @relation("ChecklistItemExceptionBy")
+  operationsTasksCreated   OperationsTask[]             @relation("OperationsTaskCreatedBy")
+  operationsTasksCompleted OperationsTask[]             @relation("OperationsTaskCompletedBy")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -650,10 +657,12 @@ model ChecklistTemplateItem {
 // (America/Detroit) — never re-derived from createdAt afterwards. The
 // unique constraint is what makes lazy creation race-safe: two devices
 // opening at once collide on it, and the loser re-reads the winner.
-// `completedAt` is a derived projection of "every item is complete", kept
-// on the row so progress reads need no aggregate; it is set when the last
-// item is completed and cleared when an Undo makes the checklist
-// incomplete again. There is no status enum.
+// `completedAt` is a derived projection of "every item is RESOLVED" — an
+// item is resolved by a normal completion OR (Milestone 6C) a logged
+// management exception. Kept on the row so progress reads need no
+// aggregate; set when the last item is resolved and cleared when an Undo /
+// Clear Exception makes the checklist incomplete again. There is no status
+// enum.
 model ChecklistInstance {
   id           String    @id @default(uuid(7))
   templateId   String
@@ -671,13 +680,24 @@ model ChecklistInstance {
   @@index([locationId, businessDate])
 }
 
-// The historical snapshot AND the current completion record for one line
-// of one instance. section/label/sortOrder are copied by value at
-// creation. completedByInternalUserId + completedAt are the CURRENT
-// completion state: both set together on Complete, both cleared together
-// on Undo. Because Undo clears them, 6B keeps no event-by-event history of
-// accidental completion/undo cycles — an accepted limitation of this
-// bounded slice.
+// The historical snapshot AND the current resolution record for one line of
+// one instance. section/label/sortOrder are copied by value at creation.
+//
+// An item is resolved in exactly ONE of two mutually exclusive ways:
+//   - NORMAL COMPLETION — completedByInternalUserId + completedAt, set
+//     together on Complete, cleared together on Undo.
+//   - MANAGEMENT EXCEPTION (Milestone 6C) — exceptionReason +
+//     exceptionByInternalUserId + exceptionAt, set together on Log
+//     Exception, cleared together on Clear Exception. Used when the
+//     requirement genuinely could not be completed; it is NOT a normal
+//     completion and every projection keeps the two visibly distinct.
+// The service enforces that the two never overlap: Complete is rejected on
+// an exception-resolved item and Log Exception is rejected on a completed
+// item (clear/undo back to "open" first).
+//
+// Because Undo / Clear reset these fields, 6B/6C keep no event-by-event
+// history of completion cycles here — the significant management decision
+// (log / clear an exception) is recorded in InternalAuditEvent instead.
 model ChecklistInstanceItem {
   id                        String    @id @default(uuid(7))
   checklistInstanceId       String
@@ -686,11 +706,49 @@ model ChecklistInstanceItem {
   sortOrder                 Int
   completedByInternalUserId String?
   completedAt               DateTime?
+  exceptionReason           String?
+  exceptionByInternalUserId String?
+  exceptionAt               DateTime?
   createdAt                 DateTime  @default(now())
 
   checklistInstance ChecklistInstance @relation(fields: [checklistInstanceId], references: [id], onDelete: Cascade)
   completedBy       InternalUser?     @relation("ChecklistItemCompletedBy", fields: [completedByInternalUserId], references: [id], onDelete: Restrict)
+  exceptionBy       InternalUser?     @relation("ChecklistItemExceptionBy", fields: [exceptionByInternalUserId], references: [id], onDelete: Restrict)
 
   @@index([checklistInstanceId])
+  @@index([completedByInternalUserId])
+  @@index([exceptionByInternalUserId])
+}
+
+// --- Milestone 6C, Store Operations: Today's Tasks -------------------
+// A simple, location-scoped operational to-do for ONE America/Detroit
+// business date. Deliberately the minimum: a title, an optional note, who
+// created it, and the current completion actor/time. There is NO priority,
+// due time, assignee, category, recurrence, or rollover — a task belongs
+// only to `businessDate` and is never carried forward. "Open" vs "Done" is
+// derived purely from `completedAt`; there is no status enum.
+//
+// Not tied to any template or checklist. Not an audit surface — routine
+// task add/complete/reopen/delete are not recorded in InternalAuditEvent.
+// Hard delete is allowed (a mistaken same-day task, unlike a checklist
+// template item, has no "inactive" concept and just clutters the day).
+model OperationsTask {
+  id                        String    @id @default(uuid(7))
+  locationId                String
+  businessDate              DateTime  @db.Date
+  title                     String
+  note                      String?
+  createdByInternalUserId   String
+  completedByInternalUserId String?
+  completedAt               DateTime?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  location    Location      @relation(fields: [locationId], references: [id])
+  createdBy   InternalUser  @relation("OperationsTaskCreatedBy", fields: [createdByInternalUserId], references: [id], onDelete: Restrict)
+  completedBy InternalUser? @relation("OperationsTaskCompletedBy", fields: [completedByInternalUserId], references: [id], onDelete: Restrict)
+
+  @@index([locationId, businessDate])
+  @@index([createdByInternalUserId])
   @@index([completedByInternalUserId])
 }

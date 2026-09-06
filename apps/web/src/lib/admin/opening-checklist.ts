@@ -1,20 +1,17 @@
 import type {
+  OpeningChecklistItemStatus,
   OpeningChecklistProgress,
   OpeningChecklistResponse,
 } from "@mocha-house/contracts";
 import { canAtLocation, type AdminCapabilities } from "./capabilities";
 import type { AdminLocationContext } from "./location-context";
 
-// Framework-free view-model logic for the Opening Checklist page
-// (Milestone 6B), matching the rest of lib/admin. It makes NO authorization
-// decision of its own — every API call the page performs is still guarded
-// server-side. It only decides what the page renders from the
+// Framework-free view-model logic for the Opening Checklist execution page
+// (Milestone 6B; Milestone 6C adds the management exception). It makes NO
+// authorization decision of its own — every API call the page performs is
+// still guarded server-side. It only decides what the page renders from the
 // already-resolved location context and capability map.
 
-// The resolved state for one render of the Opening Checklist page. Mirrors
-// resolveOperationsTodayView: the page is per store, so a corporate viewer
-// with no location chosen is prompted for one rather than shown a global
-// checklist.
 export type OpeningChecklistPageState =
   | { kind: "forbidden-location" }
   | { kind: "no-location" }
@@ -24,9 +21,11 @@ export type OpeningChecklistPageState =
       locationId: string;
       locationName: string;
       // TRUE only when the viewer holds operations.tasks.complete for THIS
-      // location. A viewer with only operations.view sees the checklist and
-      // completion state but no usable Complete / Undo controls.
+      // location — the Complete / Undo controls.
       canComplete: boolean;
+      // TRUE only when the viewer holds operations.exceptions.manage for
+      // THIS location — the Log Exception / Clear Exception controls.
+      canLogExceptions: boolean;
     };
 
 export function resolveOpeningChecklistPage(input: {
@@ -52,16 +51,21 @@ export function resolveOpeningChecklistPage(input: {
           "operations.tasks.complete",
           locationContext.location.id,
         ),
+        canLogExceptions: canAtLocation(
+          capabilities,
+          "operations.exceptions.manage",
+          locationContext.location.id,
+        ),
       };
   }
 }
 
-// "12 of 23 complete" — the only progress phrasing. No percentage, no
-// score, no threshold.
+// "12 of 23 complete" — counts RESOLVED items (normal completion OR a
+// management exception). No percentage, no score, no threshold.
 export function formatChecklistProgress(
   progress: OpeningChecklistProgress,
 ): string {
-  return `${progress.completed} of ${progress.total} complete`;
+  return `${progress.resolved} of ${progress.total} complete`;
 }
 
 // The outcome of one Opening Checklist API call, as the browser client
@@ -70,6 +74,7 @@ export type ChecklistLoadOutcome =
   | "success"
   | "forbidden"
   | "not-found"
+  | "invalid"
   | "error";
 
 // The load-state the Opening Checklist page tracks.
@@ -78,12 +83,14 @@ export type ChecklistLoadState = "ok" | "forbidden" | "error";
 // Map an API outcome to the page's load-state. A failed load — a plain
 // `error`, or a `not-found` with nothing already on screen — must reach
 // `error` so the page renders its retryable error card, never staying on
-// the loading skeleton.
+// the loading skeleton. `invalid` (a rejected mutation) keeps the page:
+// the loaded checklist is still valid and the message is shown inline.
 export function nextChecklistLoadState(
   outcome: ChecklistLoadOutcome,
 ): ChecklistLoadState {
   switch (outcome) {
     case "success":
+    case "invalid":
       return "ok";
     case "forbidden":
       return "forbidden";
@@ -93,16 +100,24 @@ export function nextChecklistLoadState(
   }
 }
 
-// One checklist item, prepared for rendering. `showComplete` / `showUndo`
-// are mutually exclusive and both false for a read-only viewer.
+// One checklist item, prepared for rendering. `showComplete` / `showUndo` /
+// `showLogException` / `showClearException` reflect exactly one available
+// action for the current status and the viewer's permissions; all are
+// false for a read-only viewer.
 export interface OpeningChecklistItemViewModel {
   id: string;
   label: string;
+  status: OpeningChecklistItemStatus;
+  // Normal completion only — drives the ordinary checkmark.
   completed: boolean;
   completedByName: string | null;
   completedAt: string | null;
+  // Present only when status === "exception".
+  exception: { reason: string; byName: string | null; at: string } | null;
   showComplete: boolean;
   showUndo: boolean;
+  showLogException: boolean;
+  showClearException: boolean;
 }
 
 export interface OpeningChecklistViewModel {
@@ -112,8 +127,8 @@ export interface OpeningChecklistViewModel {
   progress: OpeningChecklistProgress;
   progressLabel: string;
   isComplete: boolean;
-  // A read-only viewer (operations.view but not operations.tasks.complete)
-  // sees the checklist with no operable controls.
+  // A viewer with neither operations.tasks.complete nor
+  // operations.exceptions.manage for this location — no operable controls.
   readOnly: boolean;
   sections: {
     name: string;
@@ -121,14 +136,11 @@ export interface OpeningChecklistViewModel {
   }[];
 }
 
-// Build the page view-model from the authoritative API projection. The
-// grouping/order is the API's — this never invents sections or items, and
-// adds nothing beyond per-item control visibility.
 export function buildOpeningChecklistViewModel(
   checklist: OpeningChecklistResponse,
-  options: { canComplete: boolean },
+  options: { canComplete: boolean; canLogExceptions: boolean },
 ): OpeningChecklistViewModel {
-  const { canComplete } = options;
+  const { canComplete, canLogExceptions } = options;
 
   return {
     title: checklist.title,
@@ -137,17 +149,27 @@ export function buildOpeningChecklistViewModel(
     progress: checklist.progress,
     progressLabel: formatChecklistProgress(checklist.progress),
     isComplete: checklist.progress.isComplete,
-    readOnly: !canComplete,
+    readOnly: !canComplete && !canLogExceptions,
     sections: checklist.sections.map((section) => ({
       name: section.name,
       items: section.items.map((item) => ({
         id: item.id,
         label: item.label,
+        status: item.status,
         completed: item.completed,
         completedByName: item.completedBy?.name ?? null,
         completedAt: item.completedAt,
-        showComplete: canComplete && !item.completed,
-        showUndo: canComplete && item.completed,
+        exception: item.exception
+          ? {
+              reason: item.exception.reason,
+              byName: item.exception.by?.name ?? null,
+              at: item.exception.at,
+            }
+          : null,
+        showComplete: canComplete && item.status === "open",
+        showUndo: canComplete && item.status === "completed",
+        showLogException: canLogExceptions && item.status === "open",
+        showClearException: canLogExceptions && item.status === "exception",
       })),
     })),
   };

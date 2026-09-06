@@ -985,6 +985,8 @@ export const INTERNAL_PERMISSION_KEYS = [
   "operations.tasks.complete",
   // Milestone 6B-2
   "operations.checklists.configure",
+  // Milestone 6C
+  "operations.exceptions.manage",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1141,6 +1143,19 @@ export const INTERNAL_PERMISSION_METADATA: Record<
       "Manage the corporate Opening Checklist template — item wording, active state, ordering and sections. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
+  // Milestone 6C — log and clear a Management Exception on an Opening
+  // Checklist item: a manager-authorized way to RESOLVE an item that could
+  // not actually be completed, with a required reason. It is deliberately
+  // separate from `operations.tasks.complete` — waiving a standard
+  // requirement is a management decision, not a routine tick, and it is
+  // audited. Held at corporate (an operations user across every store) or
+  // per location (a store manager for their store).
+  "operations.exceptions.manage": {
+    key: "operations.exceptions.manage",
+    description:
+      "Log and clear a management exception on an Opening Checklist item for an authorized location. Held at corporate or per location.",
+    allowedScopeTypes: ["CORPORATE", "LOCATION"],
+  },
 };
 
 // --- Store Operations: the Opening Checklist (Milestone 6B) ------------
@@ -1157,18 +1172,41 @@ export const INTERNAL_PERMISSION_METADATA: Record<
 //
 // `businessDate` is `YYYY-MM-DD`, resolved in the Mocha House business
 // timezone (America/Detroit). Sections and items are already ordered; the
-// six sections come from the seeded corporate template. Progress is
-// derived: `isComplete` is `completed === total`.
+// six sections come from the seeded corporate template.
+//
+// RESOLUTION (Milestone 6C): an item is "resolved" when it is completed
+// normally OR carries a management exception. `status` is the single source
+// of truth for the UI; `completed` stays true ONLY for a normal completion
+// so older callers keep their meaning. Progress is derived: `isComplete` is
+// `resolved === total`.
+export type OpeningChecklistItemStatus = "open" | "completed" | "exception";
+
 export interface OpeningChecklistItemView {
-  // Opaque ChecklistInstanceItem id — the target for Complete / Undo.
+  // Opaque ChecklistInstanceItem id — the target for Complete / Undo /
+  // Log Exception / Clear Exception.
   id: string;
   label: string;
+  status: OpeningChecklistItemStatus;
+  // status !== "open" — the item no longer blocks the checklist.
+  resolved: boolean;
+  // TRUE only for a NORMAL completion (status === "completed"). An
+  // exception-resolved item is `false` here — it must never render as an
+  // ordinary completed checkmark.
   completed: boolean;
-  // The current completion actor's display name, or null when incomplete.
-  // Undo clears this — 6B keeps only the CURRENT actor, not a history.
+  // The current completion actor's display name, or null when not completed
+  // normally. Undo clears this — only the CURRENT actor is kept, not a
+  // history.
   completedBy: { name: string } | null;
-  // ISO 8601 timestamp of the current completion, or null when incomplete.
+  // ISO 8601 timestamp of the current normal completion, or null.
   completedAt: string | null;
+  // Present only when status === "exception". The reason is required text;
+  // `by` is the manager who logged it (null only if that user is missing);
+  // `at` is the ISO 8601 timestamp. Cleared together by Clear Exception.
+  exception: {
+    reason: string;
+    by: { name: string } | null;
+    at: string;
+  } | null;
 }
 
 export interface OpeningChecklistSectionView {
@@ -1177,9 +1215,13 @@ export interface OpeningChecklistSectionView {
 }
 
 export interface OpeningChecklistProgress {
+  // Items completed NORMALLY.
   completed: number;
+  // Items resolved by normal completion OR a management exception. This is
+  // the number to show as "X of Y".
+  resolved: number;
   total: number;
-  // completed === total. There is no readiness score or threshold.
+  // resolved === total (and total > 0). There is no readiness score.
   isComplete: boolean;
 }
 
@@ -1198,6 +1240,77 @@ export interface OpeningChecklistResponse {
 // and `.../undo`. `locationId` is a REQUIRED filter — it is checked against
 // the item's own instance, never trusted as proof of authorization.
 export interface OpeningChecklistItemActionRequest {
+  locationId: string;
+}
+
+// --- Store Operations: Management Exception (Milestone 6C) ------------
+// POST `/api/v1/admin/operations/opening-checklist/items/:instanceItemId/exception`
+// — requires `operations.exceptions.manage` for the location. Rejected
+// (409) when the item is already completed normally. `reason` is required,
+// trimmed, non-empty and at most 500 characters. Logging an exception is
+// recorded as an InternalAuditEvent.
+export interface LogOpeningChecklistExceptionRequest {
+  locationId: string;
+  reason: string;
+}
+
+// POST `.../items/:instanceItemId/exception/clear` — requires
+// `operations.exceptions.manage`. Returns the item to "open". Also audited.
+export interface ClearOpeningChecklistExceptionRequest {
+  locationId: string;
+}
+
+// --- Store Operations: Today's Tasks (Milestone 6C) -----------------
+// Simple, location-scoped operational to-dos for ONE America/Detroit
+// business date. Served only from the guarded
+// `/api/v1/admin/operations/tasks*` routes (InternalAuthGuard +
+// PermissionGuard + resource-level location scope). GET requires
+// `operations.view`; add / complete / reopen / delete require
+// `operations.tasks.complete`.
+//
+// A task belongs only to `businessDate` — there is no rollover, no due
+// time, no assignee, no priority, no category. "Open" vs "Done" is derived
+// purely from completion state. Routine task actions are NOT audited.
+export interface OperationsTaskView {
+  // Opaque OperationsTask id — the target for the task actions.
+  id: string;
+  title: string;
+  note: string | null;
+  done: boolean;
+  // Display name of who completed it, or null when open.
+  completedBy: { name: string } | null;
+  // ISO 8601 timestamp of completion, or null when open.
+  completedAt: string | null;
+  // Display name of the creator, or null only if that user is missing.
+  createdBy: { name: string } | null;
+  // ISO 8601 timestamp.
+  createdAt: string;
+}
+
+export interface OperationsTasksResponse {
+  locationId: string;
+  locationName: string;
+  businessDate: string;
+  // Open tasks first (oldest first), then done tasks (oldest first).
+  tasks: OperationsTaskView[];
+  openCount: number;
+  doneCount: number;
+}
+
+// POST `/api/v1/admin/operations/tasks` — `title` is required, trimmed,
+// non-empty and at most 200 characters; `note` is optional, trimmed and at
+// most 500 characters (an empty note is stored as null).
+export interface CreateOperationsTaskRequest {
+  locationId: string;
+  title: string;
+  note?: string;
+}
+
+// POST body for `/tasks/:taskId/complete`, `/tasks/:taskId/reopen` and
+// `/tasks/:taskId/delete`. `locationId` is a REQUIRED filter, checked
+// against the task's own location and business date, never trusted as
+// proof of authorization.
+export interface OperationsTaskActionRequest {
   locationId: string;
 }
 

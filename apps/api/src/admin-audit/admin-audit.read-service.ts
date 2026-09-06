@@ -110,7 +110,17 @@ export class AdminAuditReadService {
   private buildWhere(
     query: AdminAuditListQuery,
   ): Prisma.InternalAuditEventWhereInput {
-    const where: Prisma.InternalAuditEventWhereInput = {};
+    // The Admin Activity Log is, by its contract, the history of
+    // administrative ACCESS changes — its subject is always an Admin user
+    // and `resolveSubjects` only resolves internal users. Audit events with
+    // another target (Milestone 6C records checklist management exceptions
+    // against `checklist_instance_item`) are stored in the same table but
+    // do not belong on this screen, so the base query is scoped to
+    // internal-user targets. This is not a redesign — it makes an existing
+    // implicit assumption explicit.
+    const where: Prisma.InternalAuditEventWhereInput = {
+      targetType: 'internal_user',
+    };
 
     // --- Cursor (forward pagination) ------------------------------
     // Ordering is by `id` descending; `id` is a UUIDv7 stored lower-case, so

@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 import type { OpeningChecklistResponse } from "@mocha-house/contracts";
 import {
+  clearOpeningChecklistExceptionFromBrowser,
   completeOpeningChecklistItemFromBrowser,
   getOpeningChecklistFromBrowser,
+  logOpeningChecklistExceptionFromBrowser,
   undoOpeningChecklistItemFromBrowser,
   type OpeningChecklistResult,
 } from "@/lib/api-client";
@@ -24,17 +26,19 @@ import {
 } from "@/components/admin/states";
 import { Button } from "@/components/admin/Button";
 import { Card } from "@/components/Card";
+import { ADMIN_FIELD_CLASS, FormField } from "@/components/admin/form";
 import { useAdminContext } from "@/components/admin/AdminContext";
 
-// Admin → Operations → Today → Opening Checklist (Milestone 6B). A
-// store-use workflow: open today's checklist, complete items with one tap,
-// see progress, undo an accidental completion. `operations.view` gates the
-// page; the Complete / Undo controls need `operations.tasks.complete` for
-// THIS location — a viewer without it sees the checklist read-only.
+// Admin → Operations → Today → Opening Checklist (Milestone 6B; 6C adds the
+// management exception). A store-use workflow: open today's checklist,
+// complete items with one tap, undo an accidental completion. When an
+// opening requirement genuinely could not be met, an authorized manager
+// (operations.exceptions.manage) can Log a management exception with a
+// reason — the item is RESOLVED but is never shown as an ordinary
+// completed checkmark. `operations.view` gates the page.
 //
-// The server (GET) lazily creates today's instance and snapshots the
-// active template items. Complete / Undo return the full authoritative
-// projection; the UI always reconciles from it.
+// The server (GET) lazily creates today's instance. Every mutation returns
+// the full authoritative projection; the UI always reconciles from it.
 export default function OpeningChecklistPage() {
   const { can, canAtLocation, capabilities, locationContext } =
     useAdminContext();
@@ -91,9 +95,6 @@ export default function OpeningChecklistPage() {
     );
   }
 
-  // `operations.view` is held somewhere, but the resolved location comes
-  // from the general operational-scope set — it may not be a location the
-  // viewer holds `operations.view` FOR.
   if (!canAtLocation("operations.view", page.locationId)) {
     return (
       <AdminPage>
@@ -114,25 +115,34 @@ export default function OpeningChecklistPage() {
       key={page.locationId}
       locationId={page.locationId}
       canComplete={page.canComplete}
+      canLogExceptions={page.canLogExceptions}
     />
   );
 }
 
+type ItemAction =
+  | { kind: "complete" | "undo" | "clear-exception" }
+  | { kind: "log-exception"; reason: string };
+
 function OpeningChecklist({
   locationId,
   canComplete,
+  canLogExceptions,
 }: {
   locationId: string;
   canComplete: boolean;
+  canLogExceptions: boolean;
 }) {
   const [checklist, setChecklist] = useState<OpeningChecklistResponse | null>(
     null,
   );
   const [state, setState] = useState<"ok" | "forbidden" | "error">("ok");
   const [notice, setNotice] = useState<string | null>(null);
-  // Item ids with a Complete/Undo request in flight — drives the disabled
-  // state and prevents a double submission.
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
+  // The item currently showing its inline "reason" input, if any.
+  const [exceptionDraftFor, setExceptionDraftFor] = useState<string | null>(
+    null,
+  );
 
   const applyResult = useCallback((result: OpeningChecklistResult): boolean => {
     if (result.outcome === "success") {
@@ -141,16 +151,13 @@ function OpeningChecklist({
       setChecklist(result.checklist);
       return true;
     }
-    // Every non-success outcome lands on a definite state — a failed load
-    // must reach the retryable AdminErrorState below, never leave the page
-    // on its loading skeleton (see `state === "error" && !checklist`).
+    // A failed load must reach the retryable AdminErrorState below; a
+    // rejected mutation ("invalid") keeps the loaded checklist and shows
+    // its message inline.
     setState(nextChecklistLoadState(result.outcome));
     if (result.outcome === "not-found") {
-      // The instance/item moved under us (e.g. the business day rolled
-      // over). A mutation caller re-loads; the initial load falls back to
-      // the error state above.
       setNotice("This checklist has changed. Refreshing…");
-    } else if (result.outcome === "error") {
+    } else if (result.outcome === "invalid" || result.outcome === "error") {
       setNotice(result.message);
     }
     return false;
@@ -173,16 +180,40 @@ function OpeningChecklist({
 
   async function mutate(
     item: OpeningChecklistItemViewModel,
-    action: "complete" | "undo",
+    action: ItemAction,
   ) {
     if (pending.has(item.id)) return;
     setPending((current) => new Set(current).add(item.id));
     try {
-      const result =
-        action === "complete"
-          ? await completeOpeningChecklistItemFromBrowser(item.id, locationId)
-          : await undoOpeningChecklistItemFromBrowser(item.id, locationId);
+      let result: OpeningChecklistResult;
+      switch (action.kind) {
+        case "complete":
+          result = await completeOpeningChecklistItemFromBrowser(
+            item.id,
+            locationId,
+          );
+          break;
+        case "undo":
+          result = await undoOpeningChecklistItemFromBrowser(item.id, locationId);
+          break;
+        case "log-exception":
+          result = await logOpeningChecklistExceptionFromBrowser(
+            item.id,
+            locationId,
+            action.reason,
+          );
+          break;
+        case "clear-exception":
+          result = await clearOpeningChecklistExceptionFromBrowser(
+            item.id,
+            locationId,
+          );
+          break;
+      }
       const ok = applyResult(result);
+      if (ok && (action.kind === "log-exception" || action.kind === "clear-exception")) {
+        setExceptionDraftFor(null);
+      }
       if (!ok && result.outcome === "not-found") {
         await load();
       }
@@ -225,7 +256,14 @@ function OpeningChecklist({
     );
   }
 
-  const vm = buildOpeningChecklistViewModel(checklist, { canComplete });
+  const vm = buildOpeningChecklistViewModel(checklist, {
+    canComplete,
+    canLogExceptions,
+  });
+  const pct =
+    vm.progress.total === 0
+      ? 0
+      : Math.round((vm.progress.resolved / vm.progress.total) * 100);
 
   return (
     <AdminPage>
@@ -249,19 +287,11 @@ function OpeningChecklist({
           role="progressbar"
           aria-valuemin={0}
           aria-valuemax={vm.progress.total}
-          aria-valuenow={vm.progress.completed}
+          aria-valuenow={vm.progress.resolved}
         >
           <div
             className="h-full rounded-full bg-status-success transition-[width]"
-            style={{
-              width: `${
-                vm.progress.total === 0
-                  ? 0
-                  : Math.round(
-                      (vm.progress.completed / vm.progress.total) * 100,
-                    )
-              }%`,
-            }}
+            style={{ width: `${pct}%` }}
           />
         </div>
       </Card>
@@ -274,9 +304,9 @@ function OpeningChecklist({
 
       {vm.readOnly ? (
         <Card tone="subtle" className="text-sm text-text-secondary">
-          You can view the opening checklist for this location, but completing
-          items needs the operational tasks permission. Ask an administrator if
-          you need it.
+          You can view the opening checklist for this location, but acting on
+          items needs the operational tasks or exception permission. Ask an
+          administrator if you need it.
         </Card>
       ) : null}
 
@@ -294,8 +324,17 @@ function OpeningChecklist({
                 <ChecklistItemRow
                   item={item}
                   busy={pending.has(item.id)}
-                  onComplete={() => void mutate(item, "complete")}
-                  onUndo={() => void mutate(item, "undo")}
+                  draftingException={exceptionDraftFor === item.id}
+                  onComplete={() => void mutate(item, { kind: "complete" })}
+                  onUndo={() => void mutate(item, { kind: "undo" })}
+                  onStartException={() => setExceptionDraftFor(item.id)}
+                  onCancelException={() => setExceptionDraftFor(null)}
+                  onLogException={(reason) =>
+                    void mutate(item, { kind: "log-exception", reason })
+                  }
+                  onClearException={() =>
+                    void mutate(item, { kind: "clear-exception" })
+                  }
                 />
               </li>
             ))}
@@ -309,44 +348,55 @@ function OpeningChecklist({
 function ChecklistItemRow({
   item,
   busy,
+  draftingException,
   onComplete,
   onUndo,
+  onStartException,
+  onCancelException,
+  onLogException,
+  onClearException,
 }: {
   item: OpeningChecklistItemViewModel;
   busy: boolean;
+  draftingException: boolean;
   onComplete: () => void;
   onUndo: () => void;
+  onStartException: () => void;
+  onCancelException: () => void;
+  onLogException: (reason: string) => void;
+  onClearException: () => void;
 }) {
+  const marker =
+    item.status === "completed" ? "✓" : item.status === "exception" ? "!" : "○";
+  const markerClass =
+    item.status === "completed"
+      ? "text-status-success"
+      : item.status === "exception"
+        ? "text-status-warning"
+        : "text-text-muted";
+  const cardAccent =
+    item.status === "completed"
+      ? "border-status-success/40 bg-status-success/5"
+      : item.status === "exception"
+        ? "border-status-warning/40 bg-status-warning/5"
+        : "";
+
   return (
-    <Card
-      className={`flex flex-col gap-3 ${
-        item.completed ? "border-status-success/40 bg-status-success/5" : ""
-      }`}
-    >
+    <Card className={`flex flex-col gap-3 ${cardAccent}`}>
       <div className="flex items-start gap-2">
-        <span
-          aria-hidden="true"
-          className={`mt-0.5 text-base ${
-            item.completed ? "text-status-success" : "text-text-muted"
-          }`}
-        >
-          {item.completed ? "✓" : "○"}
+        <span aria-hidden="true" className={`mt-0.5 text-base ${markerClass}`}>
+          {marker}
         </span>
         <p className="text-sm text-text-primary">{item.label}</p>
       </div>
 
-      {item.completed ? (
+      {item.status === "completed" ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <span className="text-xs text-text-secondary">
             {item.completedByName
               ? `Completed by ${item.completedByName}`
               : "Completed"}
-            {item.completedAt
-              ? ` · ${new Date(item.completedAt).toLocaleTimeString([], {
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}`
-              : ""}
+            {item.completedAt ? ` · ${formatTime(item.completedAt)}` : ""}
           </span>
           {item.showUndo ? (
             <Button
@@ -359,17 +409,128 @@ function ChecklistItemRow({
             </Button>
           ) : null}
         </div>
-      ) : item.showComplete ? (
-        <Button
-          className="w-full sm:w-auto sm:self-start"
-          onClick={onComplete}
-          disabled={busy}
-        >
-          {busy ? "Working…" : "Complete"}
-        </Button>
+      ) : item.status === "exception" && item.exception ? (
+        <div className="flex flex-col gap-2">
+          <span className="text-xs font-medium text-status-warning">
+            Management exception
+          </span>
+          <p className="text-sm text-text-primary">
+            &ldquo;{item.exception.reason}&rdquo;
+          </p>
+          <span className="text-xs text-text-secondary">
+            {item.exception.byName
+              ? `Logged by ${item.exception.byName}`
+              : "Logged"}
+            {item.exception.at ? ` · ${formatTime(item.exception.at)}` : ""}
+          </span>
+          {item.showClearException ? (
+            <div>
+              <Button
+                variant="secondary"
+                className="w-full sm:w-auto"
+                onClick={onClearException}
+                disabled={busy}
+              >
+                {busy ? "Working…" : "Clear exception"}
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      ) : draftingException ? (
+        <ExceptionReasonForm
+          busy={busy}
+          onCancel={onCancelException}
+          onSubmit={onLogException}
+        />
       ) : (
-        <span className="text-xs text-text-muted">Not yet complete</span>
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          {item.showComplete ? (
+            <Button
+              className="w-full sm:w-auto"
+              onClick={onComplete}
+              disabled={busy}
+            >
+              {busy ? "Working…" : "Complete"}
+            </Button>
+          ) : null}
+          {item.showLogException ? (
+            <Button
+              variant="secondary"
+              className="w-full sm:w-auto"
+              onClick={onStartException}
+              disabled={busy}
+            >
+              Log exception
+            </Button>
+          ) : null}
+          {!item.showComplete && !item.showLogException ? (
+            <span className="text-xs text-text-muted">Not yet complete</span>
+          ) : null}
+        </div>
       )}
     </Card>
   );
+}
+
+function ExceptionReasonForm({
+  busy,
+  onCancel,
+  onSubmit,
+}: {
+  busy: boolean;
+  onCancel: () => void;
+  onSubmit: (reason: string) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  function submit() {
+    const trimmed = reason.trim();
+    if (trimmed.length === 0) {
+      setError("Enter a reason for the exception.");
+      return;
+    }
+    if (trimmed.length > 500) {
+      setError("Keep the reason under 500 characters.");
+      return;
+    }
+    onSubmit(trimmed);
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <FormField
+        label="Reason for the exception"
+        htmlFor="exception-reason"
+        hint="Why this requirement could not be completed. Recorded for management."
+        error={error}
+      >
+        <textarea
+          id="exception-reason"
+          value={reason}
+          onChange={(event) => {
+            setReason(event.target.value);
+            setError(null);
+          }}
+          rows={2}
+          className={ADMIN_FIELD_CLASS}
+        />
+      </FormField>
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={busy} onClick={submit}>
+          {busy ? "Working…" : "Log exception"}
+        </Button>
+        <Button variant="secondary" disabled={busy} onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }

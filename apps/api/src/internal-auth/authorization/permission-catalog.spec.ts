@@ -38,6 +38,8 @@ describe('internal permission catalog', () => {
         'operations.tasks.complete',
         // Milestone 6B-2
         'operations.checklists.configure',
+        // Milestone 6C
+        'operations.exceptions.manage',
       ].sort(),
     );
   });
@@ -94,6 +96,8 @@ describe('internal permission catalog', () => {
       'operations.view',
       // Milestone 6B — completing checklist items is held per location too.
       'operations.tasks.complete',
+      // Milestone 6C — logging a checklist management exception, per location.
+      'operations.exceptions.manage',
     ] as const) {
       expect([...allowedScopeTypesFor(key)].sort()).toEqual([
         'CORPORATE',

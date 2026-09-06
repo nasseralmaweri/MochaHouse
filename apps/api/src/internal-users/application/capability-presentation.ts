@@ -59,6 +59,12 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Manage the corporate opening checklist',
     definition: 'Manage the corporate opening checklist',
   },
+  'operations.exceptions.manage': {
+    group: 'Operations',
+    effectiveAll: 'Log checklist management exceptions at all locations',
+    effectiveScoped: 'Log checklist management exceptions at their locations',
+    definition: 'Log checklist management exceptions',
+  },
   'catalog.view': {
     group: 'Menu & Products',
     effectiveAll: 'View the full product catalogue',
@@ -155,6 +161,7 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'orders.manage_status',
   'operations.view',
   'operations.tasks.complete',
+  'operations.exceptions.manage',
   'operations.checklists.configure',
   'catalog.view',
   'catalog.products.edit',

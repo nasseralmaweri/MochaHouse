@@ -687,13 +687,24 @@ describe('Opening Checklist (integration)', () => {
       ['businessDate', 'locationId', 'locationName', 'progress', 'sections', 'title'].sort(),
     );
     expect(Object.keys(body.progress).sort()).toEqual(
-      ['completed', 'isComplete', 'total'].sort(),
+      ['completed', 'resolved', 'isComplete', 'total'].sort(),
     );
     for (const section of body.sections) {
       expect(Object.keys(section).sort()).toEqual(['items', 'name'].sort());
       for (const item of section.items) {
+        // Milestone 6C adds status / resolved / exception (all mutually
+        // consistent with `completed`).
         expect(Object.keys(item).sort()).toEqual(
-          ['completed', 'completedAt', 'completedBy', 'id', 'label'].sort(),
+          [
+            'completed',
+            'completedAt',
+            'completedBy',
+            'exception',
+            'id',
+            'label',
+            'resolved',
+            'status',
+          ].sort(),
         );
       }
     }

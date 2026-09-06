@@ -1,14 +1,17 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  OpeningChecklistItemView,
   OpeningChecklistResponse,
   OpeningChecklistSectionView,
 } from '@mocha-house/contracts';
 import { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import {
   businessDateToProjection,
@@ -20,11 +23,14 @@ import {
 // configuration service (Milestone 6B-2), which manages the same row.
 export const OPENING_TEMPLATE_KEY = 'opening';
 
+const EXCEPTION_REASON_MAX_LENGTH = 500;
+
 const INSTANCE_INCLUDE = {
   items: {
     orderBy: { sortOrder: 'asc' },
     include: {
       completedBy: { select: { displayName: true, email: true } },
+      exceptionBy: { select: { displayName: true, email: true } },
     },
   },
 } satisfies Prisma.ChecklistInstanceInclude;
@@ -52,9 +58,18 @@ interface LocationRef {
 // Historical safety: an instance's item rows are a by-value snapshot taken
 // at creation. Nothing here re-reads ChecklistTemplateItem for an existing
 // instance, so later template edits never rewrite history.
+//
+// Resolution (Milestone 6C): an item is "resolved" by a NORMAL completion
+// OR a MANAGEMENT EXCEPTION (a manager-authorized, reasoned waiver). The
+// two are mutually exclusive — Complete is rejected on an exception item
+// and Log Exception is rejected on a completed item; clear/undo back to
+// "open" first. The checklist is complete when every item is resolved.
 @Injectable()
 export class OpeningChecklistService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: InternalAuditService,
+  ) {}
 
   async getToday(
     locationId: string,
@@ -96,17 +111,143 @@ export class OpeningChecklistService {
     await this.prisma.$transaction(async (tx) => {
       await lockInstance(tx, context.instanceId);
       // Conditional update: Complete only wins when the item is currently
-      // incomplete. If another request already completed it, count === 0
-      // and this is an idempotent no-op — the actor/timestamp already
-      // recorded by the winning request are left untouched.
-      await tx.checklistInstanceItem.updateMany({
-        where: { id: instanceItemId, completedAt: null },
+      // OPEN (not completed AND not exception-resolved). If another request
+      // already completed it, count === 0 and this is an idempotent no-op.
+      // If it is exception-resolved, count === 0 too — and that is a
+      // conflict the caller must resolve (Clear Exception first), never a
+      // silent overwrite of the two states.
+      const result = await tx.checklistInstanceItem.updateMany({
+        where: { id: instanceItemId, completedAt: null, exceptionAt: null },
         data: {
           completedAt: new Date(),
           completedByInternalUserId: actorInternalUserId,
         },
       });
+      if (result.count === 0) {
+        const current = await tx.checklistInstanceItem.findUniqueOrThrow({
+          where: { id: instanceItemId },
+          select: { completedAt: true, exceptionAt: true },
+        });
+        if (current.exceptionAt !== null && current.completedAt === null) {
+          throw new ConflictException(
+            'This item is resolved by a management exception. Clear the exception before completing it normally.',
+          );
+        }
+        // Otherwise it is already completed — an idempotent no-op.
+      }
       await recomputeInstanceCompletion(tx, context.instanceId);
+    });
+
+    return this.reload(context.instanceId, context.location, context.title);
+  }
+
+  async logException(
+    instanceItemId: string,
+    locationId: string,
+    reason: unknown,
+    actorInternalUserId: string,
+    authorization: AuthorizationContext,
+  ): Promise<OpeningChecklistResponse> {
+    const trimmedLocationId = assertLocationId(locationId);
+    authorization.assertCanActOnLocation(
+      'operations.exceptions.manage',
+      trimmedLocationId,
+    );
+
+    const trimmedReason = assertExceptionReason(reason);
+    const context = await this.loadItemContext(
+      instanceItemId,
+      trimmedLocationId,
+    );
+
+    await this.prisma.$transaction(async (tx) => {
+      await lockInstance(tx, context.instanceId);
+      // Log Exception only wins on an OPEN item. A normally completed item
+      // is a conflict (Undo first); an item that already carries THIS kind
+      // of resolution is an idempotent no-op that must not overwrite the
+      // original actor / timestamp / reason.
+      const result = await tx.checklistInstanceItem.updateMany({
+        where: { id: instanceItemId, completedAt: null, exceptionAt: null },
+        data: {
+          exceptionReason: trimmedReason,
+          exceptionByInternalUserId: actorInternalUserId,
+          exceptionAt: new Date(),
+        },
+      });
+      if (result.count === 0) {
+        const current = await tx.checklistInstanceItem.findUniqueOrThrow({
+          where: { id: instanceItemId },
+          select: { completedAt: true, exceptionAt: true },
+        });
+        if (current.completedAt !== null) {
+          throw new ConflictException(
+            'This item is already completed. Undo the completion before logging a management exception.',
+          );
+        }
+        // Already exception-resolved — idempotent, no audit event, no change.
+        return;
+      }
+      await recomputeInstanceCompletion(tx, context.instanceId);
+      await this.audit.recordChecklistExceptionLogged(tx, {
+        actorInternalUserId,
+        checklistInstanceItemId: instanceItemId,
+        checklistInstanceId: context.instanceId,
+        locationId: context.location.id,
+        locationName: context.location.name,
+        itemLabel: context.itemLabel,
+        reason: trimmedReason,
+      });
+    });
+
+    return this.reload(context.instanceId, context.location, context.title);
+  }
+
+  async clearException(
+    instanceItemId: string,
+    locationId: string,
+    actorInternalUserId: string,
+    authorization: AuthorizationContext,
+  ): Promise<OpeningChecklistResponse> {
+    const trimmedLocationId = assertLocationId(locationId);
+    authorization.assertCanActOnLocation(
+      'operations.exceptions.manage',
+      trimmedLocationId,
+    );
+
+    const context = await this.loadItemContext(
+      instanceItemId,
+      trimmedLocationId,
+    );
+
+    await this.prisma.$transaction(async (tx) => {
+      await lockInstance(tx, context.instanceId);
+      const before = await tx.checklistInstanceItem.findUniqueOrThrow({
+        where: { id: instanceItemId },
+        select: { exceptionReason: true, exceptionAt: true },
+      });
+      // Clear only wins when an exception is actually present. Otherwise an
+      // idempotent no-op with no audit event.
+      const result = await tx.checklistInstanceItem.updateMany({
+        where: { id: instanceItemId, exceptionAt: { not: null } },
+        data: {
+          exceptionReason: null,
+          exceptionByInternalUserId: null,
+          exceptionAt: null,
+        },
+      });
+      if (result.count === 0) {
+        return;
+      }
+      await recomputeInstanceCompletion(tx, context.instanceId);
+      await this.audit.recordChecklistExceptionCleared(tx, {
+        actorInternalUserId,
+        checklistInstanceItemId: instanceItemId,
+        checklistInstanceId: context.instanceId,
+        locationId: context.location.id,
+        locationName: context.location.name,
+        itemLabel: context.itemLabel,
+        previousReason: before.exceptionReason ?? '(reason unavailable)',
+      });
     });
 
     return this.reload(context.instanceId, context.location, context.title);
@@ -220,17 +361,25 @@ export class OpeningChecklistService {
   private async loadItemContext(
     instanceItemId: string,
     locationId: string,
-  ): Promise<{ instanceId: string; location: LocationRef; title: string }> {
+  ): Promise<{
+    instanceId: string;
+    location: LocationRef;
+    title: string;
+    itemLabel: string;
+  }> {
     if (
       typeof instanceItemId !== 'string' ||
       instanceItemId.trim().length === 0
     ) {
-      throw new NotFoundException('Checklist item not found for this location.');
+      throw new NotFoundException(
+        'Checklist item not found for this location.',
+      );
     }
 
     const item = await this.prisma.checklistInstanceItem.findUnique({
       where: { id: instanceItemId },
       select: {
+        label: true,
         checklistInstance: {
           select: {
             id: true,
@@ -253,13 +402,16 @@ export class OpeningChecklistService {
       // One response for "no such item", "another location's item" and
       // "a prior business date" — a location-scoped caller must not be able
       // to tell them apart (same principle as the order-detail check).
-      throw new NotFoundException('Checklist item not found for this location.');
+      throw new NotFoundException(
+        'Checklist item not found for this location.',
+      );
     }
 
     return {
       instanceId: item.checklistInstance.id,
       location: item.checklistInstance.location,
       title: item.checklistInstance.template.name,
+      itemLabel: item.label,
     };
   }
 
@@ -282,11 +434,12 @@ export class OpeningChecklistService {
     location: LocationRef,
     title: string,
   ): OpeningChecklistResponse {
-    const items = [...instance.items].sort(
-      (a, b) => a.sortOrder - b.sortOrder,
-    );
+    const items = [...instance.items].sort((a, b) => a.sortOrder - b.sortOrder);
     const total = items.length;
     const completed = items.filter((item) => item.completedAt !== null).length;
+    const resolved = items.filter(
+      (item) => item.completedAt !== null || item.exceptionAt !== null,
+    ).length;
 
     const sections: OpeningChecklistSectionView[] = [];
     const byName = new Map<string, OpeningChecklistSectionView>();
@@ -297,15 +450,7 @@ export class OpeningChecklistService {
         byName.set(item.section, section);
         sections.push(section);
       }
-      const completedName =
-        item.completedBy?.displayName ?? item.completedBy?.email ?? null;
-      section.items.push({
-        id: item.id,
-        label: item.label,
-        completed: item.completedAt !== null,
-        completedBy: completedName ? { name: completedName } : null,
-        completedAt: item.completedAt ? item.completedAt.toISOString() : null,
-      });
+      section.items.push(projectItem(item));
     }
 
     return {
@@ -315,8 +460,9 @@ export class OpeningChecklistService {
       title,
       progress: {
         completed,
+        resolved,
         total,
-        isComplete: total > 0 && completed === total,
+        isComplete: total > 0 && resolved === total,
       },
       sections,
     };
@@ -335,7 +481,10 @@ export class OpeningChecklistService {
     return location;
   }
 
-  private async requireOpeningTemplate(): Promise<{ id: string; name: string }> {
+  private async requireOpeningTemplate(): Promise<{
+    id: string;
+    name: string;
+  }> {
     const template = await this.prisma.checklistTemplate.findUnique({
       where: { key: OPENING_TEMPLATE_KEY },
       select: { id: true, name: true },
@@ -357,11 +506,58 @@ function assertLocationId(locationId: unknown): string {
   return locationId.trim();
 }
 
-// A transaction-scoped row lock on the instance. All Complete/Undo
-// mutations for one instance take it first, so their item flips and the
-// completion recompute below serialize — two racing requests can never
-// leave every item complete while ChecklistInstance.completedAt is still
-// null (or vice versa).
+// A management-exception reason: required, trimmed, non-empty, and capped.
+function assertExceptionReason(reason: unknown): string {
+  if (typeof reason !== 'string' || reason.trim().length === 0) {
+    throw new BadRequestException('A reason for the exception is required.');
+  }
+  const trimmed = reason.trim();
+  if (trimmed.length > EXCEPTION_REASON_MAX_LENGTH) {
+    throw new BadRequestException(
+      `The reason must be ${EXCEPTION_REASON_MAX_LENGTH} characters or fewer.`,
+    );
+  }
+  return trimmed;
+}
+
+// One ChecklistInstanceItem -> its business-facing view. `status` is the
+// single source of truth; `completed` stays true ONLY for a normal
+// completion so an exception never renders as an ordinary checkmark.
+function projectItem(
+  item: InstanceWithItems['items'][number],
+): OpeningChecklistItemView {
+  const isCompleted = item.completedAt !== null;
+  const isException = item.exceptionAt !== null;
+  const completedName =
+    item.completedBy?.displayName ?? item.completedBy?.email ?? null;
+  const exceptionName =
+    item.exceptionBy?.displayName ?? item.exceptionBy?.email ?? null;
+
+  return {
+    id: item.id,
+    label: item.label,
+    status: isCompleted ? 'completed' : isException ? 'exception' : 'open',
+    resolved: isCompleted || isException,
+    completed: isCompleted,
+    completedBy: completedName ? { name: completedName } : null,
+    completedAt: item.completedAt ? item.completedAt.toISOString() : null,
+    exception:
+      isException && item.exceptionAt
+        ? {
+            reason: item.exceptionReason ?? '',
+            by: exceptionName ? { name: exceptionName } : null,
+            at: item.exceptionAt.toISOString(),
+          }
+        : null,
+  };
+}
+
+// A transaction-scoped row lock on the instance. All Complete/Undo and
+// Log/Clear Exception mutations for one instance take it first, so their
+// item flips and the completion recompute below serialize — two racing
+// requests can never leave every item resolved while
+// ChecklistInstance.completedAt is still null (or vice versa), nor can a
+// Complete and a Log Exception both land on the same item.
 async function lockInstance(
   tx: Prisma.TransactionClient,
   instanceId: string,
@@ -370,9 +566,11 @@ async function lockInstance(
 }
 
 // Reconcile ChecklistInstance.completedAt from the authoritative current
-// state of its items. Runs after every Complete and Undo:
-//   - all items complete and the instance is not yet marked -> mark it.
-//   - not all complete and the instance is marked -> clear it.
+// state of its items. Runs after every Complete/Undo and Log/Clear
+// Exception. An item is RESOLVED when it is completed normally OR carries a
+// management exception:
+//   - all items resolved and the instance is not yet marked -> mark it.
+//   - not all resolved and the instance is marked -> clear it.
 // Idempotent otherwise.
 async function recomputeInstanceCompletion(
   tx: Prisma.TransactionClient,
@@ -380,22 +578,25 @@ async function recomputeInstanceCompletion(
 ): Promise<void> {
   const items = await tx.checklistInstanceItem.findMany({
     where: { checklistInstanceId: instanceId },
-    select: { completedAt: true },
+    select: { completedAt: true, exceptionAt: true },
   });
-  const allComplete =
-    items.length > 0 && items.every((item) => item.completedAt !== null);
+  const allResolved =
+    items.length > 0 &&
+    items.every(
+      (item) => item.completedAt !== null || item.exceptionAt !== null,
+    );
 
   const instance = await tx.checklistInstance.findUniqueOrThrow({
     where: { id: instanceId },
     select: { completedAt: true },
   });
 
-  if (allComplete && instance.completedAt === null) {
+  if (allResolved && instance.completedAt === null) {
     await tx.checklistInstance.update({
       where: { id: instanceId },
       data: { completedAt: new Date() },
     });
-  } else if (!allComplete && instance.completedAt !== null) {
+  } else if (!allResolved && instance.completedAt !== null) {
     await tx.checklistInstance.update({
       where: { id: instanceId },
       data: { completedAt: null },
