@@ -40,6 +40,9 @@ describe('internal permission catalog', () => {
         'operations.checklists.configure',
         // Milestone 6C
         'operations.exceptions.manage',
+        // Milestone 7A
+        'loyalty.view',
+        'loyalty.adjust',
       ].sort(),
     );
   });
@@ -83,6 +86,11 @@ describe('internal permission catalog', () => {
     expect(allowedScopeTypesFor('operations.checklists.configure')).toEqual([
       'CORPORATE',
     ]);
+    // loyalty.* — a Mocha Bean balance is a single company-wide figure per
+    // customer, and manual adjustment is a highly sensitive HQ action
+    // (Milestone 7A).
+    expect(allowedScopeTypesFor('loyalty.view')).toEqual(['CORPORATE']);
+    expect(allowedScopeTypesFor('loyalty.adjust')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {

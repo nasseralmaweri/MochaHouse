@@ -1,7 +1,9 @@
 import type {
+  AdminAdjustMochaBeansRequest,
   AdminAssignInternalUserRoleRequest,
   AdminInternalUserDetail,
   AdminLocationDetail,
+  AdminLoyaltyCustomerDetail,
   AdminProductDetail,
   AdminUpdateInternalUserStatusRequest,
   AdminUpdateLocationRequest,
@@ -1137,4 +1139,78 @@ export function moveChecklistTemplateSectionFromBrowser(
     `${checklistConfigBase(checklist)}/sections/move`,
     { method: "POST", body: { section, direction } },
   );
+}
+
+// --- Admin: manual Mocha Bean adjustment (Milestone 7A) -----------
+// POST via the internal admin proxy. The API (`loyalty.adjust`,
+// CORPORATE-only) is the authority — it enforces the required reason, the
+// operationKey idempotency, and that the balance never goes below zero. A
+// 409 carries a business-safe message (below-zero, or an operationKey
+// reused for another customer) shown as-is; on success the refreshed
+// AdminLoyaltyCustomerDetail is returned so the screen updates in place.
+export type AdjustMochaBeansResult =
+  | { outcome: "success"; detail: AdminLoyaltyCustomerDetail }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "conflict"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function adjustMochaBeansFromBrowser(
+  customerId: string,
+  input: AdminAdjustMochaBeansRequest,
+): Promise<AdjustMochaBeansResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/loyalty/customers/${encodeURIComponent(customerId)}/adjustments`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const body = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: body?.message ?? "Please check the form and try again.",
+    };
+  }
+  if (response.status === 409) {
+    const body = await safeJson(response);
+    return {
+      outcome: "conflict",
+      message: body?.message ?? "That adjustment isn't possible right now.",
+    };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+
+  return {
+    outcome: "success",
+    detail: (await response.json()) as AdminLoyaltyCustomerDetail,
+  };
 }

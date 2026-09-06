@@ -15,6 +15,7 @@ import { LocationsModule } from '../../locations/locations.module';
 import { CustomerAuthModule } from '../../customer-auth/customer-auth.module';
 import { InternalAuthModule } from '../../internal-auth/internal-auth.module';
 import { CustomersModule } from '../../customers/customers.module';
+import { LoyaltyModule } from '../../loyalty/loyalty.module';
 import { signDevJwt } from '../../customer-auth/infrastructure/dev-jwt';
 import { CheckoutService } from '../application/checkout.service';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
@@ -49,6 +50,7 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
         CustomerAuthModule,
         InternalAuthModule,
         CustomersModule,
+        LoyaltyModule,
       ],
       controllers: [OrdersController],
       providers: [

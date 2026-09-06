@@ -144,6 +144,20 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'View platform status',
     definition: 'View platform status',
   },
+  // Milestone 7A — Mocha Beans (loyalty). Both CORPORATE-only, so the
+  // "all locations" / "their locations" phrasings are the same.
+  'loyalty.view': {
+    group: 'Loyalty',
+    effectiveAll: 'View customer Mocha Bean balances and ledger',
+    effectiveScoped: 'View customer Mocha Bean balances and ledger',
+    definition: 'View customer Mocha Bean balances and ledger',
+  },
+  'loyalty.adjust': {
+    group: 'Loyalty',
+    effectiveAll: 'Manually adjust customer Mocha Beans',
+    effectiveScoped: 'Manually adjust customer Mocha Beans',
+    definition: 'Manually adjust customer Mocha Beans',
+  },
 };
 
 const GROUP_ORDER = [
@@ -151,6 +165,7 @@ const GROUP_ORDER = [
   'Operations',
   'Menu & Products',
   'Locations',
+  'Loyalty',
   'Administration',
 ];
 
@@ -171,6 +186,8 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'locations.view',
   'locations.edit',
   'locations.manage_digital_ordering',
+  'loyalty.view',
+  'loyalty.adjust',
   'users.view',
   'roles.view',
   'audit.view',

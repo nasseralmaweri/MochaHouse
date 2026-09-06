@@ -108,6 +108,43 @@ export class InternalAuditService {
     });
   }
 
+  // Records a completed manual HQ Mocha Bean adjustment (Milestone 7A).
+  // Manually moving a customer's Bean balance is a sensitive HQ action, so
+  // it is administrative history in addition to the authoritative
+  // MochaBeanLedgerEntry the same transaction writes. Call with the SAME
+  // `tx` that inserted the ledger entry and updated the balance.
+  //
+  // `targetType` is 'customer' (a new polymorphic target — the audit table
+  // has always been polymorphic by design). The Admin Activity Log is
+  // scoped to `internal_user` targets and ignores this, exactly as it
+  // ignores the 6C `checklist_instance_item` events.
+  async recordMochaBeansAdjusted(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      customerId: string;
+      deltaBeans: number;
+      balanceBefore: number;
+      balanceAfter: number;
+      reason: string;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'loyalty.beans_adjusted',
+        targetType: 'customer',
+        targetId: input.customerId,
+        beforeData: { balance: input.balanceBefore },
+        afterData: {
+          balance: input.balanceAfter,
+          delta: input.deltaBeans,
+        },
+        reason: input.reason,
+      },
+    });
+  }
+
   async recordChecklistExceptionCleared(
     tx: Prisma.TransactionClient,
     input: ChecklistExceptionAuditInput & { previousReason: string },

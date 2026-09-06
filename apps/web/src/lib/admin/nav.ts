@@ -17,6 +17,8 @@ export interface AdminNavItem {
 //     own permission.
 //   - Orders: shown only if the user effectively holds `orders.view`
 //     somewhere.
+//   - Loyalty: shown only if the user effectively holds `loyalty.view`
+//     (CORPORATE-only — Milestone 7A HQ Mocha Beans surface).
 //   - Locations: shown only if the user effectively holds `locations.view`
 //     somewhere (Milestone 5D-1 — list + detail only).
 //   - Menu & Products: shown only if the user holds `catalog.view`
@@ -49,6 +51,13 @@ export function adminNavItems(
 
   if (can(capabilities, "orders.view")) {
     items.push({ key: "orders", label: "Orders", href: "/admin/orders" });
+  }
+
+  // Loyalty (Milestone 7A — HQ Mocha Beans surface). Shown only if the user
+  // effectively holds `loyalty.view` (CORPORATE-only). The page inside still
+  // gates on its own permission, and adjusting requires `loyalty.adjust`.
+  if (can(capabilities, "loyalty.view")) {
+    items.push({ key: "loyalty", label: "Loyalty", href: "/admin/loyalty" });
   }
 
   if (can(capabilities, "locations.view")) {

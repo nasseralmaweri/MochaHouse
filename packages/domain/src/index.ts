@@ -478,3 +478,30 @@ function prepareLine(
     issues,
   };
 }
+
+// --- Mocha Beans earning (Milestone 7A) ------------------------------
+// The one place the earning rate is applied. For 7A the rate is a code
+// constant — HQ-configurable earning is a deliberately deferred later
+// slice. Qualifying spend is the merchandise subtotal in integer minor
+// units (cents); the platform has no discount/tax/tip/fee/gift-card model
+// yet, so Order.subtotal IS the qualifying spend today.
+//
+// Whole qualifying DOLLARS only, truncated (never rounded):
+//   $0.99  -> 0
+//   $1.00  -> 1
+//   $8.75  -> 8
+//   $8.99  -> 8
+//   $12.00 -> 12
+export const MOCHA_BEANS_PER_DOLLAR = 1;
+
+export function mochaBeansForQualifyingSpend(subtotalMinorUnits: number): number {
+  if (
+    !Number.isFinite(subtotalMinorUnits) ||
+    !Number.isInteger(subtotalMinorUnits) ||
+    subtotalMinorUnits <= 0
+  ) {
+    return 0;
+  }
+  const wholeDollars = Math.floor(subtotalMinorUnits / 100);
+  return wholeDollars * MOCHA_BEANS_PER_DOLLAR;
+}

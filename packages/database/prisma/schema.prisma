@@ -214,6 +214,7 @@ model Customer {
   updatedAt           DateTime                    @updatedAt
   orders              Order[]
   preferredLocations  CustomerPreferredLocation[]
+  loyaltyAccount      CustomerLoyaltyAccount?
 
   @@unique([externalProvider, externalSubject])
 }
@@ -361,8 +362,9 @@ model Order {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  lines         OrderLine[]
-  statusHistory OrderStatusHistory[]
+  lines             OrderLine[]
+  statusHistory     OrderStatusHistory[]
+  mochaBeanEntries  MochaBeanLedgerEntry[]
 
   @@index([locationId])
   @@index([customerId])
@@ -475,6 +477,10 @@ model InternalUser {
 
   roleAssignments          InternalUserRoleAssignment[]
   auditEventsActed         InternalAuditEvent[]         @relation("InternalAuditEventActor")
+  // Milestone 7A — the manual Mocha Bean adjustments this HQ user performed.
+  // onDelete: Restrict (see MochaBeanLedgerEntry) so an internal user who
+  // has moved customer Beans cannot be hard-deleted and orphan that record.
+  mochaBeanAdjustments     MochaBeanLedgerEntry[]       @relation("MochaBeanLedgerActor")
   // Milestone 6B — the checklist items this user is the CURRENT completion
   // actor for. onDelete: Restrict (see ChecklistInstanceItem) mirrors the
   // audit-actor relation: an internal user who has completed operational
@@ -751,4 +757,93 @@ model OperationsTask {
   @@index([locationId, businessDate])
   @@index([createdByInternalUserId])
   @@index([completedByInternalUserId])
+}
+
+// --- Milestone 7A, Mocha Beans foundation ----------------------------
+// "Mocha Beans" is the official customer-facing loyalty currency. This is
+// the minimum safe, ledger-backed foundation: earning on a successful
+// authenticated Order, plus manual HQ add/deduct. Rewards, redemption,
+// bonus campaigns, expiration, customer-facing history and any refund /
+// reversal behaviour are deliberately NOT here — they arrive in later
+// bounded slices, and the ledger gains new entry types only when the
+// capability that writes them actually ships.
+//
+// A Bean has no fractional unit: every amount is a whole signed integer.
+
+enum MochaBeanEntryType {
+  // A qualifying purchase: $1 of Order.subtotal = 1 Bean, whole dollars
+  // only. Written in the SAME transaction that creates the Order, and only
+  // when the Order has a customerId (guests never earn).
+  EARN
+  // An HQ operator manually added or deducted Beans. Always carries a
+  // trimmed non-empty `reason` and an `actorInternalUserId`, and is
+  // mirrored by an InternalAuditEvent written in the same transaction.
+  MANUAL_ADJUSTMENT
+}
+
+// One row per Customer. `balance` is a materialized projection of the sum
+// of this account's ledger entries — kept on the row (the same pattern as
+// Order.status ↔ OrderStatusHistory) so a balance read needs no aggregate,
+// and, more importantly, so there is a single row to lock (SELECT ... FOR
+// UPDATE) when a future redemption slice must enforce its non-negative
+// invariant under concurrency. Created lazily (upsert on customerId) the
+// first time the customer earns or is adjusted.
+model CustomerLoyaltyAccount {
+  id         String   @id @default(uuid(7))
+  customerId String   @unique
+  balance    Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  customer Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  entries  MochaBeanLedgerEntry[]
+
+  @@index([customerId])
+}
+
+// Append-oriented Mocha Bean transaction history — the authoritative record
+// of every Bean movement. The service never updates or deletes a row here
+// (mirrors OrderStatusHistory / InternalAuditEvent). `amount` is signed:
+// positive for EARN and for a positive MANUAL_ADJUSTMENT, negative for a
+// deduction. Every balance-changing write inserts one row here AND updates
+// CustomerLoyaltyAccount.balance by the same signed delta inside one
+// transaction, so the ledger and the materialized balance can never
+// disagree.
+//
+// Idempotency:
+//   - @@unique([type, orderId]) makes EARN exactly-once per Order (NULLs
+//     are distinct in Postgres, so MANUAL_ADJUSTMENT rows with a null
+//     orderId are unaffected).
+//   - @@unique([type, operationKey]) makes a manual adjustment idempotent
+//     on its caller-supplied operationKey; a retry with the same key
+//     returns the existing row instead of applying the change twice.
+model MochaBeanLedgerEntry {
+  id               String             @id @default(uuid(7))
+  loyaltyAccountId String
+  type             MochaBeanEntryType
+  // Signed whole Beans. The resulting account balance is never allowed
+  // below zero (enforced in the service, before the write).
+  amount           Int
+  // Required (trimmed, non-empty) for MANUAL_ADJUSTMENT; null for EARN.
+  reason           String?
+  // Set for EARN (and for a future EARN reversal). onDelete: SetNull keeps
+  // the ledger entry — and the balance it accounts for — intact even if the
+  // Order is later removed, exactly like Order.customerId.
+  orderId          String?
+  // Set for MANUAL_ADJUSTMENT: the HQ operator who performed it.
+  actorInternalUserId String?
+  // Caller-supplied idempotency key for MANUAL_ADJUSTMENT; null for EARN
+  // (EARN is keyed by orderId instead).
+  operationKey     String?
+  createdAt        DateTime           @default(now())
+
+  loyaltyAccount    CustomerLoyaltyAccount @relation(fields: [loyaltyAccountId], references: [id], onDelete: Cascade)
+  order             Order?                 @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  actorInternalUser InternalUser?          @relation("MochaBeanLedgerActor", fields: [actorInternalUserId], references: [id], onDelete: Restrict)
+
+  @@unique([type, orderId])
+  @@unique([type, operationKey])
+  @@index([loyaltyAccountId, createdAt])
+  @@index([orderId])
+  @@index([actorInternalUserId])
 }

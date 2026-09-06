@@ -472,6 +472,20 @@ export interface CustomerOrderDetail extends CustomerOrderSummary {
   lines: OrderLineSummary[];
 }
 
+// --- Loyalty: Mocha Beans balance (Milestone 7A) ----------------------
+// "Mocha Beans" is the official customer-facing loyalty currency. This is
+// the only customer-facing loyalty shape in 7A: the current balance, and
+// nothing else. Customer-facing Bean history is deliberately NOT exposed
+// (it is an HQ-controlled setting that defaults off and ships in a later
+// slice), and there is no rewards data here yet — Rewards Catalog and
+// redemption are separate future slices.
+//
+// GET /api/v1/customers/me/loyalty (CustomerAuthGuard). The balance is a
+// whole non-negative integer number of Mocha Beans.
+export interface CustomerLoyaltySummary {
+  balance: number;
+}
+
 // --- Reorder from order history (Milestone 4G) -------------------------
 // The historical Order is a snapshot/reference only. A reorder is ALWAYS
 // revalidated against the current location, menu, product availability,
@@ -987,6 +1001,11 @@ export const INTERNAL_PERMISSION_KEYS = [
   "operations.checklists.configure",
   // Milestone 6C
   "operations.exceptions.manage",
+  // Milestone 7A — Mocha Beans (loyalty). Both CORPORATE-only: a Mocha Bean
+  // balance is company-wide, not location-scoped, and manual adjustment is
+  // a highly sensitive HQ action a Store Manager never holds.
+  "loyalty.view",
+  "loyalty.adjust",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1155,6 +1174,20 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     description:
       "Log and clear a management exception on a daily-checklist item for an authorized location. Held at corporate or per location.",
     allowedScopeTypes: ["CORPORATE", "LOCATION"],
+  },
+  // Milestone 7A — Mocha Beans (loyalty). A Bean balance is a single
+  // company-wide figure per customer, so both keys are CORPORATE-only.
+  "loyalty.view": {
+    key: "loyalty.view",
+    description:
+      "View a customer's Mocha Bean balance and the internal Bean transaction ledger. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "loyalty.adjust": {
+    key: "loyalty.adjust",
+    description:
+      "Manually add or deduct a customer's Mocha Beans, with a required reason. Highly privileged; corporate-only.",
+    allowedScopeTypes: ["CORPORATE"],
   },
 };
 
@@ -1407,4 +1440,63 @@ export interface MoveOpeningChecklistTemplateSectionRequest {
 export interface RenameOpeningChecklistTemplateSectionRequest {
   from: string;
   to: string;
+}
+
+// --- Admin: Mocha Beans / loyalty (Milestone 7A) ---------------------
+// The smallest HQ surface over the Mocha Bean ledger: find a customer,
+// read their balance and the internal ledger, and manually add/deduct
+// Beans. All routes are InternalAuthGuard + PermissionGuard, CORPORATE-only
+// (`loyalty.view` to read, `loyalty.adjust` to adjust). This is NOT a
+// general customer-management module — it only ever exposes loyalty data.
+
+export type MochaBeanLedgerEntryType = "EARN" | "MANUAL_ADJUSTMENT";
+
+// One row of the internal Mocha Bean ledger, projected for HQ. `amount` is
+// signed whole Beans. `actorLabel` is the HQ operator's name/email for a
+// MANUAL_ADJUSTMENT, null for an automatic EARN. `orderNumber` is the
+// human order reference for an EARN, null otherwise.
+export interface AdminMochaBeanLedgerEntry {
+  id: string;
+  type: MochaBeanLedgerEntryType;
+  amount: number;
+  reason: string | null;
+  orderNumber: string | null;
+  actorLabel: string | null;
+  createdAt: string;
+}
+
+// A customer as it appears on the HQ loyalty surface — identity plus the
+// current materialized balance. `balance` is 0 for a customer who has
+// never earned or been adjusted (no ledger account yet).
+export interface AdminLoyaltyCustomer {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  status: CustomerAccountStatus;
+  balance: number;
+}
+
+// GET /api/v1/admin/loyalty/customers?query=<email or customer id>
+// A deliberately narrow lookup: an exact (case-insensitive) email match or
+// an exact customer-id match. No fuzzy search, no listing-all.
+export interface AdminLoyaltyCustomerSearchResponse {
+  customers: AdminLoyaltyCustomer[];
+}
+
+// GET /api/v1/admin/loyalty/customers/:customerId
+export interface AdminLoyaltyCustomerDetail {
+  customer: AdminLoyaltyCustomer;
+  entries: AdminMochaBeanLedgerEntry[];
+}
+
+// POST /api/v1/admin/loyalty/customers/:customerId/adjustments
+// `deltaBeans` is a non-zero whole integer (positive to add, negative to
+// deduct). `reason` is required, trimmed, non-empty. `operationKey` is a
+// caller-supplied idempotency key (8-200 chars) — retrying the same key
+// never applies the adjustment twice. The resulting balance may never go
+// below zero.
+export interface AdminAdjustMochaBeansRequest {
+  deltaBeans: number;
+  reason: string;
+  operationKey: string;
 }

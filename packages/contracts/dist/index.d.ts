@@ -280,6 +280,9 @@ export interface CustomerOrderSummary {
 export interface CustomerOrderDetail extends CustomerOrderSummary {
     lines: OrderLineSummary[];
 }
+export interface CustomerLoyaltySummary {
+    balance: number;
+}
 export type ReorderIssueCode = "LOCATION_INACTIVE" | "LOCATION_DIGITAL_ORDERING_DISABLED" | "PRODUCT_NOT_ON_MENU" | "PRODUCT_UNAVAILABLE" | "PRICE_CHANGED" | "MODIFIER_GROUP_REMOVED" | "MODIFIER_OPTION_REMOVED" | "MODIFIER_REQUIRED_SELECTION_MISSING" | "MODIFIER_SELECTION_COUNT_INVALID";
 export interface ReorderIssue {
     code: ReorderIssueCode;
@@ -503,7 +506,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
@@ -625,5 +628,34 @@ export interface MoveOpeningChecklistTemplateSectionRequest {
 export interface RenameOpeningChecklistTemplateSectionRequest {
     from: string;
     to: string;
+}
+export type MochaBeanLedgerEntryType = "EARN" | "MANUAL_ADJUSTMENT";
+export interface AdminMochaBeanLedgerEntry {
+    id: string;
+    type: MochaBeanLedgerEntryType;
+    amount: number;
+    reason: string | null;
+    orderNumber: string | null;
+    actorLabel: string | null;
+    createdAt: string;
+}
+export interface AdminLoyaltyCustomer {
+    id: string;
+    email: string | null;
+    displayName: string | null;
+    status: CustomerAccountStatus;
+    balance: number;
+}
+export interface AdminLoyaltyCustomerSearchResponse {
+    customers: AdminLoyaltyCustomer[];
+}
+export interface AdminLoyaltyCustomerDetail {
+    customer: AdminLoyaltyCustomer;
+    entries: AdminMochaBeanLedgerEntry[];
+}
+export interface AdminAdjustMochaBeansRequest {
+    deltaBeans: number;
+    reason: string;
+    operationKey: string;
 }
 //# sourceMappingURL=index.d.ts.map

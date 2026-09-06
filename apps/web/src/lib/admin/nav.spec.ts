@@ -76,6 +76,37 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(adminNavItems(caps).map((i) => i.key)).toEqual(["dashboard"]);
   });
 
+  it("shows Loyalty when the user holds loyalty.view (Milestone 7A)", () => {
+    const items = adminNavItems({
+      "loyalty.view": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual(["dashboard", "loyalty"]);
+    expect(items.find((i) => i.key === "loyalty")?.href).toBe("/admin/loyalty");
+  });
+
+  it("hides Loyalty without loyalty.view even when loyalty.adjust is somehow present", () => {
+    // loyalty.adjust never appears without loyalty.view in practice, but the
+    // nav is driven by loyalty.view specifically.
+    const items = adminNavItems({
+      "loyalty.adjust": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual(["dashboard"]);
+  });
+
+  it("orders Loyalty immediately after Orders", () => {
+    const items = adminNavItems({
+      "orders.view": { corporate: true, locationIds: [] },
+      "loyalty.view": { corporate: true, locationIds: [] },
+      "locations.view": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual([
+      "dashboard",
+      "orders",
+      "loyalty",
+      "locations",
+    ]);
+  });
+
   it("shows Locations when the user holds locations.view (any scope)", () => {
     const items = adminNavItems({
       "locations.view": { corporate: false, locationIds: ["loc-a"] },

@@ -3,6 +3,7 @@ import { FakePaymentProvider } from '@mocha-house/integrations';
 import { PrismaModule } from '../prisma/prisma.module';
 import { LocationsModule } from '../locations/locations.module';
 import { CustomersModule } from '../customers/customers.module';
+import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { OrdersController } from './api/orders.controller';
 import { AdminOrdersController } from './api/admin-orders.controller';
 import { CustomerOrdersController } from './api/customer-orders.controller';
@@ -22,7 +23,7 @@ import { PAYMENT_PROVIDER } from './infrastructure/payment-provider.token';
 // CustomerOrdersController does the same to scope its queries — neither
 // duplicates that resolution logic.
 @Module({
-  imports: [PrismaModule, LocationsModule, CustomersModule],
+  imports: [PrismaModule, LocationsModule, CustomersModule, LoyaltyModule],
   controllers: [
     OrdersController,
     AdminOrdersController,

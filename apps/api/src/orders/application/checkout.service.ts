@@ -19,6 +19,7 @@ import { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsService } from '../../locations/application/locations.service';
 import { CustomersService } from '../../customers/application/customers.service';
+import { LoyaltyService } from '../../loyalty/application/loyalty.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import {
@@ -49,6 +50,7 @@ export class CheckoutService {
     private readonly prisma: PrismaService,
     private readonly locationsService: LocationsService,
     private readonly customersService: CustomersService,
+    private readonly loyaltyService: LoyaltyService,
     @Inject(PAYMENT_PROVIDER)
     private readonly paymentProvider: PaymentProvider,
   ) {}
@@ -132,6 +134,14 @@ export class CheckoutService {
         providerReference: chargeResult.providerReference,
       },
     });
+
+    // Milestone 7A — create the customer's loyalty account now, OUTSIDE the
+    // order transaction, so a unique-key race can be caught here rather than
+    // aborting the order and tripping reconciliation. Guests (customerId
+    // null) never earn, so this is skipped for them.
+    if (customerId !== null) {
+      await this.loyaltyService.ensureAccountForCustomer(customerId);
+    }
 
     let order: OrderWithRelations;
     try {
@@ -449,6 +459,22 @@ export class CheckoutService {
           },
         },
       });
+
+      // Milestone 7A — award Mocha Beans for a successful authenticated
+      // order, in the SAME transaction as the Order itself. A guest order
+      // (customerId null) earns nothing; an order whose transaction rolls
+      // back (payment succeeded, order creation failed) earns nothing. The
+      // ledger's @@unique([type, orderId]) makes this exactly-once per
+      // Order at the database level.
+      if (customerId !== null) {
+        await this.loyaltyService.earnForOrder({
+          tx,
+          customerId,
+          orderId: order.id,
+          qualifyingSubtotalMinorUnits: priced.subtotal,
+          currency: priced.currency,
+        });
+      }
 
       return order;
     });

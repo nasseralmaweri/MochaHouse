@@ -16,6 +16,7 @@ import { LocationsModule } from '../../locations/locations.module';
 import { CustomerAuthModule } from '../../customer-auth/customer-auth.module';
 import { InternalAuthModule } from '../../internal-auth/internal-auth.module';
 import { CustomersModule } from '../../customers/customers.module';
+import { LoyaltyModule } from '../../loyalty/loyalty.module';
 import { signDevJwt } from '../../customer-auth/infrastructure/dev-jwt';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 import { CheckoutService } from '../application/checkout.service';
@@ -56,6 +57,7 @@ describe('Customer reorder (integration)', () => {
         CustomerAuthModule,
         InternalAuthModule,
         CustomersModule,
+        LoyaltyModule,
       ],
       controllers: [CustomerOrdersController],
       providers: [

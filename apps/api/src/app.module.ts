@@ -13,6 +13,7 @@ import { InternalUsersModule } from './internal-users/internal-users.module';
 import { AdminAuditModule } from './admin-audit/admin-audit.module';
 import { AdminPlatformModule } from './admin-platform/admin-platform.module';
 import { OperationsModule } from './operations/operations.module';
+import { LoyaltyModule } from './loyalty/loyalty.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { OperationsModule } from './operations/operations.module';
     AdminAuditModule,
     AdminPlatformModule,
     OperationsModule,
+    LoyaltyModule,
   ],
   controllers: [AppController],
   providers: [AppService],
