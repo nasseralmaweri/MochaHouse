@@ -11,6 +11,7 @@ import type {
   LocationMenuResponse,
   LocationSummary,
   OpeningChecklistResponse,
+  OpeningChecklistTemplateConfigResponse,
   OrderConfirmation,
   OrderStatus,
   OrderStatusResponse,
@@ -867,4 +868,123 @@ export function undoOpeningChecklistItemFromBrowser(
     )}/undo`,
     { method: "POST", body: { locationId } },
   );
+}
+
+// --- HQ Opening Checklist configuration (Milestone 6B-2) -------------
+// The corporate template management surface. Same server-side proxy as
+// above. The API is the sole authority — every route requires
+// `operations.checklists.configure` at CORPORATE scope. Every mutation
+// returns the whole authoritative template projection so the editor
+// reconciles from it. There is no `locationId` — one corporate standard.
+
+const CHECKLIST_CONFIG_BASE = "/operations/opening-checklist/template";
+
+export type ChecklistTemplateConfigResult =
+  | { outcome: "success"; template: OpeningChecklistTemplateConfigResponse }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+async function checklistConfigRequest(
+  path: string,
+  init?: { method: "POST" | "PATCH"; body: unknown },
+): Promise<ChecklistTemplateConfigResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${INTERNAL_ADMIN_PROXY}${path}`, {
+      method: init?.method ?? "GET",
+      headers: init ? { "Content-Type": "application/json" } : undefined,
+      body: init ? JSON.stringify(init.body) : undefined,
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const body = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: body?.message ?? "That change isn't valid.",
+    };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+
+  return {
+    outcome: "success",
+    template: (await response.json()) as OpeningChecklistTemplateConfigResponse,
+  };
+}
+
+export function getOpeningChecklistTemplateFromBrowser(): Promise<ChecklistTemplateConfigResult> {
+  return checklistConfigRequest(CHECKLIST_CONFIG_BASE);
+}
+
+export function updateOpeningChecklistTemplateItemFromBrowser(
+  itemId: string,
+  patch: { label?: string; isActive?: boolean },
+): Promise<ChecklistTemplateConfigResult> {
+  return checklistConfigRequest(
+    `${CHECKLIST_CONFIG_BASE}/items/${encodeURIComponent(itemId)}`,
+    { method: "PATCH", body: patch },
+  );
+}
+
+export function addOpeningChecklistTemplateItemFromBrowser(input: {
+  section: string;
+  label: string;
+}): Promise<ChecklistTemplateConfigResult> {
+  return checklistConfigRequest(`${CHECKLIST_CONFIG_BASE}/items`, {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function moveOpeningChecklistTemplateItemFromBrowser(
+  itemId: string,
+  direction: "up" | "down",
+): Promise<ChecklistTemplateConfigResult> {
+  return checklistConfigRequest(
+    `${CHECKLIST_CONFIG_BASE}/items/${encodeURIComponent(itemId)}/move`,
+    { method: "POST", body: { direction } },
+  );
+}
+
+export function renameOpeningChecklistTemplateSectionFromBrowser(input: {
+  from: string;
+  to: string;
+}): Promise<ChecklistTemplateConfigResult> {
+  return checklistConfigRequest(`${CHECKLIST_CONFIG_BASE}/sections/rename`, {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function moveOpeningChecklistTemplateSectionFromBrowser(
+  section: string,
+  direction: "up" | "down",
+): Promise<ChecklistTemplateConfigResult> {
+  return checklistConfigRequest(`${CHECKLIST_CONFIG_BASE}/sections/move`, {
+    method: "POST",
+    body: { section, direction },
+  });
 }

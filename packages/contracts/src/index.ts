@@ -983,6 +983,8 @@ export const INTERNAL_PERMISSION_KEYS = [
   "operations.view",
   // Milestone 6B
   "operations.tasks.complete",
+  // Milestone 6B-2
+  "operations.checklists.configure",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1125,6 +1127,20 @@ export const INTERNAL_PERMISSION_METADATA: Record<
       "Complete operational checklist and task items for an authorized location. Held at corporate or per location.",
     allowedScopeTypes: ["CORPORATE", "LOCATION"],
   },
+  // Milestone 6B-2 — manage the single corporate Opening Checklist template
+  // that every location's daily checklist is created from (item wording,
+  // active state, ordering, sections). There is ONE corporate checklist and
+  // no per-location override, so this is CORPORATE-only — a location-scoped
+  // manager can never reconfigure the standard for every store. It is a
+  // configuration capability only: it never grants `operations.view` or
+  // `operations.tasks.complete`, and completing a store's daily checklist
+  // still requires `operations.tasks.complete`.
+  "operations.checklists.configure": {
+    key: "operations.checklists.configure",
+    description:
+      "Manage the corporate Opening Checklist template — item wording, active state, ordering and sections. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
 };
 
 // --- Store Operations: the Opening Checklist (Milestone 6B) ------------
@@ -1183,4 +1199,93 @@ export interface OpeningChecklistResponse {
 // the item's own instance, never trusted as proof of authorization.
 export interface OpeningChecklistItemActionRequest {
   locationId: string;
+}
+
+// --- Store Operations: HQ Opening Checklist configuration (6B-2) -------
+// The corporate configuration view of the ONE Opening Checklist template
+// that every location's daily checklist instance is created from. Served
+// only from the guarded
+// `/api/v1/admin/operations/opening-checklist/template*` routes
+// (InternalAuthGuard + PermissionGuard + `operations.checklists.configure`,
+// CORPORATE-only). There is no `locationId` anywhere here — one corporate
+// standard, no per-location override.
+//
+// Configuration changes NEVER rewrite an already-created ChecklistInstance
+// (instances snapshot every item by value at creation). They take effect
+// the next time a location creates its Opening Checklist.
+//
+// Unlike the execution view, this view includes INACTIVE items — HQ needs
+// to see and reactivate them. `id` is the opaque ChecklistTemplateItem id,
+// the target for the item mutations.
+export interface OpeningChecklistTemplateItemConfig {
+  // Opaque ChecklistTemplateItem id.
+  id: string;
+  label: string;
+  // Inactive items stay in configuration and can be reactivated, but are
+  // left out of every newly created daily checklist.
+  isActive: boolean;
+  // True when this item can move further up / down within its own section.
+  // Cross-section moves are not offered in 6B-2.
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+}
+
+export interface OpeningChecklistTemplateSectionConfig {
+  name: string;
+  // True when this section can move further up / down in the checklist.
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  items: OpeningChecklistTemplateItemConfig[];
+}
+
+// GET /api/v1/admin/operations/opening-checklist/template
+export interface OpeningChecklistTemplateConfigResponse {
+  // The template name — "Opening Checklist".
+  title: string;
+  // Sections in corporate display order; items within each section in
+  // corporate display order. A newly created daily checklist lists its
+  // ACTIVE items in exactly this order.
+  sections: OpeningChecklistTemplateSectionConfig[];
+}
+
+// PATCH /api/v1/admin/operations/opening-checklist/template/items/:itemId
+// At least one field must be present. `label`, when present, is trimmed and
+// must be non-empty. Toggling `isActive` never touches an existing
+// instance.
+export interface UpdateOpeningChecklistTemplateItemRequest {
+  label?: string;
+  isActive?: boolean;
+}
+
+// POST /api/v1/admin/operations/opening-checklist/template/items
+// Adds one item to the end of `section`. `section` may name an existing
+// section (matched case- and whitespace-insensitively) or a new one, in
+// which case the new section is appended after the existing sections. The
+// new item is created Active.
+export interface AddOpeningChecklistTemplateItemRequest {
+  section: string;
+  label: string;
+}
+
+// POST .../template/items/:itemId/move  and  .../template/sections/move
+// Simple one-step reorder. Item moves are within the item's current
+// section only; a move past the first / last position is rejected.
+export interface MoveOpeningChecklistTemplateItemRequest {
+  direction: "up" | "down";
+}
+
+export interface MoveOpeningChecklistTemplateSectionRequest {
+  // The section to move, by its current name.
+  section: string;
+  direction: "up" | "down";
+}
+
+// POST .../template/sections/rename
+// Renames one section: every template item in `from` is moved to `to`.
+// `to` is trimmed and must be non-empty and must not collide (case- and
+// whitespace-insensitively) with another existing section. Existing
+// ChecklistInstanceItem.section values are never touched.
+export interface RenameOpeningChecklistTemplateSectionRequest {
+  from: string;
+  to: string;
 }

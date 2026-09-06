@@ -69,7 +69,25 @@ export default async function OperationsTodayPage({
     />
   );
 
+  const canConfigureChecklist = can(
+    capabilities,
+    "operations.checklists.configure",
+  );
+
   if (!can(capabilities, "operations.view")) {
+    // A corporate configuration-only user (Milestone 6B-2) has no store to
+    // view, but should still land somewhere useful: the checklist they
+    // manage. Store execution stays gated on operations.view.
+    if (canConfigureChecklist) {
+      return (
+        <AdminPage>
+          {header}
+          <AdminSection title="Opening checklist">
+            <ManageChecklistCard />
+          </AdminSection>
+        </AdminPage>
+      );
+    }
     return (
       <AdminPage>
         {header}
@@ -201,7 +219,10 @@ export default async function OperationsTodayPage({
         </Card>
       </AdminSection>
 
-      <AdminSection title="Opening checklist">{openingChecklist}</AdminSection>
+      <AdminSection title="Opening checklist">
+        {openingChecklist}
+        {canConfigureChecklist ? <ManageChecklistCard /> : null}
+      </AdminSection>
 
       <AdminSection title="Needs attention">
         <NeedsAttention items={attention} />
@@ -211,6 +232,31 @@ export default async function OperationsTodayPage({
         <AdminSection title="Store snapshot">{snapshot}</AdminSection>
       ) : null}
     </AdminPage>
+  );
+}
+
+// HQ entry point (Milestone 6B-2) — shown only to holders of
+// `operations.checklists.configure`. Separate from the store-execution card
+// above: this manages the corporate template, not today's checklist.
+function ManageChecklistCard() {
+  return (
+    <Card className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <span className="text-base font-semibold text-text-primary">
+          Manage the corporate checklist
+        </span>
+        <span className="text-sm text-text-secondary">
+          Edit the wording, order and sections of the Opening Checklist every
+          location uses.
+        </span>
+      </div>
+      <ButtonLink
+        href="/admin/operations/opening-checklist/configuration"
+        variant="secondary"
+      >
+        Open configuration
+      </ButtonLink>
+    </Card>
   );
 }
 

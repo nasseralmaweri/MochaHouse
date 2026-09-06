@@ -36,6 +36,8 @@ describe('internal permission catalog', () => {
         'operations.view',
         // Milestone 6B
         'operations.tasks.complete',
+        // Milestone 6B-2
+        'operations.checklists.configure',
       ].sort(),
     );
   });
@@ -74,6 +76,11 @@ describe('internal permission catalog', () => {
     expect(allowedScopeTypesFor('audit.view')).toEqual(['CORPORATE']);
     // platform.view — platform status is a corporate read (5G).
     expect(allowedScopeTypesFor('platform.view')).toEqual(['CORPORATE']);
+    // operations.checklists.configure — one corporate checklist standard,
+    // no per-location override (Milestone 6B-2).
+    expect(allowedScopeTypesFor('operations.checklists.configure')).toEqual([
+      'CORPORATE',
+    ]);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {

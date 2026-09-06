@@ -377,17 +377,19 @@ async function main() {
 
   // Milestone 6B — the official corporate Opening Checklist, seeded from
   // the Mocha House Operations Manual. There is ONE checklist standard for
-  // every active location in 6B (no location overrides, no per-location
-  // editing). HQ self-service editing of these items is 6B-2; here they
-  // are pure seed/configuration data. Every item starts isActive = true —
-  // only ACTIVE items are copied into a newly created daily instance.
+  // every active location (no location overrides, no per-location editing).
+  // Every item starts isActive = true — only ACTIVE items are copied into a
+  // newly created daily instance.
   //
-  // Re-sync strategy: the template row is upserted; its items are fully
-  // replaced on every run. This is safe precisely because instances
-  // snapshot by value — ChecklistInstanceItem has no foreign key to
-  // ChecklistTemplateItem, so replacing template items can never alter an
-  // existing ChecklistInstance. A template change affects only future
-  // instances.
+  // SEED OWNERSHIP (Milestone 6B-2): HQ now manages these items through the
+  // Admin UI (wording, active state, ordering, sections). The seed
+  // therefore SEEDS THEM ONCE — a brand-new database receives the official
+  // 23-item standard below, and every subsequent seed run leaves the items
+  // completely alone. HQ edits, HQ-added items and HQ section changes
+  // survive reseeding; normal seed execution is NOT a reset mechanism.
+  //
+  // (Milestone 6B replaced these items on every run; that was safe only
+  // while they carried no HQ-managed state. It is not safe now.)
   const OPENING_CHECKLIST_ITEMS: {
     section: string;
     label: string;
@@ -429,18 +431,23 @@ async function main() {
     create: { key: 'opening', name: 'Opening Checklist', isActive: true },
   });
 
-  await prisma.checklistTemplateItem.deleteMany({
+  // Create-once: only populate the standard items when the template has
+  // none. Once items exist they are HQ-managed and the seed never touches
+  // them again (no delete, no re-create, no wording/order/active overwrite).
+  const existingItemCount = await prisma.checklistTemplateItem.count({
     where: { templateId: openingTemplate.id },
   });
-  await prisma.checklistTemplateItem.createMany({
-    data: OPENING_CHECKLIST_ITEMS.map((item, index) => ({
-      templateId: openingTemplate.id,
-      section: item.section,
-      label: item.label,
-      sortOrder: index + 1,
-      isActive: true,
-    })),
-  });
+  if (existingItemCount === 0) {
+    await prisma.checklistTemplateItem.createMany({
+      data: OPENING_CHECKLIST_ITEMS.map((item, index) => ({
+        templateId: openingTemplate.id,
+        section: item.section,
+        label: item.label,
+        sortOrder: index + 1,
+        isActive: true,
+      })),
+    });
+  }
 }
 
 main()

@@ -16,7 +16,9 @@ import {
   resolveBusinessDate,
 } from './business-date';
 
-const OPENING_TEMPLATE_KEY = 'opening';
+// The single corporate Opening Checklist template. Shared with the HQ
+// configuration service (Milestone 6B-2), which manages the same row.
+export const OPENING_TEMPLATE_KEY = 'opening';
 
 const INSTANCE_INCLUDE = {
   items: {

@@ -26,7 +26,16 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(items.map((i) => i.key)).toContain("operations");
   });
 
-  it("hides Operations without operations.view even with other operational permissions", () => {
+  it("shows Operations for operations.checklists.configure alone (Milestone 6B-2)", () => {
+    // A corporate configuration-only user must be able to reach checklist
+    // configuration without holding any store-execution permission.
+    const items = adminNavItems({
+      "operations.checklists.configure": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual(["dashboard", "operations"]);
+  });
+
+  it("hides Operations without operations.view or operations.checklists.configure", () => {
     const caps: AdminCapabilities = {
       "orders.view": { corporate: false, locationIds: ["loc-a"] },
       "orders.manage_status": { corporate: false, locationIds: ["loc-a"] },
@@ -235,6 +244,13 @@ describe("isNavItemActive", () => {
     // Milestone 6B — the Opening Checklist sub-route keeps Operations active.
     expect(
       isNavItemActive(operations, "/admin/operations/opening-checklist"),
+    ).toBe(true);
+    // Milestone 6B-2 — the HQ configuration sub-route too.
+    expect(
+      isNavItemActive(
+        operations,
+        "/admin/operations/opening-checklist/configuration",
+      ),
     ).toBe(true);
     expect(isNavItemActive(operations, "/admin")).toBe(false);
     expect(isNavItemActive(operations, "/admin/orders")).toBe(false);

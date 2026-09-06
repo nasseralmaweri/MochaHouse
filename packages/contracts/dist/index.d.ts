@@ -503,7 +503,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
@@ -541,5 +541,41 @@ export interface OpeningChecklistResponse {
 }
 export interface OpeningChecklistItemActionRequest {
     locationId: string;
+}
+export interface OpeningChecklistTemplateItemConfig {
+    id: string;
+    label: string;
+    isActive: boolean;
+    canMoveUp: boolean;
+    canMoveDown: boolean;
+}
+export interface OpeningChecklistTemplateSectionConfig {
+    name: string;
+    canMoveUp: boolean;
+    canMoveDown: boolean;
+    items: OpeningChecklistTemplateItemConfig[];
+}
+export interface OpeningChecklistTemplateConfigResponse {
+    title: string;
+    sections: OpeningChecklistTemplateSectionConfig[];
+}
+export interface UpdateOpeningChecklistTemplateItemRequest {
+    label?: string;
+    isActive?: boolean;
+}
+export interface AddOpeningChecklistTemplateItemRequest {
+    section: string;
+    label: string;
+}
+export interface MoveOpeningChecklistTemplateItemRequest {
+    direction: "up" | "down";
+}
+export interface MoveOpeningChecklistTemplateSectionRequest {
+    section: string;
+    direction: "up" | "down";
+}
+export interface RenameOpeningChecklistTemplateSectionRequest {
+    from: string;
+    to: string;
 }
 //# sourceMappingURL=index.d.ts.map
