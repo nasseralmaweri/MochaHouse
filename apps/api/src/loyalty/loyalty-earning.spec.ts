@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
-import { HttpException } from '@nestjs/common';
+import { ConflictException, HttpException } from '@nestjs/common';
 import { FakePaymentProvider } from '@mocha-house/integrations';
 import type { CheckoutRequest } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -14,6 +14,7 @@ import { CheckoutService } from '../orders/application/checkout.service';
 import { PAYMENT_PROVIDER } from '../orders/infrastructure/payment-provider.token';
 import type { CustomerIdentity } from '../customer-auth/infrastructure/customer-identity';
 import { LoyaltyModule } from './loyalty.module';
+import { LoyaltyService } from './application/loyalty.service';
 
 // Milestone 7A — Mocha Beans earning integrated into the real checkout
 // transaction, against the local Postgres instance. Requires the seed to
@@ -22,6 +23,7 @@ import { LoyaltyModule } from './loyalty.module';
 describe('Mocha Beans earning on checkout (integration)', () => {
   let prisma: PrismaService;
   let checkoutService: CheckoutService;
+  let loyaltyService: LoyaltyService;
   let paymentProvider: FakePaymentProvider;
   let locationId: string;
   let productId: string;
@@ -49,6 +51,7 @@ describe('Mocha Beans earning on checkout (integration)', () => {
 
     prisma = moduleRef.get(PrismaService);
     checkoutService = moduleRef.get(CheckoutService);
+    loyaltyService = moduleRef.get(LoyaltyService);
     paymentProvider = moduleRef.get(PAYMENT_PROVIDER);
     await prisma.$connect();
 
@@ -296,6 +299,61 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     });
     expect(await balanceOf(customer.id)).toBe(0);
     expect(await ledgerFor(customer.id)).toHaveLength(0);
+  });
+
+  // Regression for the MAJOR review finding: loyalty-account preparation
+  // now runs INSIDE the post-payment reconciliation try/catch, so a
+  // non-P2002 failure there must flag reconciliationRequired exactly like
+  // an order-transaction failure — never silently orphan a captured
+  // payment.
+  it('payment succeeds but loyalty-account preparation fails: no order, no Beans, reconciliationRequired set', async () => {
+    const id = identity(randomUUID());
+    const request = buildRequest();
+    const spy = jest
+      .spyOn(loyaltyService, 'ensureAccountForCustomer')
+      .mockRejectedValueOnce(
+        new Error('Simulated loyalty account preparation failure'),
+      );
+
+    await expect(checkoutService.checkout(request, id)).rejects.toThrow(
+      'Simulated loyalty account preparation failure',
+    );
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
+      where: { idempotencyKey: request.idempotencyKey },
+    });
+    // The payment truthfully succeeded — must never be relabeled, and the
+    // invariant "after payment capture: an Order exists OR
+    // reconciliationRequired is set" must hold.
+    expect(attempt.status).toBe('SUCCEEDED');
+    expect(attempt.reconciliationRequired).toBe(true);
+    expect(attempt.reconciliationReason).toContain(
+      'Simulated loyalty account preparation failure',
+    );
+    expect(attempt.reconciliationDetectedAt).not.toBeNull();
+
+    const order = await prisma.order.findUnique({
+      where: { paymentAttemptId: attempt.id },
+    });
+    expect(order).toBeNull();
+
+    const customer = await prisma.customer.findUniqueOrThrow({
+      where: {
+        externalProvider_externalSubject: {
+          externalProvider: id.provider,
+          externalSubject: id.subject,
+        },
+      },
+    });
+    expect(await balanceOf(customer.id)).toBe(0);
+    expect(await ledgerFor(customer.id)).toHaveLength(0);
+
+    // A retry with the same key recognises the reconciliation condition —
+    // it never charges again, never silently succeeds.
+    await expect(checkoutService.checkout(request, id)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
   });
 
   it('the ledger enforces exactly one EARN per order', async () => {

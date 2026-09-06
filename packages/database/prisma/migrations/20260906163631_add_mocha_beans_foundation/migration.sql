@@ -31,9 +31,6 @@ CREATE TABLE "MochaBeanLedgerEntry" (
 CREATE UNIQUE INDEX "CustomerLoyaltyAccount_customerId_key" ON "CustomerLoyaltyAccount"("customerId");
 
 -- CreateIndex
-CREATE INDEX "CustomerLoyaltyAccount_customerId_idx" ON "CustomerLoyaltyAccount"("customerId");
-
--- CreateIndex
 CREATE INDEX "MochaBeanLedgerEntry_loyaltyAccountId_createdAt_idx" ON "MochaBeanLedgerEntry"("loyaltyAccountId", "createdAt");
 
 -- CreateIndex

@@ -156,20 +156,13 @@ export class LoyaltyAdminService {
     // race is caught and swallowed there, never abort a real write).
     await this.loyaltyService.ensureAccountForCustomer(customerId);
 
-    // Idempotent replay: this exact operationKey already applied. Return the
-    // current state without a second ledger entry or a second audit event.
-    const existing = await this.prisma.mochaBeanLedgerEntry.findUnique({
-      where: {
-        type_operationKey: { type: 'MANUAL_ADJUSTMENT', operationKey },
-      },
-      include: { loyaltyAccount: { select: { customerId: true } } },
-    });
-    if (existing) {
-      if (existing.loyaltyAccount.customerId !== customerId) {
-        throw new ConflictException(
-          'That operation key has already been used for a different customer.',
-        );
-      }
+    // Fast-path idempotent replay for the common (sequential) retry: this
+    // exact operationKey already applied. The authoritative re-check is
+    // done again INSIDE the account lock below — this one only saves a
+    // transaction when the key is plainly already there.
+    const preexisting = await this.findAdjustmentByOperationKey(operationKey);
+    if (preexisting) {
+      this.assertOperationKeyOwnedBy(preexisting, customerId);
       return this.buildCustomerDetail(customerId);
     }
 
@@ -183,6 +176,27 @@ export class LoyaltyAdminService {
         // Serialize every balance-changing write for this account (the same
         // row-lock pattern the operations checklists use).
         await tx.$queryRaw`SELECT id FROM "CustomerLoyaltyAccount" WHERE id = ${account.id} FOR UPDATE`;
+
+        // Re-check idempotency INSIDE the lock: a concurrent request with
+        // this operationKey may have committed between the fast-path check
+        // above and our acquiring the lock. If so, this call is an
+        // idempotent replay — return WITHOUT a second balance change,
+        // ledger entry, or audit event, and without letting the below-zero
+        // check reject it against the already-updated balance.
+        const applied = await tx.mochaBeanLedgerEntry.findUnique({
+          where: {
+            type_operationKey: { type: 'MANUAL_ADJUSTMENT', operationKey },
+          },
+          select: { loyaltyAccountId: true },
+        });
+        if (applied) {
+          if (applied.loyaltyAccountId !== account.id) {
+            throw new ConflictException(
+              'That operation key has already been used for a different customer.',
+            );
+          }
+          return;
+        }
 
         const locked = await tx.customerLoyaltyAccount.findUniqueOrThrow({
           where: { id: account.id },
@@ -232,6 +246,28 @@ export class LoyaltyAdminService {
     }
 
     return this.buildCustomerDetail(customerId);
+  }
+
+  private async findAdjustmentByOperationKey(
+    operationKey: string,
+  ): Promise<{ loyaltyAccount: { customerId: string } } | null> {
+    return this.prisma.mochaBeanLedgerEntry.findUnique({
+      where: {
+        type_operationKey: { type: 'MANUAL_ADJUSTMENT', operationKey },
+      },
+      select: { loyaltyAccount: { select: { customerId: true } } },
+    });
+  }
+
+  private assertOperationKeyOwnedBy(
+    entry: { loyaltyAccount: { customerId: string } },
+    customerId: string,
+  ): void {
+    if (entry.loyaltyAccount.customerId !== customerId) {
+      throw new ConflictException(
+        'That operation key has already been used for a different customer.',
+      );
+    }
   }
 
   private validateDelta(raw: unknown): number {

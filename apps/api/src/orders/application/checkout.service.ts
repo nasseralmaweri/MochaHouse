@@ -135,16 +135,19 @@ export class CheckoutService {
       },
     });
 
-    // Milestone 7A — create the customer's loyalty account now, OUTSIDE the
-    // order transaction, so a unique-key race can be caught here rather than
-    // aborting the order and tripping reconciliation. Guests (customerId
-    // null) never earn, so this is skipped for them.
-    if (customerId !== null) {
-      await this.loyaltyService.ensureAccountForCustomer(customerId);
-    }
-
     let order: OrderWithRelations;
     try {
+      // Milestone 7A — prepare the customer's loyalty account (a
+      // unique-key race is swallowed inside ensureAccountForCustomer, never
+      // surfaced here). This MUST stay INSIDE the post-payment try/catch:
+      // any other failure here is then handled exactly like an
+      // order-transaction failure — the payment stays SUCCEEDED and the
+      // attempt is flagged reconciliationRequired, never silently orphaned.
+      // Guests (customerId null) never earn, so this is skipped for them.
+      if (customerId !== null) {
+        await this.loyaltyService.ensureAccountForCustomer(customerId);
+      }
+
       order = await this.createOrderTransactionally(
         request,
         attempt.id,
@@ -152,10 +155,10 @@ export class CheckoutService {
       );
     } catch (error) {
       // Payment already succeeded (the update above committed before this
-      // ever runs) but the order transaction did not — durably record that
-      // as a reconciliation condition rather than letting it exist only as
-      // an inferable "SUCCEEDED with no linked Order" state. No refund and
-      // no automatic retry of the financial effect happens here.
+      // ever runs) but the order could not be completed — durably record
+      // that as a reconciliation condition rather than letting it exist
+      // only as an inferable "SUCCEEDED with no linked Order" state. No
+      // refund and no automatic retry of the financial effect happens here.
       await this.markReconciliationRequired(attempt.id, error);
       throw error;
     }

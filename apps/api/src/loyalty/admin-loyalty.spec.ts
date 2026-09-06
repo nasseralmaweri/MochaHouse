@@ -426,6 +426,44 @@ describe('Admin Mocha Beans surface (integration)', () => {
     expect(await auditEventsFor(customerId)).toHaveLength(1);
   });
 
+  it('concurrent identical deductions to zero apply once, without a false below-zero rejection', async () => {
+    // Balance 10, deduct 10: succeeds exactly once; applying it twice would
+    // go below zero. Two concurrent requests with the SAME operationKey
+    // must both resolve as the same successful operation — the loser is
+    // recognised as an idempotent replay under the account lock, never
+    // rejected by the below-zero check (the MINOR review finding).
+    const customerId = await makeCustomer(10);
+    const body = {
+      deltaBeans: -10,
+      reason: 'Full deduction',
+      operationKey: randomUUID(),
+    };
+
+    const responses = await Promise.all([
+      adjust('hq', customerId, body),
+      adjust('hq', customerId, body),
+    ]);
+
+    for (const res of responses) {
+      // Neither request may 409 — that would be a false below-zero
+      // rejection of the idempotent replay.
+      expect([200, 201]).toContain(res.status);
+      expect(
+        (res.body as AdminLoyaltyCustomerDetail).customer.balance,
+      ).toBe(0);
+    }
+
+    const detail = (await getDetail('hq', customerId).expect(200))
+      .body as AdminLoyaltyCustomerDetail;
+    expect(detail.customer.balance).toBe(0);
+    const manualEntries = detail.entries.filter(
+      (e) => e.type === 'MANUAL_ADJUSTMENT',
+    );
+    expect(manualEntries).toHaveLength(1);
+    expect(manualEntries[0].amount).toBe(-10);
+    expect(await auditEventsFor(customerId)).toHaveLength(1);
+  });
+
   it('returns 404 for an unknown customer', async () => {
     await getDetail('hq', randomUUID()).expect(404);
     await adjust('hq', randomUUID(), {
