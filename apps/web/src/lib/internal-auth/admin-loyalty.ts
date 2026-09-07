@@ -1,7 +1,10 @@
 import "server-only";
 import type {
+  AdminLoyaltyCatalogOptions,
   AdminLoyaltyCustomerDetail,
   AdminLoyaltyCustomerSearchResponse,
+  AdminLoyaltyRewardsResponse,
+  LoyaltySettings,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
 
@@ -106,4 +109,50 @@ export async function getLoyaltyCustomerDetail(
     outcome: "success",
     data: (await response.json()) as AdminLoyaltyCustomerDetail,
   };
+}
+
+// --- Milestone 7B: settings + rewards (loyalty.configure) ----------
+
+type ConfigureReadResult<T> =
+  | { outcome: "success"; data: T }
+  | { outcome: "unauthenticated" }
+  | { outcome: "forbidden" }
+  | { outcome: "error" };
+
+async function configureGet<T>(path: string): Promise<ConfigureReadResult<T>> {
+  const token = await getInternalSessionToken();
+  if (!token) {
+    return { outcome: "unauthenticated" };
+  }
+  let response: Response;
+  try {
+    response = await fetch(`${getApiUrl()}/admin/loyalty/${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+  } catch {
+    return { outcome: "error" };
+  }
+  if (response.status === 401) {
+    return { outcome: "unauthenticated" };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (!response.ok) {
+    return { outcome: "error" };
+  }
+  return { outcome: "success", data: (await response.json()) as T };
+}
+
+export function getLoyaltySettings() {
+  return configureGet<LoyaltySettings>("settings");
+}
+
+export function getAdminLoyaltyRewards() {
+  return configureGet<AdminLoyaltyRewardsResponse>("rewards");
+}
+
+export function getLoyaltyCatalogOptions() {
+  return configureGet<AdminLoyaltyCatalogOptions>("catalog-options");
 }

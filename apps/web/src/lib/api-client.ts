@@ -4,7 +4,12 @@ import type {
   AdminInternalUserDetail,
   AdminLocationDetail,
   AdminLoyaltyCustomerDetail,
+  AdminLoyaltyReward,
   AdminProductDetail,
+  CreateLoyaltyRewardRequest,
+  LoyaltySettings,
+  UpdateLoyaltyRewardRequest,
+  UpdateLoyaltySettingsRequest,
   AdminUpdateInternalUserStatusRequest,
   AdminUpdateLocationRequest,
   AdminUpdateProductRequest,
@@ -1213,4 +1218,85 @@ export async function adjustMochaBeansFromBrowser(
     outcome: "success",
     detail: (await response.json()) as AdminLoyaltyCustomerDetail,
   };
+}
+
+// --- Admin: HQ loyalty configuration + Rewards Catalog (Milestone 7B) --
+// All via the internal admin proxy. The API (`loyalty.configure`,
+// CORPORATE-only) is the authority for every rule; a 400 carries a
+// business-safe message shown as-is.
+export type LoyaltyConfigureResult<T> =
+  | { outcome: "success"; data: T }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+async function loyaltyConfigureRequest<T>(
+  path: string,
+  method: "PUT" | "POST" | "PATCH",
+  body: unknown,
+): Promise<LoyaltyConfigureResult<T>> {
+  let response: Response;
+  try {
+    response = await fetch(`${INTERNAL_ADMIN_PROXY}/loyalty/${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const errBody = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: errBody?.message ?? "Please check the form and try again.",
+    };
+  }
+  if (!response.ok) {
+    const errBody = await safeJson(response);
+    return {
+      outcome: "error",
+      message: errBody?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+
+  return { outcome: "success", data: (await response.json()) as T };
+}
+
+export function updateLoyaltySettingsFromBrowser(
+  input: UpdateLoyaltySettingsRequest,
+): Promise<LoyaltyConfigureResult<LoyaltySettings>> {
+  return loyaltyConfigureRequest<LoyaltySettings>("settings", "PUT", input);
+}
+
+export function createLoyaltyRewardFromBrowser(
+  input: CreateLoyaltyRewardRequest,
+): Promise<LoyaltyConfigureResult<AdminLoyaltyReward>> {
+  return loyaltyConfigureRequest<AdminLoyaltyReward>("rewards", "POST", input);
+}
+
+export function updateLoyaltyRewardFromBrowser(
+  rewardId: string,
+  input: UpdateLoyaltyRewardRequest,
+): Promise<LoyaltyConfigureResult<AdminLoyaltyReward>> {
+  return loyaltyConfigureRequest<AdminLoyaltyReward>(
+    `rewards/${encodeURIComponent(rewardId)}`,
+    "PATCH",
+    input,
+  );
 }

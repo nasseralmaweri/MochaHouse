@@ -16,6 +16,7 @@ import {
   AdminNotFound,
 } from "@/components/admin/states";
 import { Card } from "@/components/Card";
+import { LoyaltyTabs } from "@/components/admin/LoyaltyTabs";
 import { MochaBeanAdjustForm } from "@/components/admin/MochaBeanAdjustForm";
 
 // Admin → Loyalty (Milestone 7A). The smallest HQ Mocha Beans surface:
@@ -46,7 +47,16 @@ export default async function AdminLoyaltyPage({
     />
   );
 
-  if (!can(session.authorization.capabilities, "loyalty.view")) {
+  const caps = session.authorization.capabilities;
+  const canViewCustomers = can(caps, "loyalty.view");
+  const canConfigure = can(caps, "loyalty.configure");
+
+  if (!canViewCustomers) {
+    // A configuration-only HQ user has no customer-lookup access; send them
+    // to the part of Loyalty they can use.
+    if (canConfigure) {
+      redirect("/admin/loyalty/rewards");
+    }
     return (
       <AdminPage>
         {header}
@@ -55,7 +65,7 @@ export default async function AdminLoyaltyPage({
     );
   }
 
-  const canAdjust = can(session.authorization.capabilities, "loyalty.adjust");
+  const canAdjust = can(caps, "loyalty.adjust");
 
   const params = await searchParams;
   const rawQuery = Array.isArray(params.q) ? params.q[0] : params.q;
@@ -67,6 +77,12 @@ export default async function AdminLoyaltyPage({
   return (
     <AdminPage>
       {header}
+
+      <LoyaltyTabs
+        active="customers"
+        canView={canViewCustomers}
+        canConfigure={canConfigure}
+      />
 
       <AdminSection
         title="Find a customer"

@@ -70,6 +70,15 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     productId = product.id;
     const sizeGroup = product.modifierGroups[0].modifierGroup;
     sizeGroupId = sizeGroup.id;
+
+    // These assertions assume the default earning rate of 1 Bean / $1.
+    // Pin the shared LoyaltyConfiguration singleton so this suite is
+    // independent of test-file order (the settings suite mutates it).
+    await prisma.loyaltyConfiguration.upsert({
+      where: { key: 'company' },
+      update: { earningRatePerDollar: 1 },
+      create: { key: 'company', earningRatePerDollar: 1 },
+    });
     mediumOptionId = sizeGroup.options.find((o) => o.name === 'Medium')!.id;
   });
 

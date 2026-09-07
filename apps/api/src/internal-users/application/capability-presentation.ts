@@ -158,6 +158,13 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Manually adjust customer Mocha Beans',
     definition: 'Manually adjust customer Mocha Beans',
   },
+  // Milestone 7B — HQ loyalty configuration. CORPORATE-only.
+  'loyalty.configure': {
+    group: 'Loyalty',
+    effectiveAll: 'Configure the earning rate and Rewards Catalog',
+    effectiveScoped: 'Configure the earning rate and Rewards Catalog',
+    definition: 'Configure the earning rate and Rewards Catalog',
+  },
 };
 
 const GROUP_ORDER = [
@@ -188,6 +195,7 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'locations.manage_digital_ordering',
   'loyalty.view',
   'loyalty.adjust',
+  'loyalty.configure',
   'users.view',
   'roles.view',
   'audit.view',

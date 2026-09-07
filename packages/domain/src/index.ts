@@ -479,22 +479,32 @@ function prepareLine(
   };
 }
 
-// --- Mocha Beans earning (Milestone 7A) ------------------------------
-// The one place the earning rate is applied. For 7A the rate is a code
-// constant — HQ-configurable earning is a deliberately deferred later
-// slice. Qualifying spend is the merchandise subtotal in integer minor
-// units (cents); the platform has no discount/tax/tip/fee/gift-card model
-// yet, so Order.subtotal IS the qualifying spend today.
+// --- Mocha Beans earning (Milestone 7A; rate configurable in 7B) -----
+// The one place the earning rate is applied. Qualifying spend is the
+// merchandise subtotal in integer minor units (cents); the platform has no
+// discount/tax/tip/fee/gift-card model yet, so Order.subtotal IS the
+// qualifying spend today.
 //
-// Whole qualifying DOLLARS only, truncated (never rounded):
-//   $0.99  -> 0
-//   $1.00  -> 1
-//   $8.75  -> 8
-//   $8.99  -> 8
-//   $12.00 -> 12
-export const MOCHA_BEANS_PER_DOLLAR = 1;
+// `ratePerDollar` is the whole number of Mocha Beans awarded per whole
+// qualifying dollar. Milestone 7B makes it HQ-configurable and persisted;
+// the caller (LoyaltyService) loads the current company-wide rate and
+// passes it in — this function stays pure and never touches a database.
+// It defaults to DEFAULT_MOCHA_BEANS_PER_DOLLAR so a caller that has no
+// configuration (a fresh install, a unit test) still gets the 7A behaviour.
+//
+// Whole qualifying DOLLARS only, truncated (never rounded). With rate 1:
+//   $0.99  -> 0     $1.00  -> 1     $8.75  -> 8     $12.00 -> 12
+// With rate 2:
+//   $8.75  -> 8 whole dollars -> 16 Beans
+export const DEFAULT_MOCHA_BEANS_PER_DOLLAR = 1;
 
-export function mochaBeansForQualifyingSpend(subtotalMinorUnits: number): number {
+// Backwards-compatible alias for the 7A constant name.
+export const MOCHA_BEANS_PER_DOLLAR = DEFAULT_MOCHA_BEANS_PER_DOLLAR;
+
+export function mochaBeansForQualifyingSpend(
+  subtotalMinorUnits: number,
+  ratePerDollar: number = DEFAULT_MOCHA_BEANS_PER_DOLLAR,
+): number {
   if (
     !Number.isFinite(subtotalMinorUnits) ||
     !Number.isInteger(subtotalMinorUnits) ||
@@ -502,6 +512,15 @@ export function mochaBeansForQualifyingSpend(subtotalMinorUnits: number): number
   ) {
     return 0;
   }
+  // A malformed rate never earns and never throws — the service validates
+  // the rate on write, this is the last line of defence for the earn path.
+  if (
+    !Number.isFinite(ratePerDollar) ||
+    !Number.isInteger(ratePerDollar) ||
+    ratePerDollar <= 0
+  ) {
+    return 0;
+  }
   const wholeDollars = Math.floor(subtotalMinorUnits / 100);
-  return wholeDollars * MOCHA_BEANS_PER_DOLLAR;
+  return wholeDollars * ratePerDollar;
 }

@@ -472,18 +472,124 @@ export interface CustomerOrderDetail extends CustomerOrderSummary {
   lines: OrderLineSummary[];
 }
 
-// --- Loyalty: Mocha Beans balance (Milestone 7A) ----------------------
-// "Mocha Beans" is the official customer-facing loyalty currency. This is
-// the only customer-facing loyalty shape in 7A: the current balance, and
-// nothing else. Customer-facing Bean history is deliberately NOT exposed
-// (it is an HQ-controlled setting that defaults off and ships in a later
-// slice), and there is no rewards data here yet — Rewards Catalog and
-// redemption are separate future slices.
+// --- Loyalty: Mocha Beans balance + rewards (Milestone 7A; rewards 7B) --
+// "Mocha Beans" is the official customer-facing loyalty currency.
+// Customer-facing Bean history is deliberately NOT exposed (it is an
+// HQ-controlled setting that defaults off and ships in a later slice).
 //
 // GET /api/v1/customers/me/loyalty (CustomerAuthGuard). The balance is a
-// whole non-negative integer number of Mocha Beans.
+// whole non-negative integer number of Mocha Beans. `rewards` (Milestone
+// 7B) is the customer-facing Rewards Catalog: the currently ACTIVE rewards
+// only, in HQ display order. Redemption is NOT part of 7B — nothing here
+// lets a customer select, reserve or apply a reward, and no Beans move.
+export type LoyaltyRewardType = "FIXED_AMOUNT" | "FREE_ITEM";
+
+export interface CustomerLoyaltyReward {
+  id: string;
+  name: string;
+  description: string | null;
+  type: LoyaltyRewardType;
+  // Whole Mocha Beans the customer would spend to redeem this (in a future
+  // slice). Shown for information only in 7B.
+  beanCost: number;
+  // FIXED_AMOUNT only — the dollar-off value in integer minor units (cents).
+  // Null for FREE_ITEM.
+  fixedAmountMinorUnits: number | null;
+  // FREE_ITEM only — display names of the eligible products/categories.
+  // Empty for FIXED_AMOUNT.
+  eligibleItemNames: string[];
+  // Whether the customer's current balance is >= beanCost. Purely
+  // informational; it reserves nothing and deducts nothing.
+  canAfford: boolean;
+}
+
 export interface CustomerLoyaltySummary {
   balance: number;
+  rewards: CustomerLoyaltyReward[];
+}
+
+// --- Admin: HQ loyalty configuration (Milestone 7B) ------------------
+// GET/PUT /api/v1/admin/loyalty/settings (InternalAuthGuard +
+// PermissionGuard + `loyalty.configure`, CORPORATE-only). The standard
+// company-wide Mocha Bean earning rate — a whole number of Beans per whole
+// qualifying dollar. Never per-location, per-segment or time-based.
+export interface LoyaltySettings {
+  earningRatePerDollar: number;
+}
+
+// `earningRatePerDollar` must be a whole integer, 1-100. Changing it
+// affects only FUTURE earning; historical EARN ledger entries and balances
+// are never recalculated.
+export interface UpdateLoyaltySettingsRequest {
+  earningRatePerDollar: number;
+}
+
+// --- Admin: Rewards Catalog (Milestone 7B) --------------------------
+// GET/POST/PATCH /api/v1/admin/loyalty/rewards[...] (`loyalty.configure`,
+// CORPORATE-only). Catalog management only — no redemption. Rewards are
+// never hard-deleted; `isActive` is the off switch.
+
+export interface AdminLoyaltyRewardCatalogRef {
+  id: string;
+  name: string;
+}
+
+export interface AdminLoyaltyReward {
+  id: string;
+  name: string;
+  description: string | null;
+  type: LoyaltyRewardType;
+  beanCost: number;
+  fixedAmountMinorUnits: number | null;
+  isActive: boolean;
+  sortOrder: number;
+  // FREE_ITEM eligibility. Empty for FIXED_AMOUNT.
+  eligibleProducts: AdminLoyaltyRewardCatalogRef[];
+  eligibleCategories: AdminLoyaltyRewardCatalogRef[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminLoyaltyRewardsResponse {
+  rewards: AdminLoyaltyReward[];
+}
+
+// GET /api/v1/admin/loyalty/catalog-options (`loyalty.configure`). The
+// product/category picker data for building a FREE_ITEM reward — identity
+// and name only, so managing rewards never requires `catalog.view`.
+export interface AdminLoyaltyCatalogOptions {
+  products: AdminLoyaltyRewardCatalogRef[];
+  categories: AdminLoyaltyRewardCatalogRef[];
+}
+
+// `type` is required and fixed at creation (never editable). For
+// FIXED_AMOUNT: `fixedAmountMinorUnits` (> 0, integer cents) is required
+// and eligibility lists must be absent/empty. For FREE_ITEM:
+// `fixedAmountMinorUnits` must be absent and there must be >= 1 eligible
+// product or category, all referencing existing catalog ids.
+export interface CreateLoyaltyRewardRequest {
+  name: string;
+  description?: string | null;
+  type: LoyaltyRewardType;
+  beanCost: number;
+  fixedAmountMinorUnits?: number | null;
+  eligibleProductIds?: string[];
+  eligibleCategoryIds?: string[];
+  sortOrder?: number;
+}
+
+// Every field optional — only present fields change. `type` is NOT
+// accepted. Providing `eligibleProductIds`/`eligibleCategoryIds` REPLACES
+// that list wholesale (FREE_ITEM only). `isActive` toggles activation.
+export interface UpdateLoyaltyRewardRequest {
+  name?: string;
+  description?: string | null;
+  beanCost?: number;
+  fixedAmountMinorUnits?: number | null;
+  eligibleProductIds?: string[];
+  eligibleCategoryIds?: string[];
+  isActive?: boolean;
+  sortOrder?: number;
 }
 
 // --- Reorder from order history (Milestone 4G) -------------------------
@@ -1006,6 +1112,9 @@ export const INTERNAL_PERMISSION_KEYS = [
   // a highly sensitive HQ action a Store Manager never holds.
   "loyalty.view",
   "loyalty.adjust",
+  // Milestone 7B — HQ loyalty configuration: the company-wide earning rate
+  // and the Rewards Catalog. CORPORATE-only; a Store Manager never holds it.
+  "loyalty.configure",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1187,6 +1296,12 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "loyalty.adjust",
     description:
       "Manually add or deduct a customer's Mocha Beans, with a required reason. Highly privileged; corporate-only.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "loyalty.configure": {
+    key: "loyalty.configure",
+    description:
+      "Configure the standard company-wide Mocha Bean earning rate and manage the customer Rewards Catalog. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };

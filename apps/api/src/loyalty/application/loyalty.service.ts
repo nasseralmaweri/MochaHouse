@@ -1,7 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@mocha-house/database';
-import { mochaBeansForQualifyingSpend } from '@mocha-house/domain';
+import {
+  DEFAULT_MOCHA_BEANS_PER_DOLLAR,
+  mochaBeansForQualifyingSpend,
+} from '@mocha-house/domain';
 import { PrismaService } from '../../prisma/prisma.service';
+
+// The single company-wide loyalty configuration is a keyed singleton.
+export const LOYALTY_CONFIGURATION_KEY = 'company';
 
 // The Mocha Beans core service (Milestone 7A): the authenticated-Order
 // earning path and the customer balance read. Manual HQ add/deduct lives in
@@ -73,7 +79,22 @@ export class LoyaltyService {
       return;
     }
 
-    const beans = mochaBeansForQualifyingSpend(qualifyingSubtotalMinorUnits);
+    // Milestone 7B — the earning rate is the HQ-configured company-wide
+    // value, read at earn time. A missing configuration row (fresh install)
+    // falls back to the 7A default of 1 Bean / $1, preserving behaviour.
+    // Historical EARN entries are never recalculated when the rate changes;
+    // this snapshot is what this one order earns.
+    const config = await tx.loyaltyConfiguration.findUnique({
+      where: { key: LOYALTY_CONFIGURATION_KEY },
+      select: { earningRatePerDollar: true },
+    });
+    const ratePerDollar =
+      config?.earningRatePerDollar ?? DEFAULT_MOCHA_BEANS_PER_DOLLAR;
+
+    const beans = mochaBeansForQualifyingSpend(
+      qualifyingSubtotalMinorUnits,
+      ratePerDollar,
+    );
     if (beans <= 0) {
       // Sub-$1 qualifying spend earns nothing; don't write an empty entry.
       return;

@@ -95,6 +95,7 @@ describe('capability presentation (Milestone 5E)', () => {
       expect(groups.find((g) => g.group === 'Loyalty')?.items).toEqual([
         'View customer Mocha Bean balances and ledger',
         'Manually adjust customer Mocha Beans',
+        'Configure the earning rate and Rewards Catalog',
       ]);
       expect(groups.find((g) => g.group === 'Administration')?.items).toEqual([
         'View Admin users',

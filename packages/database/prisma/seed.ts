@@ -482,6 +482,17 @@ async function main() {
 
   await seedChecklist('opening', 'Opening Checklist', OPENING_CHECKLIST_ITEMS);
   await seedChecklist('closing', 'Closing Checklist', CLOSING_CHECKLIST_ITEMS);
+
+  // Milestone 7B — the single company-wide loyalty configuration (keyed
+  // singleton). Create-once at the default rate of 1 Mocha Bean per
+  // qualifying dollar, which preserves the 7A behaviour exactly; re-seeding
+  // never overwrites an HQ-chosen rate. The Rewards Catalog is NOT seeded —
+  // HQ creates rewards through the Admin UI.
+  await prisma.loyaltyConfiguration.upsert({
+    where: { key: 'company' },
+    update: {},
+    create: { key: 'company', earningRatePerDollar: 1 },
+  });
 }
 
 main()

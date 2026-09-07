@@ -280,8 +280,71 @@ export interface CustomerOrderSummary {
 export interface CustomerOrderDetail extends CustomerOrderSummary {
     lines: OrderLineSummary[];
 }
+export type LoyaltyRewardType = "FIXED_AMOUNT" | "FREE_ITEM";
+export interface CustomerLoyaltyReward {
+    id: string;
+    name: string;
+    description: string | null;
+    type: LoyaltyRewardType;
+    beanCost: number;
+    fixedAmountMinorUnits: number | null;
+    eligibleItemNames: string[];
+    canAfford: boolean;
+}
 export interface CustomerLoyaltySummary {
     balance: number;
+    rewards: CustomerLoyaltyReward[];
+}
+export interface LoyaltySettings {
+    earningRatePerDollar: number;
+}
+export interface UpdateLoyaltySettingsRequest {
+    earningRatePerDollar: number;
+}
+export interface AdminLoyaltyRewardCatalogRef {
+    id: string;
+    name: string;
+}
+export interface AdminLoyaltyReward {
+    id: string;
+    name: string;
+    description: string | null;
+    type: LoyaltyRewardType;
+    beanCost: number;
+    fixedAmountMinorUnits: number | null;
+    isActive: boolean;
+    sortOrder: number;
+    eligibleProducts: AdminLoyaltyRewardCatalogRef[];
+    eligibleCategories: AdminLoyaltyRewardCatalogRef[];
+    createdAt: string;
+    updatedAt: string;
+}
+export interface AdminLoyaltyRewardsResponse {
+    rewards: AdminLoyaltyReward[];
+}
+export interface AdminLoyaltyCatalogOptions {
+    products: AdminLoyaltyRewardCatalogRef[];
+    categories: AdminLoyaltyRewardCatalogRef[];
+}
+export interface CreateLoyaltyRewardRequest {
+    name: string;
+    description?: string | null;
+    type: LoyaltyRewardType;
+    beanCost: number;
+    fixedAmountMinorUnits?: number | null;
+    eligibleProductIds?: string[];
+    eligibleCategoryIds?: string[];
+    sortOrder?: number;
+}
+export interface UpdateLoyaltyRewardRequest {
+    name?: string;
+    description?: string | null;
+    beanCost?: number;
+    fixedAmountMinorUnits?: number | null;
+    eligibleProductIds?: string[];
+    eligibleCategoryIds?: string[];
+    isActive?: boolean;
+    sortOrder?: number;
 }
 export type ReorderIssueCode = "LOCATION_INACTIVE" | "LOCATION_DIGITAL_ORDERING_DISABLED" | "PRODUCT_NOT_ON_MENU" | "PRODUCT_UNAVAILABLE" | "PRICE_CHANGED" | "MODIFIER_GROUP_REMOVED" | "MODIFIER_OPTION_REMOVED" | "MODIFIER_REQUIRED_SELECTION_MISSING" | "MODIFIER_SELECTION_COUNT_INVALID";
 export interface ReorderIssue {
@@ -506,7 +569,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];

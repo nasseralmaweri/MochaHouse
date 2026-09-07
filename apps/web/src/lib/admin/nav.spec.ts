@@ -84,9 +84,16 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(items.find((i) => i.key === "loyalty")?.href).toBe("/admin/loyalty");
   });
 
-  it("hides Loyalty without loyalty.view even when loyalty.adjust is somehow present", () => {
+  it("shows Loyalty when the user holds loyalty.configure only (Milestone 7B)", () => {
+    const items = adminNavItems({
+      "loyalty.configure": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual(["dashboard", "loyalty"]);
+  });
+
+  it("hides Loyalty without loyalty.view or loyalty.configure even when loyalty.adjust is somehow present", () => {
     // loyalty.adjust never appears without loyalty.view in practice, but the
-    // nav is driven by loyalty.view specifically.
+    // nav is driven by loyalty.view / loyalty.configure specifically.
     const items = adminNavItems({
       "loyalty.adjust": { corporate: true, locationIds: [] },
     });

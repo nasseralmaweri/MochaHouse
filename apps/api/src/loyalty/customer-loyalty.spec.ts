@@ -101,7 +101,9 @@ describe('GET /api/v1/customers/me/loyalty (integration)', () => {
       .expect(200);
 
     const body = response.body as CustomerLoyaltySummary;
-    expect(body).toEqual({ balance: 125 });
+    expect(body.balance).toBe(125);
+    // Milestone 7B — the summary also carries the (active) Rewards Catalog.
+    expect(Array.isArray(body.rewards)).toBe(true);
   });
 
   it('never returns another customer\'s balance', async () => {

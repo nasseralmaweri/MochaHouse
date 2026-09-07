@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { Prisma } from '@mocha-house/database';
+import { Prisma } from '@mocha-house/database';
 import type { InternalUserStatus } from '@mocha-house/contracts';
 
 // The write side of the access-control audit foundation (Milestone 5E-3).
@@ -141,6 +141,93 @@ export class InternalAuditService {
           delta: input.deltaBeans,
         },
         reason: input.reason,
+      },
+    });
+  }
+
+  // --- Milestone 7B, HQ loyalty configuration + Rewards Catalog -----
+  // Sensitive HQ configuration changes. Like every method here, each writes
+  // in the SAME transaction as the change it records. The reward /
+  // configuration tables remain the source of truth — these events are the
+  // "who changed what, when" administrative trail, not reward data.
+  //
+  // targetType is 'loyalty_configuration' / 'loyalty_reward' — new
+  // polymorphic targets. The Admin Activity Log is scoped to
+  // 'internal_user' targets and ignores these, exactly as it ignores the 6C
+  // 'checklist_instance_item' and 7A 'customer' events.
+
+  async recordLoyaltyEarningRateChanged(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      beforeRatePerDollar: number;
+      afterRatePerDollar: number;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'loyalty.earning_rate_changed',
+        targetType: 'loyalty_configuration',
+        targetId: 'company',
+        beforeData: { earningRatePerDollar: input.beforeRatePerDollar },
+        afterData: { earningRatePerDollar: input.afterRatePerDollar },
+        reason: `Standard earning rate changed from ${input.beforeRatePerDollar} to ${input.afterRatePerDollar} Mocha Beans per qualifying dollar.`,
+      },
+    });
+  }
+
+  async recordLoyaltyRewardCreated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      rewardId: string;
+      snapshot: Prisma.InputJsonValue;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'loyalty.reward_created',
+        targetType: 'loyalty_reward',
+        targetId: input.rewardId,
+        // No beforeData — the reward did not exist.
+        afterData: input.snapshot,
+        reason: 'Loyalty reward created.',
+      },
+    });
+  }
+
+  async recordLoyaltyRewardUpdated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      rewardId: string;
+      change: 'updated' | 'activated' | 'deactivated';
+      before: Prisma.InputJsonValue;
+      after: Prisma.InputJsonValue;
+    },
+  ): Promise<void> {
+    const action =
+      input.change === 'activated'
+        ? 'loyalty.reward_activated'
+        : input.change === 'deactivated'
+          ? 'loyalty.reward_deactivated'
+          : 'loyalty.reward_updated';
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action,
+        targetType: 'loyalty_reward',
+        targetId: input.rewardId,
+        beforeData: input.before,
+        afterData: input.after,
+        reason:
+          input.change === 'activated'
+            ? 'Loyalty reward activated.'
+            : input.change === 'deactivated'
+              ? 'Loyalty reward deactivated.'
+              : 'Loyalty reward updated.',
       },
     });
   }

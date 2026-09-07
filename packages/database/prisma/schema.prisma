@@ -39,6 +39,7 @@ model Category {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   products     Product[]
+  loyaltyRewardEligibility LoyaltyRewardCategory[]
 }
 
 model Product {
@@ -57,6 +58,7 @@ model Product {
   menus                 MenuProduct[]
   priceOverrides        LocationProductPriceOverride[]
   availabilityOverrides LocationProductAvailabilityOverride[]
+  loyaltyRewardEligibility LoyaltyRewardProduct[]
 
   @@index([categoryId])
 }
@@ -845,4 +847,97 @@ model MochaBeanLedgerEntry {
   @@index([loyaltyAccountId, createdAt])
   @@index([orderId])
   @@index([actorInternalUserId])
+}
+
+// --- Milestone 7B, HQ loyalty configuration + Rewards Catalog --------
+// 7B gives HQ two controls: the company-wide Mocha Bean earning rate, and
+// the customer Rewards Catalog. It deliberately does NOT touch redemption —
+// customers cannot redeem, no Beans are deducted, and there are no
+// redemption/snapshot tables yet (that is 7C).
+
+// The single company-wide loyalty configuration. Modelled as a keyed
+// singleton (like ChecklistTemplate): every code path uses key "company",
+// so the @unique key is the "exactly one active configuration" invariant.
+// Seeded, and also lazily upserted by LoyaltySettingsService so a fresh
+// database (or a test that skips the seed) still has a safe default.
+model LoyaltyConfiguration {
+  id                   String   @id @default(uuid(7))
+  key                  String   @unique
+  // Whole Mocha Beans awarded per whole qualifying dollar. Default 1
+  // preserves the 7A behaviour exactly. Company-wide only — never
+  // per-location, per-segment or time-based. Changing it affects only
+  // FUTURE earning; historical EARN ledger entries are never recalculated.
+  earningRatePerDollar Int      @default(1)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+enum LoyaltyRewardType {
+  // A fixed dollar-off discount, redeemable later with Mocha Beans. The
+  // discount value is `fixedAmountMinorUnits` (integer cents). Never
+  // creates cash value; the future redemption slice caps it at the
+  // eligible merchandise amount.
+  FIXED_AMOUNT
+  // A specific free item, redeemable later with Mocha Beans. Eligibility is
+  // one or more Products and/or Categories (LoyaltyRewardProduct /
+  // LoyaltyRewardCategory) — never raw display text.
+  FREE_ITEM
+}
+
+// One HQ-defined reward customers will later be able to redeem with Mocha
+// Beans. 7B manages the catalog only. Rewards are never hard-deleted
+// (isActive is the off switch) so a future redemption record can always
+// still point at the reward it used. `type` is fixed at creation — it is
+// never editable, so the type-specific fields can never become
+// inconsistent.
+model LoyaltyReward {
+  id                    String            @id @default(uuid(7))
+  name                  String
+  description           String?
+  type                  LoyaltyRewardType
+  // Whole Mocha Beans the customer will later spend to redeem this reward.
+  beanCost              Int
+  // FIXED_AMOUNT only — the dollar-off value in integer minor units (cents),
+  // always > 0. Null for FREE_ITEM.
+  fixedAmountMinorUnits Int?
+  isActive              Boolean           @default(true)
+  // Ascending display order for the customer catalog and the Admin list.
+  sortOrder             Int               @default(0)
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  eligibleProducts   LoyaltyRewardProduct[]
+  eligibleCategories LoyaltyRewardCategory[]
+
+  @@index([isActive, sortOrder])
+}
+
+// FREE_ITEM eligibility by Product. onDelete: Cascade from the reward (a
+// join row is meaningless without it); onDelete: Restrict from the Product
+// so a catalog product that a reward depends on cannot be hard-deleted out
+// from under it (the catalog uses isActive anyway).
+model LoyaltyRewardProduct {
+  rewardId  String
+  productId String
+  createdAt DateTime @default(now())
+
+  reward  LoyaltyReward @relation(fields: [rewardId], references: [id], onDelete: Cascade)
+  product Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@id([rewardId, productId])
+  @@index([productId])
+}
+
+// FREE_ITEM eligibility by Category — same delete semantics as
+// LoyaltyRewardProduct.
+model LoyaltyRewardCategory {
+  rewardId   String
+  categoryId String
+  createdAt  DateTime @default(now())
+
+  reward   LoyaltyReward @relation(fields: [rewardId], references: [id], onDelete: Cascade)
+  category Category      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@id([rewardId, categoryId])
+  @@index([categoryId])
 }

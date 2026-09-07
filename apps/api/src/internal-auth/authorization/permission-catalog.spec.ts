@@ -43,6 +43,8 @@ describe('internal permission catalog', () => {
         // Milestone 7A
         'loyalty.view',
         'loyalty.adjust',
+        // Milestone 7B
+        'loyalty.configure',
       ].sort(),
     );
   });
@@ -91,6 +93,9 @@ describe('internal permission catalog', () => {
     // (Milestone 7A).
     expect(allowedScopeTypesFor('loyalty.view')).toEqual(['CORPORATE']);
     expect(allowedScopeTypesFor('loyalty.adjust')).toEqual(['CORPORATE']);
+    // loyalty.configure — the earning rate and Rewards Catalog are
+    // company-wide HQ configuration (Milestone 7B).
+    expect(allowedScopeTypesFor('loyalty.configure')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {
