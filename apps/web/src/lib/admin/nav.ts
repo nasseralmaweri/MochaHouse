@@ -77,6 +77,23 @@ export function adminNavItems(
     });
   }
 
+  // Gift Cards (Milestone 7F — the financial + administrative foundation).
+  // Shown if the user effectively holds any of the three CORPORATE-only
+  // gift-card keys. Each page inside still gates on its own permission:
+  // issuing / correcting / deactivating requires `giftcards.manage`, and
+  // the purchasing configuration requires `giftcards.configure`.
+  if (
+    can(capabilities, "giftcards.view") ||
+    can(capabilities, "giftcards.manage") ||
+    can(capabilities, "giftcards.configure")
+  ) {
+    items.push({
+      key: "gift-cards",
+      label: "Gift Cards",
+      href: "/admin/gift-cards",
+    });
+  }
+
   if (can(capabilities, "locations.view")) {
     items.push({
       key: "locations",

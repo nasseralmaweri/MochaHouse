@@ -15,6 +15,7 @@ import { AdminPlatformModule } from './admin-platform/admin-platform.module';
 import { OperationsModule } from './operations/operations.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { PromotionsModule } from './promotions/promotions.module';
+import { GiftCardsModule } from './gift-cards/gift-cards.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { PromotionsModule } from './promotions/promotions.module';
     OperationsModule,
     LoyaltyModule,
     PromotionsModule,
+    GiftCardsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

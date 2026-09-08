@@ -343,6 +343,10 @@ async function main() {
     // Milestone 6C — a Store Manager is the person who logs a management
     // exception when an opening requirement genuinely could not be met.
     'operations.exceptions.manage',
+    // Milestone 7F — gift-card administration (giftcards.view /
+    // giftcards.manage / giftcards.configure) is deliberately NOT here. A
+    // gift card is company-wide stored value; its administration is a
+    // CORPORATE-only HQ function a Store Manager never holds by default.
   ] as const;
 
   const storeManagerRole = await prisma.internalRole.upsert({
@@ -492,6 +496,23 @@ async function main() {
     where: { key: 'company' },
     update: {},
     create: { key: 'company', earningRatePerDollar: 1 },
+  });
+
+  // Milestone 7F — the single company-wide gift-card purchasing
+  // configuration (keyed singleton). Persisted now so the FUTURE
+  // customer-purchasing slice has HQ settings to read; nothing in 7F
+  // consumes it. Create-once with example preset amounts ($10 / $25 / $50 /
+  // $100 in integer minor units) and custom amounts enabled; re-seeding
+  // never overwrites HQ-chosen values. Gift cards themselves are NOT
+  // seeded — HQ issues them through the Admin UI.
+  await prisma.giftCardConfiguration.upsert({
+    where: { key: 'company' },
+    update: {},
+    create: {
+      key: 'company',
+      presetAmountsMinorUnits: [1000, 2500, 5000, 10000],
+      customAmountEnabled: true,
+    },
   });
 }
 

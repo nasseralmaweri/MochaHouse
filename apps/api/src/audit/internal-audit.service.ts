@@ -359,6 +359,126 @@ export class InternalAuditService {
     });
   }
 
+  // --- Milestone 7F, Gift Card Foundation & Administration --------
+  // Same contract as every method here — written in the SAME transaction as
+  // the gift-card change it records. The GiftCard / GiftCardTransaction
+  // tables stay the authoritative financial record; these events are the
+  // "who changed what, when, and why" administrative trail. A manual
+  // balance correction writes BOTH the GiftCardTransaction ledger row and
+  // this audit event in one transaction (mirrors loyalty.beans_adjusted).
+  // targetType 'gift_card' / 'giftcard_configuration' are new polymorphic
+  // targets; the Admin Activity Log is scoped to 'internal_user' and
+  // ignores them, exactly as it ignores the 7A–7E events. The full
+  // gift-card code is NEVER placed in beforeData / afterData / reason —
+  // only the last 4 characters.
+
+  async recordGiftCardIssued(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      giftCardId: string;
+      last4: string;
+      originalValueMinorUnits: number;
+      currency: string;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'giftcards.card_issued',
+        targetType: 'gift_card',
+        targetId: input.giftCardId,
+        // No beforeData — the card did not exist.
+        afterData: {
+          last4: input.last4,
+          originalValueMinorUnits: input.originalValueMinorUnits,
+          currency: input.currency,
+        },
+        reason: 'Gift card issued by HQ.',
+      },
+    });
+  }
+
+  async recordGiftCardStatusChanged(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      giftCardId: string;
+      before: 'ACTIVE' | 'INACTIVE';
+      after: 'ACTIVE' | 'INACTIVE';
+      reason: string;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action:
+          input.after === 'INACTIVE'
+            ? 'giftcards.card_deactivated'
+            : 'giftcards.card_reactivated',
+        targetType: 'gift_card',
+        targetId: input.giftCardId,
+        beforeData: { status: input.before },
+        afterData: { status: input.after },
+        reason: input.reason,
+      },
+    });
+  }
+
+  async recordGiftCardBalanceCorrected(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      giftCardId: string;
+      deltaMinorUnits: number;
+      balanceBeforeMinorUnits: number;
+      balanceAfterMinorUnits: number;
+      reason: string;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'giftcards.balance_corrected',
+        targetType: 'gift_card',
+        targetId: input.giftCardId,
+        beforeData: { balanceMinorUnits: input.balanceBeforeMinorUnits },
+        afterData: {
+          balanceMinorUnits: input.balanceAfterMinorUnits,
+          deltaMinorUnits: input.deltaMinorUnits,
+        },
+        reason: input.reason,
+      },
+    });
+  }
+
+  async recordGiftCardConfigurationUpdated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      before: {
+        presetAmountsMinorUnits: number[];
+        customAmountEnabled: boolean;
+      };
+      after: {
+        presetAmountsMinorUnits: number[];
+        customAmountEnabled: boolean;
+      };
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'giftcards.configuration_updated',
+        targetType: 'giftcard_configuration',
+        targetId: 'company',
+        beforeData: input.before,
+        afterData: input.after,
+        reason: 'Gift-card purchasing configuration updated.',
+      },
+    });
+  }
+
   async recordChecklistExceptionCleared(
     tx: Prisma.TransactionClient,
     input: ChecklistExceptionAuditInput & { previousReason: string },

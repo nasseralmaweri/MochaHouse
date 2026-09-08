@@ -141,6 +141,41 @@ describe("adminNavItems (permission-aware navigation)", () => {
     ]);
   });
 
+  it("shows Gift Cards for any of the three gift-card keys (Milestone 7F)", () => {
+    for (const key of [
+      "giftcards.view",
+      "giftcards.manage",
+      "giftcards.configure",
+    ] as const) {
+      const items = adminNavItems({ [key]: { corporate: true, locationIds: [] } });
+      expect(items.map((i) => i.key)).toEqual(["dashboard", "gift-cards"]);
+      expect(items.find((i) => i.key === "gift-cards")?.href).toBe(
+        "/admin/gift-cards",
+      );
+    }
+  });
+
+  it("hides Gift Cards without any gift-card key", () => {
+    const items = adminNavItems({
+      "promotions.configure": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).not.toContain("gift-cards");
+  });
+
+  it("orders Gift Cards immediately after Promotions", () => {
+    const items = adminNavItems({
+      "promotions.configure": { corporate: true, locationIds: [] },
+      "giftcards.view": { corporate: true, locationIds: [] },
+      "locations.view": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual([
+      "dashboard",
+      "promotions",
+      "gift-cards",
+      "locations",
+    ]);
+  });
+
   it("shows Locations when the user holds locations.view (any scope)", () => {
     const items = adminNavItems({
       "locations.view": { corporate: false, locationIds: ["loc-a"] },

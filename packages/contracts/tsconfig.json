@@ -1,8 +1,15 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
+    // CommonJS, not ESNext: like @mocha-house/domain and
+    // @mocha-house/database, this package is consumed by apps/api — a
+    // CommonJS NestJS build (and its Jest test runner) that reaches it via
+    // a plain Node `require()`. An ESM-only build here breaks
+    // `pnpm --filter api test`. apps/web's bundler consumes the CJS output
+    // without issue.
+    "module": "CommonJS",
+    "moduleResolution": "Node10",
+    "esModuleInterop": true,
     "strict": true,
     "declaration": true,
     "declarationMap": true,

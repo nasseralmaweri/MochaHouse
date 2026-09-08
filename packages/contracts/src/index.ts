@@ -1528,6 +1528,20 @@ export const INTERNAL_PERMISSION_KEYS = [
   // merchandise-discount system). A company-wide pricing capability;
   // CORPORATE-only, and a Store Manager never holds it.
   "promotions.configure",
+  // Milestone 7F — Gift Card Foundation & Administration. A gift card is
+  // company-wide stored value, so all three keys are CORPORATE-only and a
+  // Store Manager never holds them.
+  //   giftcards.view      — search/find, view detail, balance, status,
+  //                         transaction history.
+  //   giftcards.manage    — issue an HQ gift card, deactivate / reactivate,
+  //                         perform an authorized manual balance correction
+  //                         (a required reason, audited). Highly privileged.
+  //   giftcards.configure — view/update the gift-card purchasing
+  //                         configuration (preset amounts, custom-amount
+  //                         enabled/disabled).
+  "giftcards.view",
+  "giftcards.manage",
+  "giftcards.configure",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1721,6 +1735,26 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "promotions.configure",
     description:
       "Create and manage Promotions & Coupons (the regular merchandise-discount system). A company-wide pricing capability; corporate-only.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  // Milestone 7F — Gift Cards. A gift card is company-wide stored value, so
+  // every key is CORPORATE-only; a Store Manager never holds them.
+  "giftcards.view": {
+    key: "giftcards.view",
+    description:
+      "Search for a gift card and view its detail — masked code, original value, current balance, active/inactive status and transaction history. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "giftcards.manage": {
+    key: "giftcards.manage",
+    description:
+      "Issue an HQ gift card, deactivate or reactivate a gift card, and make an authorized manual balance correction with a required reason. Highly privileged; corporate-only.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "giftcards.configure": {
+    key: "giftcards.configure",
+    description:
+      "View and update the gift-card purchasing configuration — preset purchase amounts and whether custom amounts are allowed. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
@@ -2041,4 +2075,126 @@ export interface AdminAdjustMochaBeansRequest {
   deltaBeans: number;
   reason: string;
   operationKey: string;
+}
+
+// --- Admin: Gift Card Foundation & Administration (Milestone 7F) ------
+// The HQ gift-card surface. All routes are InternalAuthGuard +
+// PermissionGuard, CORPORATE-only:
+//   giftcards.view      — POST /search, GET /:id
+//   giftcards.manage    — POST / (issue), POST /:id/deactivate,
+//                         POST /:id/reactivate, POST /:id/corrections
+//   giftcards.configure — GET /configuration, PUT /configuration
+// This is NOT customer purchasing or checkout redemption — see the schema
+// comment on GiftCard. The full gift-card code is returned exactly once, in
+// the issuance response; every other projection exposes only a masked code
+// and the last 4 characters. The full code never appears in a URL, query
+// string, audit record or log.
+
+// The approved monetary ceiling for a gift card's value / balance and for
+// any single preset purchase amount, in integer minor units ($2,000.00).
+export const GIFT_CARD_MAX_VALUE_MINOR_UNITS = 200_000;
+
+export type GiftCardStatus = "ACTIVE" | "INACTIVE";
+
+// 7F writes exactly these two. REDEMPTION / REFUND are added by the slices
+// that implement those capabilities.
+export type GiftCardTransactionType = "ISSUANCE" | "ADJUSTMENT";
+
+// A gift card as it appears on the HQ surface. `maskedCode` is the only
+// code representation in a normal read (e.g. "•••• •••• •••• 4821");
+// `last4` is provided for compact display. The full code and the codeHash
+// are never present.
+export interface AdminGiftCard {
+  id: string;
+  maskedCode: string;
+  last4: string;
+  status: GiftCardStatus;
+  originalValueMinorUnits: number;
+  balanceMinorUnits: number;
+  currency: string;
+  createdAt: string;
+}
+
+// One row of the immutable gift-card transaction ledger, projected for HQ.
+// `amountMinorUnits` is signed; `balanceAfterMinorUnits` is the card
+// balance immediately after the entry. `actorLabel` is the HQ operator's
+// name/email (present for ISSUANCE and ADJUSTMENT), `reason` is the
+// operator's required text for an ADJUSTMENT (null for ISSUANCE).
+export interface AdminGiftCardTransaction {
+  id: string;
+  type: GiftCardTransactionType;
+  amountMinorUnits: number;
+  balanceAfterMinorUnits: number;
+  reason: string | null;
+  actorLabel: string | null;
+  createdAt: string;
+}
+
+// POST /api/v1/admin/gift-cards/search — the code (or id) is submitted in
+// the BODY, never the URL. Exact match only: no search-by-last-4 in V1.
+// Exactly one of `code` / `giftCardId` should be provided.
+export interface GiftCardSearchRequest {
+  code?: string;
+  giftCardId?: string;
+}
+
+export interface AdminGiftCardSearchResponse {
+  giftCards: AdminGiftCard[];
+}
+
+// GET /api/v1/admin/gift-cards/:giftCardId
+export interface AdminGiftCardDetail {
+  giftCard: AdminGiftCard;
+  transactions: AdminGiftCardTransaction[];
+}
+
+// POST /api/v1/admin/gift-cards — issue a gift card for a legitimate HQ
+// administrative reason. `originalValueMinorUnits` is a whole integer,
+// 1..GIFT_CARD_MAX_VALUE_MINOR_UNITS. `currency` is optional and must be
+// "USD" in V1.
+export interface IssueGiftCardRequest {
+  originalValueMinorUnits: number;
+  currency?: string;
+}
+
+// The ONLY response that carries the full plaintext gift-card code. It is
+// shown once and is never retrievable again through any read.
+export interface IssueGiftCardResponse {
+  giftCard: AdminGiftCard;
+  code: string;
+}
+
+// POST /api/v1/admin/gift-cards/:giftCardId/{deactivate,reactivate}
+// `reason` is optional context recorded on the audit event.
+export interface GiftCardStatusChangeRequest {
+  reason?: string;
+}
+
+// POST /api/v1/admin/gift-cards/:giftCardId/corrections — an authorized
+// manual balance correction. `deltaMinorUnits` is a non-zero whole integer
+// (positive to add, negative to deduct). `reason` is required, trimmed,
+// non-empty. `operationKey` is a caller-supplied idempotency key
+// (8-200 chars) — retrying the same key never applies the correction twice.
+// The resulting balance may never fall below 0 or exceed
+// GIFT_CARD_MAX_VALUE_MINOR_UNITS. A correction is permitted on an INACTIVE
+// card (an accounting fix is not blocked by status).
+export interface AdjustGiftCardBalanceRequest {
+  deltaMinorUnits: number;
+  reason: string;
+  operationKey: string;
+}
+
+// GET/PUT /api/v1/admin/gift-cards/configuration (`giftcards.configure`,
+// CORPORATE-only). The company-wide gift-card purchasing configuration,
+// persisted for the FUTURE customer-purchasing slice — nothing in 7F
+// consumes it. `presetAmountsMinorUnits` are ascending, de-duplicated
+// whole integers, each 1..GIFT_CARD_MAX_VALUE_MINOR_UNITS (1-12 entries).
+export interface GiftCardConfiguration {
+  presetAmountsMinorUnits: number[];
+  customAmountEnabled: boolean;
+}
+
+export interface UpdateGiftCardConfigurationRequest {
+  presetAmountsMinorUnits: number[];
+  customAmountEnabled: boolean;
 }

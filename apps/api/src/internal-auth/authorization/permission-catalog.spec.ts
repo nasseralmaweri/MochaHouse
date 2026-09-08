@@ -47,6 +47,10 @@ describe('internal permission catalog', () => {
         'loyalty.configure',
         // Milestone 7E
         'promotions.configure',
+        // Milestone 7F
+        'giftcards.view',
+        'giftcards.manage',
+        'giftcards.configure',
       ].sort(),
     );
   });
@@ -101,6 +105,11 @@ describe('internal permission catalog', () => {
     // promotions.configure — Promotions & Coupons are company-wide pricing
     // configuration (Milestone 7E).
     expect(allowedScopeTypesFor('promotions.configure')).toEqual(['CORPORATE']);
+    // giftcards.* — a gift card is company-wide stored value; issuance,
+    // correction and purchasing configuration are all HQ (Milestone 7F).
+    expect(allowedScopeTypesFor('giftcards.view')).toEqual(['CORPORATE']);
+    expect(allowedScopeTypesFor('giftcards.manage')).toEqual(['CORPORATE']);
+    expect(allowedScopeTypesFor('giftcards.configure')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {

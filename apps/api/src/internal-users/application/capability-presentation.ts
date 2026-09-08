@@ -174,6 +174,26 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Manage Promotions & Coupons',
     definition: 'Manage Promotions & Coupons',
   },
+  // Milestone 7F — Gift Cards. All three CORPORATE-only, so the "all
+  // locations" / "their locations" phrasings are the same.
+  'giftcards.view': {
+    group: 'Gift Cards',
+    effectiveAll: 'View gift cards, balances and transaction history',
+    effectiveScoped: 'View gift cards, balances and transaction history',
+    definition: 'View gift cards, balances and transaction history',
+  },
+  'giftcards.manage': {
+    group: 'Gift Cards',
+    effectiveAll: 'Issue, deactivate and correct gift cards',
+    effectiveScoped: 'Issue, deactivate and correct gift cards',
+    definition: 'Issue, deactivate and correct gift cards',
+  },
+  'giftcards.configure': {
+    group: 'Gift Cards',
+    effectiveAll: 'Configure gift-card purchasing options',
+    effectiveScoped: 'Configure gift-card purchasing options',
+    definition: 'Configure gift-card purchasing options',
+  },
 };
 
 const GROUP_ORDER = [
@@ -183,6 +203,7 @@ const GROUP_ORDER = [
   'Locations',
   'Loyalty',
   'Promotions',
+  'Gift Cards',
   'Administration',
 ];
 
@@ -207,6 +228,9 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'loyalty.adjust',
   'loyalty.configure',
   'promotions.configure',
+  'giftcards.view',
+  'giftcards.manage',
+  'giftcards.configure',
   'users.view',
   'roles.view',
   'audit.view',

@@ -1,5 +1,13 @@
 import type {
   AdminAdjustMochaBeansRequest,
+  AdminGiftCardDetail,
+  AdminGiftCardSearchResponse,
+  AdjustGiftCardBalanceRequest,
+  GiftCardConfiguration,
+  GiftCardSearchRequest,
+  IssueGiftCardRequest,
+  IssueGiftCardResponse,
+  UpdateGiftCardConfigurationRequest,
   AdminAssignInternalUserRoleRequest,
   AdminInternalUserDetail,
   AdminLocationDetail,
@@ -1441,6 +1449,118 @@ export function updatePromotionFromBrowser(
   return promotionConfigureRequest<AdminPromotion>(
     `/${encodeURIComponent(promotionId)}`,
     "PATCH",
+    input,
+  );
+}
+
+// --- Admin: Gift Cards (Milestone 7F) -------------------------------
+// All via the internal admin proxy. The API (giftcards.view /
+// giftcards.manage / giftcards.configure, CORPORATE-only) is the authority
+// for every rule; a 400/409 carries a business-safe message shown as-is.
+// The gift-card SEARCH and every mutation is a POST/PUT with the payload in
+// the body — a full gift-card code must never appear in a URL.
+export type GiftCardMutationResult<T> =
+  | { outcome: "success"; data: T }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "conflict"; message: string }
+  | { outcome: "error"; message: string };
+
+async function giftCardRequest<T>(
+  path: string,
+  method: "POST" | "PUT",
+  body: unknown,
+): Promise<GiftCardMutationResult<T>> {
+  let response: Response;
+  try {
+    response = await fetch(`${INTERNAL_ADMIN_PROXY}/gift-cards${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "Please check the form and try again.",
+    };
+  }
+  if (response.status === 409) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "conflict",
+      message: parsed?.message ?? "That isn't possible right now.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return { outcome: "success", data: (await response.json()) as T };
+}
+
+export function searchGiftCardFromBrowser(
+  input: GiftCardSearchRequest,
+): Promise<GiftCardMutationResult<AdminGiftCardSearchResponse>> {
+  return giftCardRequest<AdminGiftCardSearchResponse>("/search", "POST", input);
+}
+
+export function issueGiftCardFromBrowser(
+  input: IssueGiftCardRequest,
+): Promise<GiftCardMutationResult<IssueGiftCardResponse>> {
+  return giftCardRequest<IssueGiftCardResponse>("", "POST", input);
+}
+
+export function correctGiftCardBalanceFromBrowser(
+  giftCardId: string,
+  input: AdjustGiftCardBalanceRequest,
+): Promise<GiftCardMutationResult<AdminGiftCardDetail>> {
+  return giftCardRequest<AdminGiftCardDetail>(
+    `/${encodeURIComponent(giftCardId)}/corrections`,
+    "POST",
+    input,
+  );
+}
+
+export function setGiftCardStatusFromBrowser(
+  giftCardId: string,
+  action: "deactivate" | "reactivate",
+  reason?: string,
+): Promise<GiftCardMutationResult<AdminGiftCardDetail>> {
+  return giftCardRequest<AdminGiftCardDetail>(
+    `/${encodeURIComponent(giftCardId)}/${action}`,
+    "POST",
+    reason ? { reason } : {},
+  );
+}
+
+export function updateGiftCardConfigurationFromBrowser(
+  input: UpdateGiftCardConfigurationRequest,
+): Promise<GiftCardMutationResult<GiftCardConfiguration>> {
+  return giftCardRequest<GiftCardConfiguration>(
+    "/configuration",
+    "PUT",
     input,
   );
 }

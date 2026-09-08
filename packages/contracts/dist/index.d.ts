@@ -784,7 +784,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
@@ -935,5 +935,62 @@ export interface AdminAdjustMochaBeansRequest {
     deltaBeans: number;
     reason: string;
     operationKey: string;
+}
+export declare const GIFT_CARD_MAX_VALUE_MINOR_UNITS = 200000;
+export type GiftCardStatus = "ACTIVE" | "INACTIVE";
+export type GiftCardTransactionType = "ISSUANCE" | "ADJUSTMENT";
+export interface AdminGiftCard {
+    id: string;
+    maskedCode: string;
+    last4: string;
+    status: GiftCardStatus;
+    originalValueMinorUnits: number;
+    balanceMinorUnits: number;
+    currency: string;
+    createdAt: string;
+}
+export interface AdminGiftCardTransaction {
+    id: string;
+    type: GiftCardTransactionType;
+    amountMinorUnits: number;
+    balanceAfterMinorUnits: number;
+    reason: string | null;
+    actorLabel: string | null;
+    createdAt: string;
+}
+export interface GiftCardSearchRequest {
+    code?: string;
+    giftCardId?: string;
+}
+export interface AdminGiftCardSearchResponse {
+    giftCards: AdminGiftCard[];
+}
+export interface AdminGiftCardDetail {
+    giftCard: AdminGiftCard;
+    transactions: AdminGiftCardTransaction[];
+}
+export interface IssueGiftCardRequest {
+    originalValueMinorUnits: number;
+    currency?: string;
+}
+export interface IssueGiftCardResponse {
+    giftCard: AdminGiftCard;
+    code: string;
+}
+export interface GiftCardStatusChangeRequest {
+    reason?: string;
+}
+export interface AdjustGiftCardBalanceRequest {
+    deltaMinorUnits: number;
+    reason: string;
+    operationKey: string;
+}
+export interface GiftCardConfiguration {
+    presetAmountsMinorUnits: number[];
+    customAmountEnabled: boolean;
+}
+export interface UpdateGiftCardConfigurationRequest {
+    presetAmountsMinorUnits: number[];
+    customAmountEnabled: boolean;
 }
 //# sourceMappingURL=index.d.ts.map

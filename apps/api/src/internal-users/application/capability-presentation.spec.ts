@@ -74,6 +74,7 @@ describe('capability presentation (Milestone 5E)', () => {
         'Locations',
         'Loyalty',
         'Promotions',
+        'Gift Cards',
         'Administration',
       ]);
       expect(groups.find((g) => g.group === 'Operations')?.items).toEqual([
@@ -100,6 +101,11 @@ describe('capability presentation (Milestone 5E)', () => {
       ]);
       expect(groups.find((g) => g.group === 'Promotions')?.items).toEqual([
         'Manage Promotions & Coupons',
+      ]);
+      expect(groups.find((g) => g.group === 'Gift Cards')?.items).toEqual([
+        'View gift cards, balances and transaction history',
+        'Issue, deactivate and correct gift cards',
+        'Configure gift-card purchasing options',
       ]);
       expect(groups.find((g) => g.group === 'Administration')?.items).toEqual([
         'View Admin users',

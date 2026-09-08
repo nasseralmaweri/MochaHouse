@@ -517,6 +517,11 @@ model InternalUser {
   checklistItemsExcepted   ChecklistInstanceItem[]      @relation("ChecklistItemExceptionBy")
   operationsTasksCreated   OperationsTask[]             @relation("OperationsTaskCreatedBy")
   operationsTasksCompleted OperationsTask[]             @relation("OperationsTaskCompletedBy")
+  // Milestone 7F — the gift-card ledger entries this HQ user performed
+  // (issuance and manual balance corrections). onDelete: Restrict (see
+  // GiftCardTransaction) so an internal user who has moved stored value
+  // cannot be hard-deleted and orphan that financial record.
+  giftCardTransactionsActed GiftCardTransaction[]      @relation("GiftCardTransactionActor")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -1347,4 +1352,141 @@ model OrderPromotionRedemption {
   createdAt           DateTime              @default(now())
 
   @@index([sourcePromotionId])
+}
+
+// --- Milestone 7F, Gift Card Foundation & Administration -------------
+// The financial and administrative foundation for Mocha House Gift Cards:
+// a secure gift-card instrument, its immutable transaction ledger, its
+// materialized balance, and the HQ administration surface. Gift Cards V1
+// are digital, but nothing here ties a card to a customer, a channel, or a
+// physical format — a later slice can add those without restructuring.
+//
+// This slice is NOT customer purchasing or checkout redemption. The ledger
+// is designed so future lifecycle operations (redemption, refund) can be
+// represented cleanly, but only the operations 7F actually performs are
+// implemented: HQ issuance and HQ manual correction (plus deactivate /
+// reactivate, which never touch the balance or the ledger).
+
+// A deliberately minimal administrative on/off switch. A zero balance is
+// NOT a status — balance represents depletion — so there is no DEPLETED or
+// EXPIRED value. Gift cards have no expiration in V1.
+enum GiftCardStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// The ledger gains a new type only when the capability that writes it
+// actually ships (the same discipline as MochaBeanEntryType). 7F writes
+// exactly two:
+//   ISSUANCE   — the opening entry, +originalValue, exactly one per card.
+//   ADJUSTMENT — an authorized HQ manual correction. Signed; always
+//                carries a trimmed non-empty `reason` and an
+//                `actorInternalUserId`, and is mirrored by an
+//                InternalAuditEvent written in the same transaction.
+// REDEMPTION and REFUND are intentionally absent — they are added by the
+// checkout-redemption and refund slices that write them.
+enum GiftCardTransactionType {
+  ISSUANCE
+  ADJUSTMENT
+}
+
+// One gift card. `codeHash` is the ONLY lookup path: the human code is
+// canonicalized (upper-cased, un-spaced) and stored as an HMAC-SHA-256
+// digest keyed by GIFT_CARD_CODE_SECRET — the plaintext code is never
+// persisted and is returned exactly once, in the HQ issuance response.
+// `last4` backs the masked representation (`•••• •••• •••• 4821`) used in
+// every normal Admin read.
+//
+// `balanceMinorUnits` is a materialized projection of the sum of this
+// card's ledger entries — kept on the row (the same pattern as
+// Order.status ↔ OrderStatusHistory and CustomerLoyaltyAccount.balance) so
+// a balance read needs no aggregate, and, crucially, so there is a single
+// row to lock (SELECT ... FOR UPDATE) when enforcing the monetary
+// invariants under concurrency. Invariants (enforced in the service,
+// before every write): 0 <= balanceMinorUnits <= 200000 (the approved
+// $2,000.00 ceiling), and `originalValueMinorUnits` is immutable after
+// issuance.
+model GiftCard {
+  id                      String         @id @default(uuid(7))
+  codeHash                String         @unique
+  last4                   String
+  status                  GiftCardStatus @default(ACTIVE)
+  originalValueMinorUnits Int
+  balanceMinorUnits       Int            @default(0)
+  currency                String         @default("USD")
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
+
+  transactions GiftCardTransaction[]
+
+  @@index([status])
+}
+
+// Append-only gift-card transaction history — the authoritative record of
+// every movement of stored value (mirrors OrderStatusHistory /
+// MochaBeanLedgerEntry / InternalAuditEvent: the service never updates or
+// deletes a row here). `amountMinorUnits` is signed: positive for ISSUANCE
+// and a positive ADJUSTMENT, negative for a deduction.
+// `balanceAfterMinorUnits` is the card balance immediately after this
+// entry — a financial ledger should be readable without re-summing (the
+// OrderLine snapshot philosophy).
+//
+// Every balance-changing write inserts exactly one row here AND updates
+// GiftCard.balanceMinorUnits by the same signed delta inside ONE
+// transaction, so the ledger and the materialized balance can never
+// disagree.
+//
+// Idempotency / integrity (partial unique indexes added in the migration —
+// Prisma cannot express the WHERE predicate, so they live in migration.sql
+// and are documented here):
+//   - UNIQUE (giftCardId) WHERE type = 'ISSUANCE' — exactly one issuance
+//     entry per card.
+//   - UNIQUE (operationKey) WHERE type = 'ADJUSTMENT' — a manual correction
+//     is idempotent on its caller-supplied operationKey; a retry with the
+//     same key returns the existing outcome instead of applying it twice.
+model GiftCardTransaction {
+  id                     String                  @id @default(uuid(7))
+  giftCardId             String
+  type                   GiftCardTransactionType
+  // Signed whole minor units. The resulting card balance is never allowed
+  // below zero or above 200000 (enforced in the service, before the write).
+  amountMinorUnits       Int
+  // Card balance immediately after this entry was applied.
+  balanceAfterMinorUnits Int
+  // Required (trimmed, non-empty) for ADJUSTMENT; null for ISSUANCE.
+  reason                 String?
+  // The HQ operator who performed this entry. Set for a HQ-issued card and
+  // for every ADJUSTMENT. onDelete: Restrict keeps the financial record —
+  // and the balance it accounts for — intact.
+  actorInternalUserId    String?
+  // Caller-supplied idempotency key for ADJUSTMENT; null for ISSUANCE.
+  operationKey           String?
+  createdAt              DateTime                @default(now())
+
+  giftCard          GiftCard      @relation(fields: [giftCardId], references: [id], onDelete: Restrict)
+  actorInternalUser InternalUser? @relation("GiftCardTransactionActor", fields: [actorInternalUserId], references: [id], onDelete: Restrict)
+
+  @@index([giftCardId, createdAt])
+  @@index([actorInternalUserId])
+}
+
+// The single company-wide gift-card purchasing configuration, persisted now
+// so the FUTURE customer-purchasing slice has HQ settings to read. Nothing
+// in 7F consumes it. Modelled as a keyed singleton (like
+// LoyaltyConfiguration): every code path uses key "company". Seeded, and
+// also lazily upserted by the service so a fresh database (or a test that
+// skips the seed) still reads safe defaults.
+//
+// `presetAmountsMinorUnits` are HQ-editable suggested purchase amounts
+// (integer minor units, each 1..200000). The seeded values ($10/$25/$50/
+// $100) are examples, never permanent business rules.
+// `customAmountEnabled` toggles whether a customer will later be able to
+// enter their own amount. No custom-amount min/max fields in V1.
+model GiftCardConfiguration {
+  id                      String   @id @default(uuid(7))
+  key                     String   @unique
+  presetAmountsMinorUnits Int[]
+  customAmountEnabled      Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 }
