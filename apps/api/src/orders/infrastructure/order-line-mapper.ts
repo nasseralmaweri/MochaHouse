@@ -1,5 +1,6 @@
 import type {
   OrderLineSummary,
+  OrderLoyaltyBonusSummary,
   OrderLoyaltyRewardSummary,
 } from '@mocha-house/contracts';
 import type { Prisma } from '@mocha-house/database';
@@ -53,5 +54,38 @@ export function toOrderLoyaltyRewardSummary(
     beanCost: redemption.beanCost,
     discountMinorUnits: redemption.discountMinorUnits,
     freeItemName: redemption.freeItemProductName,
+  };
+}
+
+// Milestone 7D — the immutable bonus Mocha Beans snapshot, projected for
+// every order surface. Null for an order that earned no bonus. Every value
+// comes from OrderLoyaltyBonus / OrderLoyaltyBonusItem — never re-read from
+// a live LoyaltyBonusPromotion.
+export function toOrderLoyaltyBonusSummary(
+  bonus: {
+    totalBonusBeans: number;
+    items: {
+      promotionName: string;
+      promotionType: 'EXTRA_BEANS' | 'MULTIPLIER';
+      bonusValue: number;
+      productName: string;
+      qualifyingUnits: number;
+      bonusBeans: number;
+    }[];
+  } | null,
+): OrderLoyaltyBonusSummary | null {
+  if (!bonus) {
+    return null;
+  }
+  return {
+    totalBonusBeans: bonus.totalBonusBeans,
+    items: bonus.items.map((item) => ({
+      promotionName: item.promotionName,
+      promotionType: item.promotionType,
+      bonusValue: item.bonusValue,
+      productName: item.productName,
+      qualifyingUnits: item.qualifyingUnits,
+      bonusBeans: item.bonusBeans,
+    })),
   };
 }

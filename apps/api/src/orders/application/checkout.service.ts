@@ -26,6 +26,7 @@ import {
   LoyaltyRedemptionService,
   type RedemptionPlan,
 } from '../../loyalty/application/loyalty-redemption.service';
+import { LoyaltyBonusService } from '../../loyalty/application/loyalty-bonus.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import {
@@ -34,19 +35,26 @@ import {
 } from '../infrastructure/order-identifiers';
 import {
   toOrderLineSummary,
+  toOrderLoyaltyBonusSummary,
   toOrderLoyaltyRewardSummary,
 } from '../infrastructure/order-line-mapper';
 
 const MAX_ORDER_NUMBER_ATTEMPTS = 5;
 
 type OrderWithRelations = Prisma.OrderGetPayload<{
-  include: { lines: true; location: true; loyaltyRewardRedemption: true };
+  include: {
+    lines: true;
+    location: true;
+    loyaltyRewardRedemption: true;
+    loyaltyBonus: { include: { items: true } };
+  };
 }>;
 
 const ORDER_INCLUDE = {
   lines: true,
   location: true,
   loyaltyRewardRedemption: true,
+  loyaltyBonus: { include: { items: true } },
 } satisfies Prisma.OrderInclude;
 
 type PaymentAttemptRow = Prisma.PaymentAttemptGetPayload<Record<string, never>>;
@@ -67,6 +75,7 @@ export class CheckoutService {
     private readonly customersService: CustomersService,
     private readonly loyaltyService: LoyaltyService,
     private readonly redemptionService: LoyaltyRedemptionService,
+    private readonly bonusService: LoyaltyBonusService,
     @Inject(PAYMENT_PROVIDER)
     private readonly paymentProvider: PaymentProvider,
   ) {}
@@ -294,6 +303,7 @@ export class CheckoutService {
       currency: order.currency,
       lines: order.lines.map(toOrderLineSummary),
       loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
+      loyaltyBonus: toOrderLoyaltyBonusSummary(order.loyaltyBonus),
       createdAt: order.createdAt.toISOString(),
     };
   }
@@ -630,6 +640,31 @@ export class CheckoutService {
           qualifyingSubtotalMinorUnits: priced.subtotal - rewardDiscount,
           currency: priced.currency,
         });
+        // Milestone 7D — award any Bonus Mocha Bean Promotions on qualifying
+        // items, as a dedicated positive BONUS_EARN entry, in this same
+        // transaction. Uses CURRENT promotion state and the qualifying spend
+        // that remains after the reward: a FREE_ITEM free unit earns no
+        // bonus; a FIXED_AMOUNT discount is allocated across items
+        // proportionally. Writes nothing when no promotion applies.
+        await this.bonusService.applyBonusForOrder({
+          tx,
+          customerId,
+          orderId: order.id,
+          locationId: request.locationId,
+          currency: priced.currency,
+          pricedLines: priced.lines.map((line) => ({
+            productId: line.productId,
+            productName: line.productName,
+            unitPrice: line.unitPrice,
+            quantity: line.quantity,
+          })),
+          freeItemProductId:
+            plan?.rewardType === 'FREE_ITEM'
+              ? plan.freeItem?.productId ?? null
+              : null,
+          fixedRewardDiscountMinorUnits:
+            plan?.rewardType === 'FIXED_AMOUNT' ? plan.discountMinorUnits : 0,
+        });
       }
 
       // Re-fetch so the confirmation sees the redemption snapshot written
@@ -656,6 +691,7 @@ export class CheckoutService {
       currency: order.currency,
       lines: order.lines.map(toOrderLineSummary),
       loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
+      loyaltyBonus: toOrderLoyaltyBonusSummary(order.loyaltyBonus),
       createdAt: order.createdAt.toISOString(),
     };
   }

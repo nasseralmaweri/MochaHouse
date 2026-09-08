@@ -1,5 +1,7 @@
 import "server-only";
 import type {
+  AdminLoyaltyBonusPromotionOptions,
+  AdminLoyaltyBonusPromotionsResponse,
   AdminLoyaltyCatalogOptions,
   AdminLoyaltyCustomerDetail,
   AdminLoyaltyCustomerSearchResponse,
@@ -155,4 +157,16 @@ export function getAdminLoyaltyRewards() {
 
 export function getLoyaltyCatalogOptions() {
   return configureGet<AdminLoyaltyCatalogOptions>("catalog-options");
+}
+
+// --- Milestone 7D: Bonus Mocha Beans Promotions (loyalty.configure) ---
+
+export function getAdminLoyaltyBonusPromotions() {
+  return configureGet<AdminLoyaltyBonusPromotionsResponse>("bonus-promotions");
+}
+
+export function getLoyaltyBonusPromotionOptions() {
+  return configureGet<AdminLoyaltyBonusPromotionOptions>(
+    "bonus-promotion-options",
+  );
 }

@@ -158,12 +158,13 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Manually adjust customer Mocha Beans',
     definition: 'Manually adjust customer Mocha Beans',
   },
-  // Milestone 7B — HQ loyalty configuration. CORPORATE-only.
+  // Milestone 7B — HQ loyalty configuration. CORPORATE-only. Milestone 7D
+  // adds Bonus Mocha Bean Promotions under the same key.
   'loyalty.configure': {
     group: 'Loyalty',
-    effectiveAll: 'Configure the earning rate and Rewards Catalog',
-    effectiveScoped: 'Configure the earning rate and Rewards Catalog',
-    definition: 'Configure the earning rate and Rewards Catalog',
+    effectiveAll: 'Configure earning, Rewards Catalog and bonus promotions',
+    effectiveScoped: 'Configure earning, Rewards Catalog and bonus promotions',
+    definition: 'Configure earning, Rewards Catalog and bonus promotions',
   },
 };
 

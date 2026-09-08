@@ -28,6 +28,7 @@ model Location {
   preferredByCustomers         CustomerPreferredLocation[]
   checklistInstances           ChecklistInstance[]
   operationsTasks              OperationsTask[]
+  loyaltyBonusPromotionEligibility LoyaltyBonusPromotionLocation[]
 }
 
 model Category {
@@ -59,6 +60,7 @@ model Product {
   priceOverrides        LocationProductPriceOverride[]
   availabilityOverrides LocationProductAvailabilityOverride[]
   loyaltyRewardEligibility LoyaltyRewardProduct[]
+  loyaltyBonusPromotionEligibility LoyaltyBonusPromotionProduct[]
 
   @@index([categoryId])
 }
@@ -376,6 +378,7 @@ model Order {
   statusHistory     OrderStatusHistory[]
   mochaBeanEntries  MochaBeanLedgerEntry[]
   loyaltyRewardRedemption OrderLoyaltyRewardRedemption?
+  loyaltyBonus            OrderLoyaltyBonus?
 
   @@index([locationId])
   @@index([customerId])
@@ -797,6 +800,14 @@ enum MochaBeanEntryType {
   // and the OrderLoyaltyRewardRedemption snapshot. @@unique([type, orderId])
   // makes it exactly-once per order.
   REDEEM
+  // Milestone 7D — additional Beans awarded by one or more Bonus Mocha Bean
+  // Promotions on a qualifying order. `amount` is positive (the sum of every
+  // qualifying item's bonus), `orderId` is set, and the entry is written in
+  // the SAME transaction as the Order, the standard EARN entry and the
+  // OrderLoyaltyBonus snapshot. @@unique([type, orderId]) makes it
+  // exactly-once per order. It is separate from EARN so HQ accounting can
+  // see standard vs promotional earning at a glance.
+  BONUS_EARN
 }
 
 // One row per Customer. `balance` is a materialized projection of the sum
@@ -843,9 +854,10 @@ model MochaBeanLedgerEntry {
   amount           Int
   // Required (trimmed, non-empty) for MANUAL_ADJUSTMENT; null for EARN.
   reason           String?
-  // Set for EARN (and for a future EARN reversal). onDelete: SetNull keeps
-  // the ledger entry — and the balance it accounts for — intact even if the
-  // Order is later removed, exactly like Order.customerId.
+  // Set for EARN, REDEEM and BONUS_EARN (and for a future EARN reversal).
+  // onDelete: SetNull keeps the ledger entry — and the balance it accounts
+  // for — intact even if the Order is later removed, exactly like
+  // Order.customerId.
   orderId          String?
   // Set for MANUAL_ADJUSTMENT: the HQ operator who performed it.
   actorInternalUserId String?
@@ -1002,4 +1014,133 @@ model OrderLoyaltyRewardRedemption {
   createdAt           DateTime          @default(now())
 
   @@index([sourceRewardId])
+}
+
+// --- Milestone 7D, Bonus Mocha Beans Promotions --------------------
+// HQ-defined, deliberately simple product-based Bean bonus campaigns. NOT a
+// generic promotion/rules engine: two bonus types, product targeting only,
+// optional flat date window, all-or-selected locations. A promotion never
+// discounts money — it only awards extra Mocha Beans on qualifying items of
+// a successful order. Promotions are never hard-deleted (isActive is the
+// off switch) so a historical OrderLoyaltyBonusItem can always still point
+// at the promotion it used.
+
+enum LoyaltyBonusPromotionType {
+  // A flat, additive bonus: `bonusValue` whole Mocha Beans for every
+  // qualifying PAID unit of an eligible product (a unit made free by a
+  // FREE_ITEM loyalty reward does not qualify). Never derived from price.
+  EXTRA_BEANS
+  // The qualifying item's TOTAL earning becomes `bonusValue` times its
+  // standard earning (`bonusValue` >= 2). The BONUS_EARN contribution is
+  // therefore `standardItemBeans * (bonusValue - 1)`, computed on the
+  // item's post-discount qualifying spend at the configured company rate.
+  MULTIPLIER
+}
+
+model LoyaltyBonusPromotion {
+  id                    String                    @id @default(uuid(7))
+  name                  String
+  type                  LoyaltyBonusPromotionType
+  // EXTRA_BEANS: whole Beans per qualifying paid unit (1..100000).
+  // MULTIPLIER: whole multiple of standard item earning (2..10).
+  bonusValue            Int
+  isActive              Boolean                   @default(true)
+  // Optional active window. A promotion is eligible for an order only when
+  // isActive AND (startsAt is null OR startsAt <= orderTime) AND
+  // (endsAt is null OR orderTime < endsAt) — end-exclusive.
+  startsAt              DateTime?
+  endsAt                DateTime?
+  // true  -> applies at every location; no join rows are required.
+  // false -> applies only at the locations in `eligibleLocations`.
+  appliesToAllLocations Boolean                   @default(false)
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+
+  eligibleProducts  LoyaltyBonusPromotionProduct[]
+  eligibleLocations LoyaltyBonusPromotionLocation[]
+
+  @@index([isActive])
+}
+
+// Product targeting. onDelete: Cascade from the promotion (a join row is
+// meaningless without it); onDelete: Restrict from the Product so a catalog
+// product a promotion depends on cannot be hard-deleted out from under it.
+model LoyaltyBonusPromotionProduct {
+  promotionId String
+  productId   String
+  createdAt   DateTime @default(now())
+
+  promotion LoyaltyBonusPromotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  product   Product               @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@id([promotionId, productId])
+  @@index([productId])
+}
+
+// Selected-location targeting — only present when appliesToAllLocations is
+// false. Same delete semantics as LoyaltyBonusPromotionProduct.
+model LoyaltyBonusPromotionLocation {
+  promotionId String
+  locationId  String
+  createdAt   DateTime @default(now())
+
+  promotion LoyaltyBonusPromotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  location  Location              @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@id([promotionId, locationId])
+  @@index([locationId])
+}
+
+// The immutable per-order snapshot of the bonus Mocha Beans awarded.
+// Written in the SAME transaction as the Order, the REDEEM/EARN ledger
+// entries and the single positive BONUS_EARN ledger entry — never split
+// into independent commits. Historical orders never change when HQ later
+// edits or deactivates a promotion; every value here is copied by value.
+//
+// `orderId @unique` is both the "one bonus record per order" invariant and
+// the idempotency anchor: a checkout replay re-uses the same Order (or
+// none), so this row — and the BONUS_EARN entry — is created at most once.
+model OrderLoyaltyBonus {
+  id              String   @id @default(uuid(7))
+  orderId         String   @unique
+  order           Order    @relation(fields: [orderId], references: [id])
+  // Sum of every item's bonusBeans — equals the BONUS_EARN ledger amount.
+  totalBonusBeans Int
+  createdAt       DateTime @default(now())
+
+  items OrderLoyaltyBonusItem[]
+}
+
+// One row per qualifying order line that earned a bonus. Enough detail to
+// answer, from the snapshot alone: which promotion applied, its name / type
+// / configured value, the qualifying product, how many paid units
+// qualified, the post-discount qualifying spend, the standard Beans those
+// units earned, and the bonus Beans awarded.
+model OrderLoyaltyBonusItem {
+  id                        String            @id @default(uuid(7))
+  orderLoyaltyBonusId       String
+  orderLoyaltyBonus         OrderLoyaltyBonus @relation(fields: [orderLoyaltyBonusId], references: [id], onDelete: Cascade)
+
+  // Plain reference to the promotion this came from — nullable and
+  // un-joined on purpose (mirrors OrderLoyaltyRewardRedemption.sourceRewardId).
+  sourcePromotionId         String?
+
+  // Immutable snapshot.
+  promotionName             String
+  promotionType             LoyaltyBonusPromotionType
+  bonusValue                Int
+  productId                 String
+  productName               String
+  // Paid qualifying units (a FREE_ITEM-reward free unit is excluded).
+  qualifyingUnits           Int
+  // Post-discount qualifying spend attributed to those units, minor units.
+  qualifyingSpendMinorUnits Int
+  // Standard Beans those units earned at the configured company rate — the
+  // MULTIPLIER math input; informational for EXTRA_BEANS.
+  standardBeansForItem      Int
+  bonusBeans                Int
+  createdAt                 DateTime          @default(now())
+
+  @@index([orderLoyaltyBonusId])
+  @@index([sourcePromotionId])
 }

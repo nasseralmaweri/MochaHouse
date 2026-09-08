@@ -7,6 +7,7 @@ import { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   toOrderLineSummary,
+  toOrderLoyaltyBonusSummary,
   toOrderLoyaltyRewardSummary,
 } from '../infrastructure/order-line-mapper';
 
@@ -44,7 +45,12 @@ export class CustomerOrdersService {
     // like the guest accessToken check in CheckoutService.getStatus.
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, customerId },
-      include: { location: true, lines: true, loyaltyRewardRedemption: true },
+      include: {
+        location: true,
+        lines: true,
+        loyaltyRewardRedemption: true,
+        loyaltyBonus: { include: { items: true } },
+      },
     });
 
     if (!order) {
@@ -55,6 +61,7 @@ export class CustomerOrdersService {
       ...this.toSummary(order),
       lines: order.lines.map(toOrderLineSummary),
       loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
+      loyaltyBonus: toOrderLoyaltyBonusSummary(order.loyaltyBonus),
     };
   }
 

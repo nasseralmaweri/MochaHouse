@@ -158,6 +158,11 @@ export default function OrderConfirmationPage() {
               {status.loyaltyReward.beanCost} Mocha Beans used
             </p>
           ) : null}
+          {status.loyaltyBonus && status.loyaltyBonus.totalBonusBeans > 0 ? (
+            <p className="text-xs text-status-success">
+              +{status.loyaltyBonus.totalBonusBeans} bonus Mocha Beans earned
+            </p>
+          ) : null}
         </div>
       </Card>
 

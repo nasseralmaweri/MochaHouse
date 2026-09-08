@@ -287,6 +287,26 @@ export interface OrderLoyaltyRewardSummary {
   freeItemName: string | null;
 }
 
+// The immutable snapshot of the bonus Mocha Beans awarded on an order by one
+// or more Bonus Mocha Bean Promotions (Milestone 7D). Reused by
+// confirmation, customer history and the store order detail. Every value is
+// what was true AT ORDER TIME — later HQ edits to a promotion never change
+// these. `null` for an order that earned no bonus.
+export interface OrderLoyaltyBonusItemSummary {
+  promotionName: string;
+  promotionType: LoyaltyBonusPromotionType;
+  bonusValue: number;
+  productName: string;
+  // Paid qualifying units this promotion applied to.
+  qualifyingUnits: number;
+  bonusBeans: number;
+}
+
+export interface OrderLoyaltyBonusSummary {
+  totalBonusBeans: number;
+  items: OrderLoyaltyBonusItemSummary[];
+}
+
 export interface OrderLineSummary {
   productId: string;
   productName: string;
@@ -324,6 +344,8 @@ export interface OrderConfirmation {
   currency: string;
   lines: OrderLineSummary[];
   loyaltyReward: OrderLoyaltyRewardSummary | null;
+  // Milestone 7D — bonus Mocha Beans earned from HQ promotions, or null.
+  loyaltyBonus: OrderLoyaltyBonusSummary | null;
   createdAt: string;
 }
 
@@ -340,6 +362,8 @@ export interface OrderStatusResponse {
   currency: string;
   lines: OrderLineSummary[];
   loyaltyReward: OrderLoyaltyRewardSummary | null;
+  // Milestone 7D — bonus Mocha Beans earned from HQ promotions, or null.
+  loyaltyBonus: OrderLoyaltyBonusSummary | null;
   createdAt: string;
 }
 
@@ -512,6 +536,8 @@ export interface CustomerOrderSummary {
 export interface CustomerOrderDetail extends CustomerOrderSummary {
   lines: OrderLineSummary[];
   loyaltyReward: OrderLoyaltyRewardSummary | null;
+  // Milestone 7D — bonus Mocha Beans earned from HQ promotions, or null.
+  loyaltyBonus: OrderLoyaltyBonusSummary | null;
 }
 
 // --- Loyalty: Mocha Beans balance + rewards (Milestone 7A; rewards 7B) --
@@ -668,6 +694,76 @@ export interface UpdateLoyaltyRewardRequest {
   sortOrder?: number;
 }
 
+// --- Admin: Bonus Mocha Beans Promotions (Milestone 7D) -------------
+// GET/POST/PATCH /api/v1/admin/loyalty/bonus-promotions[...]
+// (`loyalty.configure`, CORPORATE-only). Deliberately simple product-based
+// Bean bonus campaigns — NOT a generic promotion/rules engine. Promotions
+// are never hard-deleted; `isActive` is the off switch. A promotion never
+// discounts money — it only awards extra Mocha Beans on qualifying items.
+export type LoyaltyBonusPromotionType = "EXTRA_BEANS" | "MULTIPLIER";
+
+export interface AdminLoyaltyBonusPromotion {
+  id: string;
+  name: string;
+  type: LoyaltyBonusPromotionType;
+  // EXTRA_BEANS: whole Beans per qualifying paid unit (1..100000).
+  // MULTIPLIER: whole multiple of standard item earning (2..10).
+  bonusValue: number;
+  isActive: boolean;
+  // ISO 8601, or null for "no bound".
+  startsAt: string | null;
+  endsAt: string | null;
+  appliesToAllLocations: boolean;
+  eligibleProducts: AdminLoyaltyRewardCatalogRef[];
+  // Empty when appliesToAllLocations is true.
+  eligibleLocations: AdminLoyaltyRewardCatalogRef[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminLoyaltyBonusPromotionsResponse {
+  promotions: AdminLoyaltyBonusPromotion[];
+}
+
+// GET /api/v1/admin/loyalty/bonus-promotion-options (`loyalty.configure`).
+// The product + location picker data for building a promotion — identity
+// and name only, so managing promotions never requires `catalog.view` or
+// `locations.view`.
+export interface AdminLoyaltyBonusPromotionOptions {
+  products: AdminLoyaltyRewardCatalogRef[];
+  locations: AdminLoyaltyRewardCatalogRef[];
+}
+
+// `type` is required and fixed at creation (never editable). `bonusValue`
+// range depends on `type` (see above). At least one `eligibleProductId` is
+// required. Location targeting is `appliesToAllLocations: true` OR at least
+// one `eligibleLocationId`. If both `startsAt` and `endsAt` are given,
+// `endsAt` must be after `startsAt`.
+export interface CreateLoyaltyBonusPromotionRequest {
+  name: string;
+  type: LoyaltyBonusPromotionType;
+  bonusValue: number;
+  eligibleProductIds: string[];
+  appliesToAllLocations?: boolean;
+  eligibleLocationIds?: string[];
+  startsAt?: string | null;
+  endsAt?: string | null;
+}
+
+// Every field optional — only present fields change. `type` is NOT
+// accepted. Providing `eligibleProductIds` / `eligibleLocationIds` REPLACES
+// that list wholesale. `isActive` toggles activation.
+export interface UpdateLoyaltyBonusPromotionRequest {
+  name?: string;
+  bonusValue?: number;
+  eligibleProductIds?: string[];
+  appliesToAllLocations?: boolean;
+  eligibleLocationIds?: string[];
+  startsAt?: string | null;
+  endsAt?: string | null;
+  isActive?: boolean;
+}
+
 // --- Reorder from order history (Milestone 4G) -------------------------
 // The historical Order is a snapshot/reference only. A reorder is ALWAYS
 // revalidated against the current location, menu, product availability,
@@ -786,6 +882,9 @@ export interface StoreOrderDetail extends StoreOrderSummary {
   rewardDiscount: number;
   total: number;
   loyaltyReward: OrderLoyaltyRewardSummary | null;
+  // Milestone 7D — bonus Mocha Beans earned from HQ promotions, or null, so
+  // staff/HQ can explain the order's Bean accounting.
+  loyaltyBonus: OrderLoyaltyBonusSummary | null;
 }
 
 export interface AdvanceOrderStatusRequest {
@@ -1195,7 +1294,8 @@ export const INTERNAL_PERMISSION_KEYS = [
   "loyalty.view",
   "loyalty.adjust",
   // Milestone 7B — HQ loyalty configuration: the company-wide earning rate
-  // and the Rewards Catalog. CORPORATE-only; a Store Manager never holds it.
+  // and the Rewards Catalog. Milestone 7D also reuses this key for Bonus
+  // Mocha Bean Promotions. CORPORATE-only; a Store Manager never holds it.
   "loyalty.configure",
 ] as const;
 
@@ -1383,7 +1483,7 @@ export const INTERNAL_PERMISSION_METADATA: Record<
   "loyalty.configure": {
     key: "loyalty.configure",
     description:
-      "Configure the standard company-wide Mocha Bean earning rate and manage the customer Rewards Catalog. A corporate capability.",
+      "Configure the standard company-wide Mocha Bean earning rate, manage the customer Rewards Catalog, and manage Bonus Mocha Bean Promotions. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
@@ -1649,7 +1749,11 @@ export interface RenameOpeningChecklistTemplateSectionRequest {
 // EARN and REDEEM are automatic (order-driven); MANUAL_ADJUSTMENT is an HQ
 // action. REDEEM (Milestone 7C) is a negative entry for Beans spent on a
 // reward.
-export type MochaBeanLedgerEntryType = "EARN" | "MANUAL_ADJUSTMENT" | "REDEEM";
+export type MochaBeanLedgerEntryType =
+  | "EARN"
+  | "MANUAL_ADJUSTMENT"
+  | "REDEEM"
+  | "BONUS_EARN";
 
 // One row of the internal Mocha Bean ledger, projected for HQ. `amount` is
 // signed whole Beans. `actorLabel` is the HQ operator's name/email for a

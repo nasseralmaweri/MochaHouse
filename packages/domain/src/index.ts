@@ -623,3 +623,218 @@ export function computeLoyaltyRewardDiscount(
     freeItem: { productId: chosen.productId, productName: chosen.productName },
   };
 }
+
+// --- Bonus Mocha Beans Promotions (Milestone 7D) ------------------
+// Pure, framework-agnostic computation of the ADDITIONAL Mocha Beans one or
+// more HQ bonus promotions award on a qualifying order. Never touches a
+// database and never changes the standard order-level EARN — the caller
+// still earns standard Beans on the post-discount merchandise subtotal
+// exactly as before; this returns only the BONUS_EARN contribution.
+//
+// Deliberately simple (Milestone 7D is not a rules engine):
+//   - Promotions target specific PRODUCTS only.
+//   - The caller pre-filters `promotions` to those that are active, inside
+//     their date window, and eligible for the order's location, and sorts
+//     them by a stable order (creation time, then id) so ties resolve
+//     deterministically.
+//   - EXTRA_BEANS: `bonusValue` whole Beans per qualifying PAID unit.
+//   - MULTIPLIER: the item's total earning becomes `bonusValue`x its
+//     standard earning, so the bonus contribution is
+//     `standardItemBeans * (bonusValue - 1)`.
+//   - At most ONE promotion applies per qualifying item — the one producing
+//     the highest Bean benefit for that item (first in the sorted list on a
+//     tie). Bonuses never stack on the same item.
+//
+// Post-discount qualifying spend (Milestone 7C interaction):
+//   - A unit made free by a FREE_ITEM reward is NOT a paid qualifying unit —
+//     it earns neither EXTRA_BEANS nor a spend-based multiplier bonus.
+//   - An order-level FIXED_AMOUNT reward discount is allocated across the
+//     paid merchandise proportionally (integer minor units, largest
+//     remainder first) so each item's multiplier bonus is computed on the
+//     spend that actually remains attributable to it.
+//
+// All money is integer minor units. `unitPriceMinorUnits` is the fully
+// resolved per-unit price INCLUDING modifier adjustments, exactly as
+// priceCart produces it.
+
+export type LoyaltyBonusPromotionKind = "EXTRA_BEANS" | "MULTIPLIER";
+
+export interface BonusPromotionInput {
+  id: string;
+  name: string;
+  type: LoyaltyBonusPromotionKind;
+  // EXTRA_BEANS: whole Beans per qualifying paid unit. MULTIPLIER: the whole
+  // multiple of standard item earning (>= 2).
+  bonusValue: number;
+  eligibleProductIds: string[];
+}
+
+export interface BonusCartLine {
+  productId: string;
+  productName: string;
+  unitPriceMinorUnits: number;
+  quantity: number;
+}
+
+export interface OrderBonusInput {
+  lines: BonusCartLine[];
+  // The current company-wide standard earning rate (Milestone 7B).
+  standardRatePerDollar: number;
+  // The single unit made free by a FREE_ITEM loyalty reward (Milestone 7C),
+  // or null. One unit of this product does not count as a paid qualifying
+  // unit.
+  freeItemProductId: string | null;
+  // An order-level FIXED_AMOUNT loyalty-reward discount (Milestone 7C) in
+  // integer minor units, or 0. Allocated proportionally across paid
+  // merchandise for item-level qualifying-spend purposes.
+  fixedRewardDiscountMinorUnits: number;
+  // Pre-filtered (active + in window + location-eligible) and pre-sorted
+  // (stable creation order) by the caller.
+  promotions: BonusPromotionInput[];
+}
+
+export interface OrderBonusItemResult {
+  sourcePromotionId: string;
+  promotionName: string;
+  promotionType: LoyaltyBonusPromotionKind;
+  bonusValue: number;
+  productId: string;
+  productName: string;
+  qualifyingUnits: number;
+  qualifyingSpendMinorUnits: number;
+  standardBeansForItem: number;
+  bonusBeans: number;
+}
+
+export interface OrderBonusResult {
+  totalBonusBeans: number;
+  items: OrderBonusItemResult[];
+}
+
+export function computeOrderLoyaltyBonuses(
+  input: OrderBonusInput,
+): OrderBonusResult {
+  const rate = input.standardRatePerDollar;
+
+  // Paid units per line — one unit of the FREE_ITEM reward product is not
+  // paid. Only ever ONE unit total is free (7C frees a single unit).
+  let freeUnitsRemaining = input.freeItemProductId === null ? 0 : 1;
+  const paidUnits = input.lines.map((line) => {
+    let units = Math.max(0, Math.floor(line.quantity));
+    if (
+      freeUnitsRemaining > 0 &&
+      line.productId === input.freeItemProductId &&
+      units > 0
+    ) {
+      units -= 1;
+      freeUnitsRemaining -= 1;
+    }
+    return units;
+  });
+
+  const paidGross = input.lines.map(
+    (line, i) => Math.max(0, line.unitPriceMinorUnits) * paidUnits[i],
+  );
+  const totalPaidGross = paidGross.reduce((sum, n) => sum + n, 0);
+
+  // Proportional allocation of an order-level FIXED_AMOUNT reward discount
+  // across the paid merchandise. Largest-remainder method, deterministic
+  // tie-break on line index, capped so no line goes below zero.
+  const fixedDiscount = Math.max(
+    0,
+    Math.min(
+      Math.floor(input.fixedRewardDiscountMinorUnits) || 0,
+      totalPaidGross,
+    ),
+  );
+  const allocatedDiscount = allocateProportionally(paidGross, fixedDiscount);
+
+  const qualifyingSpend = paidGross.map((gross, i) =>
+    Math.max(0, gross - allocatedDiscount[i]),
+  );
+
+  const items: OrderBonusItemResult[] = [];
+  for (let i = 0; i < input.lines.length; i++) {
+    const line = input.lines[i];
+    const units = paidUnits[i];
+    if (units <= 0) {
+      continue; // no paid qualifying unit on this line
+    }
+
+    const standardBeansForItem = mochaBeansForQualifyingSpend(
+      qualifyingSpend[i],
+      rate,
+    );
+
+    let best: OrderBonusItemResult | null = null;
+    for (const promotion of input.promotions) {
+      if (!promotion.eligibleProductIds.includes(line.productId)) {
+        continue;
+      }
+
+      let bonusBeans: number;
+      if (promotion.type === "EXTRA_BEANS") {
+        bonusBeans = Math.max(0, Math.floor(promotion.bonusValue)) * units;
+      } else {
+        const multiplier = Math.max(0, Math.floor(promotion.bonusValue));
+        bonusBeans =
+          multiplier >= 2 ? standardBeansForItem * (multiplier - 1) : 0;
+      }
+
+      if (bonusBeans <= 0) {
+        continue;
+      }
+      // First promotion in the caller's stable order wins a tie.
+      if (best === null || bonusBeans > best.bonusBeans) {
+        best = {
+          sourcePromotionId: promotion.id,
+          promotionName: promotion.name,
+          promotionType: promotion.type,
+          bonusValue: promotion.bonusValue,
+          productId: line.productId,
+          productName: line.productName,
+          qualifyingUnits: units,
+          qualifyingSpendMinorUnits: qualifyingSpend[i],
+          standardBeansForItem,
+          bonusBeans,
+        };
+      }
+    }
+
+    if (best !== null) {
+      items.push(best);
+    }
+  }
+
+  return {
+    totalBonusBeans: items.reduce((sum, item) => sum + item.bonusBeans, 0),
+    items,
+  };
+}
+
+// Split `total` across `weights` in integer minor units, proportionally to
+// each weight, giving the leftover unit(s) to the largest fractional parts
+// (ties broken by lowest index). The returned array sums exactly to `total`
+// (assuming total <= sum(weights)) and never exceeds a weight.
+function allocateProportionally(weights: number[], total: number): number[] {
+  const sum = weights.reduce((s, w) => s + w, 0);
+  if (sum <= 0 || total <= 0) {
+    return weights.map(() => 0);
+  }
+  const exact = weights.map((w) => (total * w) / sum);
+  const base = exact.map((n) => Math.floor(n));
+  let remaining = total - base.reduce((s, n) => s + n, 0);
+  const order = exact
+    .map((n, i) => ({ i, frac: n - Math.floor(n) }))
+    .sort((a, b) => b.frac - a.frac || a.i - b.i);
+  for (const { i } of order) {
+    if (remaining <= 0) {
+      break;
+    }
+    if (base[i] < weights[i]) {
+      base[i] += 1;
+      remaining -= 1;
+    }
+  }
+  return base;
+}

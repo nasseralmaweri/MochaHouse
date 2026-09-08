@@ -4,7 +4,7 @@ import Link from "next/link";
 // tab is only shown when the viewer holds the permission its page needs.
 // The API re-checks on every request regardless.
 export interface LoyaltyTabsProps {
-  active: "customers" | "rewards" | "settings";
+  active: "customers" | "rewards" | "bonus-promotions" | "settings";
   canView: boolean;
   canConfigure: boolean;
 }
@@ -24,6 +24,11 @@ export function LoyaltyTabs({ active, canView, canConfigure }: LoyaltyTabsProps)
       key: "rewards",
       label: "Rewards",
       href: "/admin/loyalty/rewards",
+    });
+    tabs.push({
+      key: "bonus-promotions",
+      label: "Bonus promotions",
+      href: "/admin/loyalty/bonus-promotions",
     });
     tabs.push({
       key: "settings",

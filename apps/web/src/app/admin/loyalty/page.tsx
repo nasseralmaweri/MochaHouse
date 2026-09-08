@@ -15,9 +15,17 @@ import {
   AdminForbidden,
   AdminNotFound,
 } from "@/components/admin/states";
+import type { MochaBeanLedgerEntryType } from "@mocha-house/contracts";
 import { Card } from "@/components/Card";
 import { LoyaltyTabs } from "@/components/admin/LoyaltyTabs";
 import { MochaBeanAdjustForm } from "@/components/admin/MochaBeanAdjustForm";
+
+const LEDGER_TYPE_LABEL: Record<MochaBeanLedgerEntryType, string> = {
+  EARN: "Earned",
+  BONUS_EARN: "Bonus earned",
+  REDEEM: "Reward redeemed",
+  MANUAL_ADJUSTMENT: "Manual adjustment",
+};
 
 // Admin → Loyalty (Milestone 7A). The smallest HQ Mocha Beans surface:
 // look a customer up by email or id, read their balance and the internal
@@ -288,7 +296,7 @@ async function CustomerDetail({
                       {new Date(entry.createdAt).toLocaleString()}
                     </td>
                     <td className="py-2 pr-3 text-text-secondary">
-                      {entry.type === "EARN" ? "Earned" : "Manual adjustment"}
+                      {LEDGER_TYPE_LABEL[entry.type]}
                     </td>
                     <td
                       className={`py-2 pr-3 text-right font-medium ${
@@ -300,13 +308,13 @@ async function CustomerDetail({
                       {entry.amount > 0 ? `+${entry.amount}` : entry.amount}
                     </td>
                     <td className="py-2 pr-3 text-text-secondary">
-                      {entry.type === "EARN"
-                        ? entry.orderNumber
-                          ? `Order #${entry.orderNumber}`
-                          : "Order"
-                        : `${entry.reason ?? ""}${
+                      {entry.type === "MANUAL_ADJUSTMENT"
+                        ? `${entry.reason ?? ""}${
                             entry.actorLabel ? ` — ${entry.actorLabel}` : ""
-                          }`}
+                          }`
+                        : entry.orderNumber
+                          ? `Order #${entry.orderNumber}`
+                          : "Order"}
                     </td>
                   </tr>
                 ))}

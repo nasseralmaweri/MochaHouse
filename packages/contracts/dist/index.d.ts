@@ -170,6 +170,18 @@ export interface OrderLoyaltyRewardSummary {
     discountMinorUnits: number;
     freeItemName: string | null;
 }
+export interface OrderLoyaltyBonusItemSummary {
+    promotionName: string;
+    promotionType: LoyaltyBonusPromotionType;
+    bonusValue: number;
+    productName: string;
+    qualifyingUnits: number;
+    bonusBeans: number;
+}
+export interface OrderLoyaltyBonusSummary {
+    totalBonusBeans: number;
+    items: OrderLoyaltyBonusItemSummary[];
+}
 export interface OrderLineSummary {
     productId: string;
     productName: string;
@@ -196,6 +208,7 @@ export interface OrderConfirmation {
     currency: string;
     lines: OrderLineSummary[];
     loyaltyReward: OrderLoyaltyRewardSummary | null;
+    loyaltyBonus: OrderLoyaltyBonusSummary | null;
     createdAt: string;
 }
 export interface OrderStatusResponse {
@@ -211,6 +224,7 @@ export interface OrderStatusResponse {
     currency: string;
     lines: OrderLineSummary[];
     loyaltyReward: OrderLoyaltyRewardSummary | null;
+    loyaltyBonus: OrderLoyaltyBonusSummary | null;
     createdAt: string;
 }
 export interface CheckoutDeclinedResponse {
@@ -296,6 +310,7 @@ export interface CustomerOrderSummary {
 export interface CustomerOrderDetail extends CustomerOrderSummary {
     lines: OrderLineSummary[];
     loyaltyReward: OrderLoyaltyRewardSummary | null;
+    loyaltyBonus: OrderLoyaltyBonusSummary | null;
 }
 export type LoyaltyRewardType = "FIXED_AMOUNT" | "FREE_ITEM";
 export interface CustomerLoyaltyReward {
@@ -381,6 +396,48 @@ export interface UpdateLoyaltyRewardRequest {
     isActive?: boolean;
     sortOrder?: number;
 }
+export type LoyaltyBonusPromotionType = "EXTRA_BEANS" | "MULTIPLIER";
+export interface AdminLoyaltyBonusPromotion {
+    id: string;
+    name: string;
+    type: LoyaltyBonusPromotionType;
+    bonusValue: number;
+    isActive: boolean;
+    startsAt: string | null;
+    endsAt: string | null;
+    appliesToAllLocations: boolean;
+    eligibleProducts: AdminLoyaltyRewardCatalogRef[];
+    eligibleLocations: AdminLoyaltyRewardCatalogRef[];
+    createdAt: string;
+    updatedAt: string;
+}
+export interface AdminLoyaltyBonusPromotionsResponse {
+    promotions: AdminLoyaltyBonusPromotion[];
+}
+export interface AdminLoyaltyBonusPromotionOptions {
+    products: AdminLoyaltyRewardCatalogRef[];
+    locations: AdminLoyaltyRewardCatalogRef[];
+}
+export interface CreateLoyaltyBonusPromotionRequest {
+    name: string;
+    type: LoyaltyBonusPromotionType;
+    bonusValue: number;
+    eligibleProductIds: string[];
+    appliesToAllLocations?: boolean;
+    eligibleLocationIds?: string[];
+    startsAt?: string | null;
+    endsAt?: string | null;
+}
+export interface UpdateLoyaltyBonusPromotionRequest {
+    name?: string;
+    bonusValue?: number;
+    eligibleProductIds?: string[];
+    appliesToAllLocations?: boolean;
+    eligibleLocationIds?: string[];
+    startsAt?: string | null;
+    endsAt?: string | null;
+    isActive?: boolean;
+}
 export type ReorderIssueCode = "LOCATION_INACTIVE" | "LOCATION_DIGITAL_ORDERING_DISABLED" | "PRODUCT_NOT_ON_MENU" | "PRODUCT_UNAVAILABLE" | "PRICE_CHANGED" | "MODIFIER_GROUP_REMOVED" | "MODIFIER_OPTION_REMOVED" | "MODIFIER_REQUIRED_SELECTION_MISSING" | "MODIFIER_SELECTION_COUNT_INVALID";
 export interface ReorderIssue {
     code: ReorderIssueCode;
@@ -433,6 +490,7 @@ export interface StoreOrderDetail extends StoreOrderSummary {
     rewardDiscount: number;
     total: number;
     loyaltyReward: OrderLoyaltyRewardSummary | null;
+    loyaltyBonus: OrderLoyaltyBonusSummary | null;
 }
 export interface AdvanceOrderStatusRequest {
     locationId: string;
@@ -730,7 +788,7 @@ export interface RenameOpeningChecklistTemplateSectionRequest {
     from: string;
     to: string;
 }
-export type MochaBeanLedgerEntryType = "EARN" | "MANUAL_ADJUSTMENT" | "REDEEM";
+export type MochaBeanLedgerEntryType = "EARN" | "MANUAL_ADJUSTMENT" | "REDEEM" | "BONUS_EARN";
 export interface AdminMochaBeanLedgerEntry {
     id: string;
     type: MochaBeanLedgerEntryType;

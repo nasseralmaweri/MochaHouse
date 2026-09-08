@@ -7,6 +7,8 @@ import { LoyaltyAdminService } from './application/loyalty-admin.service';
 import { LoyaltySettingsService } from './application/loyalty-settings.service';
 import { LoyaltyRewardsService } from './application/loyalty-rewards.service';
 import { LoyaltyRedemptionService } from './application/loyalty-redemption.service';
+import { LoyaltyBonusPromotionsService } from './application/loyalty-bonus-promotions.service';
+import { LoyaltyBonusService } from './application/loyalty-bonus.service';
 import { CustomerLoyaltyController } from './api/customer-loyalty.controller';
 import { AdminLoyaltyController } from './api/admin-loyalty.controller';
 
@@ -17,6 +19,10 @@ import { AdminLoyaltyController } from './api/admin-loyalty.controller';
 //   - Milestone 7B: HQ configuration of the company-wide earning rate
 //     (LoyaltySettingsService) and the customer Rewards Catalog
 //     (LoyaltyRewardsService). Catalog management only — no redemption.
+//   - Milestone 7C: reward redemption at checkout (LoyaltyRedemptionService).
+//   - Milestone 7D: HQ Bonus Mocha Bean Promotions
+//     (LoyaltyBonusPromotionsService) and the order-time bonus earning path
+//     (LoyaltyBonusService).
 //
 // InternalAuthGuard / PermissionGuard / AuthorizationService come from the
 // @Global InternalAuthModule; CustomerAuthGuard from the @Global
@@ -33,10 +39,13 @@ import { AdminLoyaltyController } from './api/admin-loyalty.controller';
     LoyaltySettingsService,
     LoyaltyRewardsService,
     LoyaltyRedemptionService,
+    LoyaltyBonusPromotionsService,
+    LoyaltyBonusService,
   ],
-  // Exported so OrdersModule's CheckoutService can earn Beans and apply a
-  // reward redemption inside the order-creation transaction, and the
-  // checkout reward-eligibility endpoint can quote a cart.
-  exports: [LoyaltyService, LoyaltyRedemptionService],
+  // Exported so OrdersModule's CheckoutService can earn Beans, apply a
+  // reward redemption and award bonus-promotion Beans inside the
+  // order-creation transaction, and the checkout reward-eligibility
+  // endpoint can quote a cart.
+  exports: [LoyaltyService, LoyaltyRedemptionService, LoyaltyBonusService],
 })
 export class LoyaltyModule {}

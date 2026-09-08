@@ -14,6 +14,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@mocha-house/database';
 import {
   toOrderLineSummary,
+  toOrderLoyaltyBonusSummary,
   toOrderLoyaltyRewardSummary,
 } from '../infrastructure/order-line-mapper';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
@@ -85,7 +86,11 @@ export class AdminOrdersService {
 
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      include: { lines: true, loyaltyRewardRedemption: true },
+      include: {
+        lines: true,
+        loyaltyRewardRedemption: true,
+        loyaltyBonus: { include: { items: true } },
+      },
     });
 
     if (!order || order.locationId !== locationId) {
@@ -101,6 +106,7 @@ export class AdminOrdersService {
       rewardDiscount: order.rewardDiscountMinorUnits,
       total: order.subtotal - order.rewardDiscountMinorUnits,
       loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
+      loyaltyBonus: toOrderLoyaltyBonusSummary(order.loyaltyBonus),
     };
   }
 

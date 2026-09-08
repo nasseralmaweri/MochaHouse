@@ -102,6 +102,11 @@ export default async function AccountOrderDetailPage({
               {order.loyaltyReward.beanCost} Mocha Beans used
             </p>
           ) : null}
+          {order.loyaltyBonus && order.loyaltyBonus.totalBonusBeans > 0 ? (
+            <p className="text-xs text-status-success">
+              +{order.loyaltyBonus.totalBonusBeans} bonus Mocha Beans earned
+            </p>
+          ) : null}
         </div>
       </Card>
 

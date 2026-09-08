@@ -232,6 +232,70 @@ export class InternalAuditService {
     });
   }
 
+  // --- Milestone 7D, Bonus Mocha Beans Promotions -----------------
+  // Same contract as every method here: written in the SAME transaction as
+  // the promotion change it records. The LoyaltyBonusPromotion tables stay
+  // the source of truth — these events are the "who changed what, when"
+  // trail. targetType 'loyalty_bonus_promotion' is a new polymorphic
+  // target; the Admin Activity Log is scoped to 'internal_user' and ignores
+  // it, exactly as it ignores the 7B 'loyalty_reward' events. Routine
+  // customer bonus earning is NOT audited — the immutable OrderLoyaltyBonus
+  // snapshot and the Bean ledger are its operational history.
+
+  async recordLoyaltyBonusPromotionCreated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      promotionId: string;
+      snapshot: Prisma.InputJsonValue;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'loyalty.bonus_promotion_created',
+        targetType: 'loyalty_bonus_promotion',
+        targetId: input.promotionId,
+        afterData: input.snapshot,
+        reason: 'Bonus Mocha Bean promotion created.',
+      },
+    });
+  }
+
+  async recordLoyaltyBonusPromotionUpdated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      promotionId: string;
+      change: 'updated' | 'activated' | 'deactivated';
+      before: Prisma.InputJsonValue;
+      after: Prisma.InputJsonValue;
+    },
+  ): Promise<void> {
+    const action =
+      input.change === 'activated'
+        ? 'loyalty.bonus_promotion_activated'
+        : input.change === 'deactivated'
+          ? 'loyalty.bonus_promotion_deactivated'
+          : 'loyalty.bonus_promotion_updated';
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action,
+        targetType: 'loyalty_bonus_promotion',
+        targetId: input.promotionId,
+        beforeData: input.before,
+        afterData: input.after,
+        reason:
+          input.change === 'activated'
+            ? 'Bonus Mocha Bean promotion activated.'
+            : input.change === 'deactivated'
+              ? 'Bonus Mocha Bean promotion deactivated.'
+              : 'Bonus Mocha Bean promotion updated.',
+      },
+    });
+  }
+
   async recordChecklistExceptionCleared(
     tx: Prisma.TransactionClient,
     input: ChecklistExceptionAuditInput & { previousReason: string },

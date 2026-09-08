@@ -3,11 +3,14 @@ import type {
   AdminAssignInternalUserRoleRequest,
   AdminInternalUserDetail,
   AdminLocationDetail,
+  AdminLoyaltyBonusPromotion,
   AdminLoyaltyCustomerDetail,
   AdminLoyaltyReward,
   AdminProductDetail,
+  CreateLoyaltyBonusPromotionRequest,
   CreateLoyaltyRewardRequest,
   LoyaltySettings,
+  UpdateLoyaltyBonusPromotionRequest,
   UpdateLoyaltyRewardRequest,
   UpdateLoyaltySettingsRequest,
   AdminUpdateInternalUserStatusRequest,
@@ -1320,6 +1323,29 @@ export function updateLoyaltyRewardFromBrowser(
 ): Promise<LoyaltyConfigureResult<AdminLoyaltyReward>> {
   return loyaltyConfigureRequest<AdminLoyaltyReward>(
     `rewards/${encodeURIComponent(rewardId)}`,
+    "PATCH",
+    input,
+  );
+}
+
+// --- Admin: Bonus Mocha Beans Promotions (Milestone 7D) ---------------
+
+export function createLoyaltyBonusPromotionFromBrowser(
+  input: CreateLoyaltyBonusPromotionRequest,
+): Promise<LoyaltyConfigureResult<AdminLoyaltyBonusPromotion>> {
+  return loyaltyConfigureRequest<AdminLoyaltyBonusPromotion>(
+    "bonus-promotions",
+    "POST",
+    input,
+  );
+}
+
+export function updateLoyaltyBonusPromotionFromBrowser(
+  promotionId: string,
+  input: UpdateLoyaltyBonusPromotionRequest,
+): Promise<LoyaltyConfigureResult<AdminLoyaltyBonusPromotion>> {
+  return loyaltyConfigureRequest<AdminLoyaltyBonusPromotion>(
+    `bonus-promotions/${encodeURIComponent(promotionId)}`,
     "PATCH",
     input,
   );

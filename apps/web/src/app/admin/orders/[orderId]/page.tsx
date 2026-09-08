@@ -287,6 +287,23 @@ function OrderDetail({
               {order.loyaltyReward.beanCost} Mocha Beans used
             </p>
           ) : null}
+          {order.loyaltyBonus && order.loyaltyBonus.totalBonusBeans > 0 ? (
+            <div className="flex flex-col gap-0.5">
+              <p className="text-xs font-medium text-status-success">
+                +{order.loyaltyBonus.totalBonusBeans} bonus Mocha Beans
+              </p>
+              {order.loyaltyBonus.items.map((item, i) => (
+                <p key={i} className="text-xs text-text-muted">
+                  {item.promotionName} ·{" "}
+                  {item.promotionType === "EXTRA_BEANS"
+                    ? `+${item.bonusValue}/unit`
+                    : `${item.bonusValue}×`}{" "}
+                  · {item.productName} × {item.qualifyingUnits} → +
+                  {item.bonusBeans}
+                </p>
+              ))}
+            </div>
+          ) : null}
         </div>
       </Card>
 

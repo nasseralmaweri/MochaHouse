@@ -12,7 +12,9 @@ import {
 } from '@nestjs/common';
 import type {
   AdminAdjustMochaBeansRequest,
+  CreateLoyaltyBonusPromotionRequest,
   CreateLoyaltyRewardRequest,
+  UpdateLoyaltyBonusPromotionRequest,
   UpdateLoyaltyRewardRequest,
   UpdateLoyaltySettingsRequest,
 } from '@mocha-house/contracts';
@@ -23,6 +25,7 @@ import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastru
 import { LoyaltyAdminService } from '../application/loyalty-admin.service';
 import { LoyaltySettingsService } from '../application/loyalty-settings.service';
 import { LoyaltyRewardsService } from '../application/loyalty-rewards.service';
+import { LoyaltyBonusPromotionsService } from '../application/loyalty-bonus-promotions.service';
 
 // The HQ loyalty surface. InternalAuthGuard (authentication + ACTIVE
 // lifecycle) then PermissionGuard.
@@ -41,6 +44,7 @@ export class AdminLoyaltyController {
     private readonly service: LoyaltyAdminService,
     private readonly settings: LoyaltySettingsService,
     private readonly rewards: LoyaltyRewardsService,
+    private readonly bonusPromotions: LoyaltyBonusPromotionsService,
   ) {}
 
   // --- Milestone 7A: customer Mocha Beans ------------------------
@@ -138,6 +142,48 @@ export class AdminLoyaltyController {
   ) {
     return this.rewards.updateReward(
       rewardId,
+      body,
+      request.internalUser!.id,
+      request.authorization!,
+    );
+  }
+
+  // --- Milestone 7D: Bonus Mocha Beans Promotions -----------------
+
+  @RequirePermission('loyalty.configure')
+  @Get('bonus-promotions')
+  listBonusPromotions(@Req() request: InternalAuthenticatedRequest) {
+    return this.bonusPromotions.listPromotions(request.authorization!);
+  }
+
+  @RequirePermission('loyalty.configure')
+  @Get('bonus-promotion-options')
+  bonusPromotionOptions(@Req() request: InternalAuthenticatedRequest) {
+    return this.bonusPromotions.getOptions(request.authorization!);
+  }
+
+  @RequirePermission('loyalty.configure')
+  @Post('bonus-promotions')
+  createBonusPromotion(
+    @Body() body: CreateLoyaltyBonusPromotionRequest,
+    @Req() request: InternalAuthenticatedRequest,
+  ) {
+    return this.bonusPromotions.createPromotion(
+      body,
+      request.internalUser!.id,
+      request.authorization!,
+    );
+  }
+
+  @RequirePermission('loyalty.configure')
+  @Patch('bonus-promotions/:promotionId')
+  updateBonusPromotion(
+    @Param('promotionId') promotionId: string,
+    @Body() body: UpdateLoyaltyBonusPromotionRequest,
+    @Req() request: InternalAuthenticatedRequest,
+  ) {
+    return this.bonusPromotions.updatePromotion(
+      promotionId,
       body,
       request.internalUser!.id,
       request.authorization!,
