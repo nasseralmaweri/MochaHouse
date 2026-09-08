@@ -59,7 +59,7 @@ export default async function AccountOrdersPage() {
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     <span className="text-sm font-medium text-text-primary">
-                      {formatPrice(order.subtotal, order.currency)}
+                      {formatPrice(order.total, order.currency)}
                     </span>
                     <span className="text-xs text-text-muted">
                       {STATUS_LABEL[order.status]}

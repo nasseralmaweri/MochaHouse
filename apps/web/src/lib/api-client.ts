@@ -15,6 +15,8 @@ import type {
   AdminUpdateProductRequest,
   AdvanceOrderStatusResponse,
   CheckoutRequest,
+  CheckoutRewardEligibilityRequest,
+  CheckoutRewardEligibilityResponse,
   LocationMenuResponse,
   LocationSummary,
   OpeningChecklistResponse,
@@ -74,6 +76,28 @@ export type CheckoutResult =
   | { outcome: "invalid"; message: string }
   | { outcome: "conflict"; message: string }
   | { outcome: "network-error"; message: string };
+
+// Milestone 7C — the checkout reward-eligibility quote. Goes through this
+// app's own /api/loyalty/checkout-rewards route (server-side, reads the
+// httpOnly session cookie). A signed-out visitor always gets an empty list
+// — this never throws and never blocks checkout.
+export async function getCheckoutRewardsFromBrowser(
+  input: CheckoutRewardEligibilityRequest,
+): Promise<CheckoutRewardEligibilityResponse> {
+  try {
+    const response = await fetch("/api/loyalty/checkout-rewards", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    if (!response.ok) {
+      return { balance: 0, rewards: [] };
+    }
+    return (await response.json()) as CheckoutRewardEligibilityResponse;
+  } catch {
+    return { balance: 0, rewards: [] };
+  }
+}
 
 export async function submitCheckoutFromBrowser(
   request: CheckoutRequest,

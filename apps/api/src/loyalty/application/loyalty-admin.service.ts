@@ -336,7 +336,7 @@ export class LoyaltyAdminService {
 
   private toLedgerEntry(entry: {
     id: string;
-    type: 'EARN' | 'MANUAL_ADJUSTMENT';
+    type: 'EARN' | 'MANUAL_ADJUSTMENT' | 'REDEEM';
     amount: number;
     reason: string | null;
     createdAt: Date;

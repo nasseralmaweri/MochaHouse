@@ -72,11 +72,36 @@ export default async function AccountOrderDetailPage({
             </li>
           ))}
         </ul>
-        <div className="flex items-center justify-between border-t border-border-default pt-2">
-          <span className="text-sm font-semibold text-text-primary">Total</span>
-          <span className="text-lg font-semibold text-text-primary">
-            {formatPrice(order.subtotal, order.currency)}
-          </span>
+        <div className="flex flex-col gap-1 border-t border-border-default pt-2">
+          {order.loyaltyReward ? (
+            <>
+              <div className="flex items-center justify-between text-sm text-text-secondary">
+                <span>Subtotal</span>
+                <span>{formatPrice(order.subtotal, order.currency)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm text-status-success">
+                <span>
+                  Mocha Beans Reward · {order.loyaltyReward.rewardName}
+                </span>
+                <span>
+                  −{formatPrice(order.rewardDiscount, order.currency)}
+                </span>
+              </div>
+            </>
+          ) : null}
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold text-text-primary">
+              Total
+            </span>
+            <span className="text-lg font-semibold text-text-primary">
+              {formatPrice(order.total, order.currency)}
+            </span>
+          </div>
+          {order.loyaltyReward ? (
+            <p className="text-xs text-text-muted">
+              {order.loyaltyReward.beanCost} Mocha Beans used
+            </p>
+          ) : null}
         </div>
       </Card>
 

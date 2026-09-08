@@ -2,10 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { CheckoutRequest, LocationMenuResponse } from "@mocha-house/contracts";
+import type {
+  CheckoutRequest,
+  CheckoutRewardOption,
+  LocationMenuResponse,
+} from "@mocha-house/contracts";
 import { priceCart } from "@mocha-house/domain";
 import { useCart } from "@/lib/cart/store";
-import { getLocationMenuFromBrowser, submitCheckoutFromBrowser } from "@/lib/api-client";
+import {
+  getCheckoutRewardsFromBrowser,
+  getLocationMenuFromBrowser,
+  submitCheckoutFromBrowser,
+} from "@/lib/api-client";
 import { formatPrice } from "@/lib/money";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
@@ -24,6 +32,11 @@ export default function CheckoutPage() {
   const [guestEmail, setGuestEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Milestone 7C — the Mocha Bean rewards eligible for the current cart (a
+  // signed-in customer only; empty for a guest). The customer picks one or
+  // none; the server revalidates everything on submit.
+  const [rewardOptions, setRewardOptions] = useState<CheckoutRewardOption[]>([]);
+  const [selectedRewardId, setSelectedRewardId] = useState<string | null>(null);
   // Synchronous guard against a double-click firing two submissions before
   // React re-renders with `submitting`/disabled — the disabled attribute
   // alone isn't fast enough to rule that race out.
@@ -56,6 +69,58 @@ export default function CheckoutPage() {
     };
   }, [cart.isHydrated, cart.locationId]);
 
+  // Milestone 7C — refetch the eligible-reward quote whenever the cart
+  // changes. Serialised into a stable key so it doesn't re-run on every
+  // render. A stale `selectedRewardId` that no longer appears is dropped.
+  const cartLinesKey = cart.isHydrated
+    ? JSON.stringify(
+        cart.lines.map((line) => ({
+          p: line.productId,
+          q: line.quantity,
+          s: line.selections.map((sel) => ({
+            g: sel.groupId,
+            o: [...sel.optionIds].sort(),
+          })),
+        })),
+      )
+    : "";
+
+  useEffect(() => {
+    if (!cart.isHydrated || !cart.locationId || cart.lines.length === 0) {
+      setRewardOptions([]);
+      return;
+    }
+    let cancelled = false;
+    getCheckoutRewardsFromBrowser({
+      locationId: cart.locationId,
+      lines: cart.lines.map((line) => ({
+        productId: line.productId,
+        quantity: line.quantity,
+        selections: line.selections.map((s) => ({
+          groupId: s.groupId,
+          optionIds: s.optionIds,
+        })),
+      })),
+    })
+      .then((result) => {
+        if (cancelled) return;
+        setRewardOptions(result.rewards);
+        setSelectedRewardId((current) =>
+          current !== null &&
+          result.rewards.some((r) => r.rewardId === current && r.canAfford)
+            ? current
+            : null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setRewardOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart.isHydrated, cart.locationId, cartLinesKey]);
+
   if (!cart.isHydrated) {
     return (
       <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
@@ -72,6 +137,11 @@ export default function CheckoutPage() {
       </main>
     );
   }
+
+  const selectedReward =
+    selectedRewardId !== null
+      ? (rewardOptions.find((r) => r.rewardId === selectedRewardId) ?? null)
+      : null;
 
   const menuMatchesCart = menu !== null && menu.location.id === cart.locationId;
   // Preview only — this is the exact same authoritative repricing function
@@ -124,6 +194,7 @@ export default function CheckoutPage() {
           optionIds: s.optionIds,
         })),
       })),
+      loyaltyRewardId: selectedRewardId,
     };
 
     const result = await submitCheckoutFromBrowser(request);
@@ -191,11 +262,86 @@ export default function CheckoutPage() {
               </li>
             ))}
           </ul>
-          <div className="flex items-center justify-between border-t border-border-default pt-2">
-            <span className="text-sm font-semibold text-text-primary">Total</span>
-            <span className="text-lg font-semibold text-text-primary">
-              {formatPrice(priced.subtotal, priced.currency)}
-            </span>
+          <div className="flex flex-col gap-1 border-t border-border-default pt-2">
+            <div className="flex items-center justify-between text-sm text-text-secondary">
+              <span>Subtotal</span>
+              <span>{formatPrice(priced.subtotal, priced.currency)}</span>
+            </div>
+            {selectedReward ? (
+              <div className="flex items-center justify-between text-sm text-status-success">
+                <span>Mocha Beans Reward · {selectedReward.name}</span>
+                <span>
+                  −
+                  {formatPrice(
+                    selectedReward.discountMinorUnits,
+                    priced.currency,
+                  )}
+                </span>
+              </div>
+            ) : null}
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold text-text-primary">
+                Total
+              </span>
+              <span className="text-lg font-semibold text-text-primary">
+                {formatPrice(
+                  priced.subtotal - (selectedReward?.discountMinorUnits ?? 0),
+                  priced.currency,
+                )}
+              </span>
+            </div>
+            {selectedReward ? (
+              <p className="text-xs text-text-muted">
+                {selectedReward.beanCost} Mocha Beans will be used.
+              </p>
+            ) : null}
+          </div>
+        </Card>
+      ) : null}
+
+      {rewardOptions.length > 0 && priced?.ok ? (
+        <Card className="flex flex-col gap-3">
+          <span className="text-sm font-semibold text-text-primary">
+            Use Mocha Beans
+          </span>
+          <div className="flex flex-col gap-2">
+            <label className="flex items-center gap-2 text-sm text-text-primary">
+              <input
+                type="radio"
+                name="loyalty-reward"
+                checked={selectedRewardId === null}
+                onChange={() => setSelectedRewardId(null)}
+              />
+              No reward
+            </label>
+            {rewardOptions.map((reward) => (
+              <label
+                key={reward.rewardId}
+                className={`flex items-center justify-between gap-2 text-sm ${
+                  reward.canAfford ? "text-text-primary" : "text-text-muted"
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="loyalty-reward"
+                    disabled={!reward.canAfford}
+                    checked={selectedRewardId === reward.rewardId}
+                    onChange={() => setSelectedRewardId(reward.rewardId)}
+                  />
+                  {reward.name}
+                  {reward.type === "FREE_ITEM" && reward.freeItemName ? (
+                    <span className="text-xs text-text-muted">
+                      (free {reward.freeItemName})
+                    </span>
+                  ) : null}
+                </span>
+                <span className="shrink-0 text-xs">
+                  {reward.beanCost} Beans
+                  {reward.canAfford ? "" : " · not enough"}
+                </span>
+              </label>
+            ))}
           </div>
         </Card>
       ) : null}
@@ -247,7 +393,10 @@ export default function CheckoutPage() {
           {submitting
             ? "Placing order…"
             : priced?.ok
-              ? `Place order — ${formatPrice(priced.subtotal, priced.currency)}`
+              ? `Place order — ${formatPrice(
+                  priced.subtotal - (selectedReward?.discountMinorUnits ?? 0),
+                  priced.currency,
+                )}`
               : "Place order"}
         </button>
       </form>

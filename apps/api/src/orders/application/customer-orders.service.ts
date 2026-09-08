@@ -5,7 +5,10 @@ import type {
 } from '@mocha-house/contracts';
 import { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
-import { toOrderLineSummary } from '../infrastructure/order-line-mapper';
+import {
+  toOrderLineSummary,
+  toOrderLoyaltyRewardSummary,
+} from '../infrastructure/order-line-mapper';
 
 type OrderWithLocation = Prisma.OrderGetPayload<{
   include: { location: true };
@@ -41,7 +44,7 @@ export class CustomerOrdersService {
     // like the guest accessToken check in CheckoutService.getStatus.
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, customerId },
-      include: { location: true, lines: true },
+      include: { location: true, lines: true, loyaltyRewardRedemption: true },
     });
 
     if (!order) {
@@ -51,6 +54,7 @@ export class CustomerOrdersService {
     return {
       ...this.toSummary(order),
       lines: order.lines.map(toOrderLineSummary),
+      loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
     };
   }
 
@@ -62,6 +66,8 @@ export class CustomerOrdersService {
       locationName: order.location.name,
       status: order.status,
       subtotal: order.subtotal,
+      rewardDiscount: order.rewardDiscountMinorUnits,
+      total: order.subtotal - order.rewardDiscountMinorUnits,
       currency: order.currency,
     };
   }

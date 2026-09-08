@@ -256,11 +256,35 @@ export interface CheckoutLineInput {
 // The client-submitted cart. Note there is no price field anywhere in this
 // shape — the backend independently reprices every line and never reads a
 // client-submitted amount.
+//
+// `loyaltyRewardId` (Milestone 7C) is the ONLY loyalty input the client
+// sends: the id of the single Mocha Bean reward the signed-in customer
+// chose to apply, or null / omitted for no reward. The server loads the
+// reward, revalidates it against the current cart and the customer's
+// current balance, and computes the discount and Bean cost itself — the
+// client's view is never trusted. A guest that submits a `loyaltyRewardId`
+// is rejected before any payment.
 export interface CheckoutRequest {
   idempotencyKey: string;
   locationId: string;
   guest: GuestContactInput;
   lines: CheckoutLineInput[];
+  loyaltyRewardId?: string | null;
+}
+
+// The immutable snapshot of the one Mocha Bean reward redeemed on an order
+// (Milestone 7C). Reused by confirmation, customer history and the store
+// order detail. All values are what was true AT REDEMPTION TIME — later HQ
+// edits to the reward never change these.
+export interface OrderLoyaltyRewardSummary {
+  rewardName: string;
+  rewardType: LoyaltyRewardType;
+  // Mocha Beans deducted (the reward's full configured cost).
+  beanCost: number;
+  // Discount applied to the gross merchandise subtotal, integer minor units.
+  discountMinorUnits: number;
+  // FREE_ITEM only — the product one unit of which was made free.
+  freeItemName: string | null;
 }
 
 export interface OrderLineSummary {
@@ -279,6 +303,13 @@ export interface OrderLineSummary {
 // Returned once, at checkout time. accessToken is the guest's bearer
 // credential for the status endpoint — the caller must persist it
 // (e.g. in the confirmation URL) to view this order again.
+//
+// Money (Milestone 7C):
+//   subtotal       — gross merchandise (sum of every line total), unchanged.
+//   rewardDiscount  — the Mocha Bean reward discount; 0 when no reward.
+//   total           — subtotal - rewardDiscount = the amount charged / owed.
+//   loyaltyReward   — the redeemed reward snapshot, or null.
+// Pre-7C orders read rewardDiscount 0, total === subtotal, loyaltyReward null.
 export interface OrderConfirmation {
   orderId: string;
   orderNumber: string;
@@ -288,8 +319,11 @@ export interface OrderConfirmation {
   locationName: string;
   guestName: string;
   subtotal: number;
+  rewardDiscount: number;
+  total: number;
   currency: string;
   lines: OrderLineSummary[];
+  loyaltyReward: OrderLoyaltyRewardSummary | null;
   createdAt: string;
 }
 
@@ -301,8 +335,11 @@ export interface OrderStatusResponse {
   locationName: string;
   guestName: string;
   subtotal: number;
+  rewardDiscount: number;
+  total: number;
   currency: string;
   lines: OrderLineSummary[];
+  loyaltyReward: OrderLoyaltyRewardSummary | null;
   createdAt: string;
 }
 
@@ -464,12 +501,17 @@ export interface CustomerOrderSummary {
   createdAt: string;
   locationName: string;
   status: OrderStatus;
+  // subtotal = gross merchandise; total = subtotal - rewardDiscount
+  // (Milestone 7C). Pre-7C orders: rewardDiscount 0, total === subtotal.
   subtotal: number;
+  rewardDiscount: number;
+  total: number;
   currency: string;
 }
 
 export interface CustomerOrderDetail extends CustomerOrderSummary {
   lines: OrderLineSummary[];
+  loyaltyReward: OrderLoyaltyRewardSummary | null;
 }
 
 // --- Loyalty: Mocha Beans balance + rewards (Milestone 7A; rewards 7B) --
@@ -506,6 +548,40 @@ export interface CustomerLoyaltyReward {
 export interface CustomerLoyaltySummary {
   balance: number;
   rewards: CustomerLoyaltyReward[];
+}
+
+// --- Checkout: Mocha Bean reward eligibility (Milestone 7C) ----------
+// POST /api/v1/orders/reward-eligibility (CustomerAuthGuard — signed-in
+// customers only; a guest gets no rewards). A read-only quote: given the
+// current cart it returns the ACTIVE rewards that are actually eligible for
+// THIS cart, each with the discount it would apply and whether the customer
+// can currently afford it. It reserves nothing and deducts nothing. The
+// checkout submission independently revalidates everything.
+export interface CheckoutRewardEligibilityRequest {
+  locationId: string;
+  lines: CheckoutLineInput[];
+}
+
+export interface CheckoutRewardOption {
+  rewardId: string;
+  name: string;
+  description: string | null;
+  type: LoyaltyRewardType;
+  beanCost: number;
+  // The discount this reward would apply to the current cart, integer minor
+  // units (server-computed, authoritative).
+  discountMinorUnits: number;
+  // FREE_ITEM only — the item that would be made free (lowest-priced
+  // eligible unit in the current cart).
+  freeItemName: string | null;
+  // balance >= beanCost right now. Informational; the checkout submission
+  // re-checks under a row lock.
+  canAfford: boolean;
+}
+
+export interface CheckoutRewardEligibilityResponse {
+  balance: number;
+  rewards: CheckoutRewardOption[];
 }
 
 // --- Admin: HQ loyalty configuration (Milestone 7B) ------------------
@@ -704,6 +780,12 @@ export interface StoreOrderSummary {
 
 export interface StoreOrderDetail extends StoreOrderSummary {
   guestPhone: string;
+  // Milestone 7C — the redeemed Mocha Bean reward snapshot and the
+  // resulting discount, so staff can see the order's true owed total.
+  // Null / 0 for an order with no reward.
+  rewardDiscount: number;
+  total: number;
+  loyaltyReward: OrderLoyaltyRewardSummary | null;
 }
 
 export interface AdvanceOrderStatusRequest {
@@ -1564,12 +1646,16 @@ export interface RenameOpeningChecklistTemplateSectionRequest {
 // (`loyalty.view` to read, `loyalty.adjust` to adjust). This is NOT a
 // general customer-management module — it only ever exposes loyalty data.
 
-export type MochaBeanLedgerEntryType = "EARN" | "MANUAL_ADJUSTMENT";
+// EARN and REDEEM are automatic (order-driven); MANUAL_ADJUSTMENT is an HQ
+// action. REDEEM (Milestone 7C) is a negative entry for Beans spent on a
+// reward.
+export type MochaBeanLedgerEntryType = "EARN" | "MANUAL_ADJUSTMENT" | "REDEEM";
 
 // One row of the internal Mocha Bean ledger, projected for HQ. `amount` is
 // signed whole Beans. `actorLabel` is the HQ operator's name/email for a
-// MANUAL_ADJUSTMENT, null for an automatic EARN. `orderNumber` is the
-// human order reference for an EARN, null otherwise.
+// MANUAL_ADJUSTMENT, null for an automatic EARN / REDEEM. `orderNumber` is
+// the human order reference for an EARN or REDEEM, null for a manual
+// adjustment.
 export interface AdminMochaBeanLedgerEntry {
   id: string;
   type: MochaBeanLedgerEntryType;

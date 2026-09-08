@@ -12,7 +12,10 @@ import type {
 import { nextOrderStatus } from '@mocha-house/domain';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@mocha-house/database';
-import { toOrderLineSummary } from '../infrastructure/order-line-mapper';
+import {
+  toOrderLineSummary,
+  toOrderLoyaltyRewardSummary,
+} from '../infrastructure/order-line-mapper';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 
 type OrderWithLines = Prisma.OrderGetPayload<{ include: { lines: true } }>;
@@ -82,7 +85,7 @@ export class AdminOrdersService {
 
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      include: { lines: true },
+      include: { lines: true, loyaltyRewardRedemption: true },
     });
 
     if (!order || order.locationId !== locationId) {
@@ -92,7 +95,13 @@ export class AdminOrdersService {
       throw new NotFoundException('Order not found for this location.');
     }
 
-    return { ...this.toSummary(order), guestPhone: order.guestPhone };
+    return {
+      ...this.toSummary(order),
+      guestPhone: order.guestPhone,
+      rewardDiscount: order.rewardDiscountMinorUnits,
+      total: order.subtotal - order.rewardDiscountMinorUnits,
+      loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
+    };
   }
 
   // No target status parameter by design — the API can only ever advance

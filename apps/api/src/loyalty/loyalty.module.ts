@@ -6,6 +6,7 @@ import { LoyaltyService } from './application/loyalty.service';
 import { LoyaltyAdminService } from './application/loyalty-admin.service';
 import { LoyaltySettingsService } from './application/loyalty-settings.service';
 import { LoyaltyRewardsService } from './application/loyalty-rewards.service';
+import { LoyaltyRedemptionService } from './application/loyalty-redemption.service';
 import { CustomerLoyaltyController } from './api/customer-loyalty.controller';
 import { AdminLoyaltyController } from './api/admin-loyalty.controller';
 
@@ -31,9 +32,11 @@ import { AdminLoyaltyController } from './api/admin-loyalty.controller';
     LoyaltyAdminService,
     LoyaltySettingsService,
     LoyaltyRewardsService,
+    LoyaltyRedemptionService,
   ],
-  // Exported so OrdersModule's CheckoutService can earn Beans inside the
-  // order-creation transaction.
-  exports: [LoyaltyService],
+  // Exported so OrdersModule's CheckoutService can earn Beans and apply a
+  // reward redemption inside the order-creation transaction, and the
+  // checkout reward-eligibility endpoint can quote a cart.
+  exports: [LoyaltyService, LoyaltyRedemptionService],
 })
 export class LoyaltyModule {}

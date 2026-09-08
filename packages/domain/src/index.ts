@@ -524,3 +524,102 @@ export function mochaBeansForQualifyingSpend(
   const wholeDollars = Math.floor(subtotalMinorUnits / 100);
   return wholeDollars * ratePerDollar;
 }
+
+// --- Mocha Bean reward discount (Milestone 7C) ----------------------
+// Pure, framework-agnostic computation of the discount a single Mocha Bean
+// reward applies to a cart. Never touches a database. The caller
+// (LoyaltyRedemptionService) loads the CURRENT reward configuration and the
+// authoritative repriced cart and passes both in; the server recomputes
+// this at final validation time, never trusting a client-submitted value.
+//
+// All money is integer minor units. `unitPriceMinorUnits` is the fully
+// resolved per-unit price INCLUDING modifier price adjustments, exactly as
+// priceCart produces it — modifiers are already part of the unit price, so
+// a free unit is the whole unit.
+
+export interface RewardDiscountCartLine {
+  productId: string;
+  categoryId: string;
+  productName: string;
+  unitPriceMinorUnits: number;
+  quantity: number;
+}
+
+export type RewardDiscountReward =
+  | { type: "FIXED_AMOUNT"; fixedAmountMinorUnits: number }
+  | {
+      type: "FREE_ITEM";
+      eligibleProductIds: string[];
+      eligibleCategoryIds: string[];
+    };
+
+export interface RewardDiscountInput {
+  // Gross merchandise subtotal (sum of every line total). The FIXED_AMOUNT
+  // discount is capped at this — a reward never reduces merchandise below $0
+  // and never creates cash value.
+  merchandiseSubtotalMinorUnits: number;
+  lines: RewardDiscountCartLine[];
+  reward: RewardDiscountReward;
+}
+
+export type RewardDiscountResult =
+  | {
+      ok: true;
+      discountMinorUnits: number;
+      // The single freed unit (FREE_ITEM only); null for FIXED_AMOUNT.
+      freeItem: { productId: string; productName: string } | null;
+    }
+  | { ok: false; code: "REWARD_NOT_ELIGIBLE"; message: string };
+
+export function computeLoyaltyRewardDiscount(
+  input: RewardDiscountInput,
+): RewardDiscountResult {
+  const gross = Math.max(0, input.merchandiseSubtotalMinorUnits);
+
+  if (input.reward.type === "FIXED_AMOUNT") {
+    const value = Math.max(0, input.reward.fixedAmountMinorUnits);
+    // Capped at the eligible merchandise amount — never below $0.
+    return { ok: true, discountMinorUnits: Math.min(value, gross), freeItem: null };
+  }
+
+  const eligibleProductIds = new Set(input.reward.eligibleProductIds);
+  const eligibleCategoryIds = new Set(input.reward.eligibleCategoryIds);
+
+  const eligibleLines = input.lines.filter(
+    (line) =>
+      eligibleProductIds.has(line.productId) ||
+      eligibleCategoryIds.has(line.categoryId),
+  );
+
+  if (eligibleLines.length === 0) {
+    return {
+      ok: false,
+      code: "REWARD_NOT_ELIGIBLE",
+      message: "Your cart has no item eligible for this reward.",
+    };
+  }
+
+  // Approved default: the LOWEST-PRICED eligible unit is free. Deterministic
+  // tie-break on productId so two carts with the same prices always resolve
+  // the same freed item.
+  const chosen = eligibleLines.reduce((best, line) => {
+    if (line.unitPriceMinorUnits < best.unitPriceMinorUnits) {
+      return line;
+    }
+    if (
+      line.unitPriceMinorUnits === best.unitPriceMinorUnits &&
+      line.productId < best.productId
+    ) {
+      return line;
+    }
+    return best;
+  });
+
+  // One UNIT is free, not the whole line — quantity > 1 keeps the rest paid.
+  const discount = Math.max(0, Math.min(chosen.unitPriceMinorUnits, gross));
+  return {
+    ok: true,
+    discountMinorUnits: discount,
+    freeItem: { productId: chosen.productId, productName: chosen.productName },
+  };
+}

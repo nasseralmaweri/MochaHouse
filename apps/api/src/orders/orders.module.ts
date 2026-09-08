@@ -5,6 +5,7 @@ import { LocationsModule } from '../locations/locations.module';
 import { CustomersModule } from '../customers/customers.module';
 import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { OrdersController } from './api/orders.controller';
+import { CheckoutRewardsController } from './api/checkout-rewards.controller';
 import { AdminOrdersController } from './api/admin-orders.controller';
 import { CustomerOrdersController } from './api/customer-orders.controller';
 import { CheckoutService } from './application/checkout.service';
@@ -26,6 +27,7 @@ import { PAYMENT_PROVIDER } from './infrastructure/payment-provider.token';
   imports: [PrismaModule, LocationsModule, CustomersModule, LoyaltyModule],
   controllers: [
     OrdersController,
+    CheckoutRewardsController,
     AdminOrdersController,
     CustomerOrdersController,
   ],

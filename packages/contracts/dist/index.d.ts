@@ -161,6 +161,14 @@ export interface CheckoutRequest {
     locationId: string;
     guest: GuestContactInput;
     lines: CheckoutLineInput[];
+    loyaltyRewardId?: string | null;
+}
+export interface OrderLoyaltyRewardSummary {
+    rewardName: string;
+    rewardType: LoyaltyRewardType;
+    beanCost: number;
+    discountMinorUnits: number;
+    freeItemName: string | null;
 }
 export interface OrderLineSummary {
     productId: string;
@@ -183,8 +191,11 @@ export interface OrderConfirmation {
     locationName: string;
     guestName: string;
     subtotal: number;
+    rewardDiscount: number;
+    total: number;
     currency: string;
     lines: OrderLineSummary[];
+    loyaltyReward: OrderLoyaltyRewardSummary | null;
     createdAt: string;
 }
 export interface OrderStatusResponse {
@@ -195,8 +206,11 @@ export interface OrderStatusResponse {
     locationName: string;
     guestName: string;
     subtotal: number;
+    rewardDiscount: number;
+    total: number;
     currency: string;
     lines: OrderLineSummary[];
+    loyaltyReward: OrderLoyaltyRewardSummary | null;
     createdAt: string;
 }
 export interface CheckoutDeclinedResponse {
@@ -275,10 +289,13 @@ export interface CustomerOrderSummary {
     locationName: string;
     status: OrderStatus;
     subtotal: number;
+    rewardDiscount: number;
+    total: number;
     currency: string;
 }
 export interface CustomerOrderDetail extends CustomerOrderSummary {
     lines: OrderLineSummary[];
+    loyaltyReward: OrderLoyaltyRewardSummary | null;
 }
 export type LoyaltyRewardType = "FIXED_AMOUNT" | "FREE_ITEM";
 export interface CustomerLoyaltyReward {
@@ -294,6 +311,24 @@ export interface CustomerLoyaltyReward {
 export interface CustomerLoyaltySummary {
     balance: number;
     rewards: CustomerLoyaltyReward[];
+}
+export interface CheckoutRewardEligibilityRequest {
+    locationId: string;
+    lines: CheckoutLineInput[];
+}
+export interface CheckoutRewardOption {
+    rewardId: string;
+    name: string;
+    description: string | null;
+    type: LoyaltyRewardType;
+    beanCost: number;
+    discountMinorUnits: number;
+    freeItemName: string | null;
+    canAfford: boolean;
+}
+export interface CheckoutRewardEligibilityResponse {
+    balance: number;
+    rewards: CheckoutRewardOption[];
 }
 export interface LoyaltySettings {
     earningRatePerDollar: number;
@@ -395,6 +430,9 @@ export interface StoreOrderSummary {
 }
 export interface StoreOrderDetail extends StoreOrderSummary {
     guestPhone: string;
+    rewardDiscount: number;
+    total: number;
+    loyaltyReward: OrderLoyaltyRewardSummary | null;
 }
 export interface AdvanceOrderStatusRequest {
     locationId: string;
@@ -692,7 +730,7 @@ export interface RenameOpeningChecklistTemplateSectionRequest {
     from: string;
     to: string;
 }
-export type MochaBeanLedgerEntryType = "EARN" | "MANUAL_ADJUSTMENT";
+export type MochaBeanLedgerEntryType = "EARN" | "MANUAL_ADJUSTMENT" | "REDEEM";
 export interface AdminMochaBeanLedgerEntry {
     id: string;
     type: MochaBeanLedgerEntryType;

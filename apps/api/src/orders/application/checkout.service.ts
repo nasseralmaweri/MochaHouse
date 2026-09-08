@@ -10,6 +10,8 @@ import {
 } from '@nestjs/common';
 import type {
   CheckoutRequest,
+  CheckoutRewardEligibilityRequest,
+  CheckoutRewardEligibilityResponse,
   OrderConfirmation,
   OrderStatusResponse,
 } from '@mocha-house/contracts';
@@ -20,19 +22,32 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsService } from '../../locations/application/locations.service';
 import { CustomersService } from '../../customers/application/customers.service';
 import { LoyaltyService } from '../../loyalty/application/loyalty.service';
+import {
+  LoyaltyRedemptionService,
+  type RedemptionPlan,
+} from '../../loyalty/application/loyalty-redemption.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import {
   generateOrderAccessToken,
   generateOrderNumber,
 } from '../infrastructure/order-identifiers';
-import { toOrderLineSummary } from '../infrastructure/order-line-mapper';
+import {
+  toOrderLineSummary,
+  toOrderLoyaltyRewardSummary,
+} from '../infrastructure/order-line-mapper';
 
 const MAX_ORDER_NUMBER_ATTEMPTS = 5;
 
 type OrderWithRelations = Prisma.OrderGetPayload<{
-  include: { lines: true; location: true };
+  include: { lines: true; location: true; loyaltyRewardRedemption: true };
 }>;
+
+const ORDER_INCLUDE = {
+  lines: true,
+  location: true,
+  loyaltyRewardRedemption: true,
+} satisfies Prisma.OrderInclude;
 
 type PaymentAttemptRow = Prisma.PaymentAttemptGetPayload<Record<string, never>>;
 
@@ -51,6 +66,7 @@ export class CheckoutService {
     private readonly locationsService: LocationsService,
     private readonly customersService: CustomersService,
     private readonly loyaltyService: LoyaltyService,
+    private readonly redemptionService: LoyaltyRedemptionService,
     @Inject(PAYMENT_PROVIDER)
     private readonly paymentProvider: PaymentProvider,
   ) {}
@@ -90,10 +106,46 @@ export class CheckoutService {
       throw new BadRequestException(priced.error.message);
     }
 
+    // Milestone 7C — resolve a chosen Mocha Bean reward BEFORE payment so
+    // the charge is for the discounted amount. A guest that submits a
+    // reward id is rejected here, before any payment attempt exists — never
+    // auto-matched to an account. All numbers below are server-computed;
+    // the client only sent an id.
+    const rewardId =
+      typeof request.loyaltyRewardId === 'string' &&
+      request.loyaltyRewardId.trim().length > 0
+        ? request.loyaltyRewardId.trim()
+        : null;
+    let prePaymentPlan: RedemptionPlan | null = null;
+    if (rewardId !== null) {
+      if (customerId === null) {
+        throw new BadRequestException('Sign in to use a Mocha Bean reward.');
+      }
+      prePaymentPlan = await this.redemptionService.buildRedemptionPlan(
+        rewardId,
+        priced,
+        menu,
+      );
+      const balance =
+        await this.loyaltyService.getBalanceForCustomer(customerId);
+      if (balance < prePaymentPlan.beanCost) {
+        throw new ConflictException(
+          `You don't have enough Mocha Beans for this reward ` +
+            `(need ${prePaymentPlan.beanCost}, have ${balance}).`,
+        );
+      }
+    }
+
+    // The gross merchandise subtotal minus the reward discount — what the
+    // customer actually pays. Guaranteed >= 0 (the discount is capped at
+    // the eligible merchandise amount).
+    const chargeAmount =
+      priced.subtotal - (prePaymentPlan?.discountMinorUnits ?? 0);
+
     const created = await this.createPaymentAttempt(
       request.idempotencyKey,
       request.locationId,
-      priced.subtotal,
+      chargeAmount,
       priced.currency,
     );
 
@@ -106,34 +158,46 @@ export class CheckoutService {
 
     const attempt = created.attempt;
 
-    const chargeResult = await this.paymentProvider.charge({
-      idempotencyKey: request.idempotencyKey,
-      amount: priced.subtotal,
-      currency: priced.currency,
-      metadata: { guestPhone: request.guest.phone },
-    });
+    if (chargeAmount === 0) {
+      // A reward covered the entire merchandise subtotal — there is nothing
+      // to charge. Skip the payment provider (a real gateway rejects a $0
+      // charge) and mark the attempt succeeded so the rest of the order
+      // flow, and replay, are completely unchanged.
+      await this.prisma.paymentAttempt.update({
+        where: { id: attempt.id },
+        data: { status: 'SUCCEEDED', providerReference: 'no-charge' },
+      });
+    } else {
+      const chargeResult = await this.paymentProvider.charge({
+        idempotencyKey: request.idempotencyKey,
+        amount: chargeAmount,
+        currency: priced.currency,
+        metadata: { guestPhone: request.guest.phone },
+      });
 
-    if (chargeResult.outcome !== 'succeeded') {
+      if (chargeResult.outcome !== 'succeeded') {
+        await this.prisma.paymentAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            status:
+              chargeResult.outcome === 'declined' ? 'DECLINED' : 'FAILED',
+            failureReason: chargeResult.reason,
+          },
+        });
+        throw new HttpException(
+          { outcome: chargeResult.outcome, message: chargeResult.reason },
+          HttpStatus.PAYMENT_REQUIRED,
+        );
+      }
+
       await this.prisma.paymentAttempt.update({
         where: { id: attempt.id },
         data: {
-          status: chargeResult.outcome === 'declined' ? 'DECLINED' : 'FAILED',
-          failureReason: chargeResult.reason,
+          status: 'SUCCEEDED',
+          providerReference: chargeResult.providerReference,
         },
       });
-      throw new HttpException(
-        { outcome: chargeResult.outcome, message: chargeResult.reason },
-        HttpStatus.PAYMENT_REQUIRED,
-      );
     }
-
-    await this.prisma.paymentAttempt.update({
-      where: { id: attempt.id },
-      data: {
-        status: 'SUCCEEDED',
-        providerReference: chargeResult.providerReference,
-      },
-    });
 
     let order: OrderWithRelations;
     try {
@@ -150,8 +214,9 @@ export class CheckoutService {
 
       order = await this.createOrderTransactionally(
         request,
-        attempt.id,
+        attempt,
         customerId,
+        rewardId,
       );
     } catch (error) {
       // Payment already succeeded (the update above committed before this
@@ -165,13 +230,48 @@ export class CheckoutService {
     return this.toConfirmation(order);
   }
 
+  // Milestone 7C — the read-only checkout reward quote. Signed-in customers
+  // only (the controller applies CustomerAuthGuard). Given the current cart
+  // it returns the ACTIVE rewards eligible for THAT cart, with the discount
+  // each would apply and whether the customer can afford it. Mutates
+  // nothing, reserves nothing, deducts nothing. The checkout submission
+  // independently revalidates everything under a row lock.
+  async quoteRewardEligibility(
+    request: CheckoutRewardEligibilityRequest,
+    customerIdentity: CustomerIdentity,
+  ): Promise<CheckoutRewardEligibilityResponse> {
+    if (
+      typeof request?.locationId !== 'string' ||
+      request.locationId.trim().length === 0
+    ) {
+      throw new BadRequestException('locationId is required.');
+    }
+    if (!Array.isArray(request?.lines) || request.lines.length === 0) {
+      throw new BadRequestException('Cart is empty.');
+    }
+
+    const customer =
+      await this.customersService.resolveOrCreateFromIdentity(customerIdentity);
+
+    const menu = await this.locationsService.findMenu(request.locationId);
+    if (!menu) {
+      throw new NotFoundException('Location or menu not found.');
+    }
+    const priced = priceCart(menu, request.lines);
+    if (!priced.ok) {
+      throw new BadRequestException(priced.error.message);
+    }
+
+    return this.redemptionService.previewForCart(customer.id, priced, menu);
+  }
+
   async getStatus(
     orderId: string,
     accessToken: string,
   ): Promise<OrderStatusResponse> {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      include: { lines: true, location: true, paymentAttempt: true },
+      include: { ...ORDER_INCLUDE, paymentAttempt: true },
     });
 
     if (!order || !constantTimeEquals(order.accessToken, accessToken)) {
@@ -189,8 +289,11 @@ export class CheckoutService {
       locationName: order.location.name,
       guestName: order.guestName,
       subtotal: order.subtotal,
+      rewardDiscount: order.rewardDiscountMinorUnits,
+      total: order.subtotal - order.rewardDiscountMinorUnits,
       currency: order.currency,
       lines: order.lines.map(toOrderLineSummary),
+      loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
       createdAt: order.createdAt.toISOString(),
     };
   }
@@ -256,6 +359,14 @@ export class CheckoutService {
     if (!Array.isArray(request.lines) || request.lines.length === 0) {
       throw new BadRequestException('Cart is empty.');
     }
+    if (
+      request.loyaltyRewardId !== undefined &&
+      request.loyaltyRewardId !== null &&
+      (typeof request.loyaltyRewardId !== 'string' ||
+        request.loyaltyRewardId.trim().length === 0)
+    ) {
+      throw new BadRequestException('loyaltyRewardId must be a reward id or null.');
+    }
   }
 
   private async replay(attempt: PaymentAttemptRow): Promise<OrderConfirmation> {
@@ -291,7 +402,7 @@ export class CheckoutService {
 
     const order = await this.prisma.order.findUnique({
       where: { paymentAttemptId: attempt.id },
-      include: { lines: true, location: true },
+      include: ORDER_INCLUDE,
     });
 
     if (!order) {
@@ -365,9 +476,11 @@ export class CheckoutService {
 
   private async createOrderTransactionally(
     request: CheckoutRequest,
-    paymentAttemptId: string,
+    attempt: PaymentAttemptRow,
     customerId: string | null,
+    rewardId: string | null,
   ): Promise<OrderWithRelations> {
+    const paymentAttemptId = attempt.id;
     return this.prisma.$transaction(async (tx) => {
       // Revalidate against the current catalog state — payment succeeding
       // does not itself guarantee nothing changed in the window since the
@@ -386,6 +499,30 @@ export class CheckoutService {
           `Payment succeeded but your cart changed before the order could ` +
             `be placed (${priced.error.message}). Reference ${paymentAttemptId} for support.`,
         );
+      }
+
+      // Milestone 7C — re-validate the chosen reward against the CURRENT
+      // reward configuration and the freshly repriced cart (the client
+      // never locks in a stale reward by selecting it). If it no longer
+      // applies, or the discounted total would differ from what was
+      // actually charged, the whole order fails and the payment is flagged
+      // reconciliationRequired — never a silent mismatch, never a false
+      // success.
+      let plan: RedemptionPlan | null = null;
+      let rewardDiscount = 0;
+      if (rewardId !== null && customerId !== null) {
+        plan = await this.redemptionService.buildRedemptionPlan(
+          rewardId,
+          priced,
+          menu,
+        );
+        rewardDiscount = plan.discountMinorUnits;
+        if (priced.subtotal - rewardDiscount !== attempt.amount) {
+          throw new ConflictException(
+            `Payment succeeded but the reward or cart changed before the ` +
+              `order could be placed. Reference ${paymentAttemptId} for support.`,
+          );
+        }
       }
 
       let orderNumber: string | null = null;
@@ -418,6 +555,7 @@ export class CheckoutService {
           guestEmail: request.guest.email?.trim() || null,
           currency: priced.currency,
           subtotal: priced.subtotal,
+          rewardDiscountMinorUnits: rewardDiscount,
           status: 'RECEIVED',
           lines: {
             create: priced.lines.map((line) => ({
@@ -434,7 +572,7 @@ export class CheckoutService {
             create: { status: 'RECEIVED' },
           },
         },
-        include: { lines: true, location: true },
+        include: { location: true },
       });
 
       // Genuine transactional outbox: committed atomically with the order
@@ -459,27 +597,47 @@ export class CheckoutService {
               productName: line.productName,
               quantity: line.quantity,
             })),
+            rewardDiscount,
           },
         },
       });
 
-      // Milestone 7A — award Mocha Beans for a successful authenticated
-      // order, in the SAME transaction as the Order itself. A guest order
-      // (customerId null) earns nothing; an order whose transaction rolls
-      // back (payment succeeded, order creation failed) earns nothing. The
-      // ledger's @@unique([type, orderId]) makes this exactly-once per
-      // Order at the database level.
+      // Milestone 7C — spend Beans on the chosen reward and Milestone 7A —
+      // earn Beans on the post-discount qualifying subtotal, BOTH in this
+      // same transaction as the Order. Order of operations:
+      //   1. applyRedemption locks the loyalty account FOR UPDATE, re-reads
+      //      the balance, and (only if enough Beans remain) writes the
+      //      immutable redemption snapshot, the negative REDEEM ledger
+      //      entry, and the balance decrement. A concurrent order that
+      //      spent the Beans first makes this throw -> reconciliationRequired.
+      //   2. earnForOrder writes the positive EARN entry on
+      //      (subtotal - rewardDiscount). The FOR UPDATE lock from step 1
+      //      is still held, so this is safe.
+      // A guest order earns and redeems nothing. `@@unique([type, orderId])`
+      // on the ledger makes REDEEM and EARN each exactly-once per order.
       if (customerId !== null) {
+        if (plan !== null) {
+          await this.redemptionService.applyRedemption(tx, {
+            orderId: order.id,
+            customerId,
+            plan,
+          });
+        }
         await this.loyaltyService.earnForOrder({
           tx,
           customerId,
           orderId: order.id,
-          qualifyingSubtotalMinorUnits: priced.subtotal,
+          qualifyingSubtotalMinorUnits: priced.subtotal - rewardDiscount,
           currency: priced.currency,
         });
       }
 
-      return order;
+      // Re-fetch so the confirmation sees the redemption snapshot written
+      // above (the initial create ran before applyRedemption).
+      return tx.order.findUniqueOrThrow({
+        where: { id: order.id },
+        include: ORDER_INCLUDE,
+      });
     });
   }
 
@@ -493,8 +651,11 @@ export class CheckoutService {
       locationName: order.location.name,
       guestName: order.guestName,
       subtotal: order.subtotal,
+      rewardDiscount: order.rewardDiscountMinorUnits,
+      total: order.subtotal - order.rewardDiscountMinorUnits,
       currency: order.currency,
       lines: order.lines.map(toOrderLineSummary),
+      loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
       createdAt: order.createdAt.toISOString(),
     };
   }

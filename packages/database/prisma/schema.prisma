@@ -357,9 +357,17 @@ model Order {
   guestEmail String?
 
   currency String
-  // Merchandise total only. No tax/fee model is approved yet — see
-  // Milestone 3 report for this explicitly flagged limitation.
+  // Gross merchandise total — the sum of every OrderLine.lineTotal, exactly
+  // as before Milestone 7C. No tax/fee model is approved yet.
   subtotal Int
+  // Milestone 7C — the discount applied by a single redeemed Mocha Bean
+  // reward, in integer minor units. 0 when no reward was used (every
+  // pre-7C order). The amount actually charged / owed is
+  // `subtotal - rewardDiscountMinorUnits`; Mocha Beans are earned on that
+  // same net figure. Never makes the net negative (the discount is capped
+  // at the eligible merchandise amount). The immutable reward snapshot
+  // lives on OrderLoyaltyRewardRedemption.
+  rewardDiscountMinorUnits Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -367,6 +375,7 @@ model Order {
   lines             OrderLine[]
   statusHistory     OrderStatusHistory[]
   mochaBeanEntries  MochaBeanLedgerEntry[]
+  loyaltyRewardRedemption OrderLoyaltyRewardRedemption?
 
   @@index([locationId])
   @@index([customerId])
@@ -773,14 +782,21 @@ model OperationsTask {
 // A Bean has no fractional unit: every amount is a whole signed integer.
 
 enum MochaBeanEntryType {
-  // A qualifying purchase: $1 of Order.subtotal = 1 Bean, whole dollars
-  // only. Written in the SAME transaction that creates the Order, and only
+  // A qualifying purchase: earned on Order.subtotal AFTER any loyalty
+  // reward discount, whole qualifying dollars only, at the configured
+  // rate. Written in the SAME transaction that creates the Order, and only
   // when the Order has a customerId (guests never earn).
   EARN
   // An HQ operator manually added or deducted Beans. Always carries a
   // trimmed non-empty `reason` and an `actorInternalUserId`, and is
   // mirrored by an InternalAuditEvent written in the same transaction.
   MANUAL_ADJUSTMENT
+  // Milestone 7C — Beans spent to redeem ONE Mocha Bean reward on an order.
+  // `amount` is negative (the reward's full configured beanCost), `orderId`
+  // is set, and the entry is written in the SAME transaction as the Order
+  // and the OrderLoyaltyRewardRedemption snapshot. @@unique([type, orderId])
+  // makes it exactly-once per order.
+  REDEEM
 }
 
 // One row per Customer. `balance` is a materialized projection of the sum
@@ -940,4 +956,50 @@ model LoyaltyRewardCategory {
 
   @@id([rewardId, categoryId])
   @@index([categoryId])
+}
+
+// --- Milestone 7C, Mocha Bean reward redemption --------------------
+// The immutable record of the ONE Mocha Bean reward redeemed on an order.
+// Written in the SAME transaction as the Order, the REDEEM ledger entry and
+// the EARN ledger entry — never split into independent commits.
+//
+// SNAPSHOT BY VALUE (the OrderLine philosophy): rewardName / rewardType /
+// beanCost / discountMinorUnits / freeItem* are copied here at redemption
+// time and never re-read from LoyaltyReward. Later HQ edits to the reward
+// (name, cost, value, eligibility, active state) therefore never change a
+// completed order. `sourceRewardId` is a plain reference string (like
+// OrderLine.productId — no foreign key), kept only so history can point at
+// the reward it came from; it is NEVER trusted for display or accounting.
+//
+// `orderId @unique` is both the "one reward per order" invariant and the
+// idempotency anchor: a checkout replay re-uses the same Order (or none),
+// so this row — and the REDEEM entry — can be created at most once.
+model OrderLoyaltyRewardRedemption {
+  id                  String            @id @default(uuid(7))
+  orderId             String            @unique
+  order               Order             @relation(fields: [orderId], references: [id])
+
+  // Plain reference to the reward this came from. Nullable and un-joined on
+  // purpose — the snapshot below is authoritative.
+  sourceRewardId      String?
+
+  // Immutable snapshot.
+  rewardName          String
+  rewardType          LoyaltyRewardType
+  // Mocha Beans actually deducted (the reward's full configured beanCost —
+  // never prorated by how much of the discount was usable).
+  beanCost            Int
+  // Discount actually applied to the gross merchandise subtotal, in integer
+  // minor units. For FIXED_AMOUNT: min(reward value, gross subtotal). For
+  // FREE_ITEM: the unit price of the single freed unit.
+  discountMinorUnits  Int
+  // FREE_ITEM only — the cart product one unit of which was made free (the
+  // lowest-priced eligible unit). Plain snapshot strings, no FK, mirroring
+  // OrderLine.productId.
+  freeItemProductId   String?
+  freeItemProductName String?
+
+  createdAt           DateTime          @default(now())
+
+  @@index([sourceRewardId])
 }

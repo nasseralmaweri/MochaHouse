@@ -128,11 +128,36 @@ export default function OrderConfirmationPage() {
             </li>
           ))}
         </ul>
-        <div className="flex items-center justify-between border-t border-border-default pt-2">
-          <span className="text-sm font-semibold text-text-primary">Total</span>
-          <span className="text-lg font-semibold text-text-primary">
-            {formatPrice(status.subtotal, status.currency)}
-          </span>
+        <div className="flex flex-col gap-1 border-t border-border-default pt-2">
+          {status.loyaltyReward ? (
+            <>
+              <div className="flex items-center justify-between text-sm text-text-secondary">
+                <span>Subtotal</span>
+                <span>{formatPrice(status.subtotal, status.currency)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm text-status-success">
+                <span>
+                  Mocha Beans Reward · {status.loyaltyReward.rewardName}
+                </span>
+                <span>
+                  −{formatPrice(status.rewardDiscount, status.currency)}
+                </span>
+              </div>
+            </>
+          ) : null}
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold text-text-primary">
+              Total
+            </span>
+            <span className="text-lg font-semibold text-text-primary">
+              {formatPrice(status.total, status.currency)}
+            </span>
+          </div>
+          {status.loyaltyReward ? (
+            <p className="text-xs text-text-muted">
+              {status.loyaltyReward.beanCost} Mocha Beans used
+            </p>
+          ) : null}
         </div>
       </Card>
 
