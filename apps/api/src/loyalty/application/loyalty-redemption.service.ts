@@ -45,6 +45,24 @@ export interface RedemptionPlan {
 
 type PricedOk = Extract<PricingResult, { ok: true }>;
 
+type RewardWithEligibility = {
+  type: 'FIXED_AMOUNT' | 'FREE_ITEM';
+  fixedAmountMinorUnits: number | null;
+  eligibleProducts: { productId: string }[];
+  eligibleCategories: { categoryId: string }[];
+};
+
+// Milestone 7E — a regular Promotion/Coupon discount is applied to the cart
+// BEFORE the Mocha Bean reward. When one is in play, the reward is computed
+// against the merchandise that remains: the FIXED_AMOUNT cap is the
+// remaining amount, and a FREE_ITEM regular discount's freed unit is
+// removed from the pool so the reward frees a genuinely different unit (or
+// is found ineligible).
+export interface RegularDiscountContext {
+  merchandiseAfterRegularMinorUnits: number;
+  regularFreeItemProductId: string | null;
+}
+
 @Injectable()
 export class LoyaltyRedemptionService {
   constructor(private readonly prisma: PrismaService) {}
@@ -56,6 +74,7 @@ export class LoyaltyRedemptionService {
     customerId: string,
     priced: PricedOk,
     menu: LocationMenuResponse,
+    regularContext?: RegularDiscountContext,
   ): Promise<{ balance: number; rewards: CheckoutRewardOption[] }> {
     const [account, rewards] = await Promise.all([
       this.prisma.customerLoyaltyAccount.findUnique({
@@ -72,29 +91,15 @@ export class LoyaltyRedemptionService {
       }),
     ]);
     const balance = account?.balance ?? 0;
-    const cartLines = this.toDiscountLines(priced, menu);
 
     const options: CheckoutRewardOption[] = [];
     for (const reward of rewards) {
-      const discount = computeLoyaltyRewardDiscount({
-        merchandiseSubtotalMinorUnits: priced.subtotal,
-        lines: cartLines,
-        reward:
-          reward.type === 'FIXED_AMOUNT'
-            ? {
-                type: 'FIXED_AMOUNT',
-                fixedAmountMinorUnits: reward.fixedAmountMinorUnits ?? 0,
-              }
-            : {
-                type: 'FREE_ITEM',
-                eligibleProductIds: reward.eligibleProducts.map(
-                  (e) => e.productId,
-                ),
-                eligibleCategoryIds: reward.eligibleCategories.map(
-                  (e) => e.categoryId,
-                ),
-              },
-      });
+      const discount = this.computeRewardDiscount(
+        reward,
+        priced,
+        menu,
+        regularContext,
+      );
       if (!discount.ok) {
         continue; // not eligible for this cart — hide it
       }
@@ -120,6 +125,7 @@ export class LoyaltyRedemptionService {
     rewardId: unknown,
     priced: PricedOk,
     menu: LocationMenuResponse,
+    regularContext?: RegularDiscountContext,
   ): Promise<RedemptionPlan> {
     if (typeof rewardId !== 'string' || rewardId.trim().length === 0) {
       throw new BadRequestException('A valid reward selection is required.');
@@ -144,23 +150,12 @@ export class LoyaltyRedemptionService {
       throw new ConflictException('That reward is misconfigured.');
     }
 
-    const discount = computeLoyaltyRewardDiscount({
-      merchandiseSubtotalMinorUnits: priced.subtotal,
-      lines: this.toDiscountLines(priced, menu),
-      reward:
-        reward.type === 'FIXED_AMOUNT'
-          ? {
-              type: 'FIXED_AMOUNT',
-              fixedAmountMinorUnits: reward.fixedAmountMinorUnits ?? 0,
-            }
-          : {
-              type: 'FREE_ITEM',
-              eligibleProductIds: reward.eligibleProducts.map((e) => e.productId),
-              eligibleCategoryIds: reward.eligibleCategories.map(
-                (e) => e.categoryId,
-              ),
-            },
-    });
+    const discount = this.computeRewardDiscount(
+      reward,
+      priced,
+      menu,
+      regularContext,
+    );
 
     if (!discount.ok) {
       throw new BadRequestException(discount.message);
@@ -236,6 +231,42 @@ export class LoyaltyRedemptionService {
     });
   }
 
+  // The pure reward-discount computation, shared by previewForCart and
+  // buildRedemptionPlan. When a regular Promotion/Coupon (Milestone 7E) has
+  // already discounted the cart, `regularContext` supplies the remaining
+  // merchandise ceiling and the unit it already freed.
+  private computeRewardDiscount(
+    reward: RewardWithEligibility,
+    priced: PricedOk,
+    menu: LocationMenuResponse,
+    regularContext: RegularDiscountContext | undefined,
+  ) {
+    let lines = this.toDiscountLines(priced, menu);
+    const merchandiseSubtotalMinorUnits =
+      regularContext?.merchandiseAfterRegularMinorUnits ?? priced.subtotal;
+    if (regularContext?.regularFreeItemProductId != null) {
+      lines = decrementOneUnit(lines, regularContext.regularFreeItemProductId);
+    }
+
+    return computeLoyaltyRewardDiscount({
+      merchandiseSubtotalMinorUnits,
+      lines,
+      reward:
+        reward.type === 'FIXED_AMOUNT'
+          ? {
+              type: 'FIXED_AMOUNT',
+              fixedAmountMinorUnits: reward.fixedAmountMinorUnits ?? 0,
+            }
+          : {
+              type: 'FREE_ITEM',
+              eligibleProductIds: reward.eligibleProducts.map((e) => e.productId),
+              eligibleCategoryIds: reward.eligibleCategories.map(
+                (e) => e.categoryId,
+              ),
+            },
+    });
+  }
+
   // priceCart lines -> the domain discount input. The category id per line
   // comes from the same effective menu priceCart used, so it is
   // authoritative and needs no extra DB read.
@@ -256,4 +287,26 @@ export class LoyaltyRedemptionService {
       };
     });
   }
+}
+
+// Remove ONE unit of `productId` from the line set (the first matching
+// line), dropping a line that hits zero. Used to model a unit already made
+// free by a regular Promotion/Coupon so the reward frees a different one.
+function decrementOneUnit(
+  lines: RewardDiscountCartLine[],
+  productId: string,
+): RewardDiscountCartLine[] {
+  let done = false;
+  const out: RewardDiscountCartLine[] = [];
+  for (const line of lines) {
+    if (!done && line.productId === productId && line.quantity > 0) {
+      done = true;
+      if (line.quantity > 1) {
+        out.push({ ...line, quantity: line.quantity - 1 });
+      }
+      continue;
+    }
+    out.push(line);
+  }
+  return out;
 }

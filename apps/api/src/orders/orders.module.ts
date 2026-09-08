@@ -4,6 +4,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { LocationsModule } from '../locations/locations.module';
 import { CustomersModule } from '../customers/customers.module';
 import { LoyaltyModule } from '../loyalty/loyalty.module';
+import { PromotionsModule } from '../promotions/promotions.module';
 import { OrdersController } from './api/orders.controller';
 import { CheckoutRewardsController } from './api/checkout-rewards.controller';
 import { AdminOrdersController } from './api/admin-orders.controller';
@@ -24,7 +25,13 @@ import { PAYMENT_PROVIDER } from './infrastructure/payment-provider.token';
 // CustomerOrdersController does the same to scope its queries — neither
 // duplicates that resolution logic.
 @Module({
-  imports: [PrismaModule, LocationsModule, CustomersModule, LoyaltyModule],
+  imports: [
+    PrismaModule,
+    LocationsModule,
+    CustomersModule,
+    LoyaltyModule,
+    PromotionsModule,
+  ],
   controllers: [
     OrdersController,
     CheckoutRewardsController,

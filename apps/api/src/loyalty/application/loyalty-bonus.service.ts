@@ -39,12 +39,14 @@ export interface ApplyBonusForOrderInput {
     unitPrice: number;
     quantity: number;
   }[];
-  // Milestone 7C interaction: the single unit made free by a FREE_ITEM
-  // reward (null if none), and an order-level FIXED_AMOUNT reward discount
-  // in minor units (0 if none). Bonus earning uses the qualifying spend
-  // that actually remains after these.
-  freeItemProductId: string | null;
-  fixedRewardDiscountMinorUnits: number;
+  // Milestone 7C / 7E interaction: every unit made free by a FREE_ITEM
+  // reward or a FREE_ITEM regular Promotion/Coupon (a product id may repeat),
+  // and the summed minor-unit value of every non-free order-level discount
+  // (a FIXED_AMOUNT reward plus a PERCENTAGE_OFF / FIXED_AMOUNT regular
+  // Promotion/Coupon). Bonus earning uses the qualifying spend that actually
+  // remains after these.
+  freeItemProductIds: string[];
+  orderLevelDiscountMinorUnits: number;
 }
 
 @Injectable()
@@ -59,8 +61,8 @@ export class LoyaltyBonusService {
       locationId,
       currency,
       pricedLines,
-      freeItemProductId,
-      fixedRewardDiscountMinorUnits,
+      freeItemProductIds,
+      orderLevelDiscountMinorUnits,
     } = input;
 
     // Bonus Beans are earned on USD merchandise only, mirroring earnForOrder.
@@ -128,8 +130,8 @@ export class LoyaltyBonusService {
     const result = computeOrderLoyaltyBonuses({
       lines,
       standardRatePerDollar,
-      freeItemProductId,
-      fixedRewardDiscountMinorUnits,
+      freeItemProductIds,
+      orderLevelDiscountMinorUnits,
       promotions: promotionInputs,
     });
 

@@ -166,6 +166,14 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Configure earning, Rewards Catalog and bonus promotions',
     definition: 'Configure earning, Rewards Catalog and bonus promotions',
   },
+  // Milestone 7E — Promotions & Coupons (the regular merchandise-discount
+  // system). CORPORATE-only.
+  'promotions.configure': {
+    group: 'Promotions',
+    effectiveAll: 'Manage Promotions & Coupons',
+    effectiveScoped: 'Manage Promotions & Coupons',
+    definition: 'Manage Promotions & Coupons',
+  },
 };
 
 const GROUP_ORDER = [
@@ -174,6 +182,7 @@ const GROUP_ORDER = [
   'Menu & Products',
   'Locations',
   'Loyalty',
+  'Promotions',
   'Administration',
 ];
 
@@ -197,6 +206,7 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'loyalty.view',
   'loyalty.adjust',
   'loyalty.configure',
+  'promotions.configure',
   'users.view',
   'roles.view',
   'audit.view',

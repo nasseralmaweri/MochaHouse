@@ -9,9 +9,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  CheckoutQuoteRequest,
+  CheckoutQuoteResponse,
   CheckoutRequest,
   CheckoutRewardEligibilityRequest,
   CheckoutRewardEligibilityResponse,
+  CheckoutRewardOption,
   OrderConfirmation,
   OrderStatusResponse,
 } from '@mocha-house/contracts';
@@ -25,8 +28,13 @@ import { LoyaltyService } from '../../loyalty/application/loyalty.service';
 import {
   LoyaltyRedemptionService,
   type RedemptionPlan,
+  type RegularDiscountContext,
 } from '../../loyalty/application/loyalty-redemption.service';
 import { LoyaltyBonusService } from '../../loyalty/application/loyalty-bonus.service';
+import {
+  PromotionCheckoutService,
+  type RegularDiscountPlan,
+} from '../../promotions/application/promotion-checkout.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import {
@@ -37,6 +45,7 @@ import {
   toOrderLineSummary,
   toOrderLoyaltyBonusSummary,
   toOrderLoyaltyRewardSummary,
+  toOrderPromotionSummary,
 } from '../infrastructure/order-line-mapper';
 
 const MAX_ORDER_NUMBER_ATTEMPTS = 5;
@@ -45,6 +54,7 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
   include: {
     lines: true;
     location: true;
+    promotionRedemption: true;
     loyaltyRewardRedemption: true;
     loyaltyBonus: { include: { items: true } };
   };
@@ -53,6 +63,7 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
 const ORDER_INCLUDE = {
   lines: true,
   location: true,
+  promotionRedemption: true,
   loyaltyRewardRedemption: true,
   loyaltyBonus: { include: { items: true } },
 } satisfies Prisma.OrderInclude;
@@ -76,6 +87,7 @@ export class CheckoutService {
     private readonly loyaltyService: LoyaltyService,
     private readonly redemptionService: LoyaltyRedemptionService,
     private readonly bonusService: LoyaltyBonusService,
+    private readonly promotionService: PromotionCheckoutService,
     @Inject(PAYMENT_PROVIDER)
     private readonly paymentProvider: PaymentProvider,
   ) {}
@@ -115,11 +127,33 @@ export class CheckoutService {
       throw new BadRequestException(priced.error.message);
     }
 
-    // Milestone 7C — resolve a chosen Mocha Bean reward BEFORE payment so
-    // the charge is for the discounted amount. A guest that submits a
-    // reward id is rejected here, before any payment attempt exists — never
-    // auto-matched to an account. All numbers below are server-computed;
-    // the client only sent an id.
+    // Milestone 7E — resolve the ONE regular Promotion/Coupon FIRST. A
+    // supplied coupon that fails any rule is rejected here, before any
+    // payment attempt exists (never silently swapped for an automatic
+    // Promotion). With no coupon, the best eligible automatic Promotion (if
+    // any) applies.
+    const couponCode = normalizeRequestCoupon(request.couponCode);
+    const regularResolution =
+      await this.promotionService.resolveRegularDiscount({
+        priced,
+        menu,
+        locationId: request.locationId,
+        customerId,
+        couponCode,
+      });
+    if (regularResolution.outcome === 'coupon_rejected') {
+      throw new BadRequestException(regularResolution.message);
+    }
+    const regularPlan =
+      regularResolution.outcome === 'applied' ? regularResolution.plan : null;
+    const regularDiscount = regularPlan?.discountMinorUnits ?? 0;
+    const merchandiseAfterRegular = priced.subtotal - regularDiscount;
+
+    // Milestone 7C — resolve a chosen Mocha Bean reward, against the
+    // merchandise remaining after the regular discount. A guest that submits
+    // a reward id is rejected here, before any payment attempt exists —
+    // never auto-matched to an account. All numbers below are
+    // server-computed; the client only sent an id / code.
     const rewardId =
       typeof request.loyaltyRewardId === 'string' &&
       request.loyaltyRewardId.trim().length > 0
@@ -134,6 +168,7 @@ export class CheckoutService {
         rewardId,
         priced,
         menu,
+        regularRewardContext(regularPlan, merchandiseAfterRegular),
       );
       const balance =
         await this.loyaltyService.getBalanceForCustomer(customerId);
@@ -145,11 +180,11 @@ export class CheckoutService {
       }
     }
 
-    // The gross merchandise subtotal minus the reward discount — what the
-    // customer actually pays. Guaranteed >= 0 (the discount is capped at
-    // the eligible merchandise amount).
+    // Gross merchandise minus the regular discount minus the reward
+    // discount — what the customer actually pays. Guaranteed >= 0 (each
+    // discount is capped at the merchandise then remaining).
     const chargeAmount =
-      priced.subtotal - (prePaymentPlan?.discountMinorUnits ?? 0);
+      merchandiseAfterRegular - (prePaymentPlan?.discountMinorUnits ?? 0);
 
     const created = await this.createPaymentAttempt(
       request.idempotencyKey,
@@ -226,6 +261,7 @@ export class CheckoutService {
         attempt,
         customerId,
         rewardId,
+        couponCode,
       );
     } catch (error) {
       // Payment already succeeded (the update above committed before this
@@ -274,6 +310,121 @@ export class CheckoutService {
     return this.redemptionService.previewForCart(customer.id, priced, menu);
   }
 
+  // Milestone 7E — the unified, server-authoritative checkout pricing quote.
+  // Guests allowed (OptionalCustomerAuthGuard on the route). Given the cart,
+  // an optional coupon code and an optional selected reward id, it returns
+  // the regular Promotion/Coupon discount, the eligible Mocha Bean rewards
+  // (signed-in only, computed against the post-regular merchandise) and the
+  // resulting total. Reserves nothing, consumes no redemption, deducts no
+  // Beans. The checkout submission independently revalidates everything.
+  async quoteCheckout(
+    request: CheckoutQuoteRequest,
+    customerIdentity: CustomerIdentity | undefined,
+  ): Promise<CheckoutQuoteResponse> {
+    if (
+      typeof request?.locationId !== 'string' ||
+      request.locationId.trim().length === 0
+    ) {
+      throw new BadRequestException('locationId is required.');
+    }
+    if (!Array.isArray(request?.lines) || request.lines.length === 0) {
+      throw new BadRequestException('Cart is empty.');
+    }
+
+    const customerId = await this.resolveCustomerId(customerIdentity);
+
+    const menu = await this.locationsService.findMenu(request.locationId);
+    if (!menu) {
+      throw new NotFoundException('Location or menu not found.');
+    }
+    const priced = priceCart(menu, request.lines);
+    if (!priced.ok) {
+      throw new BadRequestException(priced.error.message);
+    }
+
+    const couponCode = normalizeRequestCoupon(request.couponCode);
+    const resolution = await this.promotionService.resolveRegularDiscount({
+      priced,
+      menu,
+      locationId: request.locationId,
+      customerId,
+      couponCode,
+    });
+
+    let regularDiscountView: CheckoutQuoteResponse['regularDiscount'] = null;
+    let couponStatus: CheckoutQuoteResponse['couponStatus'] = null;
+    let couponMessage: string | null = null;
+    let regularPlan: RegularDiscountPlan | null = null;
+
+    if (resolution.outcome === 'coupon_rejected') {
+      couponStatus = resolution.status;
+      couponMessage = resolution.message;
+    } else if (resolution.outcome === 'applied') {
+      regularPlan = resolution.plan;
+      regularDiscountView = {
+        source: resolution.plan.kind,
+        name: resolution.plan.name,
+        discountType: resolution.plan.discountType,
+        discountMinorUnits: resolution.plan.discountMinorUnits,
+        freeItemName: resolution.plan.freeItem?.productName ?? null,
+      };
+      if (couponCode !== null) {
+        couponStatus = 'applied';
+      }
+    }
+
+    const regularDiscount = regularPlan?.discountMinorUnits ?? 0;
+    const merchandiseAfterRegular = priced.subtotal - regularDiscount;
+
+    let balance = 0;
+    let rewards: CheckoutRewardOption[] = [];
+    if (customerId !== null) {
+      const preview = await this.redemptionService.previewForCart(
+        customerId,
+        priced,
+        menu,
+        regularRewardContext(regularPlan, merchandiseAfterRegular),
+      );
+      balance = preview.balance;
+      rewards = preview.rewards;
+    }
+
+    // The discount the currently-selected reward would apply.
+    const selectedRewardId =
+      typeof request.loyaltyRewardId === 'string' &&
+      request.loyaltyRewardId.trim().length > 0
+        ? request.loyaltyRewardId.trim()
+        : null;
+    let rewardDiscountMinorUnits = 0;
+    if (selectedRewardId !== null && customerId !== null) {
+      try {
+        const plan = await this.redemptionService.buildRedemptionPlan(
+          selectedRewardId,
+          priced,
+          menu,
+          regularRewardContext(regularPlan, merchandiseAfterRegular),
+        );
+        rewardDiscountMinorUnits = plan.discountMinorUnits;
+      } catch {
+        // The selected reward no longer applies with the current cart /
+        // regular discount — the quote just shows 0 for it.
+        rewardDiscountMinorUnits = 0;
+      }
+    }
+
+    return {
+      currency: priced.currency,
+      subtotal: priced.subtotal,
+      regularDiscount: regularDiscountView,
+      couponStatus,
+      couponMessage,
+      balance,
+      rewards,
+      rewardDiscountMinorUnits,
+      total: merchandiseAfterRegular - rewardDiscountMinorUnits,
+    };
+  }
+
   async getStatus(
     orderId: string,
     accessToken: string,
@@ -298,10 +449,15 @@ export class CheckoutService {
       locationName: order.location.name,
       guestName: order.guestName,
       subtotal: order.subtotal,
+      promotionDiscount: order.promotionDiscountMinorUnits,
       rewardDiscount: order.rewardDiscountMinorUnits,
-      total: order.subtotal - order.rewardDiscountMinorUnits,
+      total:
+        order.subtotal -
+        order.promotionDiscountMinorUnits -
+        order.rewardDiscountMinorUnits,
       currency: order.currency,
       lines: order.lines.map(toOrderLineSummary),
+      orderPromotion: toOrderPromotionSummary(order.promotionRedemption),
       loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
       loyaltyBonus: toOrderLoyaltyBonusSummary(order.loyaltyBonus),
       createdAt: order.createdAt.toISOString(),
@@ -376,6 +532,13 @@ export class CheckoutService {
         request.loyaltyRewardId.trim().length === 0)
     ) {
       throw new BadRequestException('loyaltyRewardId must be a reward id or null.');
+    }
+    if (
+      request.couponCode !== undefined &&
+      request.couponCode !== null &&
+      typeof request.couponCode !== 'string'
+    ) {
+      throw new BadRequestException('couponCode must be a string or null.');
     }
   }
 
@@ -489,6 +652,7 @@ export class CheckoutService {
     attempt: PaymentAttemptRow,
     customerId: string | null,
     rewardId: string | null,
+    couponCode: string | null,
   ): Promise<OrderWithRelations> {
     const paymentAttemptId = attempt.id;
     return this.prisma.$transaction(async (tx) => {
@@ -511,11 +675,34 @@ export class CheckoutService {
         );
       }
 
+      // Milestone 7E — re-resolve the regular Promotion/Coupon against the
+      // CURRENT promotion state (dates, location, applicability, minimum,
+      // limits) and the freshly repriced cart. The authoritative
+      // redemption-count enforcement happens in applyRedemption below.
+      const regularResolution =
+        await this.promotionService.resolveRegularDiscount({
+          db: tx,
+          priced,
+          menu,
+          locationId: request.locationId,
+          customerId,
+          couponCode,
+        });
+      if (regularResolution.outcome === 'coupon_rejected') {
+        throw new ConflictException(
+          `Payment succeeded but your coupon is no longer valid ` +
+            `(${regularResolution.message}). Reference ${paymentAttemptId} for support.`,
+        );
+      }
+      const regularPlan =
+        regularResolution.outcome === 'applied' ? regularResolution.plan : null;
+      const regularDiscount = regularPlan?.discountMinorUnits ?? 0;
+      const merchandiseAfterRegular = priced.subtotal - regularDiscount;
+
       // Milestone 7C — re-validate the chosen reward against the CURRENT
-      // reward configuration and the freshly repriced cart (the client
-      // never locks in a stale reward by selecting it). If it no longer
-      // applies, or the discounted total would differ from what was
-      // actually charged, the whole order fails and the payment is flagged
+      // reward configuration and the freshly repriced, regular-discounted
+      // cart. If the final expected charge differs from what was actually
+      // captured, the whole order fails and the payment is flagged
       // reconciliationRequired — never a silent mismatch, never a false
       // success.
       let plan: RedemptionPlan | null = null;
@@ -525,14 +712,18 @@ export class CheckoutService {
           rewardId,
           priced,
           menu,
+          regularRewardContext(regularPlan, merchandiseAfterRegular),
         );
         rewardDiscount = plan.discountMinorUnits;
-        if (priced.subtotal - rewardDiscount !== attempt.amount) {
-          throw new ConflictException(
-            `Payment succeeded but the reward or cart changed before the ` +
-              `order could be placed. Reference ${paymentAttemptId} for support.`,
-          );
-        }
+      }
+      if (
+        priced.subtotal - regularDiscount - rewardDiscount !==
+        attempt.amount
+      ) {
+        throw new ConflictException(
+          `Payment succeeded but the discount, reward or cart changed before ` +
+            `the order could be placed. Reference ${paymentAttemptId} for support.`,
+        );
       }
 
       let orderNumber: string | null = null;
@@ -565,6 +756,7 @@ export class CheckoutService {
           guestEmail: request.guest.email?.trim() || null,
           currency: priced.currency,
           subtotal: priced.subtotal,
+          promotionDiscountMinorUnits: regularDiscount,
           rewardDiscountMinorUnits: rewardDiscount,
           status: 'RECEIVED',
           lines: {
@@ -607,10 +799,25 @@ export class CheckoutService {
               productName: line.productName,
               quantity: line.quantity,
             })),
+            promotionDiscount: regularDiscount,
             rewardDiscount,
           },
         },
       });
+
+      // Milestone 7E — the regular Promotion/Coupon: the immutable snapshot
+      // plus the concurrency-safe conditional increments of the total and
+      // per-customer redemption counters. Applies to guest orders too
+      // (a Promotion/Coupon with a per-customer limit already required
+      // sign-in). A limit won at the last moment by a concurrent order makes
+      // this throw -> reconciliationRequired.
+      if (regularPlan !== null) {
+        await this.promotionService.applyRedemption(tx, {
+          orderId: order.id,
+          customerId,
+          plan: regularPlan,
+        });
+      }
 
       // Milestone 7C — spend Beans on the chosen reward and Milestone 7A —
       // earn Beans on the post-discount qualifying subtotal, BOTH in this
@@ -633,19 +840,24 @@ export class CheckoutService {
             plan,
           });
         }
+        // Milestone 7A/7B/7E — standard Beans on the FINAL post-discount
+        // qualifying merchandise (gross - regular discount - reward discount).
         await this.loyaltyService.earnForOrder({
           tx,
           customerId,
           orderId: order.id,
-          qualifyingSubtotalMinorUnits: priced.subtotal - rewardDiscount,
+          qualifyingSubtotalMinorUnits:
+            priced.subtotal - regularDiscount - rewardDiscount,
           currency: priced.currency,
         });
-        // Milestone 7D — award any Bonus Mocha Bean Promotions on qualifying
-        // items, as a dedicated positive BONUS_EARN entry, in this same
-        // transaction. Uses CURRENT promotion state and the qualifying spend
-        // that remains after the reward: a FREE_ITEM free unit earns no
-        // bonus; a FIXED_AMOUNT discount is allocated across items
-        // proportionally. Writes nothing when no promotion applies.
+        // Milestone 7D/7E — award any Bonus Mocha Bean Promotions on
+        // qualifying items, as a dedicated positive BONUS_EARN entry, in
+        // this same transaction. Uses CURRENT promotion state and the
+        // qualifying spend that remains after BOTH the regular
+        // Promotion/Coupon and the Mocha Bean reward: every FREE_ITEM freed
+        // unit earns no bonus; every non-free order-level discount is summed
+        // and allocated across items proportionally. Writes nothing when no
+        // bonus promotion applies.
         await this.bonusService.applyBonusForOrder({
           tx,
           customerId,
@@ -658,12 +870,13 @@ export class CheckoutService {
             unitPrice: line.unitPrice,
             quantity: line.quantity,
           })),
-          freeItemProductId:
-            plan?.rewardType === 'FREE_ITEM'
-              ? plan.freeItem?.productId ?? null
-              : null,
-          fixedRewardDiscountMinorUnits:
-            plan?.rewardType === 'FIXED_AMOUNT' ? plan.discountMinorUnits : 0,
+          freeItemProductIds: freedUnitProductIds(regularPlan, plan),
+          orderLevelDiscountMinorUnits: nonFreeOrderLevelDiscount(
+            regularPlan,
+            regularDiscount,
+            plan,
+            rewardDiscount,
+          ),
         });
       }
 
@@ -686,15 +899,92 @@ export class CheckoutService {
       locationName: order.location.name,
       guestName: order.guestName,
       subtotal: order.subtotal,
+      promotionDiscount: order.promotionDiscountMinorUnits,
       rewardDiscount: order.rewardDiscountMinorUnits,
-      total: order.subtotal - order.rewardDiscountMinorUnits,
+      total:
+        order.subtotal -
+        order.promotionDiscountMinorUnits -
+        order.rewardDiscountMinorUnits,
       currency: order.currency,
       lines: order.lines.map(toOrderLineSummary),
+      orderPromotion: toOrderPromotionSummary(order.promotionRedemption),
       loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
       loyaltyBonus: toOrderLoyaltyBonusSummary(order.loyaltyBonus),
       createdAt: order.createdAt.toISOString(),
     };
   }
+}
+
+// Trim a client-supplied coupon code to a non-empty string or null. The
+// authoritative normalization (upper-case + charset check) lives in
+// PromotionCheckoutService / normalizeCouponCode.
+function normalizeRequestCoupon(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+// The context the Mocha Bean reward computation needs when a regular
+// Promotion/Coupon has already discounted the cart: the merchandise ceiling
+// (so a FIXED reward is capped at what remains) and the unit the regular
+// discount already freed (so a FREE_ITEM reward picks a different one).
+// Returns undefined when there is no regular discount — the 7C path is then
+// completely unchanged.
+function regularRewardContext(
+  regularPlan: RegularDiscountPlan | null,
+  merchandiseAfterRegular: number,
+): RegularDiscountContext | undefined {
+  if (regularPlan === null) {
+    return undefined;
+  }
+  return {
+    merchandiseAfterRegularMinorUnits: merchandiseAfterRegular,
+    regularFreeItemProductId:
+      regularPlan.discountType === 'FREE_ITEM'
+        ? regularPlan.freeItem?.productId ?? null
+        : null,
+  };
+}
+
+// Every unit made free by a FREE_ITEM regular Promotion/Coupon and/or a
+// FREE_ITEM Mocha Bean reward — passed to 7D bonus earning so those units
+// earn no bonus. The same product id may appear twice.
+function freedUnitProductIds(
+  regularPlan: RegularDiscountPlan | null,
+  rewardPlan: RedemptionPlan | null,
+): string[] {
+  const ids: string[] = [];
+  if (
+    regularPlan?.discountType === 'FREE_ITEM' &&
+    regularPlan.freeItem?.productId
+  ) {
+    ids.push(regularPlan.freeItem.productId);
+  }
+  if (rewardPlan?.rewardType === 'FREE_ITEM' && rewardPlan.freeItem?.productId) {
+    ids.push(rewardPlan.freeItem.productId);
+  }
+  return ids;
+}
+
+// The summed minor-unit value of every non-free order-level discount (a
+// PERCENTAGE_OFF / FIXED_AMOUNT regular Promotion/Coupon plus a FIXED_AMOUNT
+// Mocha Bean reward) — passed to 7D bonus earning to be allocated across the
+// paid merchandise.
+function nonFreeOrderLevelDiscount(
+  regularPlan: RegularDiscountPlan | null,
+  regularDiscount: number,
+  rewardPlan: RedemptionPlan | null,
+  rewardDiscount: number,
+): number {
+  const regular =
+    regularPlan !== null && regularPlan.discountType !== 'FREE_ITEM'
+      ? regularDiscount
+      : 0;
+  const reward =
+    rewardPlan?.rewardType === 'FIXED_AMOUNT' ? rewardDiscount : 0;
+  return regular + reward;
 }
 
 function constantTimeEquals(a: string, b: string): boolean {

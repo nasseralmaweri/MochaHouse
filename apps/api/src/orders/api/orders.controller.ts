@@ -2,13 +2,18 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
-import type { CheckoutRequest } from '@mocha-house/contracts';
+import type {
+  CheckoutQuoteRequest,
+  CheckoutRequest,
+} from '@mocha-house/contracts';
 import { OptionalCustomerAuthGuard } from '../../customer-auth/infrastructure/optional-customer-auth.guard';
 import type { CustomerAuthenticatedRequest } from '../../customer-auth/infrastructure/customer-identity';
 import { CheckoutService } from '../application/checkout.service';
@@ -29,6 +34,19 @@ export class OrdersController {
     @Req() request: CustomerAuthenticatedRequest,
   ) {
     return this.checkoutService.checkout(body, request.customerIdentity);
+  }
+
+  // Milestone 7E — the unified checkout pricing quote. Guest-friendly
+  // (OptionalCustomerAuthGuard), read-only (200, not 201): it consumes no
+  // redemption, reserves nothing and deducts no Beans.
+  @UseGuards(OptionalCustomerAuthGuard)
+  @Post('checkout-quote')
+  @HttpCode(HttpStatus.OK)
+  quote(
+    @Body() body: CheckoutQuoteRequest,
+    @Req() request: CustomerAuthenticatedRequest,
+  ) {
+    return this.checkoutService.quoteCheckout(body, request.customerIdentity);
   }
 
   // Guest order access: the id alone is not authorization, accessToken is

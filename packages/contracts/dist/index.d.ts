@@ -162,11 +162,23 @@ export interface CheckoutRequest {
     guest: GuestContactInput;
     lines: CheckoutLineInput[];
     loyaltyRewardId?: string | null;
+    couponCode?: string | null;
 }
 export interface OrderLoyaltyRewardSummary {
     rewardName: string;
     rewardType: LoyaltyRewardType;
     beanCost: number;
+    discountMinorUnits: number;
+    freeItemName: string | null;
+}
+export type PromotionKind = "AUTOMATIC" | "COUPON";
+export type PromotionDiscountType = "PERCENTAGE_OFF" | "FIXED_AMOUNT" | "FREE_ITEM";
+export interface OrderPromotionSummary {
+    name: string;
+    kind: PromotionKind;
+    couponCode: string | null;
+    discountType: PromotionDiscountType;
+    discountValue: number;
     discountMinorUnits: number;
     freeItemName: string | null;
 }
@@ -203,10 +215,12 @@ export interface OrderConfirmation {
     locationName: string;
     guestName: string;
     subtotal: number;
+    promotionDiscount: number;
     rewardDiscount: number;
     total: number;
     currency: string;
     lines: OrderLineSummary[];
+    orderPromotion: OrderPromotionSummary | null;
     loyaltyReward: OrderLoyaltyRewardSummary | null;
     loyaltyBonus: OrderLoyaltyBonusSummary | null;
     createdAt: string;
@@ -219,10 +233,12 @@ export interface OrderStatusResponse {
     locationName: string;
     guestName: string;
     subtotal: number;
+    promotionDiscount: number;
     rewardDiscount: number;
     total: number;
     currency: string;
     lines: OrderLineSummary[];
+    orderPromotion: OrderPromotionSummary | null;
     loyaltyReward: OrderLoyaltyRewardSummary | null;
     loyaltyBonus: OrderLoyaltyBonusSummary | null;
     createdAt: string;
@@ -303,12 +319,14 @@ export interface CustomerOrderSummary {
     locationName: string;
     status: OrderStatus;
     subtotal: number;
+    promotionDiscount: number;
     rewardDiscount: number;
     total: number;
     currency: string;
 }
 export interface CustomerOrderDetail extends CustomerOrderSummary {
     lines: OrderLineSummary[];
+    orderPromotion: OrderPromotionSummary | null;
     loyaltyReward: OrderLoyaltyRewardSummary | null;
     loyaltyBonus: OrderLoyaltyBonusSummary | null;
 }
@@ -344,6 +362,31 @@ export interface CheckoutRewardOption {
 export interface CheckoutRewardEligibilityResponse {
     balance: number;
     rewards: CheckoutRewardOption[];
+}
+export interface CheckoutQuoteRequest {
+    locationId: string;
+    lines: CheckoutLineInput[];
+    couponCode?: string | null;
+    loyaltyRewardId?: string | null;
+}
+export type CouponQuoteStatus = "applied" | "invalid" | "inactive" | "not_started" | "expired" | "wrong_location" | "not_applicable" | "minimum_not_met" | "usage_limit_reached" | "sign_in_required";
+export interface CheckoutQuoteRegularDiscount {
+    source: PromotionKind;
+    name: string;
+    discountType: PromotionDiscountType;
+    discountMinorUnits: number;
+    freeItemName: string | null;
+}
+export interface CheckoutQuoteResponse {
+    currency: string;
+    subtotal: number;
+    regularDiscount: CheckoutQuoteRegularDiscount | null;
+    couponStatus: CouponQuoteStatus | null;
+    couponMessage: string | null;
+    balance: number;
+    rewards: CheckoutRewardOption[];
+    rewardDiscountMinorUnits: number;
+    total: number;
 }
 export interface LoyaltySettings {
     earningRatePerDollar: number;
@@ -438,6 +481,80 @@ export interface UpdateLoyaltyBonusPromotionRequest {
     endsAt?: string | null;
     isActive?: boolean;
 }
+export type PromotionApplicability = "ENTIRE_ORDER" | "SELECTED_PRODUCTS" | "SELECTED_CATEGORIES";
+export interface AdminPromotionCatalogRef {
+    id: string;
+    name: string;
+}
+export interface AdminPromotion {
+    id: string;
+    name: string;
+    description: string | null;
+    kind: PromotionKind;
+    code: string | null;
+    discountType: PromotionDiscountType;
+    discountValue: number;
+    maxDiscountMinorUnits: number | null;
+    applicability: PromotionApplicability;
+    minimumSubtotalMinorUnits: number | null;
+    isActive: boolean;
+    startsAt: string | null;
+    endsAt: string | null;
+    appliesToAllLocations: boolean;
+    totalRedemptionLimit: number | null;
+    perCustomerRedemptionLimit: number | null;
+    redemptionCount: number;
+    eligibleProducts: AdminPromotionCatalogRef[];
+    eligibleCategories: AdminPromotionCatalogRef[];
+    eligibleLocations: AdminPromotionCatalogRef[];
+    createdAt: string;
+    updatedAt: string;
+}
+export interface AdminPromotionsResponse {
+    promotions: AdminPromotion[];
+}
+export interface AdminPromotionOptions {
+    products: AdminPromotionCatalogRef[];
+    categories: AdminPromotionCatalogRef[];
+    locations: AdminPromotionCatalogRef[];
+}
+export interface CreatePromotionRequest {
+    name: string;
+    description?: string | null;
+    kind: PromotionKind;
+    code?: string | null;
+    discountType: PromotionDiscountType;
+    discountValue?: number;
+    maxDiscountMinorUnits?: number | null;
+    applicability?: PromotionApplicability;
+    eligibleProductIds?: string[];
+    eligibleCategoryIds?: string[];
+    minimumSubtotalMinorUnits?: number | null;
+    appliesToAllLocations?: boolean;
+    eligibleLocationIds?: string[];
+    startsAt?: string | null;
+    endsAt?: string | null;
+    totalRedemptionLimit?: number | null;
+    perCustomerRedemptionLimit?: number | null;
+}
+export interface UpdatePromotionRequest {
+    name?: string;
+    description?: string | null;
+    code?: string | null;
+    discountValue?: number;
+    maxDiscountMinorUnits?: number | null;
+    applicability?: PromotionApplicability;
+    eligibleProductIds?: string[];
+    eligibleCategoryIds?: string[];
+    minimumSubtotalMinorUnits?: number | null;
+    appliesToAllLocations?: boolean;
+    eligibleLocationIds?: string[];
+    startsAt?: string | null;
+    endsAt?: string | null;
+    totalRedemptionLimit?: number | null;
+    perCustomerRedemptionLimit?: number | null;
+    isActive?: boolean;
+}
 export type ReorderIssueCode = "LOCATION_INACTIVE" | "LOCATION_DIGITAL_ORDERING_DISABLED" | "PRODUCT_NOT_ON_MENU" | "PRODUCT_UNAVAILABLE" | "PRICE_CHANGED" | "MODIFIER_GROUP_REMOVED" | "MODIFIER_OPTION_REMOVED" | "MODIFIER_REQUIRED_SELECTION_MISSING" | "MODIFIER_SELECTION_COUNT_INVALID";
 export interface ReorderIssue {
     code: ReorderIssueCode;
@@ -487,8 +604,10 @@ export interface StoreOrderSummary {
 }
 export interface StoreOrderDetail extends StoreOrderSummary {
     guestPhone: string;
+    promotionDiscount: number;
     rewardDiscount: number;
     total: number;
+    orderPromotion: OrderPromotionSummary | null;
     loyaltyReward: OrderLoyaltyRewardSummary | null;
     loyaltyBonus: OrderLoyaltyBonusSummary | null;
 }
@@ -665,7 +784,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];

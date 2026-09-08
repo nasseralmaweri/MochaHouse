@@ -48,8 +48,8 @@ describe('computeOrderLoyaltyBonuses', () => {
 
   const base = {
     standardRatePerDollar: 1,
-    freeItemProductId: null,
-    fixedRewardDiscountMinorUnits: 0,
+    freeItemProductIds: [],
+    orderLevelDiscountMinorUnits: 0,
   };
 
   // --- EXTRA_BEANS ---------------------------------------------
@@ -211,7 +211,7 @@ describe('computeOrderLoyaltyBonuses', () => {
   it('a FREE_ITEM-reward free unit earns no EXTRA_BEANS bonus', () => {
     const result = computeOrderLoyaltyBonuses({
       ...base,
-      freeItemProductId: 'promoted',
+      freeItemProductIds: ['promoted'],
       lines: [line({ productId: 'promoted', unitPriceMinorUnits: 600, quantity: 1 })],
       promotions: [extra(20)],
     });
@@ -222,7 +222,7 @@ describe('computeOrderLoyaltyBonuses', () => {
   it('a FREE_ITEM-reward free unit earns no spend-based multiplier bonus, but paid units still do', () => {
     const result = computeOrderLoyaltyBonuses({
       ...base,
-      freeItemProductId: 'promoted',
+      freeItemProductIds: ['promoted'],
       lines: [line({ productId: 'promoted', unitPriceMinorUnits: 600, quantity: 3 })],
       promotions: [multiplier(2)],
     });
@@ -236,7 +236,7 @@ describe('computeOrderLoyaltyBonuses', () => {
   it('a FIXED_AMOUNT reward discount lowers the multiplier qualifying spend proportionally', () => {
     const result = computeOrderLoyaltyBonuses({
       ...base,
-      fixedRewardDiscountMinorUnits: 500, // $5 off the order
+      orderLevelDiscountMinorUnits: 500, // $5 off the order
       lines: [
         line({ productId: 'promoted', unitPriceMinorUnits: 600 }), // $6
         line({ productId: 'plain', unitPriceMinorUnits: 400 }), // $4
@@ -252,7 +252,7 @@ describe('computeOrderLoyaltyBonuses', () => {
   it('EXTRA_BEANS is still awarded on a fixed-discounted paid unit', () => {
     const result = computeOrderLoyaltyBonuses({
       ...base,
-      fixedRewardDiscountMinorUnits: 600,
+      orderLevelDiscountMinorUnits: 600,
       lines: [line({ productId: 'promoted', unitPriceMinorUnits: 600 })],
       promotions: [extra(20)],
     });

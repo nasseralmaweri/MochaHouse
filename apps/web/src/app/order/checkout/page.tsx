@@ -3,14 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
+  CheckoutQuoteResponse,
   CheckoutRequest,
-  CheckoutRewardOption,
+  CouponQuoteStatus,
   LocationMenuResponse,
 } from "@mocha-house/contracts";
 import { priceCart } from "@mocha-house/domain";
 import { useCart } from "@/lib/cart/store";
 import {
-  getCheckoutRewardsFromBrowser,
+  getCheckoutQuoteFromBrowser,
   getLocationMenuFromBrowser,
   submitCheckoutFromBrowser,
 } from "@/lib/api-client";
@@ -22,6 +23,19 @@ import { BackLink } from "@/components/BackLink";
 const inputClassName =
   "rounded-xl border border-border-default bg-surface-card px-4 py-3 text-base text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 
+const COUPON_MESSAGE: Record<CouponQuoteStatus, string> = {
+  applied: "Coupon applied.",
+  invalid: "We couldn't find that coupon.",
+  inactive: "That coupon is no longer active.",
+  not_started: "That coupon isn't available yet.",
+  expired: "That coupon has expired.",
+  wrong_location: "That coupon isn't valid at this location.",
+  not_applicable: "That coupon doesn't apply to anything in your cart.",
+  minimum_not_met: "Your order doesn't reach this coupon's minimum.",
+  usage_limit_reached: "This coupon has reached its redemption limit.",
+  sign_in_required: "Sign in to use this coupon.",
+};
+
 export default function CheckoutPage() {
   const router = useRouter();
   const cart = useCart();
@@ -32,23 +46,15 @@ export default function CheckoutPage() {
   const [guestEmail, setGuestEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  // Milestone 7C — the Mocha Bean rewards eligible for the current cart (a
-  // signed-in customer only; empty for a guest). The customer picks one or
-  // none; the server revalidates everything on submit.
-  const [rewardOptions, setRewardOptions] = useState<CheckoutRewardOption[]>([]);
+  // Milestone 7E — the server-authoritative pricing quote (regular
+  // Promotion/Coupon + Mocha Bean rewards + total). Recomputed whenever the
+  // cart, the applied coupon, or the selected reward changes.
+  const [quote, setQuote] = useState<CheckoutQuoteResponse | null>(null);
   const [selectedRewardId, setSelectedRewardId] = useState<string | null>(null);
-  // Synchronous guard against a double-click firing two submissions before
-  // React re-renders with `submitting`/disabled — the disabled attribute
-  // alone isn't fast enough to rule that race out.
+  const [couponDraft, setCouponDraft] = useState("");
+  const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
+
   const inFlightRef = useRef(false);
-  // One idempotency key persists across retries until this attempt reaches
-  // a *definitive* server outcome. A network failure, timeout, or lost
-  // response is ambiguous — the request may have actually reached the
-  // server and charged — so retrying must reuse the same key rather than
-  // risk a second charge. Only an authoritative DECLINED/FAILED result (or
-  // a pre-payment validation error, which never created a payment attempt
-  // at all) makes this attempt terminal and safe to abandon; the next
-  // explicit submit then mints a fresh key for a genuinely new attempt.
   const idempotencyKeyRef = useRef<string | null>(null);
   const rotateKeyOnNextSubmitRef = useRef(true);
 
@@ -69,9 +75,6 @@ export default function CheckoutPage() {
     };
   }, [cart.isHydrated, cart.locationId]);
 
-  // Milestone 7C — refetch the eligible-reward quote whenever the cart
-  // changes. Serialised into a stable key so it doesn't re-run on every
-  // render. A stale `selectedRewardId` that no longer appears is dropped.
   const cartLinesKey = cart.isHydrated
     ? JSON.stringify(
         cart.lines.map((line) => ({
@@ -87,11 +90,11 @@ export default function CheckoutPage() {
 
   useEffect(() => {
     if (!cart.isHydrated || !cart.locationId || cart.lines.length === 0) {
-      setRewardOptions([]);
+      setQuote(null);
       return;
     }
     let cancelled = false;
-    getCheckoutRewardsFromBrowser({
+    getCheckoutQuoteFromBrowser({
       locationId: cart.locationId,
       lines: cart.lines.map((line) => ({
         productId: line.productId,
@@ -101,25 +104,28 @@ export default function CheckoutPage() {
           optionIds: s.optionIds,
         })),
       })),
+      couponCode: appliedCoupon,
+      loyaltyRewardId: selectedRewardId,
     })
       .then((result) => {
         if (cancelled) return;
-        setRewardOptions(result.rewards);
+        setQuote(result);
+        // Drop a stale / now-unaffordable reward selection.
         setSelectedRewardId((current) =>
           current !== null &&
-          result.rewards.some((r) => r.rewardId === current && r.canAfford)
+          result?.rewards.some((r) => r.rewardId === current && r.canAfford)
             ? current
             : null,
         );
       })
       .catch(() => {
-        if (!cancelled) setRewardOptions([]);
+        if (!cancelled) setQuote(null);
       });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart.isHydrated, cart.locationId, cartLinesKey]);
+  }, [cart.isHydrated, cart.locationId, cartLinesKey, appliedCoupon, selectedRewardId]);
 
   if (!cart.isHydrated) {
     return (
@@ -138,17 +144,7 @@ export default function CheckoutPage() {
     );
   }
 
-  const selectedReward =
-    selectedRewardId !== null
-      ? (rewardOptions.find((r) => r.rewardId === selectedRewardId) ?? null)
-      : null;
-
   const menuMatchesCart = menu !== null && menu.location.id === cart.locationId;
-  // Preview only — this is the exact same authoritative repricing function
-  // the backend runs, so what's shown here is what checkout will charge as
-  // long as nothing changes between now and submission. The backend
-  // re-runs this independently either way; a stale/mismatched preview here
-  // can never result in an incorrect charge, only a stale preview.
   const priced = menuMatchesCart
     ? priceCart(
         menu,
@@ -163,6 +159,26 @@ export default function CheckoutPage() {
       )
     : null;
   const cartBlocked = priced !== null && !priced.ok;
+
+  const currency = quote?.currency ?? (priced?.ok ? priced.currency : "USD");
+  const subtotal = quote?.subtotal ?? (priced?.ok ? priced.subtotal : 0);
+  const regularDiscount = quote?.regularDiscount ?? null;
+  const rewardDiscount = quote?.rewardDiscountMinorUnits ?? 0;
+  const total =
+    quote?.total ??
+    subtotal -
+      (regularDiscount?.discountMinorUnits ?? 0) -
+      rewardDiscount;
+  const rewardOptions = quote?.rewards ?? [];
+  const selectedReward =
+    selectedRewardId !== null
+      ? (rewardOptions.find((r) => r.rewardId === selectedRewardId) ?? null)
+      : null;
+  const couponNote =
+    quote?.couponStatus !== null && quote?.couponStatus !== undefined
+      ? COUPON_MESSAGE[quote.couponStatus]
+      : null;
+  const couponApplied = quote?.couponStatus === "applied";
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -195,6 +211,7 @@ export default function CheckoutPage() {
         })),
       })),
       loyaltyRewardId: selectedRewardId,
+      couponCode: appliedCoupon,
     };
 
     const result = await submitCheckoutFromBrowser(request);
@@ -202,8 +219,6 @@ export default function CheckoutPage() {
     setSubmitting(false);
 
     if (result.outcome === "success") {
-      // Cart is only ever cleared on confirmed success — every failure
-      // path below leaves it untouched so the customer can retry.
       cart.clearCart();
       router.push(
         `/order/confirmation/${result.confirmation.orderId}?token=${result.confirmation.accessToken}`,
@@ -212,14 +227,8 @@ export default function CheckoutPage() {
     }
 
     if (result.outcome === "declined" || result.outcome === "failed") {
-      // Definitive server outcome — this attempt is over. The next
-      // explicit submit is a genuinely new attempt and gets a fresh key.
       rotateKeyOnNextSubmitRef.current = true;
     }
-    // Otherwise (network-error / invalid / conflict): the outcome is
-    // ambiguous or nothing was charged yet, so the same key carries over
-    // to the next retry unchanged.
-
     setSubmitError(result.message);
   }
 
@@ -265,18 +274,28 @@ export default function CheckoutPage() {
           <div className="flex flex-col gap-1 border-t border-border-default pt-2">
             <div className="flex items-center justify-between text-sm text-text-secondary">
               <span>Subtotal</span>
-              <span>{formatPrice(priced.subtotal, priced.currency)}</span>
+              <span>{formatPrice(subtotal, currency)}</span>
             </div>
+            {regularDiscount ? (
+              <div className="flex items-center justify-between text-sm text-status-success">
+                <span>
+                  {regularDiscount.source === "COUPON" ? "Coupon" : "Promotion"}
+                  {" · "}
+                  {regularDiscount.name}
+                  {regularDiscount.discountType === "FREE_ITEM" &&
+                  regularDiscount.freeItemName
+                    ? ` (free ${regularDiscount.freeItemName})`
+                    : ""}
+                </span>
+                <span>
+                  −{formatPrice(regularDiscount.discountMinorUnits, currency)}
+                </span>
+              </div>
+            ) : null}
             {selectedReward ? (
               <div className="flex items-center justify-between text-sm text-status-success">
                 <span>Mocha Beans Reward · {selectedReward.name}</span>
-                <span>
-                  −
-                  {formatPrice(
-                    selectedReward.discountMinorUnits,
-                    priced.currency,
-                  )}
-                </span>
+                <span>−{formatPrice(rewardDiscount, currency)}</span>
               </div>
             ) : null}
             <div className="flex items-center justify-between">
@@ -284,10 +303,7 @@ export default function CheckoutPage() {
                 Total
               </span>
               <span className="text-lg font-semibold text-text-primary">
-                {formatPrice(
-                  priced.subtotal - (selectedReward?.discountMinorUnits ?? 0),
-                  priced.currency,
-                )}
+                {formatPrice(total, currency)}
               </span>
             </div>
             {selectedReward ? (
@@ -296,6 +312,47 @@ export default function CheckoutPage() {
               </p>
             ) : null}
           </div>
+        </Card>
+      ) : null}
+
+      {priced?.ok ? (
+        <Card className="flex flex-col gap-2">
+          <span className="text-sm font-semibold text-text-primary">Coupon</span>
+          {couponApplied && appliedCoupon ? (
+            <div className="flex items-center justify-between gap-2 text-sm">
+              <span className="font-mono text-text-primary">{appliedCoupon}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setAppliedCoupon(null);
+                  setCouponDraft("");
+                }}
+                className="text-xs font-medium text-text-primary underline underline-offset-2"
+              >
+                Remove
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <input
+                value={couponDraft}
+                onChange={(e) => setCouponDraft(e.target.value.toUpperCase())}
+                placeholder="Enter a code"
+                className={`${inputClassName} flex-1 font-mono text-sm`}
+              />
+              <button
+                type="button"
+                disabled={couponDraft.trim().length === 0}
+                onClick={() => setAppliedCoupon(couponDraft.trim())}
+                className="rounded-xl bg-status-success/10 px-4 text-sm font-semibold text-status-success disabled:bg-surface-subtle disabled:text-text-muted"
+              >
+                Apply
+              </button>
+            </div>
+          )}
+          {couponNote && !couponApplied ? (
+            <p className="text-xs text-status-warning">{couponNote}</p>
+          ) : null}
         </Card>
       ) : null}
 
@@ -393,10 +450,7 @@ export default function CheckoutPage() {
           {submitting
             ? "Placing order…"
             : priced?.ok
-              ? `Place order — ${formatPrice(
-                  priced.subtotal - (selectedReward?.discountMinorUnits ?? 0),
-                  priced.currency,
-                )}`
+              ? `Place order — ${formatPrice(total, currency)}`
               : "Place order"}
         </button>
       </form>

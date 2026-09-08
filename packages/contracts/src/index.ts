@@ -270,6 +270,15 @@ export interface CheckoutRequest {
   guest: GuestContactInput;
   lines: CheckoutLineInput[];
   loyaltyRewardId?: string | null;
+  // `couponCode` (Milestone 7E) is the code the customer typed into the
+  // coupon box, or null / omitted. The server normalizes it (trim +
+  // upper-case), resolves the Coupon, revalidates it against the current
+  // cart / location / dates / minimum / limits, and computes the discount
+  // itself. When a valid coupon is supplied the server does NOT also apply
+  // an automatic Promotion; an invalid coupon is rejected before payment
+  // (never silently swapped for an automatic Promotion). When omitted, the
+  // best eligible automatic Promotion (if any) applies automatically.
+  couponCode?: string | null;
 }
 
 // The immutable snapshot of the one Mocha Bean reward redeemed on an order
@@ -282,6 +291,33 @@ export interface OrderLoyaltyRewardSummary {
   // Mocha Beans deducted (the reward's full configured cost).
   beanCost: number;
   // Discount applied to the gross merchandise subtotal, integer minor units.
+  discountMinorUnits: number;
+  // FREE_ITEM only — the product one unit of which was made free.
+  freeItemName: string | null;
+}
+
+// --- Order: the regular Promotion / Coupon snapshot (Milestone 7E) ---
+// The immutable record of the ONE regular Promotion or Coupon used on an
+// order. Reused by confirmation, customer history and the store order
+// detail. Every value is what was true AT REDEMPTION TIME — later HQ edits
+// never change these. `null` for an order that used no regular discount.
+export type PromotionKind = "AUTOMATIC" | "COUPON";
+export type PromotionDiscountType =
+  | "PERCENTAGE_OFF"
+  | "FIXED_AMOUNT"
+  | "FREE_ITEM";
+
+export interface OrderPromotionSummary {
+  name: string;
+  kind: PromotionKind;
+  // The normalized code the customer entered — COUPON only, null for an
+  // automatic Promotion.
+  couponCode: string | null;
+  discountType: PromotionDiscountType;
+  // The configured value at redemption (percent, or minor units); 0 for
+  // FREE_ITEM.
+  discountValue: number;
+  // The actual monetary discount applied to gross merchandise, minor units.
   discountMinorUnits: number;
   // FREE_ITEM only — the product one unit of which was made free.
   freeItemName: string | null;
@@ -324,12 +360,16 @@ export interface OrderLineSummary {
 // credential for the status endpoint — the caller must persist it
 // (e.g. in the confirmation URL) to view this order again.
 //
-// Money (Milestone 7C):
-//   subtotal       — gross merchandise (sum of every line total), unchanged.
-//   rewardDiscount  — the Mocha Bean reward discount; 0 when no reward.
-//   total           — subtotal - rewardDiscount = the amount charged / owed.
-//   loyaltyReward   — the redeemed reward snapshot, or null.
-// Pre-7C orders read rewardDiscount 0, total === subtotal, loyaltyReward null.
+// Money (Milestone 7C / 7E):
+//   subtotal          — gross merchandise (sum of every line total).
+//   promotionDiscount — the regular Promotion/Coupon discount; 0 when none.
+//   rewardDiscount    — the Mocha Bean reward discount; 0 when no reward.
+//   total             — subtotal - promotionDiscount - rewardDiscount =
+//                       the amount charged / owed.
+//   orderPromotion    — the regular discount snapshot, or null.
+//   loyaltyReward     — the redeemed reward snapshot, or null.
+// Pre-7E orders read promotionDiscount 0, orderPromotion null; pre-7C orders
+// also read rewardDiscount 0, total === subtotal, loyaltyReward null.
 export interface OrderConfirmation {
   orderId: string;
   orderNumber: string;
@@ -339,10 +379,12 @@ export interface OrderConfirmation {
   locationName: string;
   guestName: string;
   subtotal: number;
+  promotionDiscount: number;
   rewardDiscount: number;
   total: number;
   currency: string;
   lines: OrderLineSummary[];
+  orderPromotion: OrderPromotionSummary | null;
   loyaltyReward: OrderLoyaltyRewardSummary | null;
   // Milestone 7D — bonus Mocha Beans earned from HQ promotions, or null.
   loyaltyBonus: OrderLoyaltyBonusSummary | null;
@@ -357,10 +399,12 @@ export interface OrderStatusResponse {
   locationName: string;
   guestName: string;
   subtotal: number;
+  promotionDiscount: number;
   rewardDiscount: number;
   total: number;
   currency: string;
   lines: OrderLineSummary[];
+  orderPromotion: OrderPromotionSummary | null;
   loyaltyReward: OrderLoyaltyRewardSummary | null;
   // Milestone 7D — bonus Mocha Beans earned from HQ promotions, or null.
   loyaltyBonus: OrderLoyaltyBonusSummary | null;
@@ -525,9 +569,11 @@ export interface CustomerOrderSummary {
   createdAt: string;
   locationName: string;
   status: OrderStatus;
-  // subtotal = gross merchandise; total = subtotal - rewardDiscount
-  // (Milestone 7C). Pre-7C orders: rewardDiscount 0, total === subtotal.
+  // subtotal = gross merchandise;
+  // total = subtotal - promotionDiscount - rewardDiscount (Milestone 7C / 7E).
+  // Pre-7E orders: promotionDiscount 0; pre-7C orders: rewardDiscount 0.
   subtotal: number;
+  promotionDiscount: number;
   rewardDiscount: number;
   total: number;
   currency: string;
@@ -535,6 +581,8 @@ export interface CustomerOrderSummary {
 
 export interface CustomerOrderDetail extends CustomerOrderSummary {
   lines: OrderLineSummary[];
+  // Milestone 7E — the regular Promotion/Coupon snapshot, or null.
+  orderPromotion: OrderPromotionSummary | null;
   loyaltyReward: OrderLoyaltyRewardSummary | null;
   // Milestone 7D — bonus Mocha Beans earned from HQ promotions, or null.
   loyaltyBonus: OrderLoyaltyBonusSummary | null;
@@ -608,6 +656,71 @@ export interface CheckoutRewardOption {
 export interface CheckoutRewardEligibilityResponse {
   balance: number;
   rewards: CheckoutRewardOption[];
+}
+
+// --- Checkout: the unified pricing quote (Milestone 7E) -------------
+// POST /api/v1/orders/checkout-quote (OptionalCustomerAuthGuard — guests
+// allowed; they just get no rewards and cannot use a per-customer-limited
+// coupon). The ONE server-authoritative pricing preview the checkout screen
+// renders: given the cart, an optional coupon code, and an optional
+// selected reward id, it returns the regular Promotion/Coupon discount, the
+// eligible Mocha Bean rewards, and the resulting total. It reserves
+// nothing, consumes no redemption, and deducts no Beans; the checkout
+// submission independently revalidates everything.
+export interface CheckoutQuoteRequest {
+  locationId: string;
+  lines: CheckoutLineInput[];
+  // The code the customer typed, or null/omitted. Normalized server-side.
+  couponCode?: string | null;
+  // The reward the customer currently has selected, or null/omitted.
+  loyaltyRewardId?: string | null;
+}
+
+// Why a supplied coupon code did or didn't apply. `null` when no code was
+// supplied (the response then carries the best automatic Promotion, if any).
+export type CouponQuoteStatus =
+  | "applied"
+  | "invalid"
+  | "inactive"
+  | "not_started"
+  | "expired"
+  | "wrong_location"
+  | "not_applicable"
+  | "minimum_not_met"
+  | "usage_limit_reached"
+  | "sign_in_required";
+
+export interface CheckoutQuoteRegularDiscount {
+  // COUPON when it came from a customer-entered code; AUTOMATIC when it is
+  // the best eligible automatic Promotion.
+  source: PromotionKind;
+  name: string;
+  discountType: PromotionDiscountType;
+  // Server-computed, authoritative.
+  discountMinorUnits: number;
+  // FREE_ITEM only — the item that would be made free.
+  freeItemName: string | null;
+}
+
+export interface CheckoutQuoteResponse {
+  currency: string;
+  // Gross merchandise (sum of every priced line total).
+  subtotal: number;
+  // The regular discount that WOULD apply: the supplied coupon if valid,
+  // otherwise the best automatic Promotion, otherwise null.
+  regularDiscount: CheckoutQuoteRegularDiscount | null;
+  // Present only when a coupon code was supplied — why it did / didn't apply.
+  couponStatus: CouponQuoteStatus | null;
+  couponMessage: string | null;
+  // Signed-in customers only (0 / empty for a guest). The rewards are
+  // computed against the merchandise remaining AFTER the regular discount.
+  balance: number;
+  rewards: CheckoutRewardOption[];
+  // The discount the currently-selected `loyaltyRewardId` would apply (0
+  // when none selected or it no longer applies).
+  rewardDiscountMinorUnits: number;
+  // subtotal - regularDiscount - rewardDiscountMinorUnits.
+  total: number;
 }
 
 // --- Admin: HQ loyalty configuration (Milestone 7B) ------------------
@@ -764,6 +877,118 @@ export interface UpdateLoyaltyBonusPromotionRequest {
   isActive?: boolean;
 }
 
+// --- Admin: Promotions & Coupons (Milestone 7E) --------------------
+// GET/POST/PATCH /api/v1/admin/promotions[...] (InternalAuthGuard +
+// PermissionGuard + `promotions.configure`, CORPORATE-only). The platform's
+// regular merchandise-discount system, entirely separate from Mocha Bean
+// rewards and Bonus Mocha Bean Promotions. Promotions are never
+// hard-deleted; `isActive` is the off switch. `PromotionKind` /
+// `PromotionDiscountType` are declared with the order snapshot above.
+export type PromotionApplicability =
+  | "ENTIRE_ORDER"
+  | "SELECTED_PRODUCTS"
+  | "SELECTED_CATEGORIES";
+
+export interface AdminPromotionCatalogRef {
+  id: string;
+  name: string;
+}
+
+export interface AdminPromotion {
+  id: string;
+  name: string;
+  description: string | null;
+  kind: PromotionKind;
+  // Normalized (upper-cased) code — COUPON only, null for AUTOMATIC.
+  code: string | null;
+  discountType: PromotionDiscountType;
+  // PERCENTAGE_OFF: whole percent 1..100. FIXED_AMOUNT: minor units.
+  // FREE_ITEM: 0.
+  discountValue: number;
+  // PERCENTAGE_OFF only — the optional cap on the resulting discount.
+  maxDiscountMinorUnits: number | null;
+  applicability: PromotionApplicability;
+  minimumSubtotalMinorUnits: number | null;
+  isActive: boolean;
+  startsAt: string | null;
+  endsAt: string | null;
+  appliesToAllLocations: boolean;
+  totalRedemptionLimit: number | null;
+  perCustomerRedemptionLimit: number | null;
+  // Persisted successful redemptions so far (informational).
+  redemptionCount: number;
+  // Empty unless applicability is SELECTED_PRODUCTS / SELECTED_CATEGORIES
+  // (products) or a FREE_ITEM promotion.
+  eligibleProducts: AdminPromotionCatalogRef[];
+  eligibleCategories: AdminPromotionCatalogRef[];
+  // Empty when appliesToAllLocations is true.
+  eligibleLocations: AdminPromotionCatalogRef[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminPromotionsResponse {
+  promotions: AdminPromotion[];
+}
+
+// GET /api/v1/admin/promotions/options (`promotions.configure`). Product,
+// category and location picker data — identity and name only.
+export interface AdminPromotionOptions {
+  products: AdminPromotionCatalogRef[];
+  categories: AdminPromotionCatalogRef[];
+  locations: AdminPromotionCatalogRef[];
+}
+
+// `kind` and `discountType` are required and fixed at creation. `code` is
+// required for a COUPON and must be absent for an AUTOMATIC promotion.
+// PERCENTAGE_OFF: `discountValue` 1..100. FIXED_AMOUNT: `discountValue` a
+// positive minor-unit amount. FREE_ITEM / SELECTED_* : at least one
+// eligible product or category. Location targeting: `appliesToAllLocations`
+// OR at least one `eligibleLocationId`. Dates: `endsAt` after `startsAt`
+// when both are present.
+export interface CreatePromotionRequest {
+  name: string;
+  description?: string | null;
+  kind: PromotionKind;
+  code?: string | null;
+  discountType: PromotionDiscountType;
+  discountValue?: number;
+  maxDiscountMinorUnits?: number | null;
+  applicability?: PromotionApplicability;
+  eligibleProductIds?: string[];
+  eligibleCategoryIds?: string[];
+  minimumSubtotalMinorUnits?: number | null;
+  appliesToAllLocations?: boolean;
+  eligibleLocationIds?: string[];
+  startsAt?: string | null;
+  endsAt?: string | null;
+  totalRedemptionLimit?: number | null;
+  perCustomerRedemptionLimit?: number | null;
+}
+
+// Every field optional — only present fields change. `kind` and
+// `discountType` are NOT accepted (fixed at creation). Providing an
+// eligibility / location list REPLACES it wholesale. `isActive` toggles
+// activation.
+export interface UpdatePromotionRequest {
+  name?: string;
+  description?: string | null;
+  code?: string | null;
+  discountValue?: number;
+  maxDiscountMinorUnits?: number | null;
+  applicability?: PromotionApplicability;
+  eligibleProductIds?: string[];
+  eligibleCategoryIds?: string[];
+  minimumSubtotalMinorUnits?: number | null;
+  appliesToAllLocations?: boolean;
+  eligibleLocationIds?: string[];
+  startsAt?: string | null;
+  endsAt?: string | null;
+  totalRedemptionLimit?: number | null;
+  perCustomerRedemptionLimit?: number | null;
+  isActive?: boolean;
+}
+
 // --- Reorder from order history (Milestone 4G) -------------------------
 // The historical Order is a snapshot/reference only. A reorder is ALWAYS
 // revalidated against the current location, menu, product availability,
@@ -876,11 +1101,13 @@ export interface StoreOrderSummary {
 
 export interface StoreOrderDetail extends StoreOrderSummary {
   guestPhone: string;
-  // Milestone 7C — the redeemed Mocha Bean reward snapshot and the
-  // resulting discount, so staff can see the order's true owed total.
-  // Null / 0 for an order with no reward.
+  // Milestone 7E / 7C — the regular Promotion/Coupon and Mocha Bean reward
+  // snapshots and the resulting discounts, so staff can see the order's true
+  // owed total. Null / 0 when the corresponding discount was not used.
+  promotionDiscount: number;
   rewardDiscount: number;
   total: number;
+  orderPromotion: OrderPromotionSummary | null;
   loyaltyReward: OrderLoyaltyRewardSummary | null;
   // Milestone 7D — bonus Mocha Beans earned from HQ promotions, or null, so
   // staff/HQ can explain the order's Bean accounting.
@@ -1297,6 +1524,10 @@ export const INTERNAL_PERMISSION_KEYS = [
   // and the Rewards Catalog. Milestone 7D also reuses this key for Bonus
   // Mocha Bean Promotions. CORPORATE-only; a Store Manager never holds it.
   "loyalty.configure",
+  // Milestone 7E — HQ management of Promotions & Coupons (the regular
+  // merchandise-discount system). A company-wide pricing capability;
+  // CORPORATE-only, and a Store Manager never holds it.
+  "promotions.configure",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1484,6 +1715,12 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "loyalty.configure",
     description:
       "Configure the standard company-wide Mocha Bean earning rate, manage the customer Rewards Catalog, and manage Bonus Mocha Bean Promotions. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "promotions.configure": {
+    key: "promotions.configure",
+    description:
+      "Create and manage Promotions & Coupons (the regular merchandise-discount system). A company-wide pricing capability; corporate-only.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };

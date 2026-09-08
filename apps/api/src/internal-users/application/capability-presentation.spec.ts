@@ -73,6 +73,7 @@ describe('capability presentation (Milestone 5E)', () => {
         'Menu & Products',
         'Locations',
         'Loyalty',
+        'Promotions',
         'Administration',
       ]);
       expect(groups.find((g) => g.group === 'Operations')?.items).toEqual([
@@ -96,6 +97,9 @@ describe('capability presentation (Milestone 5E)', () => {
         'View customer Mocha Bean balances and ledger',
         'Manually adjust customer Mocha Beans',
         'Configure earning, Rewards Catalog and bonus promotions',
+      ]);
+      expect(groups.find((g) => g.group === 'Promotions')?.items).toEqual([
+        'Manage Promotions & Coupons',
       ]);
       expect(groups.find((g) => g.group === 'Administration')?.items).toEqual([
         'View Admin users',

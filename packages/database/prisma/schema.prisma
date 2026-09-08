@@ -29,6 +29,7 @@ model Location {
   checklistInstances           ChecklistInstance[]
   operationsTasks              OperationsTask[]
   loyaltyBonusPromotionEligibility LoyaltyBonusPromotionLocation[]
+  promotionEligibility         PromotionLocation[]
 }
 
 model Category {
@@ -41,6 +42,7 @@ model Category {
   updatedAt    DateTime  @updatedAt
   products     Product[]
   loyaltyRewardEligibility LoyaltyRewardCategory[]
+  promotionEligibility     PromotionCategory[]
 }
 
 model Product {
@@ -61,6 +63,7 @@ model Product {
   availabilityOverrides LocationProductAvailabilityOverride[]
   loyaltyRewardEligibility LoyaltyRewardProduct[]
   loyaltyBonusPromotionEligibility LoyaltyBonusPromotionProduct[]
+  promotionEligibility     PromotionProduct[]
 
   @@index([categoryId])
 }
@@ -219,6 +222,7 @@ model Customer {
   orders              Order[]
   preferredLocations  CustomerPreferredLocation[]
   loyaltyAccount      CustomerLoyaltyAccount?
+  promotionUsage      PromotionCustomerUsage[]
 
   @@unique([externalProvider, externalSubject])
 }
@@ -362,13 +366,19 @@ model Order {
   // Gross merchandise total — the sum of every OrderLine.lineTotal, exactly
   // as before Milestone 7C. No tax/fee model is approved yet.
   subtotal Int
+  // Milestone 7E — the discount applied by the ONE regular Promotion or
+  // Coupon used on this order, in integer minor units. 0 when none was used
+  // (every pre-7E order). Applied to gross merchandise BEFORE the Mocha Bean
+  // reward. The immutable snapshot lives on OrderPromotionRedemption.
+  promotionDiscountMinorUnits Int @default(0)
   // Milestone 7C — the discount applied by a single redeemed Mocha Bean
   // reward, in integer minor units. 0 when no reward was used (every
-  // pre-7C order). The amount actually charged / owed is
-  // `subtotal - rewardDiscountMinorUnits`; Mocha Beans are earned on that
-  // same net figure. Never makes the net negative (the discount is capped
-  // at the eligible merchandise amount). The immutable reward snapshot
-  // lives on OrderLoyaltyRewardRedemption.
+  // pre-7C order). Applied AFTER the regular Promotion/Coupon discount and
+  // capped at the merchandise then remaining. The amount actually charged /
+  // owed is `subtotal - promotionDiscountMinorUnits - rewardDiscountMinorUnits`;
+  // Mocha Beans are earned on that same net figure. Never makes the net
+  // negative (each discount is capped at the merchandise then remaining).
+  // The immutable reward snapshot lives on OrderLoyaltyRewardRedemption.
   rewardDiscountMinorUnits Int @default(0)
 
   createdAt DateTime @default(now())
@@ -379,6 +389,7 @@ model Order {
   mochaBeanEntries  MochaBeanLedgerEntry[]
   loyaltyRewardRedemption OrderLoyaltyRewardRedemption?
   loyaltyBonus            OrderLoyaltyBonus?
+  promotionRedemption     OrderPromotionRedemption?
 
   @@index([locationId])
   @@index([customerId])
@@ -1142,5 +1153,198 @@ model OrderLoyaltyBonusItem {
   createdAt                 DateTime          @default(now())
 
   @@index([orderLoyaltyBonusId])
+  @@index([sourcePromotionId])
+}
+
+// --- Milestone 7E, Promotions & Coupons ---------------------------
+// The platform's regular merchandise-discount system — entirely separate
+// from Mocha Bean rewards (7C), Bonus Mocha Bean Promotions (7D) and Gift
+// Cards. Deliberately bounded: three discount types, product/category/
+// whole-order applicability, all-or-selected locations, an optional flat
+// date window, optional minimum purchase, optional redemption limits. NOT a
+// generic marketing/rules engine.
+//
+// A PROMOTION (kind AUTOMATIC) applies automatically when eligible. A
+// COUPON (kind COUPON) requires the customer to enter its code. An order
+// may use at most ONE regular Promotion OR Coupon, and may additionally use
+// ONE Mocha Bean reward. Promotions are never hard-deleted (isActive is the
+// off switch) so a historical OrderPromotionRedemption can always still
+// point at what it used.
+
+enum PromotionKind {
+  // Applies automatically when eligible — no code.
+  AUTOMATIC
+  // Requires a customer-entered code (case-insensitive).
+  COUPON
+}
+
+enum PromotionDiscountType {
+  // `discountValue` is a whole percent, 1..100, off eligible merchandise.
+  // `maxDiscountMinorUnits` optionally caps the resulting discount.
+  PERCENTAGE_OFF
+  // `discountValue` is a positive amount in minor units off eligible
+  // merchandise, capped at the eligible merchandise amount.
+  FIXED_AMOUNT
+  // The lowest-priced eligible cart unit is free (mirrors the 7C Mocha Bean
+  // FREE_ITEM reward). Requires product/category eligibility.
+  FREE_ITEM
+}
+
+enum PromotionApplicability {
+  // The discount applies to the whole merchandise order.
+  ENTIRE_ORDER
+  // Only the lines whose product is in `eligibleProducts`.
+  SELECTED_PRODUCTS
+  // Only the lines whose category is in `eligibleCategories`.
+  SELECTED_CATEGORIES
+}
+
+model Promotion {
+  id                         String                @id @default(uuid(7))
+  name                       String
+  description                String?
+  kind                       PromotionKind
+  // Normalized (trimmed + upper-cased) coupon code. Null for AUTOMATIC.
+  // The @unique on the normalized form is the case-insensitive uniqueness
+  // guarantee: "welcome10" and "WELCOME10" cannot both exist.
+  code                       String?               @unique
+  discountType               PromotionDiscountType
+  // PERCENTAGE_OFF: whole percent 1..100. FIXED_AMOUNT: minor units > 0.
+  // FREE_ITEM: unused (0).
+  discountValue              Int                   @default(0)
+  // PERCENTAGE_OFF only — optional cap on the resulting discount, minor
+  // units. Null for the other types.
+  maxDiscountMinorUnits      Int?
+  applicability              PromotionApplicability @default(ENTIRE_ORDER)
+  // Optional minimum GROSS merchandise subtotal (before this discount, and
+  // before any Mocha Bean reward), minor units.
+  minimumSubtotalMinorUnits  Int?
+  isActive                   Boolean               @default(true)
+  // Optional active window. Eligible only when isActive AND
+  // (startsAt is null OR startsAt <= now) AND (endsAt is null OR now < endsAt).
+  startsAt                   DateTime?
+  endsAt                     DateTime?
+  appliesToAllLocations      Boolean               @default(false)
+  // Optional total redemption cap across all customers. Enforced by a
+  // conditional increment of `redemptionCount` inside the order
+  // transaction (updateMany where redemptionCount < limit) — never a
+  // read-compare-write.
+  totalRedemptionLimit       Int?
+  // Optional per-customer redemption cap. Requires an authenticated
+  // customer (a Promotion/Coupon with this limit cannot be used by a
+  // guest). Enforced by a conditional increment of the matching
+  // PromotionCustomerUsage row inside the order transaction.
+  perCustomerRedemptionLimit Int?
+  // Materialized count of persisted successful redemptions. Only ever
+  // incremented inside the order transaction that persists the Order, so it
+  // is never consumed by an abandoned/declined checkout.
+  redemptionCount            Int                   @default(0)
+  createdAt                  DateTime              @default(now())
+  updatedAt                  DateTime              @updatedAt
+
+  eligibleProducts   PromotionProduct[]
+  eligibleCategories PromotionCategory[]
+  eligibleLocations  PromotionLocation[]
+  customerUsage      PromotionCustomerUsage[]
+
+  @@index([kind, isActive])
+  @@index([isActive])
+}
+
+model PromotionProduct {
+  promotionId String
+  productId   String
+  createdAt   DateTime @default(now())
+
+  promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@id([promotionId, productId])
+  @@index([productId])
+}
+
+model PromotionCategory {
+  promotionId String
+  categoryId  String
+  createdAt   DateTime @default(now())
+
+  promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  category  Category  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@id([promotionId, categoryId])
+  @@index([categoryId])
+}
+
+model PromotionLocation {
+  promotionId String
+  locationId  String
+  createdAt   DateTime @default(now())
+
+  promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  location  Location  @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@id([promotionId, locationId])
+  @@index([locationId])
+}
+
+// Per-(promotion, customer) redemption counter — the row that is
+// conditionally incremented (updateMany where usedCount < limit) inside the
+// order transaction to enforce `perCustomerRedemptionLimit` under
+// concurrency. Created lazily the first time a given customer redeems a
+// given promotion.
+model PromotionCustomerUsage {
+  promotionId String
+  customerId  String
+  usedCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  customer  Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@id([promotionId, customerId])
+  @@index([customerId])
+}
+
+// The immutable per-order record of the ONE regular Promotion/Coupon used.
+// Written in the SAME transaction as the Order, the reward REDEEM/EARN
+// entries and the bonus snapshot — never split into independent commits.
+// SNAPSHOT BY VALUE (the OrderLine philosophy): every field below is copied
+// at redemption time and never re-read from Promotion. Later HQ edits to
+// the promotion (name, code, value, applicability, dates, active state)
+// never change a completed order. `sourcePromotionId` is a plain reference
+// string (no foreign key) kept only so history can point at what it came
+// from; it is NEVER trusted for display or accounting.
+//
+// `orderId @unique` is both the "one regular discount per order" invariant
+// and the idempotency anchor: a checkout replay re-uses the same Order (or
+// none), so this row — and the redemption-count increments — happen at most
+// once.
+model OrderPromotionRedemption {
+  id                  String                @id @default(uuid(7))
+  orderId             String                @unique
+  order               Order                 @relation(fields: [orderId], references: [id])
+
+  sourcePromotionId   String?
+
+  // Immutable snapshot.
+  promotionName       String
+  promotionKind       PromotionKind
+  // Normalized coupon code snapshot — set for a COUPON, null for an
+  // AUTOMATIC promotion.
+  couponCode          String?
+  discountType        PromotionDiscountType
+  // The configured value at redemption time (percent, or minor units).
+  discountValue       Int
+  // The actual monetary discount applied to gross merchandise, minor units.
+  discountMinorUnits  Int
+  // FREE_ITEM only — the cart product one unit of which was made free.
+  freeItemProductId   String?
+  freeItemProductName String?
+  // The customer this redemption counts against for a per-customer limit,
+  // or null (guest, or the promotion has no per-customer limit).
+  customerId          String?
+  createdAt           DateTime              @default(now())
+
   @@index([sourcePromotionId])
 }

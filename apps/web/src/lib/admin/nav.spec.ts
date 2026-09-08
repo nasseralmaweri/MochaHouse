@@ -114,6 +114,33 @@ describe("adminNavItems (permission-aware navigation)", () => {
     ]);
   });
 
+  it("shows Promotions only when the user holds promotions.configure (Milestone 7E)", () => {
+    expect(
+      adminNavItems({
+        "promotions.configure": { corporate: true, locationIds: [] },
+      }).map((i) => i.key),
+    ).toEqual(["dashboard", "promotions"]);
+    expect(
+      adminNavItems({
+        "loyalty.configure": { corporate: true, locationIds: [] },
+      }).map((i) => i.key),
+    ).not.toContain("promotions");
+  });
+
+  it("orders Promotions immediately after Loyalty", () => {
+    const items = adminNavItems({
+      "loyalty.configure": { corporate: true, locationIds: [] },
+      "promotions.configure": { corporate: true, locationIds: [] },
+      "locations.view": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual([
+      "dashboard",
+      "loyalty",
+      "promotions",
+      "locations",
+    ]);
+  });
+
   it("shows Locations when the user holds locations.view (any scope)", () => {
     const items = adminNavItems({
       "locations.view": { corporate: false, locationIds: ["loc-a"] },

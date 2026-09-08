@@ -67,6 +67,16 @@ export function adminNavItems(
     items.push({ key: "loyalty", label: "Loyalty", href: "/admin/loyalty" });
   }
 
+  // Promotions (Milestone 7E — Promotions & Coupons, the regular
+  // merchandise-discount system). CORPORATE-only; the page re-checks.
+  if (can(capabilities, "promotions.configure")) {
+    items.push({
+      key: "promotions",
+      label: "Promotions",
+      href: "/admin/promotions",
+    });
+  }
+
   if (can(capabilities, "locations.view")) {
     items.push({
       key: "locations",

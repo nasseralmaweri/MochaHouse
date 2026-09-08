@@ -9,6 +9,7 @@ import {
   toOrderLineSummary,
   toOrderLoyaltyBonusSummary,
   toOrderLoyaltyRewardSummary,
+  toOrderPromotionSummary,
 } from '../infrastructure/order-line-mapper';
 
 type OrderWithLocation = Prisma.OrderGetPayload<{
@@ -48,6 +49,7 @@ export class CustomerOrdersService {
       include: {
         location: true,
         lines: true,
+        promotionRedemption: true,
         loyaltyRewardRedemption: true,
         loyaltyBonus: { include: { items: true } },
       },
@@ -60,6 +62,7 @@ export class CustomerOrdersService {
     return {
       ...this.toSummary(order),
       lines: order.lines.map(toOrderLineSummary),
+      orderPromotion: toOrderPromotionSummary(order.promotionRedemption),
       loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
       loyaltyBonus: toOrderLoyaltyBonusSummary(order.loyaltyBonus),
     };
@@ -73,8 +76,12 @@ export class CustomerOrdersService {
       locationName: order.location.name,
       status: order.status,
       subtotal: order.subtotal,
+      promotionDiscount: order.promotionDiscountMinorUnits,
       rewardDiscount: order.rewardDiscountMinorUnits,
-      total: order.subtotal - order.rewardDiscountMinorUnits,
+      total:
+        order.subtotal -
+        order.promotionDiscountMinorUnits -
+        order.rewardDiscountMinorUnits,
       currency: order.currency,
     };
   }

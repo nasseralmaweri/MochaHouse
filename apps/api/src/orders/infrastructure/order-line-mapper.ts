@@ -2,6 +2,7 @@ import type {
   OrderLineSummary,
   OrderLoyaltyBonusSummary,
   OrderLoyaltyRewardSummary,
+  OrderPromotionSummary,
 } from '@mocha-house/contracts';
 import type { Prisma } from '@mocha-house/database';
 
@@ -29,6 +30,35 @@ export function toOrderLineSummary(line: {
       const s = selection as { groupName: string; optionNames: string[] };
       return { groupName: s.groupName, optionNames: s.optionNames };
     }),
+  };
+}
+
+// Milestone 7E — the immutable regular Promotion/Coupon snapshot, projected
+// for every order surface. Null for an order that used no regular discount.
+// Every value comes from OrderPromotionRedemption — never re-read from the
+// live Promotion.
+export function toOrderPromotionSummary(
+  redemption: {
+    promotionName: string;
+    promotionKind: 'AUTOMATIC' | 'COUPON';
+    couponCode: string | null;
+    discountType: 'PERCENTAGE_OFF' | 'FIXED_AMOUNT' | 'FREE_ITEM';
+    discountValue: number;
+    discountMinorUnits: number;
+    freeItemProductName: string | null;
+  } | null,
+): OrderPromotionSummary | null {
+  if (!redemption) {
+    return null;
+  }
+  return {
+    name: redemption.promotionName,
+    kind: redemption.promotionKind,
+    couponCode: redemption.couponCode,
+    discountType: redemption.discountType,
+    discountValue: redemption.discountValue,
+    discountMinorUnits: redemption.discountMinorUnits,
+    freeItemName: redemption.freeItemProductName,
   };
 }
 

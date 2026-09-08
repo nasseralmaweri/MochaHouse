@@ -129,21 +129,29 @@ export default function OrderConfirmationPage() {
           ))}
         </ul>
         <div className="flex flex-col gap-1 border-t border-border-default pt-2">
+          {status.orderPromotion || status.loyaltyReward ? (
+            <div className="flex items-center justify-between text-sm text-text-secondary">
+              <span>Subtotal</span>
+              <span>{formatPrice(status.subtotal, status.currency)}</span>
+            </div>
+          ) : null}
+          {status.orderPromotion ? (
+            <div className="flex items-center justify-between text-sm text-status-success">
+              <span>
+                {status.orderPromotion.kind === "COUPON" ? "Coupon" : "Promotion"}
+                {" · "}
+                {status.orderPromotion.name}
+              </span>
+              <span>
+                −{formatPrice(status.promotionDiscount, status.currency)}
+              </span>
+            </div>
+          ) : null}
           {status.loyaltyReward ? (
-            <>
-              <div className="flex items-center justify-between text-sm text-text-secondary">
-                <span>Subtotal</span>
-                <span>{formatPrice(status.subtotal, status.currency)}</span>
-              </div>
-              <div className="flex items-center justify-between text-sm text-status-success">
-                <span>
-                  Mocha Beans Reward · {status.loyaltyReward.rewardName}
-                </span>
-                <span>
-                  −{formatPrice(status.rewardDiscount, status.currency)}
-                </span>
-              </div>
-            </>
+            <div className="flex items-center justify-between text-sm text-status-success">
+              <span>Mocha Beans Reward · {status.loyaltyReward.rewardName}</span>
+              <span>−{formatPrice(status.rewardDiscount, status.currency)}</span>
+            </div>
           ) : null}
           <div className="flex items-center justify-between">
             <span className="text-sm font-semibold text-text-primary">

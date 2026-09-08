@@ -14,6 +14,7 @@ import { AdminAuditModule } from './admin-audit/admin-audit.module';
 import { AdminPlatformModule } from './admin-platform/admin-platform.module';
 import { OperationsModule } from './operations/operations.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
+import { PromotionsModule } from './promotions/promotions.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { LoyaltyModule } from './loyalty/loyalty.module';
     AdminPlatformModule,
     OperationsModule,
     LoyaltyModule,
+    PromotionsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -14,6 +14,7 @@ import { CheckoutService } from '../orders/application/checkout.service';
 import { PAYMENT_PROVIDER } from '../orders/infrastructure/payment-provider.token';
 import type { CustomerIdentity } from '../customer-auth/infrastructure/customer-identity';
 import { LoyaltyModule } from './loyalty.module';
+import { PromotionsModule } from '../promotions/promotions.module';
 import { LoyaltyService } from './application/loyalty.service';
 
 // Milestone 7A — Mocha Beans earning integrated into the real checkout
@@ -42,6 +43,7 @@ describe('Mocha Beans earning on checkout (integration)', () => {
         CustomerAuthModule,
         InternalAuthModule,
         LoyaltyModule,
+        PromotionsModule,
       ],
       providers: [
         CheckoutService,

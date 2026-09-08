@@ -73,21 +73,29 @@ export default async function AccountOrderDetailPage({
           ))}
         </ul>
         <div className="flex flex-col gap-1 border-t border-border-default pt-2">
+          {order.orderPromotion || order.loyaltyReward ? (
+            <div className="flex items-center justify-between text-sm text-text-secondary">
+              <span>Subtotal</span>
+              <span>{formatPrice(order.subtotal, order.currency)}</span>
+            </div>
+          ) : null}
+          {order.orderPromotion ? (
+            <div className="flex items-center justify-between text-sm text-status-success">
+              <span>
+                {order.orderPromotion.kind === "COUPON" ? "Coupon" : "Promotion"}
+                {" · "}
+                {order.orderPromotion.name}
+              </span>
+              <span>
+                −{formatPrice(order.promotionDiscount, order.currency)}
+              </span>
+            </div>
+          ) : null}
           {order.loyaltyReward ? (
-            <>
-              <div className="flex items-center justify-between text-sm text-text-secondary">
-                <span>Subtotal</span>
-                <span>{formatPrice(order.subtotal, order.currency)}</span>
-              </div>
-              <div className="flex items-center justify-between text-sm text-status-success">
-                <span>
-                  Mocha Beans Reward · {order.loyaltyReward.rewardName}
-                </span>
-                <span>
-                  −{formatPrice(order.rewardDiscount, order.currency)}
-                </span>
-              </div>
-            </>
+            <div className="flex items-center justify-between text-sm text-status-success">
+              <span>Mocha Beans Reward · {order.loyaltyReward.rewardName}</span>
+              <span>−{formatPrice(order.rewardDiscount, order.currency)}</span>
+            </div>
           ) : null}
           <div className="flex items-center justify-between">
             <span className="text-sm font-semibold text-text-primary">

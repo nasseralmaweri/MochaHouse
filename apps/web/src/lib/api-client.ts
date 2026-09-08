@@ -7,16 +7,21 @@ import type {
   AdminLoyaltyCustomerDetail,
   AdminLoyaltyReward,
   AdminProductDetail,
+  AdminPromotion,
   CreateLoyaltyBonusPromotionRequest,
   CreateLoyaltyRewardRequest,
+  CreatePromotionRequest,
   LoyaltySettings,
   UpdateLoyaltyBonusPromotionRequest,
   UpdateLoyaltyRewardRequest,
+  UpdatePromotionRequest,
   UpdateLoyaltySettingsRequest,
   AdminUpdateInternalUserStatusRequest,
   AdminUpdateLocationRequest,
   AdminUpdateProductRequest,
   AdvanceOrderStatusResponse,
+  CheckoutQuoteRequest,
+  CheckoutQuoteResponse,
   CheckoutRequest,
   CheckoutRewardEligibilityRequest,
   CheckoutRewardEligibilityResponse,
@@ -99,6 +104,29 @@ export async function getCheckoutRewardsFromBrowser(
     return (await response.json()) as CheckoutRewardEligibilityResponse;
   } catch {
     return { balance: 0, rewards: [] };
+  }
+}
+
+// Milestone 7E — the unified server-authoritative checkout pricing quote
+// (regular Promotion/Coupon + Mocha Bean rewards + total). Goes through this
+// app's own /api/orders/checkout-quote route (server-side, attaches the
+// httpOnly session cookie when present; guests allowed). Never throws — a
+// failure returns a subtotal-only quote so checkout still works.
+export async function getCheckoutQuoteFromBrowser(
+  input: CheckoutQuoteRequest,
+): Promise<CheckoutQuoteResponse | null> {
+  try {
+    const response = await fetch("/api/orders/checkout-quote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as CheckoutQuoteResponse;
+  } catch {
+    return null;
   }
 }
 
@@ -1346,6 +1374,72 @@ export function updateLoyaltyBonusPromotionFromBrowser(
 ): Promise<LoyaltyConfigureResult<AdminLoyaltyBonusPromotion>> {
   return loyaltyConfigureRequest<AdminLoyaltyBonusPromotion>(
     `bonus-promotions/${encodeURIComponent(promotionId)}`,
+    "PATCH",
+    input,
+  );
+}
+
+// --- Admin: Promotions & Coupons (Milestone 7E) ----------------------
+// Same `LoyaltyConfigureResult` shape (a 400 carries a business-safe
+// message shown as-is). The API (`promotions.configure`, CORPORATE-only) is
+// the authority for every rule.
+async function promotionConfigureRequest<T>(
+  path: string,
+  method: "POST" | "PATCH",
+  body: unknown,
+): Promise<LoyaltyConfigureResult<T>> {
+  let response: Response;
+  try {
+    response = await fetch(`${INTERNAL_ADMIN_PROXY}/promotions${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400 || response.status === 409) {
+    const errBody = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: errBody?.message ?? "Please check the form and try again.",
+    };
+  }
+  if (!response.ok) {
+    const errBody = await safeJson(response);
+    return {
+      outcome: "error",
+      message: errBody?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return { outcome: "success", data: (await response.json()) as T };
+}
+
+export function createPromotionFromBrowser(
+  input: CreatePromotionRequest,
+): Promise<LoyaltyConfigureResult<AdminPromotion>> {
+  return promotionConfigureRequest<AdminPromotion>("", "POST", input);
+}
+
+export function updatePromotionFromBrowser(
+  promotionId: string,
+  input: UpdatePromotionRequest,
+): Promise<LoyaltyConfigureResult<AdminPromotion>> {
+  return promotionConfigureRequest<AdminPromotion>(
+    `/${encodeURIComponent(promotionId)}`,
     "PATCH",
     input,
   );

@@ -16,6 +16,7 @@ import {
   toOrderLineSummary,
   toOrderLoyaltyBonusSummary,
   toOrderLoyaltyRewardSummary,
+  toOrderPromotionSummary,
 } from '../infrastructure/order-line-mapper';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 
@@ -88,6 +89,7 @@ export class AdminOrdersService {
       where: { id: orderId },
       include: {
         lines: true,
+        promotionRedemption: true,
         loyaltyRewardRedemption: true,
         loyaltyBonus: { include: { items: true } },
       },
@@ -103,8 +105,13 @@ export class AdminOrdersService {
     return {
       ...this.toSummary(order),
       guestPhone: order.guestPhone,
+      promotionDiscount: order.promotionDiscountMinorUnits,
       rewardDiscount: order.rewardDiscountMinorUnits,
-      total: order.subtotal - order.rewardDiscountMinorUnits,
+      total:
+        order.subtotal -
+        order.promotionDiscountMinorUnits -
+        order.rewardDiscountMinorUnits,
+      orderPromotion: toOrderPromotionSummary(order.promotionRedemption),
       loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
       loyaltyBonus: toOrderLoyaltyBonusSummary(order.loyaltyBonus),
     };

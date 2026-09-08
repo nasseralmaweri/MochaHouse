@@ -13,6 +13,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsModule } from '../../locations/locations.module';
 import { CustomersModule } from '../../customers/customers.module';
 import { LoyaltyModule } from '../../loyalty/loyalty.module';
+import { PromotionsModule } from '../../promotions/promotions.module';
 import { CustomerAuthModule } from '../../customer-auth/customer-auth.module';
 import { InternalAuthModule } from '../../internal-auth/internal-auth.module';
 import { CheckoutService } from './checkout.service';
@@ -65,6 +66,7 @@ describe('AdminOrdersService (integration)', () => {
         CustomerAuthModule,
         InternalAuthModule,
         LoyaltyModule,
+        PromotionsModule,
       ],
       providers: [
         CheckoutService,

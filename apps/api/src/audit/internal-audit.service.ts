@@ -296,6 +296,69 @@ export class InternalAuditService {
     });
   }
 
+  // --- Milestone 7E, Promotions & Coupons ------------------------
+  // Same contract as every method here — written in the SAME transaction as
+  // the promotion change it records. The Promotion tables stay the source
+  // of truth; these events are the "who changed what, when" trail.
+  // targetType 'promotion' is a new polymorphic target; the Admin Activity
+  // Log is scoped to 'internal_user' and ignores it, exactly as it ignores
+  // the 7B/7D loyalty events. Routine customer redemption is NOT audited —
+  // the immutable OrderPromotionRedemption snapshot is its history.
+
+  async recordPromotionCreated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      promotionId: string;
+      snapshot: Prisma.InputJsonValue;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'promotions.promotion_created',
+        targetType: 'promotion',
+        targetId: input.promotionId,
+        afterData: input.snapshot,
+        reason: 'Promotion / Coupon created.',
+      },
+    });
+  }
+
+  async recordPromotionUpdated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      promotionId: string;
+      change: 'updated' | 'activated' | 'deactivated';
+      before: Prisma.InputJsonValue;
+      after: Prisma.InputJsonValue;
+    },
+  ): Promise<void> {
+    const action =
+      input.change === 'activated'
+        ? 'promotions.promotion_activated'
+        : input.change === 'deactivated'
+          ? 'promotions.promotion_deactivated'
+          : 'promotions.promotion_updated';
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action,
+        targetType: 'promotion',
+        targetId: input.promotionId,
+        beforeData: input.before,
+        afterData: input.after,
+        reason:
+          input.change === 'activated'
+            ? 'Promotion / Coupon activated.'
+            : input.change === 'deactivated'
+              ? 'Promotion / Coupon deactivated.'
+              : 'Promotion / Coupon updated.',
+      },
+    });
+  }
+
   async recordChecklistExceptionCleared(
     tx: Prisma.TransactionClient,
     input: ChecklistExceptionAuditInput & { previousReason: string },
