@@ -10,7 +10,10 @@ import {
   type PricingResult,
   type RegularDiscountApplicability,
   type RegularDiscountCartLine,
+  type RegularDiscountResult,
 } from '@mocha-house/domain';
+
+type RegularDiscountOk = Extract<RegularDiscountResult, { ok: true }>;
 import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { normalizeCouponCode } from './coupon-code';
@@ -43,7 +46,18 @@ export interface RegularDiscountPlan {
   discountType: PromotionDiscountType;
   discountValue: number;
   discountMinorUnits: number;
-  freeItem: { productId: string; productName: string } | null;
+  // FREE_ITEM only. `lineIndex` pins the freed unit to its exact priced
+  // line (Milestone 7E — same product on multiple priced lines).
+  freeItem: {
+    productId: string;
+    productName: string;
+    lineIndex: number;
+  } | null;
+  // The distinct products a PERCENTAGE_OFF / FIXED_AMOUNT discount was
+  // applied to — `null` for ENTIRE_ORDER (and FREE_ITEM). Used by 7D bonus
+  // earning so a targeted discount never reduces an unrelated product's
+  // qualifying spend.
+  discountEligibleProductIds: string[] | null;
   totalRedemptionLimit: number | null;
   perCustomerRedemptionLimit: number | null;
 }
@@ -159,7 +173,7 @@ export class PromotionCheckoutService {
       }
       return {
         outcome: 'applied',
-        plan: this.toPlan(promotion, discount.discountMinorUnits, discount.freeItem),
+        plan: this.toPlan(promotion, discount),
       };
     }
 
@@ -205,11 +219,7 @@ export class PromotionCheckoutService {
         continue;
       }
       if (best === null || discount.discountMinorUnits > best.discountMinorUnits) {
-        best = this.toPlan(
-          promotion,
-          discount.discountMinorUnits,
-          discount.freeItem,
-        );
+        best = this.toPlan(promotion, discount);
       }
     }
 
@@ -306,8 +316,7 @@ export class PromotionCheckoutService {
 
   private toPlan(
     promotion: PromotionRow,
-    discountMinorUnits: number,
-    freeItem: { productId: string; productName: string } | null,
+    discount: RegularDiscountOk,
   ): RegularDiscountPlan {
     return {
       promotionId: promotion.id,
@@ -316,8 +325,9 @@ export class PromotionCheckoutService {
       couponCode: promotion.kind === 'COUPON' ? promotion.code : null,
       discountType: promotion.discountType,
       discountValue: promotion.discountValue,
-      discountMinorUnits,
-      freeItem,
+      discountMinorUnits: discount.discountMinorUnits,
+      freeItem: discount.freeItem,
+      discountEligibleProductIds: discount.discountEligibleProductIds,
       totalRedemptionLimit: promotion.totalRedemptionLimit,
       perCustomerRedemptionLimit: promotion.perCustomerRedemptionLimit,
     };

@@ -40,7 +40,13 @@ export interface RedemptionPlan {
   rewardType: 'FIXED_AMOUNT' | 'FREE_ITEM';
   beanCost: number;
   discountMinorUnits: number;
-  freeItem: { productId: string; productName: string } | null;
+  // FREE_ITEM only. `lineIndex` pins the freed unit to its exact priced
+  // line so 7D bonus earning can exclude that same unit.
+  freeItem: {
+    productId: string;
+    productName: string;
+    lineIndex: number;
+  } | null;
 }
 
 type PricedOk = Extract<PricingResult, { ok: true }>;
@@ -55,12 +61,12 @@ type RewardWithEligibility = {
 // Milestone 7E — a regular Promotion/Coupon discount is applied to the cart
 // BEFORE the Mocha Bean reward. When one is in play, the reward is computed
 // against the merchandise that remains: the FIXED_AMOUNT cap is the
-// remaining amount, and a FREE_ITEM regular discount's freed unit is
-// removed from the pool so the reward frees a genuinely different unit (or
-// is found ineligible).
+// remaining amount, and a FREE_ITEM regular discount's freed unit (pinned
+// to its exact priced line) is removed from the pool so the reward frees a
+// genuinely different unit — or is found ineligible.
 export interface RegularDiscountContext {
   merchandiseAfterRegularMinorUnits: number;
-  regularFreeItemProductId: string | null;
+  regularFreeItemLineIndex: number | null;
 }
 
 @Injectable()
@@ -244,8 +250,8 @@ export class LoyaltyRedemptionService {
     let lines = this.toDiscountLines(priced, menu);
     const merchandiseSubtotalMinorUnits =
       regularContext?.merchandiseAfterRegularMinorUnits ?? priced.subtotal;
-    if (regularContext?.regularFreeItemProductId != null) {
-      lines = decrementOneUnit(lines, regularContext.regularFreeItemProductId);
+    if (regularContext?.regularFreeItemLineIndex != null) {
+      lines = decrementOneUnit(lines, regularContext.regularFreeItemLineIndex);
     }
 
     return computeLoyaltyRewardDiscount({
@@ -289,24 +295,17 @@ export class LoyaltyRedemptionService {
   }
 }
 
-// Remove ONE unit of `productId` from the line set (the first matching
-// line), dropping a line that hits zero. Used to model a unit already made
-// free by a regular Promotion/Coupon so the reward frees a different one.
+// Remove ONE unit from the priced line at `lineIndex` — the exact unit a
+// regular FREE_ITEM Promotion/Coupon already freed. The line is KEPT (at
+// quantity 0 if needed) so every other line's index stays stable;
+// computeLoyaltyRewardDiscount ignores zero-quantity lines.
 function decrementOneUnit(
   lines: RewardDiscountCartLine[],
-  productId: string,
+  lineIndex: number,
 ): RewardDiscountCartLine[] {
-  let done = false;
-  const out: RewardDiscountCartLine[] = [];
-  for (const line of lines) {
-    if (!done && line.productId === productId && line.quantity > 0) {
-      done = true;
-      if (line.quantity > 1) {
-        out.push({ ...line, quantity: line.quantity - 1 });
-      }
-      continue;
-    }
-    out.push(line);
-  }
-  return out;
+  return lines.map((line, i) =>
+    i === lineIndex
+      ? { ...line, quantity: Math.max(0, line.quantity - 1) }
+      : line,
+  );
 }

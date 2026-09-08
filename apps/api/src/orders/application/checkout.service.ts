@@ -870,8 +870,8 @@ export class CheckoutService {
             unitPrice: line.unitPrice,
             quantity: line.quantity,
           })),
-          freeItemProductIds: freedUnitProductIds(regularPlan, plan),
-          orderLevelDiscountMinorUnits: nonFreeOrderLevelDiscount(
+          freeUnitLineIndices: freedUnitLineIndices(regularPlan, plan),
+          orderLevelDiscounts: orderLevelDiscountBuckets(
             regularPlan,
             regularDiscount,
             plan,
@@ -941,50 +941,64 @@ function regularRewardContext(
   }
   return {
     merchandiseAfterRegularMinorUnits: merchandiseAfterRegular,
-    regularFreeItemProductId:
+    regularFreeItemLineIndex:
       regularPlan.discountType === 'FREE_ITEM'
-        ? regularPlan.freeItem?.productId ?? null
+        ? regularPlan.freeItem?.lineIndex ?? null
         : null,
   };
 }
 
-// Every unit made free by a FREE_ITEM regular Promotion/Coupon and/or a
-// FREE_ITEM Mocha Bean reward — passed to 7D bonus earning so those units
-// earn no bonus. The same product id may appear twice.
-function freedUnitProductIds(
+// The exact priced-line indices of every unit made free by a FREE_ITEM
+// regular Promotion/Coupon and/or a FREE_ITEM Mocha Bean reward — passed to
+// 7D bonus earning so those exact units earn no bonus. The same index may
+// appear twice (a promotion and a reward each freed a unit of that line).
+function freedUnitLineIndices(
   regularPlan: RegularDiscountPlan | null,
   rewardPlan: RedemptionPlan | null,
-): string[] {
-  const ids: string[] = [];
+): number[] {
+  const indices: number[] = [];
   if (
     regularPlan?.discountType === 'FREE_ITEM' &&
-    regularPlan.freeItem?.productId
+    regularPlan.freeItem != null
   ) {
-    ids.push(regularPlan.freeItem.productId);
+    indices.push(regularPlan.freeItem.lineIndex);
   }
-  if (rewardPlan?.rewardType === 'FREE_ITEM' && rewardPlan.freeItem?.productId) {
-    ids.push(rewardPlan.freeItem.productId);
+  if (rewardPlan?.rewardType === 'FREE_ITEM' && rewardPlan.freeItem != null) {
+    indices.push(rewardPlan.freeItem.lineIndex);
   }
-  return ids;
+  return indices;
 }
 
-// The summed minor-unit value of every non-free order-level discount (a
-// PERCENTAGE_OFF / FIXED_AMOUNT regular Promotion/Coupon plus a FIXED_AMOUNT
-// Mocha Bean reward) — passed to 7D bonus earning to be allocated across the
-// paid merchandise.
-function nonFreeOrderLevelDiscount(
+// Every non-free monetary discount as a bucket carrying the products it
+// actually applied to: a FIXED_AMOUNT Mocha Bean reward and an ENTIRE_ORDER
+// Promotion/Coupon are order-wide (`eligibleProductIds: null`); a
+// SELECTED_PRODUCTS / SELECTED_CATEGORIES Promotion/Coupon carries only its
+// eligible products, so 7D bonus earning never reduces an unrelated
+// product's qualifying spend.
+function orderLevelDiscountBuckets(
   regularPlan: RegularDiscountPlan | null,
   regularDiscount: number,
   rewardPlan: RedemptionPlan | null,
   rewardDiscount: number,
-): number {
-  const regular =
-    regularPlan !== null && regularPlan.discountType !== 'FREE_ITEM'
-      ? regularDiscount
-      : 0;
-  const reward =
-    rewardPlan?.rewardType === 'FIXED_AMOUNT' ? rewardDiscount : 0;
-  return regular + reward;
+): { amountMinorUnits: number; eligibleProductIds: string[] | null }[] {
+  const buckets: {
+    amountMinorUnits: number;
+    eligibleProductIds: string[] | null;
+  }[] = [];
+  if (
+    regularPlan !== null &&
+    regularPlan.discountType !== 'FREE_ITEM' &&
+    regularDiscount > 0
+  ) {
+    buckets.push({
+      amountMinorUnits: regularDiscount,
+      eligibleProductIds: regularPlan.discountEligibleProductIds,
+    });
+  }
+  if (rewardPlan?.rewardType === 'FIXED_AMOUNT' && rewardDiscount > 0) {
+    buckets.push({ amountMinorUnits: rewardDiscount, eligibleProductIds: null });
+  }
+  return buckets;
 }
 
 function constantTimeEquals(a: string, b: string): boolean {

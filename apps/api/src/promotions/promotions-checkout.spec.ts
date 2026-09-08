@@ -33,6 +33,9 @@ describe('Promotions & Coupons at checkout (integration)', () => {
   let latteId: string; // drinks, $5.00
   let pastryId: string; // food, $3.00
   let muffinId: string; // food, $4.00
+  let sizeGroupId: string;
+  let sizeSmallId: string; // +$0
+  let sizeLargeId: string; // +$2.00 -> a Large latte is $7.00
   const promotionIds: string[] = [];
 
   beforeAll(async () => {
@@ -98,6 +101,47 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     latteId = (await mk('PC Latte', 'pc-latte', 500, drinksCategoryId)).id;
     pastryId = (await mk('PC Pastry', 'pc-pastry', 300, foodCategoryId)).id;
     muffinId = (await mk('PC Muffin', 'pc-muffin', 400, foodCategoryId)).id;
+
+    // A size modifier on the latte so the SAME product can appear on two
+    // priced lines with different modifier-inclusive unit prices.
+    const sizeGroup = await prisma.modifierGroup.create({
+      data: {
+        name: `PC Size ${suffix}`,
+        displayOrder: 1,
+        // Optional so existing `line(latteId)` cases (no selection) keep the
+        // $5.00 base price; an explicit Large selection makes it $7.00.
+        isRequired: false,
+        minSelections: 0,
+        maxSelections: 1,
+        isActive: true,
+      },
+    });
+    sizeGroupId = sizeGroup.id;
+    await prisma.productModifierGroup.create({
+      data: { productId: latteId, modifierGroupId: sizeGroup.id, displayOrder: 1 },
+    });
+    sizeSmallId = (
+      await prisma.modifierOption.create({
+        data: {
+          name: 'Small',
+          priceAdjustment: 0,
+          displayOrder: 1,
+          isActive: true,
+          modifierGroupId: sizeGroup.id,
+        },
+      })
+    ).id;
+    sizeLargeId = (
+      await prisma.modifierOption.create({
+        data: {
+          name: 'Large',
+          priceAdjustment: 200,
+          displayOrder: 2,
+          isActive: true,
+          modifierGroupId: sizeGroup.id,
+        },
+      })
+    ).id;
 
     const menu = await prisma.menu.create({
       data: { name: `PC Menu ${suffix}`, slug: `pc-menu-${suffix}` },
@@ -209,9 +253,16 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       where: { locationId: { in: [locationId, otherLocationId] } },
     });
     await prisma.menu.deleteMany({ where: { slug: `pc-menu-${suffix}` } });
+    await prisma.productModifierGroup.deleteMany({
+      where: { modifierGroupId: sizeGroupId },
+    });
+    await prisma.modifierOption.deleteMany({
+      where: { modifierGroupId: sizeGroupId },
+    });
     await prisma.product.deleteMany({
       where: { id: { in: [latteId, pastryId, muffinId] } },
     });
+    await prisma.modifierGroup.deleteMany({ where: { id: sizeGroupId } });
     await prisma.category.deleteMany({
       where: { id: { in: [drinksCategoryId, foodCategoryId] } },
     });
@@ -707,6 +758,214 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     await prisma.loyaltyBonusPromotion.deleteMany({
       where: { name: { contains: suffix } },
     });
+  });
+
+  // --- TARGETED DISCOUNT ATTRIBUTION (7E MAJOR-1 correction) --------
+
+  it('a SELECTED_PRODUCTS discount does NOT reduce an unrelated product’s Bonus Beans', async () => {
+    const id = identity(randomUUID());
+    await grantBeans(id, 0);
+    const customerId = await customerIdFor(id);
+    // 50% off the latte only.
+    await makePromotion({
+      kind: 'AUTOMATIC',
+      discountType: 'PERCENTAGE_OFF',
+      discountValue: 50,
+      applicability: 'SELECTED_PRODUCTS',
+      productIds: [latteId],
+    });
+    // 2x Bonus Beans on the muffin (a different product).
+    await prisma.loyaltyBonusPromotion.create({
+      data: {
+        name: `Bonus ${randomUUID()} ${suffix}`,
+        type: 'MULTIPLIER',
+        bonusValue: 2,
+        isActive: true,
+        appliesToAllLocations: true,
+        eligibleProducts: { create: [{ productId: muffinId }] },
+      },
+    });
+
+    // latte $5 + muffin $4. -50% latte -> $2.50 discount, all on the latte.
+    const confirmation = await checkoutService.checkout(
+      req([line(latteId), line(muffinId)]),
+      id,
+    );
+    expect(confirmation.promotionDiscount).toBe(250);
+    expect(confirmation.total).toBe(650); // $9 - $2.50
+
+    const ledger = await ledgerFor(customerId);
+    // standard EARN on net $6.50 -> 6
+    expect(ledger.find((e) => e.type === 'EARN')!.amount).toBe(6);
+    // muffin untouched -> qualifying $4 -> 4 standard -> +4 bonus (NOT +2).
+    const snapshot = await prisma.orderLoyaltyBonus.findUnique({
+      where: { orderId: confirmation.orderId },
+      include: { items: true },
+    });
+    expect(snapshot?.items[0].productId).toBe(muffinId);
+    expect(snapshot?.items[0].qualifyingSpendMinorUnits).toBe(400);
+    expect(ledger.find((e) => e.type === 'BONUS_EARN')!.amount).toBe(4);
+
+    await prisma.loyaltyBonusPromotion.deleteMany({
+      where: { name: { contains: suffix } },
+    });
+  });
+
+  it('a SELECTED_CATEGORIES discount does NOT reduce an unrelated category item’s Bonus Beans', async () => {
+    const id = identity(randomUUID());
+    await grantBeans(id, 0);
+    const customerId = await customerIdFor(id);
+    // 50% off the whole food category.
+    await makePromotion({
+      kind: 'AUTOMATIC',
+      discountType: 'PERCENTAGE_OFF',
+      discountValue: 50,
+      applicability: 'SELECTED_CATEGORIES',
+      categoryIds: [foodCategoryId],
+    });
+    // 2x Bonus Beans on the latte (drinks — unrelated category).
+    await prisma.loyaltyBonusPromotion.create({
+      data: {
+        name: `Bonus ${randomUUID()} ${suffix}`,
+        type: 'MULTIPLIER',
+        bonusValue: 2,
+        isActive: true,
+        appliesToAllLocations: true,
+        eligibleProducts: { create: [{ productId: latteId }] },
+      },
+    });
+
+    // latte $5 + pastry $3 + muffin $4. -50% of the $7 food -> $3.50.
+    const confirmation = await checkoutService.checkout(
+      req([line(latteId), line(pastryId), line(muffinId)]),
+      id,
+    );
+    expect(confirmation.promotionDiscount).toBe(350);
+
+    const snapshot = await prisma.orderLoyaltyBonus.findUnique({
+      where: { orderId: confirmation.orderId },
+      include: { items: true },
+    });
+    // latte untouched -> qualifying $5 -> 5 standard -> +5 bonus (NOT +3).
+    expect(snapshot?.items[0].productId).toBe(latteId);
+    expect(snapshot?.items[0].qualifyingSpendMinorUnits).toBe(500);
+    expect(
+      (await ledgerFor(customerId)).find((e) => e.type === 'BONUS_EARN')!.amount,
+    ).toBe(5);
+
+    await prisma.loyaltyBonusPromotion.deleteMany({
+      where: { name: { contains: suffix } },
+    });
+  });
+
+  it('a SELECTED_PRODUCTS discount DOES reduce the discounted product’s own Bonus Beans', async () => {
+    const id = identity(randomUUID());
+    await grantBeans(id, 0);
+    const customerId = await customerIdFor(id);
+    await makePromotion({
+      kind: 'AUTOMATIC',
+      discountType: 'PERCENTAGE_OFF',
+      discountValue: 50,
+      applicability: 'SELECTED_PRODUCTS',
+      productIds: [latteId],
+    });
+    await prisma.loyaltyBonusPromotion.create({
+      data: {
+        name: `Bonus ${randomUUID()} ${suffix}`,
+        type: 'MULTIPLIER',
+        bonusValue: 2,
+        isActive: true,
+        appliesToAllLocations: true,
+        eligibleProducts: { create: [{ productId: latteId }] },
+      },
+    });
+
+    // latte $5, -50% -> latte qualifying $2.50 -> 2 standard -> +2 bonus.
+    const confirmation = await checkoutService.checkout(
+      req([line(latteId), line(muffinId)]),
+      id,
+    );
+    const snapshot = await prisma.orderLoyaltyBonus.findUnique({
+      where: { orderId: confirmation.orderId },
+      include: { items: true },
+    });
+    expect(snapshot?.items[0].productId).toBe(latteId);
+    expect(snapshot?.items[0].qualifyingSpendMinorUnits).toBe(250);
+    expect(
+      (await ledgerFor(customerId)).find((e) => e.type === 'BONUS_EARN')!.amount,
+    ).toBe(2);
+
+    await prisma.loyaltyBonusPromotion.deleteMany({
+      where: { name: { contains: suffix } },
+    });
+  });
+
+  // --- FREE_ITEM UNIT PRECISION (7E MINOR-1 correction) ------------
+
+  it('regular FREE_ITEM + reward FREE_ITEM: the actual freed priced units are identified across two lines', async () => {
+    const id = identity(randomUUID());
+    await grantBeans(id, 500);
+    // Regular FREE_ITEM on the latte; reward FREE_ITEM on the latte.
+    await makePromotion({
+      kind: 'AUTOMATIC',
+      discountType: 'FREE_ITEM',
+      applicability: 'SELECTED_PRODUCTS',
+      productIds: [latteId],
+    });
+    const rewardId = await makeFreeItemReward(100, [latteId]);
+
+    // Cart: one Large latte ($7, listed first) + one Small latte ($5).
+    // The regular promo frees the LOWEST-priced unit = the $5 Small.
+    // The reward must then free the remaining $7 Large — total merchandise $0.
+    const confirmation = await checkoutService.checkout(
+      req(
+        [
+          {
+            productId: latteId,
+            quantity: 1,
+            selections: [{ groupId: sizeGroupId, optionIds: [sizeLargeId] }],
+          },
+          {
+            productId: latteId,
+            quantity: 1,
+            selections: [{ groupId: sizeGroupId, optionIds: [sizeSmallId] }],
+          },
+        ],
+        { loyaltyRewardId: rewardId },
+      ),
+      id,
+    );
+    expect(confirmation.subtotal).toBe(1200); // $7 + $5
+    expect(confirmation.promotionDiscount).toBe(500); // the $5 Small
+    expect(confirmation.rewardDiscount).toBe(700); // the $7 Large
+    expect(confirmation.total).toBe(0);
+    // No overcharge, no over-discount.
+    expect(
+      confirmation.promotionDiscount + confirmation.rewardDiscount,
+    ).toBe(confirmation.subtotal);
+  });
+
+  it('regular FREE_ITEM + reward FREE_ITEM: quantity > 1 on one line still frees two distinct units', async () => {
+    const id = identity(randomUUID());
+    await grantBeans(id, 500);
+    await makePromotion({
+      kind: 'AUTOMATIC',
+      discountType: 'FREE_ITEM',
+      applicability: 'SELECTED_PRODUCTS',
+      productIds: [latteId],
+    });
+    const rewardId = await makeFreeItemReward(100, [latteId]);
+
+    // 3 Small lattes @ $5 on one line -> promo frees one, reward frees one,
+    // one still paid.
+    const confirmation = await checkoutService.checkout(
+      req([line(latteId, 3)], { loyaltyRewardId: rewardId }),
+      id,
+    );
+    expect(confirmation.subtotal).toBe(1500);
+    expect(confirmation.promotionDiscount).toBe(500);
+    expect(confirmation.rewardDiscount).toBe(500);
+    expect(confirmation.total).toBe(500);
   });
 
   // --- LIMITS ---------------------------------------------

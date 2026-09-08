@@ -62,7 +62,7 @@ describe('computeLoyaltyRewardDiscount', () => {
       expect(result).toEqual({
         ok: true,
         discountMinorUnits: 400,
-        freeItem: { productId: 'latte', productName: 'Latte' },
+        freeItem: { productId: 'latte', productName: 'Latte', lineIndex: 0 },
       });
     });
 
@@ -111,7 +111,7 @@ describe('computeLoyaltyRewardDiscount', () => {
       expect(result).toEqual({
         ok: true,
         discountMinorUnits: 300,
-        freeItem: { productId: 'pastry', productName: 'Latte' },
+        freeItem: { productId: 'pastry', productName: 'Latte', lineIndex: 0 },
       });
     });
 

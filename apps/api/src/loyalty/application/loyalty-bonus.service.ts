@@ -5,6 +5,7 @@ import {
   computeOrderLoyaltyBonuses,
   type BonusCartLine,
   type BonusPromotionInput,
+  type OrderLevelDiscountBucket,
 } from '@mocha-house/domain';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LOYALTY_CONFIGURATION_KEY } from './loyalty.service';
@@ -39,14 +40,14 @@ export interface ApplyBonusForOrderInput {
     unitPrice: number;
     quantity: number;
   }[];
-  // Milestone 7C / 7E interaction: every unit made free by a FREE_ITEM
-  // reward or a FREE_ITEM regular Promotion/Coupon (a product id may repeat),
-  // and the summed minor-unit value of every non-free order-level discount
-  // (a FIXED_AMOUNT reward plus a PERCENTAGE_OFF / FIXED_AMOUNT regular
-  // Promotion/Coupon). Bonus earning uses the qualifying spend that actually
-  // remains after these.
-  freeItemProductIds: string[];
-  orderLevelDiscountMinorUnits: number;
+  // Milestone 7C / 7E interaction: the exact priced-line indices that had a
+  // unit made free by a FREE_ITEM reward or a FREE_ITEM regular
+  // Promotion/Coupon (an index may repeat), and every non-free monetary
+  // discount as a bucket carrying the products it actually applied to.
+  // Bonus earning uses the qualifying spend that remains after these — a
+  // targeted Promotion/Coupon never touches an unrelated product's spend.
+  freeUnitLineIndices: number[];
+  orderLevelDiscounts: OrderLevelDiscountBucket[];
 }
 
 @Injectable()
@@ -61,8 +62,8 @@ export class LoyaltyBonusService {
       locationId,
       currency,
       pricedLines,
-      freeItemProductIds,
-      orderLevelDiscountMinorUnits,
+      freeUnitLineIndices,
+      orderLevelDiscounts,
     } = input;
 
     // Bonus Beans are earned on USD merchandise only, mirroring earnForOrder.
@@ -130,8 +131,8 @@ export class LoyaltyBonusService {
     const result = computeOrderLoyaltyBonuses({
       lines,
       standardRatePerDollar,
-      freeItemProductIds,
-      orderLevelDiscountMinorUnits,
+      freeUnitLineIndices,
+      orderLevelDiscounts,
       promotions: promotionInputs,
     });
 

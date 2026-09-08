@@ -48,8 +48,8 @@ describe('computeOrderLoyaltyBonuses', () => {
 
   const base = {
     standardRatePerDollar: 1,
-    freeItemProductIds: [],
-    orderLevelDiscountMinorUnits: 0,
+    freeUnitLineIndices: [],
+    orderLevelDiscounts: [],
   };
 
   // --- EXTRA_BEANS ---------------------------------------------
@@ -211,7 +211,7 @@ describe('computeOrderLoyaltyBonuses', () => {
   it('a FREE_ITEM-reward free unit earns no EXTRA_BEANS bonus', () => {
     const result = computeOrderLoyaltyBonuses({
       ...base,
-      freeItemProductIds: ['promoted'],
+      freeUnitLineIndices: [0],
       lines: [line({ productId: 'promoted', unitPriceMinorUnits: 600, quantity: 1 })],
       promotions: [extra(20)],
     });
@@ -222,7 +222,7 @@ describe('computeOrderLoyaltyBonuses', () => {
   it('a FREE_ITEM-reward free unit earns no spend-based multiplier bonus, but paid units still do', () => {
     const result = computeOrderLoyaltyBonuses({
       ...base,
-      freeItemProductIds: ['promoted'],
+      freeUnitLineIndices: [0],
       lines: [line({ productId: 'promoted', unitPriceMinorUnits: 600, quantity: 3 })],
       promotions: [multiplier(2)],
     });
@@ -236,7 +236,7 @@ describe('computeOrderLoyaltyBonuses', () => {
   it('a FIXED_AMOUNT reward discount lowers the multiplier qualifying spend proportionally', () => {
     const result = computeOrderLoyaltyBonuses({
       ...base,
-      orderLevelDiscountMinorUnits: 500, // $5 off the order
+      orderLevelDiscounts: [{ amountMinorUnits: 500, eligibleProductIds: null }], // $5 off the order
       lines: [
         line({ productId: 'promoted', unitPriceMinorUnits: 600 }), // $6
         line({ productId: 'plain', unitPriceMinorUnits: 400 }), // $4
@@ -252,11 +252,103 @@ describe('computeOrderLoyaltyBonuses', () => {
   it('EXTRA_BEANS is still awarded on a fixed-discounted paid unit', () => {
     const result = computeOrderLoyaltyBonuses({
       ...base,
-      orderLevelDiscountMinorUnits: 600,
+      orderLevelDiscounts: [{ amountMinorUnits: 600, eligibleProductIds: null }],
       lines: [line({ productId: 'promoted', unitPriceMinorUnits: 600 })],
       promotions: [extra(20)],
     });
     expect(result.totalBonusBeans).toBe(20);
+  });
+
+  // --- TARGETED regular discount buckets (Milestone 7E) ------
+
+  it('a targeted regular discount does NOT reduce an unrelated product’s multiplier spend', () => {
+    const result = computeOrderLoyaltyBonuses({
+      ...base,
+      // 50% off Product A only -> $5, eligible to ['A'].
+      orderLevelDiscounts: [{ amountMinorUnits: 500, eligibleProductIds: ['A'] }],
+      lines: [
+        line({ productId: 'A', unitPriceMinorUnits: 1000 }),
+        line({ productId: 'B', unitPriceMinorUnits: 1000 }),
+      ],
+      promotions: [multiplier(2, ['B'])],
+    });
+    // B untouched -> qualifying $10 -> 10 standard -> 10 bonus (NOT 7).
+    expect(result.items[0].productId).toBe('B');
+    expect(result.items[0].qualifyingSpendMinorUnits).toBe(1000);
+    expect(result.totalBonusBeans).toBe(10);
+  });
+
+  it('a targeted regular discount DOES reduce the discounted product’s own multiplier spend', () => {
+    const result = computeOrderLoyaltyBonuses({
+      ...base,
+      orderLevelDiscounts: [{ amountMinorUnits: 500, eligibleProductIds: ['A'] }],
+      lines: [
+        line({ productId: 'A', unitPriceMinorUnits: 1000 }),
+        line({ productId: 'B', unitPriceMinorUnits: 1000 }),
+      ],
+      promotions: [multiplier(2, ['A'])],
+    });
+    // A discounted to $5 -> 5 standard -> 5 bonus (NOT 7.5-rounded).
+    expect(result.items[0].qualifyingSpendMinorUnits).toBe(500);
+    expect(result.totalBonusBeans).toBe(5);
+  });
+
+  it('an ENTIRE_ORDER discount keeps the proportional-across-all allocation', () => {
+    const result = computeOrderLoyaltyBonuses({
+      ...base,
+      orderLevelDiscounts: [{ amountMinorUnits: 500, eligibleProductIds: null }],
+      lines: [
+        line({ productId: 'A', unitPriceMinorUnits: 1000 }),
+        line({ productId: 'B', unitPriceMinorUnits: 1000 }),
+      ],
+      promotions: [multiplier(2, ['B'])],
+    });
+    // $5 spread proportionally -> B qualifying $7.50 -> 7 standard -> 7 bonus.
+    expect(result.items[0].qualifyingSpendMinorUnits).toBe(750);
+    expect(result.totalBonusBeans).toBe(7);
+  });
+
+  it('two discount buckets deplete each line sequentially — total attributed never exceeds paid value', () => {
+    const result = computeOrderLoyaltyBonuses({
+      ...base,
+      // Regular 50%-off-A ($5, targeted) + a $5 order-wide FIXED reward.
+      orderLevelDiscounts: [
+        { amountMinorUnits: 500, eligibleProductIds: ['A'] },
+        { amountMinorUnits: 500, eligibleProductIds: null },
+      ],
+      lines: [
+        line({ productId: 'A', unitPriceMinorUnits: 1000 }),
+        line({ productId: 'B', unitPriceMinorUnits: 1000 }),
+      ],
+      promotions: [multiplier(2, ['A']), multiplier(2, ['B'])],
+    });
+    // Total non-free discount = $10; paid gross = $20; final merchandise $10.
+    const totalQualifying = result.items.reduce(
+      (s, it) => s + it.qualifyingSpendMinorUnits,
+      0,
+    );
+    expect(totalQualifying).toBe(1000);
+    // Neither line's qualifying spend is negative or above its paid value.
+    for (const it of result.items) {
+      expect(it.qualifyingSpendMinorUnits).toBeGreaterThanOrEqual(0);
+      expect(it.qualifyingSpendMinorUnits).toBeLessThanOrEqual(1000);
+    }
+  });
+
+  it('a free unit is pinned to its exact priced line', () => {
+    const result = computeOrderLoyaltyBonuses({
+      ...base,
+      // The $6 line (index 1) is the freed unit, not the $4 line (index 0).
+      freeUnitLineIndices: [1],
+      lines: [
+        line({ productId: 'X', unitPriceMinorUnits: 400 }), // small
+        line({ productId: 'X', unitPriceMinorUnits: 600 }), // large
+      ],
+      promotions: [extra(10, ['X'])],
+    });
+    // Only the $4 small unit is still paid -> +10 once.
+    expect(result.totalBonusBeans).toBe(10);
+    expect(result.items[0].qualifyingUnits).toBe(1);
   });
 
   // --- EMPTY / EDGE ----------------------------------------

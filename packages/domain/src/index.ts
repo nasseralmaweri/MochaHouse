@@ -567,7 +567,16 @@ export type RewardDiscountResult =
       ok: true;
       discountMinorUnits: number;
       // The single freed unit (FREE_ITEM only); null for FIXED_AMOUNT.
-      freeItem: { productId: string; productName: string } | null;
+      // `lineIndex` is the 0-based index into the `lines` array that was
+      // passed in — the exact priced line the freed unit belongs to, so a
+      // caller can exclude that specific unit (Milestone 7E: a regular
+      // FREE_ITEM Promotion and a FREE_ITEM reward on the same product that
+      // appears on multiple priced lines must free different units).
+      freeItem: {
+        productId: string;
+        productName: string;
+        lineIndex: number;
+      } | null;
     }
   | { ok: false; code: "REWARD_NOT_ELIGIBLE"; message: string };
 
@@ -585,11 +594,17 @@ export function computeLoyaltyRewardDiscount(
   const eligibleProductIds = new Set(input.reward.eligibleProductIds);
   const eligibleCategoryIds = new Set(input.reward.eligibleCategoryIds);
 
-  const eligibleLines = input.lines.filter(
-    (line) =>
-      eligibleProductIds.has(line.productId) ||
-      eligibleCategoryIds.has(line.categoryId),
-  );
+  // Keep the original index so the freed unit can be pinned to its exact
+  // priced line. A line already reduced to quantity 0 (a unit freed by a
+  // regular Promotion — Milestone 7E) is not an eligible candidate.
+  const eligibleLines = input.lines
+    .map((line, lineIndex) => ({ line, lineIndex }))
+    .filter(
+      ({ line }) =>
+        line.quantity > 0 &&
+        (eligibleProductIds.has(line.productId) ||
+          eligibleCategoryIds.has(line.categoryId)),
+    );
 
   if (eligibleLines.length === 0) {
     return {
@@ -600,27 +615,36 @@ export function computeLoyaltyRewardDiscount(
   }
 
   // Approved default: the LOWEST-PRICED eligible unit is free. Deterministic
-  // tie-break on productId so two carts with the same prices always resolve
-  // the same freed item.
-  const chosen = eligibleLines.reduce((best, line) => {
-    if (line.unitPriceMinorUnits < best.unitPriceMinorUnits) {
-      return line;
+  // tie-break on productId, then line index, so two carts with the same
+  // prices always resolve the same freed unit.
+  const chosen = eligibleLines.reduce((best, cur) => {
+    if (cur.line.unitPriceMinorUnits < best.line.unitPriceMinorUnits) {
+      return cur;
     }
-    if (
-      line.unitPriceMinorUnits === best.unitPriceMinorUnits &&
-      line.productId < best.productId
-    ) {
-      return line;
+    if (cur.line.unitPriceMinorUnits === best.line.unitPriceMinorUnits) {
+      if (cur.line.productId < best.line.productId) {
+        return cur;
+      }
+      if (
+        cur.line.productId === best.line.productId &&
+        cur.lineIndex < best.lineIndex
+      ) {
+        return cur;
+      }
     }
     return best;
   });
 
   // One UNIT is free, not the whole line — quantity > 1 keeps the rest paid.
-  const discount = Math.max(0, Math.min(chosen.unitPriceMinorUnits, gross));
+  const discount = Math.max(0, Math.min(chosen.line.unitPriceMinorUnits, gross));
   return {
     ok: true,
     discountMinorUnits: discount,
-    freeItem: { productId: chosen.productId, productName: chosen.productName },
+    freeItem: {
+      productId: chosen.line.productId,
+      productName: chosen.line.productName,
+      lineIndex: chosen.lineIndex,
+    },
   };
 }
 
@@ -682,8 +706,19 @@ export type RegularDiscountResult =
   | {
       ok: true;
       discountMinorUnits: number;
-      // The single freed unit (FREE_ITEM only); null otherwise.
-      freeItem: { productId: string; productName: string } | null;
+      // The single freed unit (FREE_ITEM only); null otherwise. `lineIndex`
+      // pins it to its exact priced line.
+      freeItem: {
+        productId: string;
+        productName: string;
+        lineIndex: number;
+      } | null;
+      // The distinct product ids the monetary discount was actually applied
+      // to — `null` for ENTIRE_ORDER (and always for FREE_ITEM). Used so a
+      // 7D bonus on an UNRELATED product is not computed on a reduced
+      // qualifying spend: a targeted percentage/fixed discount is allocated
+      // only across these products' lines.
+      discountEligibleProductIds: string[] | null;
     }
   | {
       ok: false;
@@ -712,12 +747,17 @@ export function computeRegularDiscount(
 
   const eligibleProductIds = new Set(config.eligibleProductIds);
   const eligibleCategoryIds = new Set(config.eligibleCategoryIds);
-  const eligibleLines =
-    config.applicability === "ENTIRE_ORDER"
-      ? input.lines
-      : config.applicability === "SELECTED_PRODUCTS"
-        ? input.lines.filter((line) => eligibleProductIds.has(line.productId))
-        : input.lines.filter((line) => eligibleCategoryIds.has(line.categoryId));
+  // Keep original indices so a FREE_ITEM freed unit can be pinned to its
+  // exact priced line.
+  const eligibleLines = input.lines
+    .map((line, lineIndex) => ({ line, lineIndex }))
+    .filter(({ line }) =>
+      config.applicability === "ENTIRE_ORDER"
+        ? true
+        : config.applicability === "SELECTED_PRODUCTS"
+          ? eligibleProductIds.has(line.productId)
+          : eligibleCategoryIds.has(line.categoryId),
+    );
 
   if (eligibleLines.length === 0) {
     return {
@@ -728,34 +768,60 @@ export function computeRegularDiscount(
   }
 
   const eligibleGross = eligibleLines.reduce(
-    (sum, line) =>
+    (sum, { line }) =>
       sum + Math.max(0, line.unitPriceMinorUnits) * Math.max(0, line.quantity),
     0,
   );
 
+  // The products the monetary discount actually applies to (null =
+  // whole-order allocation). Never used for FREE_ITEM (which returns
+  // explicit free units instead of a monetary bucket).
+  const discountEligibleProductIds =
+    config.applicability === "ENTIRE_ORDER"
+      ? null
+      : [...new Set(eligibleLines.map(({ line }) => line.productId))];
+
   if (config.discountType === "FREE_ITEM") {
     // The LOWEST-PRICED eligible unit is free — mirrors the 7C reward.
-    // Deterministic tie-break on productId.
-    const chosen = eligibleLines.reduce((best, line) => {
-      if (line.unitPriceMinorUnits < best.unitPriceMinorUnits) {
-        return line;
-      }
-      if (
-        line.unitPriceMinorUnits === best.unitPriceMinorUnits &&
-        line.productId < best.productId
-      ) {
-        return line;
-      }
-      return best;
-    });
+    // Deterministic tie-break on productId, then line index.
+    const paidEligible = eligibleLines.filter(({ line }) => line.quantity > 0);
+    if (paidEligible.length === 0) {
+      return {
+        ok: false,
+        code: "NOT_APPLICABLE",
+        message: "This offer doesn't apply to anything in your cart.",
+      };
+    }
+    const chosen = paidEligible.reduce((best, cur) => {
+        if (cur.line.unitPriceMinorUnits < best.line.unitPriceMinorUnits) {
+          return cur;
+        }
+        if (cur.line.unitPriceMinorUnits === best.line.unitPriceMinorUnits) {
+          if (cur.line.productId < best.line.productId) {
+            return cur;
+          }
+          if (
+            cur.line.productId === best.line.productId &&
+            cur.lineIndex < best.lineIndex
+          ) {
+            return cur;
+          }
+        }
+        return best;
+      });
     const discount = Math.max(
       0,
-      Math.min(chosen.unitPriceMinorUnits, eligibleGross, gross),
+      Math.min(chosen.line.unitPriceMinorUnits, eligibleGross, gross),
     );
     return {
       ok: true,
       discountMinorUnits: discount,
-      freeItem: { productId: chosen.productId, productName: chosen.productName },
+      freeItem: {
+        productId: chosen.line.productId,
+        productName: chosen.line.productName,
+        lineIndex: chosen.lineIndex,
+      },
+      discountEligibleProductIds: null,
     };
   }
 
@@ -775,7 +841,12 @@ export function computeRegularDiscount(
   // Never below $0, never more than the eligible merchandise (and never
   // more than the whole cart — a defensive belt on top of that).
   const discount = Math.max(0, Math.min(raw, eligibleGross, gross));
-  return { ok: true, discountMinorUnits: discount, freeItem: null };
+  return {
+    ok: true,
+    discountMinorUnits: discount,
+    freeItem: null,
+    discountEligibleProductIds,
+  };
 }
 
 // --- Bonus Mocha Beans Promotions (Milestone 7D) ------------------
@@ -802,14 +873,17 @@ export function computeRegularDiscount(
 // Post-discount qualifying spend (Milestone 7C / 7E interaction):
 //   - A unit made free by a FREE_ITEM reward OR a FREE_ITEM regular
 //     Promotion/Coupon is NOT a paid qualifying unit — it earns neither
-//     EXTRA_BEANS nor a spend-based multiplier bonus. Both freed units are
-//     passed in `freeItemProductIds` (the same product may appear twice).
-//   - Every non-free order-level discount (a FIXED_AMOUNT reward, a
-//     PERCENTAGE_OFF or FIXED_AMOUNT regular Promotion/Coupon) is summed
-//     into `orderLevelDiscountMinorUnits` and allocated across the paid
-//     merchandise proportionally (integer minor units, largest remainder
-//     first) so each item's multiplier bonus is computed on the spend that
-//     actually remains attributable to it.
+//     EXTRA_BEANS nor a spend-based multiplier bonus. The exact freed
+//     priced lines are passed in `freeUnitLineIndices` (an index may repeat
+//     when a reward and a promotion each freed a unit of that line).
+//   - Every non-free monetary discount is a bucket in `orderLevelDiscounts`
+//     with the products it applied to. Each bucket is allocated
+//     proportionally (integer minor units, largest remainder first) ONLY
+//     across the paid lines it actually touched — a FIXED_AMOUNT reward and
+//     an ENTIRE_ORDER Promotion/Coupon spread over every line, but a
+//     SELECTED_PRODUCTS / SELECTED_CATEGORIES Promotion/Coupon spreads only
+//     over its eligible products, so a multiplier bonus on an UNRELATED
+//     product is never computed on a reduced spend.
 //
 // All money is integer minor units. `unitPriceMinorUnits` is the fully
 // resolved per-unit price INCLUDING modifier adjustments, exactly as
@@ -834,20 +908,29 @@ export interface BonusCartLine {
   quantity: number;
 }
 
+// A non-free monetary discount to attribute across the paid merchandise for
+// item-level qualifying-spend purposes (Milestone 7E). Each bucket is
+// allocated proportionally ONLY across the paid lines it actually applied
+// to: `eligibleProductIds: null` = whole order (a FIXED_AMOUNT reward, or an
+// ENTIRE_ORDER Promotion/Coupon); a concrete set = only those products'
+// lines (a SELECTED_PRODUCTS / SELECTED_CATEGORIES Promotion/Coupon).
+export interface OrderLevelDiscountBucket {
+  amountMinorUnits: number;
+  eligibleProductIds: string[] | null;
+}
+
 export interface OrderBonusInput {
   lines: BonusCartLine[];
   // The current company-wide standard earning rate (Milestone 7B).
   standardRatePerDollar: number;
-  // The units made free by a FREE_ITEM loyalty reward (Milestone 7C) and/or
-  // a FREE_ITEM regular Promotion/Coupon (Milestone 7E). One unit per entry
-  // does not count as a paid qualifying unit; the same product id may appear
-  // twice (both a reward and a promotion freed a unit of it).
-  freeItemProductIds: string[];
-  // The sum of every non-free order-level discount in integer minor units
-  // (a FIXED_AMOUNT reward plus a PERCENTAGE_OFF / FIXED_AMOUNT regular
-  // Promotion/Coupon), or 0. Allocated proportionally across paid
-  // merchandise for item-level qualifying-spend purposes.
-  orderLevelDiscountMinorUnits: number;
+  // The 0-based indices of the priced lines that had a unit made free by a
+  // FREE_ITEM loyalty reward (Milestone 7C) and/or a FREE_ITEM regular
+  // Promotion/Coupon (Milestone 7E). One unit per entry is excluded from the
+  // paid qualifying units; the same index may appear twice (both a reward
+  // and a promotion freed a unit of that exact line).
+  freeUnitLineIndices: number[];
+  // Every non-free monetary discount, each with the products it applied to.
+  orderLevelDiscounts: OrderLevelDiscountBucket[];
   // Pre-filtered (active + in window + location-eligible) and pre-sorted
   // (stable creation order) by the caller.
   promotions: BonusPromotionInput[];
@@ -877,46 +960,51 @@ export function computeOrderLoyaltyBonuses(
   const rate = input.standardRatePerDollar;
 
   // Paid units per line — a unit made free by a FREE_ITEM reward or a
-  // FREE_ITEM regular Promotion/Coupon is not paid. The same product id may
-  // appear more than once (both freed a unit of it), so this is a multiset.
-  const freeUnitsByProduct = new Map<string, number>();
-  for (const productId of input.freeItemProductIds) {
-    freeUnitsByProduct.set(
-      productId,
-      (freeUnitsByProduct.get(productId) ?? 0) + 1,
-    );
-  }
-  const paidUnits = input.lines.map((line) => {
-    let units = Math.max(0, Math.floor(line.quantity));
-    const freeForProduct = freeUnitsByProduct.get(line.productId) ?? 0;
-    if (freeForProduct > 0 && units > 0) {
-      const consumed = Math.min(freeForProduct, units);
-      units -= consumed;
-      freeUnitsByProduct.set(line.productId, freeForProduct - consumed);
+  // FREE_ITEM regular Promotion/Coupon is not paid. Indexed by the exact
+  // priced line; the same index may appear twice (a reward and a promotion
+  // each freed a unit of that line).
+  const freeUnitsByLine: number[] = input.lines.map(() => 0);
+  for (const idx of input.freeUnitLineIndices) {
+    if (Number.isInteger(idx) && idx >= 0 && idx < freeUnitsByLine.length) {
+      freeUnitsByLine[idx] += 1;
     }
-    return units;
-  });
+  }
+  const paidUnits = input.lines.map((line, i) =>
+    Math.max(0, Math.max(0, Math.floor(line.quantity)) - freeUnitsByLine[i]),
+  );
 
   const paidGross = input.lines.map(
     (line, i) => Math.max(0, line.unitPriceMinorUnits) * paidUnits[i],
   );
-  const totalPaidGross = paidGross.reduce((sum, n) => sum + n, 0);
 
-  // Proportional allocation of every non-free order-level discount across
-  // the paid merchandise. Largest-remainder method, deterministic tie-break
-  // on line index, capped so no line goes below zero.
-  const orderLevelDiscount = Math.max(
-    0,
-    Math.min(
-      Math.floor(input.orderLevelDiscountMinorUnits) || 0,
-      totalPaidGross,
-    ),
-  );
-  const allocatedDiscount = allocateProportionally(paidGross, orderLevelDiscount);
+  // Attribute every non-free monetary discount, each ONLY across the paid
+  // merchandise it actually applied to (largest-remainder method,
+  // deterministic tie-break on line index). Buckets are applied in order
+  // and each line's REMAINING value depletes as buckets are attributed, so
+  // no line is ever attributed more than its paid value and the sum of
+  // attributed discounts equals the sum of the bucket amounts (capped at
+  // the merchandise they could reach). A targeted Promotion/Coupon
+  // therefore never reduces the qualifying spend of an unrelated product.
+  const remaining = [...paidGross];
+  for (const bucket of input.orderLevelDiscounts) {
+    const weights = input.lines.map((line, i) =>
+      bucket.eligibleProductIds === null ||
+      bucket.eligibleProductIds.includes(line.productId)
+        ? remaining[i]
+        : 0,
+    );
+    const bucketWeightTotal = weights.reduce((s, w) => s + w, 0);
+    const amount = Math.max(
+      0,
+      Math.min(Math.floor(bucket.amountMinorUnits) || 0, bucketWeightTotal),
+    );
+    const allocated = allocateProportionally(weights, amount);
+    for (let i = 0; i < allocated.length; i++) {
+      remaining[i] = Math.max(0, remaining[i] - allocated[i]);
+    }
+  }
 
-  const qualifyingSpend = paidGross.map((gross, i) =>
-    Math.max(0, gross - allocatedDiscount[i]),
-  );
+  const qualifyingSpend = remaining;
 
   const items: OrderBonusItemResult[] = [];
   for (let i = 0; i < input.lines.length; i++) {

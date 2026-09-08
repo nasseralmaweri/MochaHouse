@@ -42,7 +42,12 @@ describe('computeRegularDiscount', () => {
       lines: [line({ unitPriceMinorUnits: 3000 })],
       config: cfg({ discountValue: 20 }),
     });
-    expect(result).toEqual({ ok: true, discountMinorUnits: 600, freeItem: null });
+    expect(result).toEqual({
+      ok: true,
+      discountMinorUnits: 600,
+      freeItem: null,
+      discountEligibleProductIds: null,
+    });
   });
 
   it('rounds half-up deterministically', () => {
@@ -125,7 +130,8 @@ describe('computeRegularDiscount', () => {
     expect(result).toEqual({
       ok: true,
       discountMinorUnits: 300,
-      freeItem: { productId: 'pastry', productName: 'Latte' },
+      freeItem: { productId: 'pastry', productName: 'Latte', lineIndex: 0 },
+      discountEligibleProductIds: null,
     });
   });
 
