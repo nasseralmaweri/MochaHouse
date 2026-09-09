@@ -323,8 +323,18 @@ export class GiftCardsAdminService {
       });
     } catch (error) {
       // A concurrent request with the same operationKey beat us to the
-      // unique ledger row — treat it as the idempotent replay it is.
+      // unique ADJUSTMENT ledger row (the partial unique index fired). By
+      // the time a P2002 surfaces the winning transaction has committed, so
+      // re-query and let the SAME ownership rule as the fast path decide:
+      //   - same gift card  -> the idempotent replay it is; return detail.
+      //   - different card  -> a genuine cross-card key clash; 409, with no
+      //                        further balance/ledger/audit write on either
+      //                        card (this transaction already rolled back).
       if (isUniqueConstraintViolation(error)) {
+        const winner = await this.findCorrectionByOperationKey(operationKey);
+        if (winner) {
+          this.assertOperationKeyOwnedBy(winner, giftCardId);
+        }
         return this.buildDetail(giftCardId);
       }
       throw error;

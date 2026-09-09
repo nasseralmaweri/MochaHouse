@@ -504,6 +504,65 @@ describe('Gift Card administration (integration)', () => {
     }).expect(409);
   });
 
+  it('rejects a concurrent cross-card operationKey clash — exactly one wins, the other is 409', async () => {
+    const a = await issueCard('hq', 5000);
+    const b = await issueCard('hq', 5000);
+    const operationKey = randomUUID();
+
+    const [resA, resB] = await Promise.all([
+      correct('hq', a.giftCard.id, {
+        deltaMinorUnits: 700,
+        reason: 'card A',
+        operationKey,
+      }),
+      correct('hq', b.giftCard.id, {
+        deltaMinorUnits: 900,
+        reason: 'card B',
+        operationKey,
+      }),
+    ]);
+
+    const statuses = [resA.status, resB.status].sort();
+    expect(statuses).toEqual([201, 409]);
+
+    const winnerIsA = resA.status === 201;
+    const winnerCardId = winnerIsA ? a.giftCard.id : b.giftCard.id;
+    const loserCardId = winnerIsA ? b.giftCard.id : a.giftCard.id;
+    const winnerDelta = winnerIsA ? 700 : 900;
+
+    // Exactly one ADJUSTMENT ledger row exists for that operationKey, on the
+    // winning card only.
+    const rows = await prisma.giftCardTransaction.findMany({
+      where: { type: 'ADJUSTMENT', operationKey },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].giftCardId).toBe(winnerCardId);
+
+    // Only the winning card's balance changed; the loser is untouched.
+    const winner = await prisma.giftCard.findUniqueOrThrow({
+      where: { id: winnerCardId },
+    });
+    const loser = await prisma.giftCard.findUniqueOrThrow({
+      where: { id: loserCardId },
+    });
+    expect(winner.balanceMinorUnits).toBe(5000 + winnerDelta);
+    expect(loser.balanceMinorUnits).toBe(5000);
+
+    // Ledger/balance invariants hold for both cards.
+    expect(await ledgerSum(winnerCardId)).toBe(winner.balanceMinorUnits);
+    expect(await ledgerSum(loserCardId)).toBe(5000);
+
+    // Audit history reflects only the successful correction.
+    const winnerAudit = (await auditFor(winnerCardId)).filter(
+      (e) => e.action === 'giftcards.balance_corrected',
+    );
+    const loserAudit = (await auditFor(loserCardId)).filter(
+      (e) => e.action === 'giftcards.balance_corrected',
+    );
+    expect(winnerAudit).toHaveLength(1);
+    expect(loserAudit).toHaveLength(0);
+  });
+
   // --- STATUS --------------------------------------------------
 
   it('deactivates and reactivates, audits each change, no-op is not audited', async () => {
@@ -610,5 +669,49 @@ describe('Gift Card administration (integration)', () => {
         customAmountEnabled: true,
       })
       .expect(200);
+  });
+
+  it('a no-op configuration update succeeds without writing a new audit event', async () => {
+    const putConfig = (body: unknown) =>
+      request(app.getHttpServer())
+        .put('/api/v1/admin/gift-cards/configuration')
+        .set('Authorization', `Bearer ${token(`hq-${suffix}`)}`)
+        .send(body as object);
+
+    const configAuditCount = () =>
+      prisma.internalAuditEvent.count({
+        where: {
+          targetType: 'giftcard_configuration',
+          action: 'giftcards.configuration_updated',
+        },
+      });
+
+    // Set a known configuration.
+    await putConfig({
+      presetAmountsMinorUnits: [1500, 3000, 4500],
+      customAmountEnabled: true,
+    }).expect(200);
+
+    const before = await configAuditCount();
+
+    // Submit the exact same values — deliberately in a different preset
+    // order to prove the no-op check is normalization-aware.
+    const echoed = (
+      await putConfig({
+        presetAmountsMinorUnits: [4500, 1500, 3000],
+        customAmountEnabled: true,
+      }).expect(200)
+    ).body as GiftCardConfiguration;
+    expect(echoed.presetAmountsMinorUnits).toEqual([1500, 3000, 4500]);
+    expect(echoed.customAmountEnabled).toBe(true);
+
+    // No new audit event.
+    expect(await configAuditCount()).toBe(before);
+
+    // Restore the seeded defaults so the shared row is left as found.
+    await putConfig({
+      presetAmountsMinorUnits: [1000, 2500, 5000, 10000],
+      customAmountEnabled: true,
+    }).expect(200);
   });
 });
