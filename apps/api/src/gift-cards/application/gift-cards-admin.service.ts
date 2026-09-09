@@ -22,11 +22,10 @@ import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import {
   canonicalizeGiftCardCode,
-  generateGiftCardCode,
   hashGiftCardCode,
-  lastFourOfGiftCardCode,
   maskGiftCardCode,
 } from '../infrastructure/gift-card-code';
+import { GiftCardIssuanceService } from './gift-card-issuance.service';
 
 // The HQ gift-card surface (Milestone 7F): issue a card for a legitimate
 // administrative reason, look one up by its secure code or internal id,
@@ -51,7 +50,6 @@ const REASON_MAX_LENGTH = 1000;
 const OPERATION_KEY_MIN_LENGTH = 8;
 const OPERATION_KEY_MAX_LENGTH = 200;
 const LEDGER_PAGE_SIZE = 100;
-const CODE_COLLISION_RETRIES = 5;
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -69,6 +67,7 @@ export class GiftCardsAdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: InternalAuditService,
+    private readonly issuance: GiftCardIssuanceService,
   ) {}
 
   // Exact lookup only: the secure code (submitted in the request BODY, then
@@ -124,9 +123,9 @@ export class GiftCardsAdminService {
 
   // Issue a gift card for a legitimate HQ administrative reason (comp cards,
   // customer-service recovery, testing/operations). NOT customer purchasing.
-  // Creates the card, its single ISSUANCE ledger entry (+originalValue) and
-  // the audit event in one transaction. The full plaintext code is in the
-  // response and is never retrievable again.
+  // Uses the shared issuance core (Milestone 7H) and additionally records the
+  // InternalAuditEvent in the SAME transaction. The full plaintext code is in
+  // the response and is never retrievable again.
   async issue(
     request: IssueGiftCardRequest,
     actorInternalUserId: string,
@@ -139,56 +138,23 @@ export class GiftCardsAdminService {
     );
     const currency = this.validateCurrency(request?.currency);
 
-    for (let attempt = 0; attempt < CODE_COLLISION_RETRIES; attempt++) {
-      const displayCode = generateGiftCardCode();
-      const canonical = canonicalizeGiftCardCode(displayCode)!;
-      const codeHash = hashGiftCardCode(canonical);
-      const last4 = lastFourOfGiftCardCode(canonical);
-
-      try {
-        const card = await this.prisma.$transaction(async (tx) => {
-          const created = await tx.giftCard.create({
-            data: {
-              codeHash,
-              last4,
-              originalValueMinorUnits,
-              balanceMinorUnits: originalValueMinorUnits,
-              currency,
-            },
-          });
-          await tx.giftCardTransaction.create({
-            data: {
-              giftCardId: created.id,
-              type: 'ISSUANCE',
-              amountMinorUnits: originalValueMinorUnits,
-              balanceAfterMinorUnits: originalValueMinorUnits,
-              actorInternalUserId,
-            },
-          });
-          await this.audit.recordGiftCardIssued(tx, {
-            actorInternalUserId,
-            giftCardId: created.id,
-            last4,
-            originalValueMinorUnits,
-            currency,
-          });
-          return created;
+    const issued = await this.issuance.issue(
+      { originalValueMinorUnits, currency, actorInternalUserId },
+      async (tx, { card, last4 }) => {
+        await this.audit.recordGiftCardIssued(tx, {
+          actorInternalUserId,
+          giftCardId: card.id,
+          last4,
+          originalValueMinorUnits,
+          currency,
         });
-
-        return { giftCard: this.toAdminGiftCard(card), code: displayCode };
-      } catch (error) {
-        // A code-hash collision is astronomically unlikely; retry with a
-        // fresh code rather than surfacing it.
-        if (isUniqueConstraintViolation(error)) {
-          continue;
-        }
-        throw error;
-      }
-    }
-
-    throw new ConflictException(
-      'Could not allocate a unique gift-card code. Please try again.',
+      },
     );
+
+    return {
+      giftCard: this.toAdminGiftCard(issued.card),
+      code: issued.displayCode,
+    };
   }
 
   async deactivate(

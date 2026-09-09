@@ -17,7 +17,7 @@ import { PromotionsModule } from '../../promotions/promotions.module';
 import { GiftCardsModule } from '../../gift-cards/gift-cards.module';
 import { signDevJwt } from '../../customer-auth/infrastructure/dev-jwt';
 import { CheckoutService } from '../application/checkout.service';
-import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
+import { PaymentModule } from '../../payment/payment.module';
 import { CheckoutRewardsController } from './checkout-rewards.controller';
 
 // Milestone 7C — POST /api/v1/orders/reward-eligibility over real HTTP.
@@ -52,12 +52,10 @@ describe('POST /api/v1/orders/reward-eligibility (integration)', () => {
         LoyaltyModule,
         PromotionsModule,
         GiftCardsModule,
+        PaymentModule,
       ],
       controllers: [CheckoutRewardsController],
-      providers: [
-        CheckoutService,
-        { provide: PAYMENT_PROVIDER, useClass: FakePaymentProvider },
-      ],
+      providers: [CheckoutService],
     }).compile();
     app = moduleFixture.createNestApplication();
     await app.init();

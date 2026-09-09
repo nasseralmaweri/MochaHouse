@@ -3,6 +3,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
+import { PaymentModule } from './payment/payment.module';
 import { LocationsModule } from './locations/locations.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { OrdersModule } from './orders/orders.module';
@@ -21,6 +22,7 @@ import { GiftCardsModule } from './gift-cards/gift-cards.module';
   imports: [
     PrismaModule,
     RedisModule,
+    PaymentModule,
     LocationsModule,
     CatalogModule,
     OrdersModule,

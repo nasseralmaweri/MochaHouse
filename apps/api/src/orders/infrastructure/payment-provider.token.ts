@@ -1,5 +1,4 @@
-// DI token for the payment boundary. CheckoutService depends on this token
-// and the PaymentProvider interface only — never on FakePaymentProvider by
-// name — so a real processor can be bound here later with no change to
-// checkout orchestration.
-export const PAYMENT_PROVIDER = Symbol('PAYMENT_PROVIDER');
+// Re-export kept for import-site stability (Milestone 7H moved the token and
+// its binding into src/payment/). Prefer importing from '../../payment/...'
+// in new code.
+export { PAYMENT_PROVIDER } from '../../payment/payment-provider.token';

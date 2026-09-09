@@ -19,7 +19,7 @@ import { CustomerAuthModule } from '../../customer-auth/customer-auth.module';
 import { InternalAuthModule } from '../../internal-auth/internal-auth.module';
 import { CheckoutService } from './checkout.service';
 import { AdminOrdersService } from './admin-orders.service';
-import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
+import { PaymentModule } from '../../payment/payment.module';
 import { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 
 // This suite exercises AdminOrdersService's own logic (store-queue
@@ -69,12 +69,9 @@ describe('AdminOrdersService (integration)', () => {
         LoyaltyModule,
         PromotionsModule,
         GiftCardsModule,
+        PaymentModule,
       ],
-      providers: [
-        CheckoutService,
-        AdminOrdersService,
-        { provide: PAYMENT_PROVIDER, useClass: FakePaymentProvider },
-      ],
+      providers: [CheckoutService, AdminOrdersService],
     }).compile();
 
     prisma = moduleRef.get(PrismaService);

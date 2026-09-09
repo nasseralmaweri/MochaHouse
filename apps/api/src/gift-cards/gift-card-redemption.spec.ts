@@ -14,6 +14,7 @@ import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 import { CheckoutService } from '../orders/application/checkout.service';
 import { PAYMENT_PROVIDER } from '../orders/infrastructure/payment-provider.token';
+import { PaymentModule } from '../payment/payment.module';
 import { GiftCardsModule } from './gift-cards.module';
 import { GiftCardRedemptionService } from './application/gift-card-redemption.service';
 import {
@@ -51,11 +52,9 @@ describe('Gift card redemption at checkout (integration)', () => {
         LoyaltyModule,
         PromotionsModule,
         GiftCardsModule,
+        PaymentModule,
       ],
-      providers: [
-        CheckoutService,
-        { provide: PAYMENT_PROVIDER, useClass: FakePaymentProvider },
-      ],
+      providers: [CheckoutService],
     }).compile();
 
     prisma = moduleRef.get(PrismaService);

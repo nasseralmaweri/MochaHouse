@@ -20,7 +20,7 @@ import { PromotionsModule } from '../../promotions/promotions.module';
 import { GiftCardsModule } from '../../gift-cards/gift-cards.module';
 import { signDevJwt } from '../../customer-auth/infrastructure/dev-jwt';
 import { CheckoutService } from '../application/checkout.service';
-import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
+import { PaymentModule } from '../../payment/payment.module';
 import { OrdersController } from './orders.controller';
 
 // Full HTTP integration test for POST /api/v1/orders' optional-auth
@@ -55,12 +55,10 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
         LoyaltyModule,
         PromotionsModule,
         GiftCardsModule,
+        PaymentModule,
       ],
       controllers: [OrdersController],
-      providers: [
-        CheckoutService,
-        { provide: PAYMENT_PROVIDER, useClass: FakePaymentProvider },
-      ],
+      providers: [CheckoutService],
     }).compile();
 
     app = moduleFixture.createNestApplication();

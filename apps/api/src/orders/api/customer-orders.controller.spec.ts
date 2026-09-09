@@ -24,7 +24,7 @@ import type { CustomerIdentity } from '../../customer-auth/infrastructure/custom
 import { CheckoutService } from '../application/checkout.service';
 import { CustomerOrdersService } from '../application/customer-orders.service';
 import { CustomerReorderService } from '../application/customer-reorder.service';
-import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
+import { PaymentModule } from '../../payment/payment.module';
 import { CustomerOrdersController } from './customer-orders.controller';
 
 // Full HTTP integration test for the authenticated customer order-history
@@ -60,13 +60,13 @@ describe('CustomerOrdersController (integration)', () => {
         LoyaltyModule,
         PromotionsModule,
         GiftCardsModule,
+        PaymentModule,
       ],
       controllers: [CustomerOrdersController],
       providers: [
         CheckoutService,
         CustomerOrdersService,
         CustomerReorderService,
-        { provide: PAYMENT_PROVIDER, useClass: FakePaymentProvider },
       ],
     }).compile();
 

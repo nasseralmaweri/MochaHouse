@@ -1,7 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import {
+  GIFT_CARD_CUSTOM_MAX_MINOR_UNITS,
+  GIFT_CARD_CUSTOM_MIN_MINOR_UNITS,
   GIFT_CARD_MAX_VALUE_MINOR_UNITS,
   type GiftCardConfiguration,
+  type GiftCardPurchaseOptions,
   type UpdateGiftCardConfigurationRequest,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -39,6 +42,21 @@ export class GiftCardConfigurationService {
     return {
       presetAmountsMinorUnits: config.presetAmountsMinorUnits,
       customAmountEnabled: config.customAmountEnabled,
+    };
+  }
+
+  // Milestone 7H — the PUBLIC read for the customer purchase page. No
+  // authorization: it exposes only the amount rules a buyer needs (presets,
+  // whether custom is allowed, the fixed custom bounds, currency) and no
+  // internal configuration metadata.
+  async getPublicOptions(): Promise<GiftCardPurchaseOptions> {
+    const config = await this.ensureConfiguration();
+    return {
+      presetAmountsMinorUnits: config.presetAmountsMinorUnits,
+      customAmountEnabled: config.customAmountEnabled,
+      customAmountMinMinorUnits: GIFT_CARD_CUSTOM_MIN_MINOR_UNITS,
+      customAmountMaxMinorUnits: GIFT_CARD_CUSTOM_MAX_MINOR_UNITS,
+      currency: 'USD',
     };
   }
 

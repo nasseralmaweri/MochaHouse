@@ -1022,4 +1022,43 @@ export interface UpdateGiftCardConfigurationRequest {
     presetAmountsMinorUnits: number[];
     customAmountEnabled: boolean;
 }
+export declare const GIFT_CARD_CUSTOM_MIN_MINOR_UNITS = 500;
+export declare const GIFT_CARD_CUSTOM_MAX_MINOR_UNITS = 50000;
+export interface GiftCardPurchaseOptions {
+    presetAmountsMinorUnits: number[];
+    customAmountEnabled: boolean;
+    customAmountMinMinorUnits: number;
+    customAmountMaxMinorUnits: number;
+    currency: string;
+}
+export interface PurchaseGiftCardRequest {
+    idempotencyKey: string;
+    amountMinorUnits: number;
+    purchaserEmail: string;
+    purchaserName?: string | null;
+}
+export type GiftCardPurchaseStatus = "PENDING" | "ISSUED" | "RECONCILIATION_REQUIRED";
+export interface PurchaseGiftCardResponse {
+    purchaseId: string;
+    status: GiftCardPurchaseStatus;
+    amountMinorUnits: number;
+    currency: string;
+    maskedCode: string;
+    last4: string;
+    code: string | null;
+    codeRetrievable: boolean;
+    codeRetrievableUntil: string | null;
+}
+export interface GiftCardBalanceRequest {
+    code: string;
+}
+export type GiftCardPublicStatus = "active" | "inactive" | "depleted";
+export interface GiftCardBalanceResponse {
+    found: boolean;
+    maskedCode?: string;
+    last4?: string;
+    balanceMinorUnits?: number;
+    currency?: string;
+    status?: GiftCardPublicStatus;
+}
 //# sourceMappingURL=index.d.ts.map

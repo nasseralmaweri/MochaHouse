@@ -2296,3 +2296,84 @@ export interface UpdateGiftCardConfigurationRequest {
   presetAmountsMinorUnits: number[];
   customAmountEnabled: boolean;
 }
+
+// --- Milestone 7H: Customer Digital Gift Card Purchase & Balance Lookup ---
+// Public customer surface. Purchase (POST, OptionalCustomerAuthGuard — guests
+// allowed) and balance lookup (POST, no auth). The plaintext gift-card code
+// is only ever sent in a request body and only ever returned in the
+// immediate purchase response or an idempotent replay within the 7-day
+// recovery window — never in a URL, redirect, log, audit, or the balance
+// response.
+
+// Fixed custom-amount bounds for a customer purchase (7H — not
+// HQ-configurable in V1). A preset may exceed the custom max as long as it
+// is <= GIFT_CARD_MAX_VALUE_MINOR_UNITS.
+export const GIFT_CARD_CUSTOM_MIN_MINOR_UNITS = 500; // $5.00
+export const GIFT_CARD_CUSTOM_MAX_MINOR_UNITS = 50_000; // $500.00
+
+// GET /api/v1/gift-cards/purchase-options (public). What the purchase page
+// needs and nothing else.
+export interface GiftCardPurchaseOptions {
+  presetAmountsMinorUnits: number[];
+  customAmountEnabled: boolean;
+  customAmountMinMinorUnits: number;
+  customAmountMaxMinorUnits: number;
+  currency: string;
+}
+
+// POST /api/v1/gift-cards/purchase
+// `idempotencyKey` is the logical-purchase anchor AND the credential a
+// signed-out buyer supplies to recover the full code within the window — it
+// must be a fresh, cryptographically-random value per purchase attempt.
+// `amountMinorUnits` must match an HQ preset, or be within
+// [GIFT_CARD_CUSTOM_MIN, GIFT_CARD_CUSTOM_MAX] when custom amounts are
+// enabled. `purchaserEmail` is the BUYER's own contact (support / future
+// receipt) — NOT a recipient-delivery field.
+export interface PurchaseGiftCardRequest {
+  idempotencyKey: string;
+  amountMinorUnits: number;
+  purchaserEmail: string;
+  purchaserName?: string | null;
+}
+
+export type GiftCardPurchaseStatus =
+  | "PENDING"
+  | "ISSUED"
+  | "RECONCILIATION_REQUIRED";
+
+// The purchase confirmation. `code` (the full plaintext, grouped display
+// form) is present ONLY on the initial successful issuance and on an
+// authorized idempotent replay before `codeRetrievableUntil`. After that it
+// is null and `codeRetrievable` is false — the card still exists and its
+// balance can be checked with the code if the buyer saved it.
+export interface PurchaseGiftCardResponse {
+  purchaseId: string;
+  status: GiftCardPurchaseStatus;
+  amountMinorUnits: number;
+  currency: string;
+  maskedCode: string;
+  last4: string;
+  code: string | null;
+  codeRetrievable: boolean;
+  codeRetrievableUntil: string | null;
+}
+
+// POST /api/v1/gift-cards/balance (public). The code is in the BODY only.
+export interface GiftCardBalanceRequest {
+  code: string;
+}
+
+export type GiftCardPublicStatus = "active" | "inactive" | "depleted";
+
+// A malformed code and an unknown code return the SAME shape ({ found:
+// false }) — no enumeration signal. On a hit, only masked identity + the
+// balance/status — never codeHash, the full code, the internal id, the
+// original value, any ledger, or any purchase/customer/HQ information.
+export interface GiftCardBalanceResponse {
+  found: boolean;
+  maskedCode?: string;
+  last4?: string;
+  balanceMinorUnits?: number;
+  currency?: string;
+  status?: GiftCardPublicStatus;
+}

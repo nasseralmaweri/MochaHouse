@@ -223,6 +223,11 @@ model Customer {
   preferredLocations  CustomerPreferredLocation[]
   loyaltyAccount      CustomerLoyaltyAccount?
   promotionUsage      PromotionCustomerUsage[]
+  // Milestone 7H — gift cards this customer bought while signed in. Guest
+  // purchases have customerId null and never appear here. onDelete: SetNull
+  // (see GiftCardPurchase) keeps the purchase + its financial history intact
+  // if the Customer is later removed.
+  giftCardPurchases   GiftCardPurchase[]
 
   @@unique([externalProvider, externalSubject])
 }
@@ -295,7 +300,9 @@ model PaymentAttempt {
   idempotencyKey    String               @unique
   provider          String
   status            PaymentAttemptStatus @default(PENDING)
-  locationId        String
+  // Milestone 7H — nullable: a food-order checkout always sets it; a
+  // gift-card purchase (which has no location) leaves it null.
+  locationId        String?
   amount            Int
   currency          String
   providerReference String?
@@ -316,7 +323,14 @@ model PaymentAttempt {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  order Order?
+  // A PaymentAttempt backs AT MOST ONE domain object — a food Order OR a
+  // gift-card purchase, never both. Each side is a 1:1 (Order.paymentAttemptId
+  // and GiftCardPurchase.paymentAttemptId are both @unique). The migration
+  // adds BEFORE INSERT triggers on Order and GiftCardPurchase that reject an
+  // insert whose paymentAttemptId is already claimed by the other table —
+  // declarative cross-table enforcement, not programmer convention.
+  order            Order?
+  giftCardPurchase GiftCardPurchase?
 
   @@index([status])
   @@index([reconciliationRequired])
@@ -1437,6 +1451,9 @@ model GiftCard {
   updatedAt               DateTime       @updatedAt
 
   transactions GiftCardTransaction[]
+  // Milestone 7H — the customer purchase that created this card, or null for
+  // an HQ-issued card.
+  purchase     GiftCardPurchase?
 
   @@index([status])
 }
@@ -1491,15 +1508,21 @@ model GiftCardTransaction {
   // for — intact even if the Order is later removed, exactly like
   // MochaBeanLedgerEntry.orderId.
   orderId                String?
+  // Milestone 7H — set for the ISSUANCE entry of a card created by a
+  // customer purchase; null for an HQ-issued card's ISSUANCE and for every
+  // ADJUSTMENT / REDEMPTION. onDelete: SetNull keeps the ledger entry intact.
+  giftCardPurchaseId     String?
   createdAt              DateTime                @default(now())
 
-  giftCard          GiftCard      @relation(fields: [giftCardId], references: [id], onDelete: Restrict)
-  actorInternalUser InternalUser? @relation("GiftCardTransactionActor", fields: [actorInternalUserId], references: [id], onDelete: Restrict)
-  order             Order?        @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  giftCard          GiftCard          @relation(fields: [giftCardId], references: [id], onDelete: Restrict)
+  actorInternalUser InternalUser?     @relation("GiftCardTransactionActor", fields: [actorInternalUserId], references: [id], onDelete: Restrict)
+  order             Order?            @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  giftCardPurchase  GiftCardPurchase? @relation(fields: [giftCardPurchaseId], references: [id], onDelete: SetNull)
 
   @@index([giftCardId, createdAt])
   @@index([actorInternalUserId])
   @@index([orderId])
+  @@index([giftCardPurchaseId])
 }
 
 // --- Milestone 7G, Gift Card Redemption at checkout -----------------
@@ -1535,6 +1558,71 @@ model OrderGiftCardRedemption {
   createdAt        DateTime @default(now())
 
   @@index([sourceGiftCardId])
+}
+
+// --- Milestone 7H, Customer Digital Gift Card Purchase --------------
+// A customer-initiated purchase of a digital gift card, paid through the
+// existing PaymentProvider boundary. NOT an Order — a purchase has no
+// location, no lines, no fulfilment; it reuses PaymentAttempt (1:1) purely
+// for the payment lifecycle. On a successful payment the shared issuance
+// core creates the GiftCard + its single ISSUANCE ledger entry in one
+// transaction, and this row transitions PENDING -> ISSUED.
+//
+// `paymentAttemptId @unique` is the idempotency anchor: a retried purchase
+// with the same PaymentAttempt.idempotencyKey re-uses this row and never
+// charges or issues again.
+//
+// FULL-CODE LOST-RESPONSE RECOVERY: the plaintext code is NEVER persisted.
+// For a bounded 7-day window it is recoverable via AES-256-GCM ciphertext
+// (`codeCiphertext` + `codeIv` + `codeAuthTag`, key GIFT_CARD_PURCHASE_CODE_KEK)
+// stored here, decryptable only server-side, only through the same
+// idempotent purchase POST flow (never a purchase-id-only endpoint), and
+// only until `codeRetrievableUntil`. After that the ciphertext is dead
+// weight (no cleanup worker in 7H) and the code is gone.
+enum GiftCardPurchaseStatus {
+  PENDING
+  ISSUED
+  RECONCILIATION_REQUIRED
+}
+
+model GiftCardPurchase {
+  id               String                 @id @default(uuid(7))
+  status           GiftCardPurchaseStatus @default(PENDING)
+  amountMinorUnits Int
+  currency         String                 @default("USD")
+
+  // 1:1 with the payment. PaymentAttempt.idempotencyKey is the logical
+  // purchase key — this row needs no separate one.
+  paymentAttemptId String  @unique
+  paymentAttempt   PaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+
+  // Set once the card is issued; null while PENDING and forever if the
+  // purchase ends in RECONCILIATION_REQUIRED.
+  giftCardId       String?  @unique
+  giftCard         GiftCard? @relation(fields: [giftCardId], references: [id], onDelete: Restrict)
+
+  // Buyer. Signed-in -> customerId; guest -> null. `purchaserEmail` is the
+  // BUYER's own contact for support / a future receipt — it is NOT a
+  // recipient-delivery field (7H issues the code on screen only).
+  customerId       String?
+  customer         Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  purchaserEmail   String
+  purchaserName    String?
+
+  // Encrypted temporary full-code recovery material (see the model comment).
+  // Never the plaintext. All three are set together at issuance or all null.
+  codeCiphertext      Bytes?
+  codeIv              Bytes?
+  codeAuthTag         Bytes?
+  codeRetrievableUntil DateTime?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  transactions GiftCardTransaction[]
+
+  @@index([customerId])
+  @@index([status])
 }
 
 // The single company-wide gift-card purchasing configuration, persisted now

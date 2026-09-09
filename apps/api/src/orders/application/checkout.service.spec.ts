@@ -19,6 +19,7 @@ import { PromotionsModule } from '../../promotions/promotions.module';
 import { GiftCardsModule } from '../../gift-cards/gift-cards.module';
 import { CheckoutService } from './checkout.service';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
+import { PaymentModule } from '../../payment/payment.module';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 
 // Integration test against the real local Postgres instance (see
@@ -46,11 +47,9 @@ describe('CheckoutService (integration)', () => {
         LoyaltyModule,
         PromotionsModule,
         GiftCardsModule,
+        PaymentModule,
       ],
-      providers: [
-        CheckoutService,
-        { provide: PAYMENT_PROVIDER, useClass: FakePaymentProvider },
-      ],
+      providers: [CheckoutService],
     }).compile();
 
     prisma = moduleRef.get(PrismaService);

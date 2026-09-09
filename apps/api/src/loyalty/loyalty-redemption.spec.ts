@@ -12,6 +12,7 @@ import { CustomerAuthModule } from '../customer-auth/customer-auth.module';
 import { InternalAuthModule } from '../internal-auth/internal-auth.module';
 import { CheckoutService } from '../orders/application/checkout.service';
 import { PAYMENT_PROVIDER } from '../orders/infrastructure/payment-provider.token';
+import { PaymentModule } from '../payment/payment.module';
 import type { CustomerIdentity } from '../customer-auth/infrastructure/customer-identity';
 import { LoyaltyModule } from './loyalty.module';
 import { PromotionsModule } from '../promotions/promotions.module';
@@ -49,11 +50,9 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
         LoyaltyModule,
         PromotionsModule,
         GiftCardsModule,
+        PaymentModule,
       ],
-      providers: [
-        CheckoutService,
-        { provide: PAYMENT_PROVIDER, useClass: FakePaymentProvider },
-      ],
+      providers: [CheckoutService],
     }).compile();
 
     prisma = moduleRef.get(PrismaService);

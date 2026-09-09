@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
-import { FakePaymentProvider } from '@mocha-house/integrations';
 import { PrismaModule } from '../prisma/prisma.module';
 import { LocationsModule } from '../locations/locations.module';
 import { CustomersModule } from '../customers/customers.module';
 import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 import { GiftCardsModule } from '../gift-cards/gift-cards.module';
+import { PaymentModule } from '../payment/payment.module';
 import { OrdersController } from './api/orders.controller';
 import { CheckoutRewardsController } from './api/checkout-rewards.controller';
 import { AdminOrdersController } from './api/admin-orders.controller';
@@ -14,7 +14,6 @@ import { CheckoutService } from './application/checkout.service';
 import { AdminOrdersService } from './application/admin-orders.service';
 import { CustomerOrdersService } from './application/customer-orders.service';
 import { CustomerReorderService } from './application/customer-reorder.service';
-import { PAYMENT_PROVIDER } from './infrastructure/payment-provider.token';
 
 // apps/api stays synchronous request/response only — OutboxEvent rows are
 // written here (see CheckoutService) and read here (see
@@ -33,6 +32,9 @@ import { PAYMENT_PROVIDER } from './infrastructure/payment-provider.token';
     LoyaltyModule,
     PromotionsModule,
     GiftCardsModule,
+    // The payment boundary binding (Milestone 7H) — CheckoutService depends
+    // only on the PaymentProvider interface via PAYMENT_PROVIDER.
+    PaymentModule,
   ],
   controllers: [
     OrdersController,
@@ -45,15 +47,9 @@ import { PAYMENT_PROVIDER } from './infrastructure/payment-provider.token';
     AdminOrdersService,
     CustomerOrdersService,
     CustomerReorderService,
-    // FakePaymentProvider is the only binding here — CheckoutService only
-    // ever depends on the PaymentProvider interface, so a real processor
-    // is a one-line swap in this provider list, not an orchestration change.
-    { provide: PAYMENT_PROVIDER, useClass: FakePaymentProvider },
   ],
-  // Exported so the Milestone 5G platform-status read can report the
-  // payment-integration posture through the SAME boundary token — it
-  // depends only on the PaymentProvider interface, never on
-  // FakePaymentProvider by name.
-  exports: [PAYMENT_PROVIDER],
+  // Re-exported so the Milestone 5G platform-status read keeps reaching the
+  // payment-integration posture through OrdersModule unchanged.
+  exports: [PaymentModule],
 })
 export class OrdersModule {}
