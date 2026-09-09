@@ -13,6 +13,7 @@ import { nextOrderStatus } from '@mocha-house/domain';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@mocha-house/database';
 import {
+  toOrderGiftCardSummary,
   toOrderLineSummary,
   toOrderLoyaltyBonusSummary,
   toOrderLoyaltyRewardSummary,
@@ -92,6 +93,7 @@ export class AdminOrdersService {
         promotionRedemption: true,
         loyaltyRewardRedemption: true,
         loyaltyBonus: { include: { items: true } },
+        giftCardRedemption: true,
       },
     });
 
@@ -111,9 +113,16 @@ export class AdminOrdersService {
         order.subtotal -
         order.promotionDiscountMinorUnits -
         order.rewardDiscountMinorUnits,
+      giftCardTenderMinorUnits: order.giftCardTenderMinorUnits,
+      externalPaymentMinorUnits:
+        order.subtotal -
+        order.promotionDiscountMinorUnits -
+        order.rewardDiscountMinorUnits -
+        order.giftCardTenderMinorUnits,
       orderPromotion: toOrderPromotionSummary(order.promotionRedemption),
       loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
       loyaltyBonus: toOrderLoyaltyBonusSummary(order.loyaltyBonus),
+      orderGiftCard: toOrderGiftCardSummary(order.giftCardRedemption),
     };
   }
 

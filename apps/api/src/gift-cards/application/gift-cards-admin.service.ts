@@ -60,6 +60,7 @@ type GiftCardRow = Prisma.GiftCardGetPayload<Record<string, never>>;
 type GiftCardTransactionRow = Prisma.GiftCardTransactionGetPayload<{
   include: {
     actorInternalUser: { select: { displayName: true; email: true } };
+    order: { select: { orderNumber: true } };
   };
 }>;
 
@@ -404,6 +405,7 @@ export class GiftCardsAdminService {
       take: LEDGER_PAGE_SIZE,
       include: {
         actorInternalUser: { select: { displayName: true, email: true } },
+        order: { select: { orderNumber: true } },
       },
     });
 
@@ -544,6 +546,7 @@ export class GiftCardsAdminService {
       actorLabel: entry.actorInternalUser
         ? entry.actorInternalUser.displayName ?? entry.actorInternalUser.email
         : null,
+      orderNumber: entry.order?.orderNumber ?? null,
       createdAt: entry.createdAt.toISOString(),
     };
   }

@@ -380,6 +380,16 @@ model Order {
   // negative (each discount is capped at the merchandise then remaining).
   // The immutable reward snapshot lives on OrderLoyaltyRewardRedemption.
   rewardDiscountMinorUnits Int @default(0)
+  // Milestone 7G — the amount of this order paid by a redeemed gift card, in
+  // integer minor units. 0 when no gift card was used (every pre-7G order). A
+  // gift card is a TENDER, not a discount: it does NOT change `subtotal` or
+  // either discount above and it is NOT part of the merchandise basis for
+  // promotion or Mocha Bean earning. The amount owed is
+  // `subtotal - promotionDiscountMinorUnits - rewardDiscountMinorUnits`; of
+  // that, `giftCardTenderMinorUnits` is covered by the gift card and the
+  // remainder (`PaymentAttempt.amount`) is charged externally. The immutable
+  // snapshot lives on OrderGiftCardRedemption.
+  giftCardTenderMinorUnits Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -390,6 +400,8 @@ model Order {
   loyaltyRewardRedemption OrderLoyaltyRewardRedemption?
   loyaltyBonus            OrderLoyaltyBonus?
   promotionRedemption     OrderPromotionRedemption?
+  giftCardRedemption      OrderGiftCardRedemption?
+  giftCardTransactions    GiftCardTransaction[]
 
   @@index([locationId])
   @@index([customerId])
@@ -1383,11 +1395,18 @@ enum GiftCardStatus {
 //                carries a trimmed non-empty `reason` and an
 //                `actorInternalUserId`, and is mirrored by an
 //                InternalAuditEvent written in the same transaction.
-// REDEMPTION and REFUND are intentionally absent — they are added by the
-// checkout-redemption and refund slices that write them.
+// REFUND is intentionally absent — it is added by the refund/restoration
+// slice that writes it. Milestone 7G adds REDEMPTION (a negative entry for
+// value spent as tender on a successful order).
 enum GiftCardTransactionType {
   ISSUANCE
   ADJUSTMENT
+  // Milestone 7G — value spent from this card as tender on ONE successful
+  // order. `amountMinorUnits` is negative (the tender applied), `orderId` is
+  // set, and the entry is written in the SAME transaction as the Order and
+  // the OrderGiftCardRedemption snapshot. The partial unique index on
+  // (orderId) WHERE type = 'REDEMPTION' makes it exactly-once per order.
+  REDEMPTION
 }
 
 // One gift card. `codeHash` is the ONLY lookup path: the human code is
@@ -1444,30 +1463,78 @@ model GiftCard {
 //   - UNIQUE (operationKey) WHERE type = 'ADJUSTMENT' — a manual correction
 //     is idempotent on its caller-supplied operationKey; a retry with the
 //     same key returns the existing outcome instead of applying it twice.
+//   - UNIQUE (orderId) WHERE type = 'REDEMPTION' — Milestone 7G: exactly one
+//     redemption entry per order, so a checkout replay can never spend the
+//     card twice.
 model GiftCardTransaction {
   id                     String                  @id @default(uuid(7))
   giftCardId             String
   type                   GiftCardTransactionType
   // Signed whole minor units. The resulting card balance is never allowed
   // below zero or above 200000 (enforced in the service, before the write).
+  // Negative for a deduction (a REDEMPTION is always negative).
   amountMinorUnits       Int
   // Card balance immediately after this entry was applied.
   balanceAfterMinorUnits Int
-  // Required (trimmed, non-empty) for ADJUSTMENT; null for ISSUANCE.
+  // Required (trimmed, non-empty) for ADJUSTMENT; null for ISSUANCE and
+  // REDEMPTION.
   reason                 String?
   // The HQ operator who performed this entry. Set for a HQ-issued card and
-  // for every ADJUSTMENT. onDelete: Restrict keeps the financial record —
-  // and the balance it accounts for — intact.
+  // for every ADJUSTMENT; null for a customer REDEMPTION. onDelete: Restrict
+  // keeps the financial record — and the balance it accounts for — intact.
   actorInternalUserId    String?
-  // Caller-supplied idempotency key for ADJUSTMENT; null for ISSUANCE.
+  // Caller-supplied idempotency key for ADJUSTMENT; null for ISSUANCE and
+  // REDEMPTION (REDEMPTION is keyed by orderId instead).
   operationKey           String?
+  // Milestone 7G — set for REDEMPTION: the order this value was spent on.
+  // onDelete: SetNull keeps the ledger entry — and the balance it accounts
+  // for — intact even if the Order is later removed, exactly like
+  // MochaBeanLedgerEntry.orderId.
+  orderId                String?
   createdAt              DateTime                @default(now())
 
   giftCard          GiftCard      @relation(fields: [giftCardId], references: [id], onDelete: Restrict)
   actorInternalUser InternalUser? @relation("GiftCardTransactionActor", fields: [actorInternalUserId], references: [id], onDelete: Restrict)
+  order             Order?        @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
   @@index([giftCardId, createdAt])
   @@index([actorInternalUserId])
+  @@index([orderId])
+}
+
+// --- Milestone 7G, Gift Card Redemption at checkout -----------------
+// The immutable per-order record of the ONE gift card redeemed as tender on
+// an order. Written in the SAME transaction as the Order and the negative
+// REDEMPTION GiftCardTransaction — never split into independent commits.
+//
+// SNAPSHOT BY VALUE (the OrderLine philosophy): `last4`, `amountMinorUnits`
+// and `currency` are copied here at redemption time and never re-read from
+// GiftCard. `sourceGiftCardId` is a plain reference string (like
+// OrderLine.productId — no foreign key) kept only so history can point at
+// the card it came from; it is NEVER trusted for display or accounting, and
+// the plaintext code / codeHash are never stored here.
+//
+// `orderId @unique` is both the "one gift card per order" invariant and the
+// idempotency anchor: a checkout replay re-uses the same Order (or none), so
+// this row — and the REDEMPTION ledger entry — is created at most once.
+model OrderGiftCardRedemption {
+  id               String   @id @default(uuid(7))
+  orderId          String   @unique
+  order            Order    @relation(fields: [orderId], references: [id])
+
+  // Plain reference to the gift card this came from. Nullable and un-joined
+  // on purpose — the snapshot below is authoritative.
+  sourceGiftCardId String?
+
+  // Immutable snapshot. `last4` is the ONLY code representation ever stored.
+  last4            String
+  // The tender actually applied to this order (a positive amount; the
+  // matching REDEMPTION ledger entry carries the negative of this).
+  amountMinorUnits Int
+  currency         String
+  createdAt        DateTime @default(now())
+
+  @@index([sourceGiftCardId])
 }
 
 // The single company-wide gift-card purchasing configuration, persisted now

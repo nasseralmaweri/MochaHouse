@@ -21,6 +21,7 @@ import { PAYMENT_PROVIDER } from '../orders/infrastructure/payment-provider.toke
 import type { CustomerIdentity } from '../customer-auth/infrastructure/customer-identity';
 import { LoyaltyModule } from './loyalty.module';
 import { PromotionsModule } from '../promotions/promotions.module';
+import { GiftCardsModule } from '../gift-cards/gift-cards.module';
 
 type Scope = { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null };
 
@@ -153,6 +154,7 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
         InternalAuthModule,
         LoyaltyModule,
         PromotionsModule,
+        GiftCardsModule,
       ],
       providers: [
         CheckoutService,

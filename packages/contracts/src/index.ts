@@ -279,6 +279,17 @@ export interface CheckoutRequest {
   // (never silently swapped for an automatic Promotion). When omitted, the
   // best eligible automatic Promotion (if any) applies automatically.
   couponCode?: string | null;
+  // `giftCardCode` (Milestone 7G) is the gift-card code the customer typed,
+  // or null / omitted. A gift card is a TENDER, not a discount: the server
+  // resolves it (canonicalize + HMAC hash + lookup), requires it ACTIVE
+  // with a matching currency and a positive balance, and applies
+  // `min(balance, amount owed after promotion + reward discounts)` against
+  // the order — the remainder is charged externally. At most ONE gift card
+  // per order. An invalid / inactive / depleted / wrong-currency card is
+  // rejected before any payment. Guests may redeem. The plaintext code is
+  // only ever sent in this request body — never a URL, query string, order
+  // record or response.
+  giftCardCode?: string | null;
 }
 
 // The immutable snapshot of the one Mocha Bean reward redeemed on an order
@@ -294,6 +305,20 @@ export interface OrderLoyaltyRewardSummary {
   discountMinorUnits: number;
   // FREE_ITEM only — the product one unit of which was made free.
   freeItemName: string | null;
+}
+
+// The immutable snapshot of the ONE gift card redeemed as tender on an
+// order (Milestone 7G). Reused by confirmation, customer history and the
+// store order detail. `last4` is the ONLY code representation ever exposed —
+// the plaintext code and codeHash are never returned. `null` for an order
+// that used no gift card. A gift card is a tender, not a discount: it does
+// not reduce `subtotal` or any discount, and the merchandise basis for
+// promotion / Mocha Bean earning is unaffected.
+export interface OrderGiftCardSummary {
+  // e.g. "4821" — render as "Gift Card •••• 4821".
+  last4: string;
+  // The amount of the order paid by this gift card, integer minor units.
+  amountMinorUnits: number;
 }
 
 // --- Order: the regular Promotion / Coupon snapshot (Milestone 7E) ---
@@ -360,16 +385,25 @@ export interface OrderLineSummary {
 // credential for the status endpoint — the caller must persist it
 // (e.g. in the confirmation URL) to view this order again.
 //
-// Money (Milestone 7C / 7E):
+// Money (Milestone 7C / 7E / 7G):
 //   subtotal          — gross merchandise (sum of every line total).
 //   promotionDiscount — the regular Promotion/Coupon discount; 0 when none.
 //   rewardDiscount    — the Mocha Bean reward discount; 0 when no reward.
 //   total             — subtotal - promotionDiscount - rewardDiscount =
-//                       the amount charged / owed.
+//                       the amount owed (paid by gift card + external
+//                       payment together).
+//   giftCardTenderMinorUnits — of `total`, the part paid by a redeemed gift
+//                       card; 0 when none. A TENDER, not a discount.
+//   externalPaymentMinorUnits — total - giftCardTenderMinorUnits = the
+//                       amount charged to the external payment method.
 //   orderPromotion    — the regular discount snapshot, or null.
 //   loyaltyReward     — the redeemed reward snapshot, or null.
+//   orderGiftCard     — the redeemed gift-card snapshot (last4 + amount), or
+//                       null.
 // Pre-7E orders read promotionDiscount 0, orderPromotion null; pre-7C orders
-// also read rewardDiscount 0, total === subtotal, loyaltyReward null.
+// also read rewardDiscount 0, total === subtotal, loyaltyReward null; pre-7G
+// orders read giftCardTenderMinorUnits 0, orderGiftCard null,
+// externalPaymentMinorUnits === total.
 export interface OrderConfirmation {
   orderId: string;
   orderNumber: string;
@@ -382,12 +416,16 @@ export interface OrderConfirmation {
   promotionDiscount: number;
   rewardDiscount: number;
   total: number;
+  giftCardTenderMinorUnits: number;
+  externalPaymentMinorUnits: number;
   currency: string;
   lines: OrderLineSummary[];
   orderPromotion: OrderPromotionSummary | null;
   loyaltyReward: OrderLoyaltyRewardSummary | null;
   // Milestone 7D — bonus Mocha Beans earned from HQ promotions, or null.
   loyaltyBonus: OrderLoyaltyBonusSummary | null;
+  // Milestone 7G — the redeemed gift-card snapshot (last4 + amount), or null.
+  orderGiftCard: OrderGiftCardSummary | null;
   createdAt: string;
 }
 
@@ -402,12 +440,16 @@ export interface OrderStatusResponse {
   promotionDiscount: number;
   rewardDiscount: number;
   total: number;
+  giftCardTenderMinorUnits: number;
+  externalPaymentMinorUnits: number;
   currency: string;
   lines: OrderLineSummary[];
   orderPromotion: OrderPromotionSummary | null;
   loyaltyReward: OrderLoyaltyRewardSummary | null;
   // Milestone 7D — bonus Mocha Beans earned from HQ promotions, or null.
   loyaltyBonus: OrderLoyaltyBonusSummary | null;
+  // Milestone 7G — the redeemed gift-card snapshot (last4 + amount), or null.
+  orderGiftCard: OrderGiftCardSummary | null;
   createdAt: string;
 }
 
@@ -570,12 +612,18 @@ export interface CustomerOrderSummary {
   locationName: string;
   status: OrderStatus;
   // subtotal = gross merchandise;
-  // total = subtotal - promotionDiscount - rewardDiscount (Milestone 7C / 7E).
-  // Pre-7E orders: promotionDiscount 0; pre-7C orders: rewardDiscount 0.
+  // total = subtotal - promotionDiscount - rewardDiscount (Milestone 7C / 7E)
+  //   = the amount owed (paid by gift card + external payment together).
+  // Pre-7E orders: promotionDiscount 0; pre-7C orders: rewardDiscount 0;
+  // pre-7G orders: giftCardTenderMinorUnits 0, externalPaymentMinorUnits
+  // === total.
   subtotal: number;
   promotionDiscount: number;
   rewardDiscount: number;
   total: number;
+  // Milestone 7G — the tender split of `total`.
+  giftCardTenderMinorUnits: number;
+  externalPaymentMinorUnits: number;
   currency: string;
 }
 
@@ -586,6 +634,8 @@ export interface CustomerOrderDetail extends CustomerOrderSummary {
   loyaltyReward: OrderLoyaltyRewardSummary | null;
   // Milestone 7D — bonus Mocha Beans earned from HQ promotions, or null.
   loyaltyBonus: OrderLoyaltyBonusSummary | null;
+  // Milestone 7G — the redeemed gift-card snapshot (last4 + amount), or null.
+  orderGiftCard: OrderGiftCardSummary | null;
 }
 
 // --- Loyalty: Mocha Beans balance + rewards (Milestone 7A; rewards 7B) --
@@ -674,6 +724,11 @@ export interface CheckoutQuoteRequest {
   couponCode?: string | null;
   // The reward the customer currently has selected, or null/omitted.
   loyaltyRewardId?: string | null;
+  // Milestone 7G — the gift-card code the customer applied, or null/omitted.
+  // Resolved READ-ONLY: the quote validates the card and reports how much it
+  // would apply, but reserves and decrements nothing. Never put this in a
+  // URL / query string.
+  giftCardCode?: string | null;
 }
 
 // Why a supplied coupon code did or didn't apply. `null` when no code was
@@ -702,6 +757,27 @@ export interface CheckoutQuoteRegularDiscount {
   freeItemName: string | null;
 }
 
+// Milestone 7G — why a supplied gift-card code did or didn't apply on the
+// quote. `null` when no code was supplied.
+export type GiftCardQuoteStatus =
+  | "applied"
+  | "not_found"
+  | "inactive"
+  | "no_balance"
+  | "currency_mismatch";
+
+// Milestone 7G — the read-only gift-card preview on the checkout quote.
+// Present only when `giftCardCode` was supplied AND it resolved to a usable
+// card (`giftCardStatus === "applied"`). Reserves and decrements nothing.
+export interface CheckoutQuoteGiftCard {
+  // The ONLY code representation — render as "Gift Card •••• 4821".
+  last4: string;
+  // The card's current balance, integer minor units (informational).
+  availableBalanceMinorUnits: number;
+  // min(availableBalance, amount owed after promotion + reward discounts).
+  appliedMinorUnits: number;
+}
+
 export interface CheckoutQuoteResponse {
   currency: string;
   // Gross merchandise (sum of every priced line total).
@@ -719,8 +795,18 @@ export interface CheckoutQuoteResponse {
   // The discount the currently-selected `loyaltyRewardId` would apply (0
   // when none selected or it no longer applies).
   rewardDiscountMinorUnits: number;
-  // subtotal - regularDiscount - rewardDiscountMinorUnits.
+  // subtotal - regularDiscount - rewardDiscountMinorUnits = the amount owed.
   total: number;
+  // Milestone 7G — present only when a gift-card code was supplied; why it
+  // did / didn't apply.
+  giftCardStatus: GiftCardQuoteStatus | null;
+  giftCardMessage: string | null;
+  // The usable gift-card preview, or null (no code supplied, or it did not
+  // resolve to a usable card).
+  giftCard: CheckoutQuoteGiftCard | null;
+  // total - (giftCard?.appliedMinorUnits ?? 0) = what the customer would pay
+  // by external payment. Equals `total` when no gift card applies.
+  amountDueAfterGiftCardMinorUnits: number;
 }
 
 // --- Admin: HQ loyalty configuration (Milestone 7B) ------------------
@@ -1107,11 +1193,16 @@ export interface StoreOrderDetail extends StoreOrderSummary {
   promotionDiscount: number;
   rewardDiscount: number;
   total: number;
+  // Milestone 7G — the tender split of `total` (0 / null when no gift card).
+  giftCardTenderMinorUnits: number;
+  externalPaymentMinorUnits: number;
   orderPromotion: OrderPromotionSummary | null;
   loyaltyReward: OrderLoyaltyRewardSummary | null;
   // Milestone 7D — bonus Mocha Beans earned from HQ promotions, or null, so
   // staff/HQ can explain the order's Bean accounting.
   loyaltyBonus: OrderLoyaltyBonusSummary | null;
+  // Milestone 7G — the redeemed gift-card snapshot (last4 + amount), or null.
+  orderGiftCard: OrderGiftCardSummary | null;
 }
 
 export interface AdvanceOrderStatusRequest {
@@ -2096,9 +2187,13 @@ export const GIFT_CARD_MAX_VALUE_MINOR_UNITS = 200_000;
 
 export type GiftCardStatus = "ACTIVE" | "INACTIVE";
 
-// 7F writes exactly these two. REDEMPTION / REFUND are added by the slices
-// that implement those capabilities.
-export type GiftCardTransactionType = "ISSUANCE" | "ADJUSTMENT";
+// 7F writes ISSUANCE / ADJUSTMENT; Milestone 7G adds REDEMPTION (value spent
+// as tender on a successful order). REFUND is still added by the slice that
+// implements it.
+export type GiftCardTransactionType =
+  | "ISSUANCE"
+  | "ADJUSTMENT"
+  | "REDEMPTION";
 
 // A gift card as it appears on the HQ surface. `maskedCode` is the only
 // code representation in a normal read (e.g. "•••• •••• •••• 4821");
@@ -2118,8 +2213,10 @@ export interface AdminGiftCard {
 // One row of the immutable gift-card transaction ledger, projected for HQ.
 // `amountMinorUnits` is signed; `balanceAfterMinorUnits` is the card
 // balance immediately after the entry. `actorLabel` is the HQ operator's
-// name/email (present for ISSUANCE and ADJUSTMENT), `reason` is the
-// operator's required text for an ADJUSTMENT (null for ISSUANCE).
+// name/email (present for ISSUANCE and ADJUSTMENT, null for a customer
+// REDEMPTION); `reason` is the operator's required text for an ADJUSTMENT
+// (null for ISSUANCE / REDEMPTION). `orderNumber` is the human order
+// reference for a Milestone 7G REDEMPTION (null otherwise).
 export interface AdminGiftCardTransaction {
   id: string;
   type: GiftCardTransactionType;
@@ -2127,6 +2224,7 @@ export interface AdminGiftCardTransaction {
   balanceAfterMinorUnits: number;
   reason: string | null;
   actorLabel: string | null;
+  orderNumber: string | null;
   createdAt: string;
 }
 

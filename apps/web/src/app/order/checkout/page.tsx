@@ -10,6 +10,7 @@ import type {
 } from "@mocha-house/contracts";
 import { priceCart } from "@mocha-house/domain";
 import { useCart } from "@/lib/cart/store";
+import { normalizeGiftCardCodeInput } from "@/lib/checkout/gift-card";
 import {
   getCheckoutQuoteFromBrowser,
   getLocationMenuFromBrowser,
@@ -53,6 +54,10 @@ export default function CheckoutPage() {
   const [selectedRewardId, setSelectedRewardId] = useState<string | null>(null);
   const [couponDraft, setCouponDraft] = useState("");
   const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
+  // Milestone 7G — the gift-card code the customer applied. Sent to the
+  // server (quote + checkout) in the POST body only, never a URL.
+  const [giftCardDraft, setGiftCardDraft] = useState("");
+  const [appliedGiftCard, setAppliedGiftCard] = useState<string | null>(null);
 
   const inFlightRef = useRef(false);
   const idempotencyKeyRef = useRef<string | null>(null);
@@ -106,6 +111,7 @@ export default function CheckoutPage() {
       })),
       couponCode: appliedCoupon,
       loyaltyRewardId: selectedRewardId,
+      giftCardCode: appliedGiftCard,
     })
       .then((result) => {
         if (cancelled) return;
@@ -125,7 +131,14 @@ export default function CheckoutPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart.isHydrated, cart.locationId, cartLinesKey, appliedCoupon, selectedRewardId]);
+  }, [
+    cart.isHydrated,
+    cart.locationId,
+    cartLinesKey,
+    appliedCoupon,
+    selectedRewardId,
+    appliedGiftCard,
+  ]);
 
   if (!cart.isHydrated) {
     return (
@@ -180,6 +193,18 @@ export default function CheckoutPage() {
       : null;
   const couponApplied = quote?.couponStatus === "applied";
 
+  // Milestone 7G — gift-card tender. The server quote is authoritative for
+  // how much a gift card applies and what remains due.
+  const giftCardApplied = quote?.giftCard?.appliedMinorUnits ?? 0;
+  const giftCard = quote?.giftCard ?? null;
+  const giftCardIsApplied = quote?.giftCardStatus === "applied";
+  const giftCardNote =
+    quote?.giftCardStatus && quote.giftCardStatus !== "applied"
+      ? quote.giftCardMessage ?? "That gift card can't be used."
+      : null;
+  const amountDue =
+    quote?.amountDueAfterGiftCardMinorUnits ?? total - giftCardApplied;
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (inFlightRef.current) {
@@ -212,6 +237,7 @@ export default function CheckoutPage() {
       })),
       loyaltyRewardId: selectedRewardId,
       couponCode: appliedCoupon,
+      giftCardCode: appliedGiftCard,
     };
 
     const result = await submitCheckoutFromBrowser(request);
@@ -299,13 +325,41 @@ export default function CheckoutPage() {
               </div>
             ) : null}
             <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold text-text-primary">
-                Total
+              <span
+                className={`text-sm ${
+                  giftCardIsApplied
+                    ? "text-text-secondary"
+                    : "font-semibold text-text-primary"
+                }`}
+              >
+                {giftCardIsApplied ? "Order total" : "Total"}
               </span>
-              <span className="text-lg font-semibold text-text-primary">
+              <span
+                className={
+                  giftCardIsApplied
+                    ? "text-sm text-text-secondary"
+                    : "text-lg font-semibold text-text-primary"
+                }
+              >
                 {formatPrice(total, currency)}
               </span>
             </div>
+            {giftCardIsApplied && giftCard ? (
+              <>
+                <div className="flex items-center justify-between text-sm text-status-success">
+                  <span>Gift Card •••• {giftCard.last4}</span>
+                  <span>−{formatPrice(giftCardApplied, currency)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-text-primary">
+                    To pay
+                  </span>
+                  <span className="text-lg font-semibold text-text-primary">
+                    {formatPrice(amountDue, currency)}
+                  </span>
+                </div>
+              </>
+            ) : null}
             {selectedReward ? (
               <p className="text-xs text-text-muted">
                 {selectedReward.beanCost} Mocha Beans will be used.
@@ -352,6 +406,54 @@ export default function CheckoutPage() {
           )}
           {couponNote && !couponApplied ? (
             <p className="text-xs text-status-warning">{couponNote}</p>
+          ) : null}
+        </Card>
+      ) : null}
+
+      {priced?.ok ? (
+        <Card className="flex flex-col gap-2">
+          <span className="text-sm font-semibold text-text-primary">
+            Gift card
+          </span>
+          {giftCardIsApplied && giftCard ? (
+            <div className="flex items-center justify-between gap-2 text-sm">
+              <span className="font-mono text-text-primary">
+                Gift Card •••• {giftCard.last4}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setAppliedGiftCard(null);
+                  setGiftCardDraft("");
+                }}
+                className="text-xs font-medium text-text-primary underline underline-offset-2"
+              >
+                Remove
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <input
+                value={giftCardDraft}
+                onChange={(e) => setGiftCardDraft(e.target.value.toUpperCase())}
+                placeholder="Enter a gift-card code"
+                autoComplete="off"
+                className={`${inputClassName} flex-1 font-mono text-sm`}
+              />
+              <button
+                type="button"
+                disabled={giftCardDraft.trim().length === 0}
+                onClick={() =>
+                  setAppliedGiftCard(normalizeGiftCardCodeInput(giftCardDraft))
+                }
+                className="rounded-xl bg-status-success/10 px-4 text-sm font-semibold text-status-success disabled:bg-surface-subtle disabled:text-text-muted"
+              >
+                Apply
+              </button>
+            </div>
+          )}
+          {giftCardNote ? (
+            <p className="text-xs text-status-warning">{giftCardNote}</p>
           ) : null}
         </Card>
       ) : null}
@@ -450,7 +552,7 @@ export default function CheckoutPage() {
           {submitting
             ? "Placing order…"
             : priced?.ok
-              ? `Place order — ${formatPrice(total, currency)}`
+              ? `Place order — ${formatPrice(amountDue, currency)}`
               : "Place order"}
         </button>
       </form>

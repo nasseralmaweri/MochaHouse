@@ -15,6 +15,7 @@ import { CheckoutService } from '../orders/application/checkout.service';
 import { PAYMENT_PROVIDER } from '../orders/infrastructure/payment-provider.token';
 import type { CustomerIdentity } from '../customer-auth/infrastructure/customer-identity';
 import { PromotionsModule } from './promotions.module';
+import { GiftCardsModule } from '../gift-cards/gift-cards.module';
 
 // Milestone 7E — Promotions & Coupons at checkout, exercised end-to-end
 // through the real CheckoutService against local Postgres.
@@ -48,6 +49,7 @@ describe('Promotions & Coupons at checkout (integration)', () => {
         InternalAuthModule,
         LoyaltyModule,
         PromotionsModule,
+        GiftCardsModule,
       ],
       providers: [
         CheckoutService,

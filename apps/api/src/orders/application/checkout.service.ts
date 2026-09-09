@@ -35,6 +35,10 @@ import {
   PromotionCheckoutService,
   type RegularDiscountPlan,
 } from '../../promotions/application/promotion-checkout.service';
+import {
+  GiftCardRedemptionService,
+  type GiftCardTenderPlan,
+} from '../../gift-cards/application/gift-card-redemption.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import {
@@ -42,6 +46,7 @@ import {
   generateOrderNumber,
 } from '../infrastructure/order-identifiers';
 import {
+  toOrderGiftCardSummary,
   toOrderLineSummary,
   toOrderLoyaltyBonusSummary,
   toOrderLoyaltyRewardSummary,
@@ -57,6 +62,7 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
     promotionRedemption: true;
     loyaltyRewardRedemption: true;
     loyaltyBonus: { include: { items: true } };
+    giftCardRedemption: true;
   };
 }>;
 
@@ -66,6 +72,7 @@ const ORDER_INCLUDE = {
   promotionRedemption: true,
   loyaltyRewardRedemption: true,
   loyaltyBonus: { include: { items: true } },
+  giftCardRedemption: true,
 } satisfies Prisma.OrderInclude;
 
 type PaymentAttemptRow = Prisma.PaymentAttemptGetPayload<Record<string, never>>;
@@ -88,6 +95,7 @@ export class CheckoutService {
     private readonly redemptionService: LoyaltyRedemptionService,
     private readonly bonusService: LoyaltyBonusService,
     private readonly promotionService: PromotionCheckoutService,
+    private readonly giftCardRedemptionService: GiftCardRedemptionService,
     @Inject(PAYMENT_PROVIDER)
     private readonly paymentProvider: PaymentProvider,
   ) {}
@@ -181,10 +189,33 @@ export class CheckoutService {
     }
 
     // Gross merchandise minus the regular discount minus the reward
-    // discount — what the customer actually pays. Guaranteed >= 0 (each
-    // discount is capped at the merchandise then remaining).
-    const chargeAmount =
+    // discount — the amount owed. Guaranteed >= 0 (each discount is capped
+    // at the merchandise then remaining).
+    const amountOwed =
       merchandiseAfterRegular - (prePaymentPlan?.discountMinorUnits ?? 0);
+
+    // Milestone 7G — resolve the ONE gift card (if a code was supplied) and
+    // size its tender against the amount owed, BEFORE any payment attempt
+    // exists. An invalid / inactive / depleted / wrong-currency card is
+    // rejected here (no charge, no order). The gift card is a TENDER — it
+    // does NOT reduce the merchandise basis for promotion / Bean earning.
+    // The planned tender is baked into PaymentAttempt.amount below and is
+    // never silently reduced afterwards.
+    const giftCardCode = normalizeRequestGiftCardCode(request.giftCardCode);
+    let giftCardPlan: GiftCardTenderPlan | null = null;
+    if (giftCardCode !== null) {
+      giftCardPlan = await this.giftCardRedemptionService.buildTenderPlan(
+        giftCardCode,
+        amountOwed,
+        priced.currency,
+      );
+    }
+    const giftCardTender = giftCardPlan?.plannedTenderMinorUnits ?? 0;
+
+    // What is charged to the external payment method: the amount owed minus
+    // whatever the gift card covers. Gift card applies BEFORE external
+    // payment.
+    const chargeAmount = amountOwed - giftCardTender;
 
     const created = await this.createPaymentAttempt(
       request.idempotencyKey,
@@ -203,10 +234,12 @@ export class CheckoutService {
     const attempt = created.attempt;
 
     if (chargeAmount === 0) {
-      // A reward covered the entire merchandise subtotal — there is nothing
-      // to charge. Skip the payment provider (a real gateway rejects a $0
-      // charge) and mark the attempt succeeded so the rest of the order
-      // flow, and replay, are completely unchanged.
+      // A reward and/or a gift card covered the entire amount owed — there
+      // is nothing to charge externally. Skip the payment provider (a real
+      // gateway rejects a $0 charge) and mark the attempt succeeded so the
+      // rest of the order flow, and replay, are completely unchanged. A
+      // full-gift-card order still records its REDEMPTION transactionally
+      // in createOrderTransactionally below.
       await this.prisma.paymentAttempt.update({
         where: { id: attempt.id },
         data: { status: 'SUCCEEDED', providerReference: 'no-charge' },
@@ -262,6 +295,7 @@ export class CheckoutService {
         customerId,
         rewardId,
         couponCode,
+        giftCardPlan,
       );
     } catch (error) {
       // Payment already succeeded (the update above committed before this
@@ -412,6 +446,46 @@ export class CheckoutService {
       }
     }
 
+    const total = merchandiseAfterRegular - rewardDiscountMinorUnits;
+
+    // Milestone 7G — READ-ONLY gift-card preview. Resolve the supplied code
+    // against the current card state and report how much it WOULD apply
+    // against the amount owed. No lock, no reservation, no decrement — the
+    // checkout submission independently revalidates everything under a row
+    // lock.
+    const giftCardCode = normalizeRequestGiftCardCode(request.giftCardCode);
+    let giftCardStatus: CheckoutQuoteResponse['giftCardStatus'] = null;
+    let giftCardMessage: string | null = null;
+    let giftCard: CheckoutQuoteResponse['giftCard'] = null;
+    if (giftCardCode !== null) {
+      const gc = await this.giftCardRedemptionService.resolveUsableCard(
+        giftCardCode,
+        priced.currency,
+      );
+      if (gc.outcome === 'usable') {
+        const applied = Math.max(
+          0,
+          Math.min(gc.balanceMinorUnits, total),
+        );
+        if (applied === 0) {
+          giftCardStatus = 'no_balance';
+          giftCardMessage =
+            "Your order total is already covered — you don't need a gift card.";
+        } else {
+          giftCardStatus = 'applied';
+          giftCard = {
+            last4: gc.last4,
+            availableBalanceMinorUnits: gc.balanceMinorUnits,
+            appliedMinorUnits: applied,
+          };
+        }
+      } else {
+        giftCardStatus = gc.outcome;
+        giftCardMessage = GIFT_CARD_QUOTE_MESSAGE[gc.outcome];
+      }
+    }
+    const giftCardApplied = giftCard?.appliedMinorUnits ?? 0;
+
     return {
       currency: priced.currency,
       subtotal: priced.subtotal,
@@ -421,7 +495,11 @@ export class CheckoutService {
       balance,
       rewards,
       rewardDiscountMinorUnits,
-      total: merchandiseAfterRegular - rewardDiscountMinorUnits,
+      total,
+      giftCardStatus,
+      giftCardMessage,
+      giftCard,
+      amountDueAfterGiftCardMinorUnits: total - giftCardApplied,
     };
   }
 
@@ -455,11 +533,18 @@ export class CheckoutService {
         order.subtotal -
         order.promotionDiscountMinorUnits -
         order.rewardDiscountMinorUnits,
+      giftCardTenderMinorUnits: order.giftCardTenderMinorUnits,
+      externalPaymentMinorUnits:
+        order.subtotal -
+        order.promotionDiscountMinorUnits -
+        order.rewardDiscountMinorUnits -
+        order.giftCardTenderMinorUnits,
       currency: order.currency,
       lines: order.lines.map(toOrderLineSummary),
       orderPromotion: toOrderPromotionSummary(order.promotionRedemption),
       loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
       loyaltyBonus: toOrderLoyaltyBonusSummary(order.loyaltyBonus),
+      orderGiftCard: toOrderGiftCardSummary(order.giftCardRedemption),
       createdAt: order.createdAt.toISOString(),
     };
   }
@@ -539,6 +624,13 @@ export class CheckoutService {
       typeof request.couponCode !== 'string'
     ) {
       throw new BadRequestException('couponCode must be a string or null.');
+    }
+    if (
+      request.giftCardCode !== undefined &&
+      request.giftCardCode !== null &&
+      typeof request.giftCardCode !== 'string'
+    ) {
+      throw new BadRequestException('giftCardCode must be a string or null.');
     }
   }
 
@@ -653,6 +745,7 @@ export class CheckoutService {
     customerId: string | null,
     rewardId: string | null,
     couponCode: string | null,
+    giftCardPlan: GiftCardTenderPlan | null,
   ): Promise<OrderWithRelations> {
     const paymentAttemptId = attempt.id;
     return this.prisma.$transaction(async (tx) => {
@@ -716,13 +809,19 @@ export class CheckoutService {
         );
         rewardDiscount = plan.discountMinorUnits;
       }
+      // Milestone 7G — the planned gift-card tender was fixed BEFORE payment
+      // and baked into attempt.amount (external charge = owed − tender). It
+      // is never re-sized here; applyRedemption below re-validates that the
+      // locked card can still satisfy this exact amount, or the whole
+      // transaction rolls back to reconciliation.
+      const giftCardTender = giftCardPlan?.plannedTenderMinorUnits ?? 0;
       if (
-        priced.subtotal - regularDiscount - rewardDiscount !==
+        priced.subtotal - regularDiscount - rewardDiscount - giftCardTender !==
         attempt.amount
       ) {
         throw new ConflictException(
-          `Payment succeeded but the discount, reward or cart changed before ` +
-            `the order could be placed. Reference ${paymentAttemptId} for support.`,
+          `Payment succeeded but the discount, reward, gift card or cart changed ` +
+            `before the order could be placed. Reference ${paymentAttemptId} for support.`,
         );
       }
 
@@ -758,6 +857,7 @@ export class CheckoutService {
           subtotal: priced.subtotal,
           promotionDiscountMinorUnits: regularDiscount,
           rewardDiscountMinorUnits: rewardDiscount,
+          giftCardTenderMinorUnits: giftCardTender,
           status: 'RECEIVED',
           lines: {
             create: priced.lines.map((line) => ({
@@ -816,6 +916,26 @@ export class CheckoutService {
           orderId: order.id,
           customerId,
           plan: regularPlan,
+        });
+      }
+
+      // Milestone 7G — apply the gift card as tender: lock the GiftCard row,
+      // re-validate ACTIVE + currency + that the locked balance still covers
+      // the EXACT planned tender, then write the immutable
+      // OrderGiftCardRedemption snapshot + the negative REDEMPTION ledger
+      // entry + the materialized balance decrement — all in this same
+      // transaction. If the card can no longer satisfy the planned tender
+      // (a concurrent redemption or an HQ correction), this throws ->
+      // reconciliationRequired: the external payment stays SUCCEEDED, the
+      // gift card is left whole, and no redemption is recorded. The planned
+      // tender is NEVER silently reduced. Works for guest orders too.
+      // OrderGiftCardRedemption.orderId @unique and the partial unique index
+      // on (orderId) WHERE type = 'REDEMPTION' make this exactly-once per
+      // order, so a checkout replay can never spend the card twice.
+      if (giftCardPlan !== null) {
+        await this.giftCardRedemptionService.applyRedemption(tx, {
+          orderId: order.id,
+          plan: giftCardPlan,
         });
       }
 
@@ -905,11 +1025,18 @@ export class CheckoutService {
         order.subtotal -
         order.promotionDiscountMinorUnits -
         order.rewardDiscountMinorUnits,
+      giftCardTenderMinorUnits: order.giftCardTenderMinorUnits,
+      externalPaymentMinorUnits:
+        order.subtotal -
+        order.promotionDiscountMinorUnits -
+        order.rewardDiscountMinorUnits -
+        order.giftCardTenderMinorUnits,
       currency: order.currency,
       lines: order.lines.map(toOrderLineSummary),
       orderPromotion: toOrderPromotionSummary(order.promotionRedemption),
       loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
       loyaltyBonus: toOrderLoyaltyBonusSummary(order.loyaltyBonus),
+      orderGiftCard: toOrderGiftCardSummary(order.giftCardRedemption),
       createdAt: order.createdAt.toISOString(),
     };
   }
@@ -925,6 +1052,31 @@ function normalizeRequestCoupon(raw: string | null | undefined): string | null {
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : null;
 }
+
+// Trim a client-supplied gift-card code to a non-empty string or null. The
+// authoritative canonicalization + HMAC hashing lives in
+// GiftCardRedemptionService / gift-card-code.
+function normalizeRequestGiftCardCode(
+  raw: string | null | undefined,
+): string | null {
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+// Customer-facing messages for the read-only gift-card quote (Milestone 7G).
+// Deliberately generic for `not_found` (never reveals malformed vs unknown).
+const GIFT_CARD_QUOTE_MESSAGE: Record<
+  'not_found' | 'inactive' | 'no_balance' | 'currency_mismatch',
+  string
+> = {
+  not_found: "We couldn't find that gift card.",
+  inactive: 'That gift card is inactive and cannot be used.',
+  no_balance: 'That gift card has no available balance.',
+  currency_mismatch: "That gift card's currency doesn't match this order.",
+};
 
 // The context the Mocha Bean reward computation needs when a regular
 // Promotion/Coupon has already discounted the cart: the merchandise ceiling

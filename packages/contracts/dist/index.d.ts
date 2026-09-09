@@ -163,6 +163,7 @@ export interface CheckoutRequest {
     lines: CheckoutLineInput[];
     loyaltyRewardId?: string | null;
     couponCode?: string | null;
+    giftCardCode?: string | null;
 }
 export interface OrderLoyaltyRewardSummary {
     rewardName: string;
@@ -170,6 +171,10 @@ export interface OrderLoyaltyRewardSummary {
     beanCost: number;
     discountMinorUnits: number;
     freeItemName: string | null;
+}
+export interface OrderGiftCardSummary {
+    last4: string;
+    amountMinorUnits: number;
 }
 export type PromotionKind = "AUTOMATIC" | "COUPON";
 export type PromotionDiscountType = "PERCENTAGE_OFF" | "FIXED_AMOUNT" | "FREE_ITEM";
@@ -218,11 +223,14 @@ export interface OrderConfirmation {
     promotionDiscount: number;
     rewardDiscount: number;
     total: number;
+    giftCardTenderMinorUnits: number;
+    externalPaymentMinorUnits: number;
     currency: string;
     lines: OrderLineSummary[];
     orderPromotion: OrderPromotionSummary | null;
     loyaltyReward: OrderLoyaltyRewardSummary | null;
     loyaltyBonus: OrderLoyaltyBonusSummary | null;
+    orderGiftCard: OrderGiftCardSummary | null;
     createdAt: string;
 }
 export interface OrderStatusResponse {
@@ -236,11 +244,14 @@ export interface OrderStatusResponse {
     promotionDiscount: number;
     rewardDiscount: number;
     total: number;
+    giftCardTenderMinorUnits: number;
+    externalPaymentMinorUnits: number;
     currency: string;
     lines: OrderLineSummary[];
     orderPromotion: OrderPromotionSummary | null;
     loyaltyReward: OrderLoyaltyRewardSummary | null;
     loyaltyBonus: OrderLoyaltyBonusSummary | null;
+    orderGiftCard: OrderGiftCardSummary | null;
     createdAt: string;
 }
 export interface CheckoutDeclinedResponse {
@@ -322,6 +333,8 @@ export interface CustomerOrderSummary {
     promotionDiscount: number;
     rewardDiscount: number;
     total: number;
+    giftCardTenderMinorUnits: number;
+    externalPaymentMinorUnits: number;
     currency: string;
 }
 export interface CustomerOrderDetail extends CustomerOrderSummary {
@@ -329,6 +342,7 @@ export interface CustomerOrderDetail extends CustomerOrderSummary {
     orderPromotion: OrderPromotionSummary | null;
     loyaltyReward: OrderLoyaltyRewardSummary | null;
     loyaltyBonus: OrderLoyaltyBonusSummary | null;
+    orderGiftCard: OrderGiftCardSummary | null;
 }
 export type LoyaltyRewardType = "FIXED_AMOUNT" | "FREE_ITEM";
 export interface CustomerLoyaltyReward {
@@ -368,6 +382,7 @@ export interface CheckoutQuoteRequest {
     lines: CheckoutLineInput[];
     couponCode?: string | null;
     loyaltyRewardId?: string | null;
+    giftCardCode?: string | null;
 }
 export type CouponQuoteStatus = "applied" | "invalid" | "inactive" | "not_started" | "expired" | "wrong_location" | "not_applicable" | "minimum_not_met" | "usage_limit_reached" | "sign_in_required";
 export interface CheckoutQuoteRegularDiscount {
@@ -376,6 +391,12 @@ export interface CheckoutQuoteRegularDiscount {
     discountType: PromotionDiscountType;
     discountMinorUnits: number;
     freeItemName: string | null;
+}
+export type GiftCardQuoteStatus = "applied" | "not_found" | "inactive" | "no_balance" | "currency_mismatch";
+export interface CheckoutQuoteGiftCard {
+    last4: string;
+    availableBalanceMinorUnits: number;
+    appliedMinorUnits: number;
 }
 export interface CheckoutQuoteResponse {
     currency: string;
@@ -387,6 +408,10 @@ export interface CheckoutQuoteResponse {
     rewards: CheckoutRewardOption[];
     rewardDiscountMinorUnits: number;
     total: number;
+    giftCardStatus: GiftCardQuoteStatus | null;
+    giftCardMessage: string | null;
+    giftCard: CheckoutQuoteGiftCard | null;
+    amountDueAfterGiftCardMinorUnits: number;
 }
 export interface LoyaltySettings {
     earningRatePerDollar: number;
@@ -607,9 +632,12 @@ export interface StoreOrderDetail extends StoreOrderSummary {
     promotionDiscount: number;
     rewardDiscount: number;
     total: number;
+    giftCardTenderMinorUnits: number;
+    externalPaymentMinorUnits: number;
     orderPromotion: OrderPromotionSummary | null;
     loyaltyReward: OrderLoyaltyRewardSummary | null;
     loyaltyBonus: OrderLoyaltyBonusSummary | null;
+    orderGiftCard: OrderGiftCardSummary | null;
 }
 export interface AdvanceOrderStatusRequest {
     locationId: string;
@@ -938,7 +966,7 @@ export interface AdminAdjustMochaBeansRequest {
 }
 export declare const GIFT_CARD_MAX_VALUE_MINOR_UNITS = 200000;
 export type GiftCardStatus = "ACTIVE" | "INACTIVE";
-export type GiftCardTransactionType = "ISSUANCE" | "ADJUSTMENT";
+export type GiftCardTransactionType = "ISSUANCE" | "ADJUSTMENT" | "REDEMPTION";
 export interface AdminGiftCard {
     id: string;
     maskedCode: string;
@@ -956,6 +984,7 @@ export interface AdminGiftCardTransaction {
     balanceAfterMinorUnits: number;
     reason: string | null;
     actorLabel: string | null;
+    orderNumber: string | null;
     createdAt: string;
 }
 export interface GiftCardSearchRequest {

@@ -5,6 +5,7 @@ import { LocationsModule } from '../locations/locations.module';
 import { CustomersModule } from '../customers/customers.module';
 import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { PromotionsModule } from '../promotions/promotions.module';
+import { GiftCardsModule } from '../gift-cards/gift-cards.module';
 import { OrdersController } from './api/orders.controller';
 import { CheckoutRewardsController } from './api/checkout-rewards.controller';
 import { AdminOrdersController } from './api/admin-orders.controller';
@@ -31,6 +32,7 @@ import { PAYMENT_PROVIDER } from './infrastructure/payment-provider.token';
     CustomersModule,
     LoyaltyModule,
     PromotionsModule,
+    GiftCardsModule,
   ],
   controllers: [
     OrdersController,

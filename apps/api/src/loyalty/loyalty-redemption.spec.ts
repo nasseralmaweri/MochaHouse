@@ -15,6 +15,7 @@ import { PAYMENT_PROVIDER } from '../orders/infrastructure/payment-provider.toke
 import type { CustomerIdentity } from '../customer-auth/infrastructure/customer-identity';
 import { LoyaltyModule } from './loyalty.module';
 import { PromotionsModule } from '../promotions/promotions.module';
+import { GiftCardsModule } from '../gift-cards/gift-cards.module';
 
 // Milestone 7C — Mocha Bean reward redemption at checkout, exercised through
 // the real CheckoutService against local Postgres. A dedicated test
@@ -47,6 +48,7 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
         InternalAuthModule,
         LoyaltyModule,
         PromotionsModule,
+        GiftCardsModule,
       ],
       providers: [
         CheckoutService,

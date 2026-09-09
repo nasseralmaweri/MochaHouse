@@ -129,7 +129,9 @@ export default function OrderConfirmationPage() {
           ))}
         </ul>
         <div className="flex flex-col gap-1 border-t border-border-default pt-2">
-          {status.orderPromotion || status.loyaltyReward ? (
+          {status.orderPromotion ||
+          status.loyaltyReward ||
+          status.orderGiftCard ? (
             <div className="flex items-center justify-between text-sm text-text-secondary">
               <span>Subtotal</span>
               <span>{formatPrice(status.subtotal, status.currency)}</span>
@@ -154,13 +156,50 @@ export default function OrderConfirmationPage() {
             </div>
           ) : null}
           <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold text-text-primary">
-              Total
+            <span
+              className={`text-sm ${
+                status.orderGiftCard
+                  ? "text-text-secondary"
+                  : "font-semibold text-text-primary"
+              }`}
+            >
+              {status.orderGiftCard ? "Order total" : "Total"}
             </span>
-            <span className="text-lg font-semibold text-text-primary">
+            <span
+              className={
+                status.orderGiftCard
+                  ? "text-sm text-text-secondary"
+                  : "text-lg font-semibold text-text-primary"
+              }
+            >
               {formatPrice(status.total, status.currency)}
             </span>
           </div>
+          {status.orderGiftCard ? (
+            <>
+              <div className="flex items-center justify-between text-sm text-status-success">
+                <span>Gift Card •••• {status.orderGiftCard.last4}</span>
+                <span>
+                  −
+                  {formatPrice(
+                    status.orderGiftCard.amountMinorUnits,
+                    status.currency,
+                  )}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-text-primary">
+                  Paid by card
+                </span>
+                <span className="text-lg font-semibold text-text-primary">
+                  {formatPrice(
+                    status.externalPaymentMinorUnits,
+                    status.currency,
+                  )}
+                </span>
+              </div>
+            </>
+          ) : null}
           {status.loyaltyReward ? (
             <p className="text-xs text-text-muted">
               {status.loyaltyReward.beanCost} Mocha Beans used

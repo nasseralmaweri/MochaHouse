@@ -3,6 +3,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { AuditModule } from '../audit/audit.module';
 import { GiftCardsAdminService } from './application/gift-cards-admin.service';
 import { GiftCardConfigurationService } from './application/gift-card-configuration.service';
+import { GiftCardRedemptionService } from './application/gift-card-redemption.service';
 import { AdminGiftCardsController } from './api/admin-gift-cards.controller';
 
 // Milestone 7F — Gift Card Foundation & Administration. The financial and
@@ -18,6 +19,10 @@ import { AdminGiftCardsController } from './api/admin-gift-cards.controller';
 //   - GiftCardConfigurationService: the company-wide gift-card purchasing
 //     configuration under giftcards.configure (CORPORATE-only). Persisted
 //     for a future slice; nothing in 7F consumes it.
+//   - GiftCardRedemptionService (Milestone 7G): read-only resolution of a
+//     supplied code for the checkout quote, and the commit-time write that
+//     applies a gift card as tender inside the order-creation transaction.
+//     Exported so OrdersModule's CheckoutService can use it.
 //
 // InternalAuthGuard / PermissionGuard come from the @Global
 // InternalAuthModule; PrismaService from the @Global PrismaModule;
@@ -25,6 +30,11 @@ import { AdminGiftCardsController } from './api/admin-gift-cards.controller';
 @Module({
   imports: [PrismaModule, AuditModule],
   controllers: [AdminGiftCardsController],
-  providers: [GiftCardsAdminService, GiftCardConfigurationService],
+  providers: [
+    GiftCardsAdminService,
+    GiftCardConfigurationService,
+    GiftCardRedemptionService,
+  ],
+  exports: [GiftCardRedemptionService],
 })
 export class GiftCardsModule {}

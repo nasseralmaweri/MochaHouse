@@ -14,6 +14,7 @@ import { CustomerAuthModule } from '../../customer-auth/customer-auth.module';
 import { InternalAuthModule } from '../../internal-auth/internal-auth.module';
 import { LoyaltyModule } from '../../loyalty/loyalty.module';
 import { PromotionsModule } from '../../promotions/promotions.module';
+import { GiftCardsModule } from '../../gift-cards/gift-cards.module';
 import { signDevJwt } from '../../customer-auth/infrastructure/dev-jwt';
 import { CheckoutService } from '../application/checkout.service';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
@@ -50,6 +51,7 @@ describe('POST /api/v1/orders/reward-eligibility (integration)', () => {
         InternalAuthModule,
         LoyaltyModule,
         PromotionsModule,
+        GiftCardsModule,
       ],
       controllers: [CheckoutRewardsController],
       providers: [

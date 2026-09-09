@@ -1,4 +1,5 @@
 import type {
+  OrderGiftCardSummary,
   OrderLineSummary,
   OrderLoyaltyBonusSummary,
   OrderLoyaltyRewardSummary,
@@ -84,6 +85,26 @@ export function toOrderLoyaltyRewardSummary(
     beanCost: redemption.beanCost,
     discountMinorUnits: redemption.discountMinorUnits,
     freeItemName: redemption.freeItemProductName,
+  };
+}
+
+// Milestone 7G — the immutable gift-card redemption snapshot, projected for
+// every order surface (confirmation, guest status, customer history, store
+// detail). Null for an order that used no gift card. `last4` is the ONLY
+// code representation ever exposed. Every value comes from
+// OrderGiftCardRedemption — never re-read from the live GiftCard.
+export function toOrderGiftCardSummary(
+  redemption: {
+    last4: string;
+    amountMinorUnits: number;
+  } | null,
+): OrderGiftCardSummary | null {
+  if (!redemption) {
+    return null;
+  }
+  return {
+    last4: redemption.last4,
+    amountMinorUnits: redemption.amountMinorUnits,
   };
 }
 

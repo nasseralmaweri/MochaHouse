@@ -21,6 +21,7 @@ import type { GiftCardTransactionType } from "@mocha-house/contracts";
 const LEDGER_TYPE_LABEL: Record<GiftCardTransactionType, string> = {
   ISSUANCE: "Issued",
   ADJUSTMENT: "Manual correction",
+  REDEMPTION: "Redeemed at checkout",
 };
 
 // Admin → Gift Cards (Milestone 7F). The HQ financial + administrative
@@ -239,8 +240,13 @@ async function GiftCardDetail({
                       )}
                     </td>
                     <td className="py-2 pr-3 text-text-secondary">
-                      {entry.reason ?? ""}
-                      {entry.actorLabel ? ` — ${entry.actorLabel}` : ""}
+                      {entry.type === "REDEMPTION"
+                        ? entry.orderNumber
+                          ? `Order #${entry.orderNumber}`
+                          : "Order"
+                        : `${entry.reason ?? ""}${
+                            entry.actorLabel ? ` — ${entry.actorLabel}` : ""
+                          }`}
                     </td>
                   </tr>
                 ))}

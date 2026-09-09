@@ -16,6 +16,7 @@ import { CustomerAuthModule } from '../../customer-auth/customer-auth.module';
 import { InternalAuthModule } from '../../internal-auth/internal-auth.module';
 import { LoyaltyModule } from '../../loyalty/loyalty.module';
 import { PromotionsModule } from '../../promotions/promotions.module';
+import { GiftCardsModule } from '../../gift-cards/gift-cards.module';
 import { CheckoutService } from './checkout.service';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
@@ -44,6 +45,7 @@ describe('CheckoutService (integration)', () => {
         InternalAuthModule,
         LoyaltyModule,
         PromotionsModule,
+        GiftCardsModule,
       ],
       providers: [
         CheckoutService,
