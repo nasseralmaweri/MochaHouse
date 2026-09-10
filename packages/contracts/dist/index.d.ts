@@ -812,7 +812,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
@@ -1204,5 +1204,77 @@ export interface PublicJobOpeningDetail extends PublicJobOpeningSummary {
     description: string;
     responsibilities: string;
     qualifications: string;
+}
+export type JobApplicationStatus = "NEW" | "REVIEWING" | "CONTACTED" | "HIRED" | "REJECTED";
+export declare const JOB_APPLICATION_STATUSES: readonly JobApplicationStatus[];
+export declare const JOB_APPLICATION_NAME_MAX_LENGTH = 120;
+export declare const JOB_APPLICATION_SHORT_MAX_LENGTH = 200;
+export declare const JOB_APPLICATION_MESSAGE_MAX_LENGTH = 4000;
+export declare const JOB_APPLICATION_URL_MAX_LENGTH = 2048;
+export declare const JOB_APPLICATION_NOTE_MAX_LENGTH = 2000;
+export interface SubmitJobApplicationRequest {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    location: string;
+    workAuthorized: boolean;
+    availability: string;
+    message: string;
+    resumeUrl?: string | null;
+}
+export interface SubmitJobApplicationResponse {
+    ok: true;
+}
+export interface AdminJobApplicationSummary {
+    id: string;
+    applicantName: string;
+    email: string;
+    jobOpeningId: string;
+    jobTitleSnapshot: string;
+    status: JobApplicationStatus;
+    createdAt: string;
+}
+export interface AdminJobApplicationsResponse {
+    applications: AdminJobApplicationSummary[];
+    nextCursor: string | null;
+}
+export interface AdminJobApplicationDetail {
+    id: string;
+    status: JobApplicationStatus;
+    jobOpeningId: string;
+    jobTitleSnapshot: string;
+    jobStatus: JobOpeningStatus | null;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    location: string;
+    workAuthorized: boolean;
+    availability: string;
+    message: string;
+    resumeUrl: string | null;
+    createdAt: string;
+    updatedAt: string;
+    notes: JobApplicationNote[];
+    activity: AdminJobApplicationActivityItem[];
+}
+export interface UpdateJobApplicationStatusRequest {
+    status: JobApplicationStatus;
+}
+export interface JobApplicationNote {
+    id: string;
+    body: string;
+    authorLabel: string | null;
+    createdAt: string;
+}
+export interface CreateJobApplicationNoteRequest {
+    body: string;
+}
+export interface AdminJobApplicationActivityItem {
+    id: string;
+    summary: string;
+    actorLabel: string | null;
+    createdAt: string;
 }
 //# sourceMappingURL=index.d.ts.map

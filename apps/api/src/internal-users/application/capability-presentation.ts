@@ -219,6 +219,20 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
       'Create, edit, publish, unpublish and archive job openings',
     definition: 'Create, edit, publish, unpublish and archive job openings',
   },
+  // Milestone 8C — Applicants. Both CORPORATE-only (candidate PII must never
+  // reach a location-scoped role), so the two phrasings are the same.
+  'applicants.view': {
+    group: 'Careers',
+    effectiveAll: 'View job applicants, applications and internal notes',
+    effectiveScoped: 'View job applicants, applications and internal notes',
+    definition: 'View job applicants, applications and internal notes',
+  },
+  'applicants.manage': {
+    group: 'Careers',
+    effectiveAll: "Change an application's status and add internal notes",
+    effectiveScoped: "Change an application's status and add internal notes",
+    definition: "Change an application's status and add internal notes",
+  },
 };
 
 const GROUP_ORDER = [
@@ -262,6 +276,8 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'customers.notes.manage',
   'careers.view',
   'careers.manage',
+  'applicants.view',
+  'applicants.manage',
   'users.view',
   'roles.view',
   'audit.view',

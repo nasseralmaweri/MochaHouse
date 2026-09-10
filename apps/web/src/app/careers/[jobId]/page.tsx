@@ -68,13 +68,20 @@ export default async function JobOpeningPage({
       <Section title="Responsibilities" body={job.responsibilities} />
       <Section title="Qualifications" body={job.qualifications} />
 
-      <Card tone="subtle" className="text-sm text-text-secondary">
-        <p className="font-medium text-text-primary">How to apply</p>
-        <p>
-          Online applications aren&apos;t available yet. To express interest in
-          this role, please contact a Mocha House location directly. An online
-          application experience is coming soon.
-        </p>
+      <Card tone="subtle" className="flex flex-col gap-3 text-sm text-text-secondary">
+        <div>
+          <p className="font-medium text-text-primary">How to apply</p>
+          <p>
+            Tell us a little about yourself and why this role interests you. It
+            only takes a few minutes.
+          </p>
+        </div>
+        <Link
+          href={`/careers/${job.id}/apply`}
+          className="flex min-h-11 items-center justify-center self-start rounded-xl bg-status-success/10 px-4 py-2 text-base font-semibold text-status-success"
+        >
+          Apply for this position
+        </Link>
       </Card>
     </main>
   );

@@ -86,6 +86,8 @@ describe('capability presentation (Milestone 5E)', () => {
       expect(groups.find((g) => g.group === 'Careers')?.items).toEqual([
         'View job openings, including drafts and archived',
         'Create, edit, publish, unpublish and archive job openings',
+        'View job applicants, applications and internal notes',
+        "Change an application's status and add internal notes",
       ]);
       expect(groups.find((g) => g.group === 'Operations')?.items).toEqual([
         'View store operations',

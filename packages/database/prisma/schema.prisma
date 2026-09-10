@@ -563,6 +563,9 @@ model InternalUser {
   // internal user who has authored CRM history cannot be hard-deleted and
   // orphan that record.
   customerNotesAuthored     CustomerNote[]             @relation("CustomerNoteAuthor")
+  // Milestone 8C — internal applicant notes this HQ user authored. Same
+  // onDelete: Restrict integrity reason.
+  jobApplicationNotesAuthored JobApplicationNote[]     @relation("JobApplicationNoteAuthor")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -1725,9 +1728,70 @@ model JobOpening {
   publishedAt    DateTime?
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
+  // Milestone 8C — applications submitted for this opening. onDelete:
+  // Restrict (see JobApplication) so a job with applications can never be
+  // hard-deleted and orphan candidate history (jobs use status anyway).
+  applications   JobApplication[]
 
   @@index([status])
   @@index([locationId])
+}
+
+// --- Milestone 8C, Applicants -------------------------------------
+// A public visitor's application to one job opening. No applicant account.
+// Contact fields live inline (there is no separate Applicant identity in
+// V1 — one person applying to N jobs is N rows). `jobTitleSnapshot` is a
+// point-in-time copy so the record stays legible after the opening is
+// edited or archived (the OrderLine snapshot philosophy). No resume file
+// bytes — `resumeUrl` is an optional external link only.
+enum JobApplicationStatus {
+  NEW
+  REVIEWING
+  CONTACTED
+  HIRED
+  REJECTED
+}
+
+model JobApplication {
+  id               String               @id @default(uuid(7))
+  jobOpeningId     String
+  jobOpening       JobOpening           @relation(fields: [jobOpeningId], references: [id], onDelete: Restrict)
+  jobTitleSnapshot String
+  firstName        String
+  lastName         String
+  email            String
+  phone            String
+  location         String
+  workAuthorized   Boolean
+  availability     String
+  message          String
+  resumeUrl        String?
+  status           JobApplicationStatus @default(NEW)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  notes JobApplicationNote[]
+
+  @@index([jobOpeningId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// An internal note an authorized HQ user attaches to an application.
+// APPEND-ONLY in 8C: no edit, no delete. Adding one also writes an
+// InternalAuditEvent (`applicants.note_added`, targetType 'job_application')
+// in the SAME transaction — only the note id and length, never the body.
+model JobApplicationNote {
+  id                   String   @id @default(uuid(7))
+  jobApplicationId     String
+  jobApplication       JobApplication @relation(fields: [jobApplicationId], references: [id], onDelete: Cascade)
+  authorInternalUserId String
+  authorInternalUser   InternalUser   @relation("JobApplicationNoteAuthor", fields: [authorInternalUserId], references: [id], onDelete: Restrict)
+  body                 String
+  createdAt            DateTime @default(now())
+
+  @@index([jobApplicationId, createdAt])
+  @@index([authorInternalUserId])
 }
 
 // --- Milestone 8A, HQ CRM foundation ---------------------------------

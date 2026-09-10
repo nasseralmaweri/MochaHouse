@@ -594,6 +594,58 @@ export class InternalAuditService {
     });
   }
 
+  // --- Milestone 8C, Applicants --------------------------------
+  // Written in the SAME transaction as the change. targetType
+  // 'job_application' is a new polymorphic target; the Admin Activity Log
+  // is scoped to 'internal_user' and ignores it. Applicant answers / PII
+  // are NEVER placed in beforeData / afterData / reason — a status event
+  // carries only the status, a note event only the note id + length. The
+  // public application submission itself is not audited.
+
+  async recordJobApplicationStatusChanged(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      jobApplicationId: string;
+      before: string;
+      after: string;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'applicants.application_status_changed',
+        targetType: 'job_application',
+        targetId: input.jobApplicationId,
+        beforeData: { status: input.before },
+        afterData: { status: input.after },
+        reason: `Application status changed from ${input.before} to ${input.after}.`,
+      },
+    });
+  }
+
+  async recordJobApplicationNoteAdded(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      jobApplicationId: string;
+      noteId: string;
+      noteLength: number;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'applicants.note_added',
+        targetType: 'job_application',
+        targetId: input.jobApplicationId,
+        // No beforeData — the note did not exist.
+        afterData: { noteId: input.noteId, noteLength: input.noteLength },
+        reason: 'Internal applicant note added.',
+      },
+    });
+  }
+
   async recordChecklistExceptionCleared(
     tx: Prisma.TransactionClient,
     input: ChecklistExceptionAuditInput & { previousReason: string },

@@ -9,6 +9,7 @@ import { AdminPage } from "@/components/admin/AdminPage";
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import { AdminErrorState, AdminForbidden } from "@/components/admin/states";
 import { CareersManager } from "@/components/admin/CareersManager";
+import { CareersTabs } from "@/components/admin/CareersTabs";
 
 // Admin → Careers (Milestone 8B). Manage job openings — draft, publish,
 // unpublish, archive. `careers.view` gates the page; create/edit/actions
@@ -20,6 +21,13 @@ export default async function AdminCareersPage() {
   }
 
   const caps = session.authorization.capabilities;
+  const tabs = (
+    <CareersTabs
+      active="jobs"
+      canViewJobs={can(caps, "careers.view")}
+      canViewApplicants={can(caps, "applicants.view")}
+    />
+  );
   const header = (
     <AdminPageHeader
       title="Careers"
@@ -65,6 +73,7 @@ export default async function AdminCareersPage() {
   return (
     <AdminPage>
       {header}
+      {tabs}
       <CareersManager
         jobs={jobsResult.data.jobs}
         options={

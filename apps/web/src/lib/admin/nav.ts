@@ -106,14 +106,19 @@ export function adminNavItems(
     });
   }
 
-  // Careers (Milestone 8B — HQ job openings). Shown only if the user
-  // effectively holds `careers.view` (CORPORATE-only). Create/edit/publish
-  // controls inside the pages re-check `careers.manage`.
-  if (can(capabilities, "careers.view")) {
+  // Careers (Milestone 8B — HQ job openings; Milestone 8C — Applicants).
+  // Shown if the user effectively holds `careers.view` OR `applicants.view`
+  // (all CORPORATE-only). The Careers area has two tabs, "Jobs" and
+  // "Applicants", each gated on its own permission; the nav links to
+  // whichever tab the user can open. Create/edit/publish controls re-check
+  // `careers.manage`; status/note controls re-check `applicants.manage`.
+  if (can(capabilities, "careers.view") || can(capabilities, "applicants.view")) {
     items.push({
       key: "careers",
       label: "Careers",
-      href: "/admin/careers",
+      href: can(capabilities, "careers.view")
+        ? "/admin/careers"
+        : "/admin/careers/applicants",
     });
   }
 

@@ -1651,6 +1651,14 @@ export const INTERNAL_PERMISSION_KEYS = [
   //                     opening.
   "careers.view",
   "careers.manage",
+  // Milestone 8C — Applicants. Applicant / application records contain
+  // candidate PII, so both keys are CORPORATE-only and a Store Manager
+  // never holds them.
+  //   applicants.view    — read applicant / application records and notes.
+  //   applicants.manage  — change an application's status and add an
+  //                        internal applicant note.
+  "applicants.view",
+  "applicants.manage",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1888,6 +1896,18 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "careers.manage",
     description:
       "Create, edit, publish, unpublish and archive job openings. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "applicants.view": {
+    key: "applicants.view",
+    description:
+      "View job applicants and individual applications, including candidate contact details and internal notes. Read-only. Candidate PII, so a corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "applicants.manage": {
+    key: "applicants.manage",
+    description:
+      "Change a job application's status and add an internal applicant note. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
@@ -2656,4 +2676,119 @@ export interface PublicJobOpeningDetail extends PublicJobOpeningSummary {
   description: string;
   responsibilities: string;
   qualifications: string;
+}
+
+// --- Milestone 8C: Applicants -------------------------------------
+// A visitor applies to a currently-visible published job (no account).
+// HQ views applicants, moves an application through a tiny status set, and
+// adds internal notes. NOT a full ATS: no interviews / offers / onboarding
+// / applicant login / email automation / file upload.
+
+export type JobApplicationStatus =
+  | "NEW"
+  | "REVIEWING"
+  | "CONTACTED"
+  | "HIRED"
+  | "REJECTED";
+
+export const JOB_APPLICATION_STATUSES: readonly JobApplicationStatus[] = [
+  "NEW",
+  "REVIEWING",
+  "CONTACTED",
+  "HIRED",
+  "REJECTED",
+];
+
+// Bounded lengths, consistent with promotions / CRM conventions.
+export const JOB_APPLICATION_NAME_MAX_LENGTH = 120;
+export const JOB_APPLICATION_SHORT_MAX_LENGTH = 200;
+export const JOB_APPLICATION_MESSAGE_MAX_LENGTH = 4000;
+export const JOB_APPLICATION_URL_MAX_LENGTH = 2048;
+export const JOB_APPLICATION_NOTE_MAX_LENGTH = 2000;
+
+// POST /api/v1/careers/jobs/:jobId/applications (public, no auth). Returns
+// ONLY { ok: true } — never an id or the stored record.
+export interface SubmitJobApplicationRequest {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  location: string; // "City, State"
+  workAuthorized: boolean;
+  availability: string;
+  message: string;
+  // "Resume / LinkedIn / Portfolio Link (optional)" — one http(s) URL.
+  resumeUrl?: string | null;
+}
+
+export interface SubmitJobApplicationResponse {
+  ok: true;
+}
+
+// One row of the Admin applicants list.
+export interface AdminJobApplicationSummary {
+  id: string;
+  applicantName: string;
+  email: string;
+  jobOpeningId: string;
+  jobTitleSnapshot: string;
+  status: JobApplicationStatus;
+  createdAt: string;
+}
+
+// GET /api/v1/admin/careers/applications?status=&jobOpeningId=&cursor=
+// (applicants.view) — cursor-paginated, newest first.
+export interface AdminJobApplicationsResponse {
+  applications: AdminJobApplicationSummary[];
+  nextCursor: string | null;
+}
+
+// GET /api/v1/admin/careers/applications/:id (applicants.view).
+export interface AdminJobApplicationDetail {
+  id: string;
+  status: JobApplicationStatus;
+  jobOpeningId: string;
+  jobTitleSnapshot: string;
+  // The job's current status, so HQ can tell if the opening is still live.
+  jobStatus: JobOpeningStatus | null;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  location: string;
+  workAuthorized: boolean;
+  availability: string;
+  message: string;
+  resumeUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+  notes: JobApplicationNote[];
+  activity: AdminJobApplicationActivityItem[];
+}
+
+// POST /api/v1/admin/careers/applications/:id/status (applicants.manage).
+export interface UpdateJobApplicationStatusRequest {
+  status: JobApplicationStatus;
+}
+
+// One internal applicant note. Append-only in 8C.
+export interface JobApplicationNote {
+  id: string;
+  body: string;
+  authorLabel: string | null;
+  createdAt: string;
+}
+
+// POST /api/v1/admin/careers/applications/:id/notes (applicants.manage).
+export interface CreateJobApplicationNoteRequest {
+  body: string;
+}
+
+// One entry of the applicant activity timeline (from InternalAuditEvent,
+// targetType 'job_application'). No answer data / PII.
+export interface AdminJobApplicationActivityItem {
+  id: string;
+  summary: string;
+  actorLabel: string | null;
+  createdAt: string;
 }

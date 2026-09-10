@@ -220,6 +220,21 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(manageOnly.map((i) => i.key)).not.toContain("careers");
   });
 
+  it("shows Careers for an applicants.view-only user, linking to the Applicants tab (Milestone 8C)", () => {
+    const applicantsOnly = adminNavItems({
+      "applicants.view": { corporate: true, locationIds: [] },
+    });
+    expect(applicantsOnly.map((i) => i.key)).toEqual(["dashboard", "careers"]);
+    expect(applicantsOnly.find((i) => i.key === "careers")?.href).toBe(
+      "/admin/careers/applicants",
+    );
+
+    const manageOnly = adminNavItems({
+      "applicants.manage": { corporate: true, locationIds: [] },
+    });
+    expect(manageOnly.map((i) => i.key)).not.toContain("careers");
+  });
+
   it("orders Careers immediately after Customers, before Locations", () => {
     const items = adminNavItems({
       "customers.view": { corporate: true, locationIds: [] },

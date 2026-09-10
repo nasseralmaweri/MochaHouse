@@ -1,8 +1,12 @@
 import type {
   AdminAdjustMochaBeansRequest,
   AdminCustomerListResponse,
+  AdminJobApplicationDetail,
+  AdminJobApplicationsResponse,
   AdminJobOpening,
   CreateJobOpeningRequest,
+  JobApplicationNote,
+  JobApplicationStatus,
   UpdateJobOpeningRequest,
   AdminGiftCardDetail,
   AdminGiftCardSearchResponse,
@@ -1758,4 +1762,245 @@ export function jobOpeningActionFromBrowser(
     "POST",
     {},
   );
+}
+
+// --- Admin: HQ Careers / Applicants (Milestone 8C) ---------------
+// Browser-side writes for Admin → Careers → Applicants, via the generic
+// internal admin proxy. The API (`applicants.manage`, CORPORATE-only) is the
+// sole authority. There is no general application PATCH — status moves only
+// through the dedicated `/status` action (any valid status → any valid
+// status); notes are append-only.
+
+export type AdminJobApplicationsListResult =
+  | { outcome: "success"; data: AdminJobApplicationsResponse }
+  | { outcome: "forbidden" }
+  | { outcome: "error"; message: string };
+
+export async function listAdminJobApplicationsFromBrowser(params: {
+  status?: string;
+  jobOpeningId?: string;
+  cursor?: string;
+}): Promise<AdminJobApplicationsListResult> {
+  const search = new URLSearchParams();
+  if (params.status && params.status.trim().length > 0) {
+    search.set("status", params.status.trim());
+  }
+  if (params.jobOpeningId && params.jobOpeningId.trim().length > 0) {
+    search.set("jobOpeningId", params.jobOpeningId.trim());
+  }
+  if (params.cursor) {
+    search.set("cursor", params.cursor);
+  }
+  const qs = search.toString();
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/careers/applications${
+        qs.length > 0 ? `?${qs}` : ""
+      }`,
+      { cache: "no-store" },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return {
+    outcome: "success",
+    data: (await response.json()) as AdminJobApplicationsResponse,
+  };
+}
+
+export type JobApplicationStatusResult =
+  | { outcome: "success"; detail: AdminJobApplicationDetail }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function updateJobApplicationStatusFromBrowser(
+  applicationId: string,
+  status: JobApplicationStatus,
+): Promise<JobApplicationStatusResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/careers/applications/${encodeURIComponent(
+        applicationId,
+      )}/status`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "That status isn't valid.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return {
+    outcome: "success",
+    detail: (await response.json()) as AdminJobApplicationDetail,
+  };
+}
+
+export type AddJobApplicationNoteResult =
+  | { outcome: "success"; notes: JobApplicationNote[] }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function addJobApplicationNoteFromBrowser(
+  applicationId: string,
+  body: string,
+): Promise<AddJobApplicationNoteResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/careers/applications/${encodeURIComponent(
+        applicationId,
+      )}/notes`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body }),
+      },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "Please check the note and try again.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return {
+    outcome: "success",
+    notes: (await response.json()) as JobApplicationNote[],
+  };
+}
+
+// --- Public: apply to a job opening (Milestone 8C) ---------------
+// Anonymous, no session. Posts through a same-origin proxy route
+// (app/api/careers/[jobId]/apply) so the API's ~5/min IP throttle and
+// visibility/404 rules apply unchanged. The response is only { ok: true };
+// a non-visible job is 404.
+
+export type SubmitJobApplicationResult =
+  | { outcome: "success" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "throttled"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function submitJobApplicationFromBrowser(
+  jobId: string,
+  input: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    location: string;
+    workAuthorized: boolean;
+    availability: string;
+    message: string;
+    resumeUrl: string | null;
+  },
+): Promise<SubmitJobApplicationResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `/api/careers/${encodeURIComponent(jobId)}/apply`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "Please check the form and try again.",
+    };
+  }
+  if (response.status === 429) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "throttled",
+      message:
+        parsed?.message ??
+        "Too many submissions right now. Please wait a minute and try again.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return { outcome: "success" };
 }

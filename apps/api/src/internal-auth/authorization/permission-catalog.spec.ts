@@ -57,6 +57,9 @@ describe('internal permission catalog', () => {
         // Milestone 8B
         'careers.view',
         'careers.manage',
+        // Milestone 8C
+        'applicants.view',
+        'applicants.manage',
       ].sort(),
     );
   });
@@ -125,6 +128,10 @@ describe('internal permission catalog', () => {
     // careers.* — a job opening is a company-wide HR record (Milestone 8B).
     expect(allowedScopeTypesFor('careers.view')).toEqual(['CORPORATE']);
     expect(allowedScopeTypesFor('careers.manage')).toEqual(['CORPORATE']);
+    // applicants.* — candidate PII is a company-wide HR record; the
+    // applicant surface is CORPORATE-only (Milestone 8C).
+    expect(allowedScopeTypesFor('applicants.view')).toEqual(['CORPORATE']);
+    expect(allowedScopeTypesFor('applicants.manage')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {
