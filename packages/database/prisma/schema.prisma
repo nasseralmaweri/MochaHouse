@@ -30,6 +30,10 @@ model Location {
   operationsTasks              OperationsTask[]
   loyaltyBonusPromotionEligibility LoyaltyBonusPromotionLocation[]
   promotionEligibility         PromotionLocation[]
+  // Milestone 8B — job openings tied to this location. onDelete: Restrict
+  // (see JobOpening): a location a job opening references cannot be
+  // hard-deleted out from under it (the codebase uses isActive anyway).
+  jobOpenings                  JobOpening[]
 }
 
 model Category {
@@ -1678,6 +1682,52 @@ model GiftCardConfiguration {
   customAmountEnabled      Boolean  @default(true)
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
+}
+
+// --- Milestone 8B, Careers / Job Openings ---------------------------
+// HQ manages job openings; the public site shows only PUBLISHED ones that
+// are visible (corporate, or tied to an active Location). Applicant
+// submission / management is Milestone 8C and is NOT modelled here.
+//
+// Lifecycle (enforced in the service, never via a raw status write):
+//   DRAFT      <-> PUBLISHED        (publish / unpublish)
+//   DRAFT / PUBLISHED -> ARCHIVED   (archive)
+//   ARCHIVED   is terminal in 8B — no edit, no publish, no unarchive.
+// `publishedAt` is set on the FIRST publish and retained afterward.
+enum JobOpeningStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum JobEmploymentType {
+  FULL_TIME
+  PART_TIME
+  TEMPORARY
+  SEASONAL
+}
+
+model JobOpening {
+  id             String            @id @default(uuid(7))
+  title          String
+  employmentType JobEmploymentType
+  // null => a corporate / HQ role. Set => a specific Mocha House location.
+  locationId     String?
+  location       Location?         @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  // Short teaser shown in the public list. Plain text.
+  summary        String
+  // The full body / responsibilities / qualifications — plain multiline
+  // text (no rich text, no markdown infrastructure, no arrays).
+  description      String
+  responsibilities String
+  qualifications   String
+  status         JobOpeningStatus  @default(DRAFT)
+  publishedAt    DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([status])
+  @@index([locationId])
 }
 
 // --- Milestone 8A, HQ CRM foundation ---------------------------------

@@ -1,6 +1,9 @@
 import type {
   AdminAdjustMochaBeansRequest,
   AdminCustomerListResponse,
+  AdminJobOpening,
+  CreateJobOpeningRequest,
+  UpdateJobOpeningRequest,
   AdminGiftCardDetail,
   AdminGiftCardSearchResponse,
   AdjustGiftCardBalanceRequest,
@@ -1668,4 +1671,91 @@ export async function addCustomerNoteFromBrowser(
     };
   }
   return { outcome: "success", notes: (await response.json()) as CustomerNote[] };
+}
+
+// --- Admin: HQ Careers / Job Openings (Milestone 8B) --------------
+// Browser-side mutations for Admin → Careers, via the generic internal admin
+// proxy. The API (`careers.manage`, CORPORATE-only) is the sole authority;
+// PATCH cannot change status — publish/unpublish/archive are explicit
+// actions.
+
+export type JobOpeningMutationResult =
+  | { outcome: "success"; job: AdminJobOpening }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "conflict"; message: string }
+  | { outcome: "error"; message: string };
+
+async function careersRequest(
+  path: string,
+  method: "POST" | "PATCH",
+  body: unknown,
+): Promise<JobOpeningMutationResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${INTERNAL_ADMIN_PROXY}/careers/jobs${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "Please check the form and try again.",
+    };
+  }
+  if (response.status === 409) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "conflict",
+      message: parsed?.message ?? "That change isn't allowed right now.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return { outcome: "success", job: (await response.json()) as AdminJobOpening };
+}
+
+export function createJobOpeningFromBrowser(
+  input: CreateJobOpeningRequest,
+): Promise<JobOpeningMutationResult> {
+  return careersRequest("", "POST", input);
+}
+
+export function updateJobOpeningFromBrowser(
+  jobId: string,
+  input: UpdateJobOpeningRequest,
+): Promise<JobOpeningMutationResult> {
+  return careersRequest(`/${encodeURIComponent(jobId)}`, "PATCH", input);
+}
+
+export function jobOpeningActionFromBrowser(
+  jobId: string,
+  action: "publish" | "unpublish" | "archive",
+): Promise<JobOpeningMutationResult> {
+  return careersRequest(
+    `/${encodeURIComponent(jobId)}/${action}`,
+    "POST",
+    {},
+  );
 }

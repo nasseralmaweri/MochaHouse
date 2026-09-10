@@ -76,11 +76,16 @@ describe('capability presentation (Milestone 5E)', () => {
         'Promotions',
         'Gift Cards',
         'Customers',
+        'Careers',
         'Administration',
       ]);
       expect(groups.find((g) => g.group === 'Customers')?.items).toEqual([
         'View the customer directory and customer details',
         'Add internal CRM notes to a customer',
+      ]);
+      expect(groups.find((g) => g.group === 'Careers')?.items).toEqual([
+        'View job openings, including drafts and archived',
+        'Create, edit, publish, unpublish and archive job openings',
       ]);
       expect(groups.find((g) => g.group === 'Operations')?.items).toEqual([
         'View store operations',

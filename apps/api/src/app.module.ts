@@ -18,6 +18,7 @@ import { LoyaltyModule } from './loyalty/loyalty.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { GiftCardsModule } from './gift-cards/gift-cards.module';
 import { CrmModule } from './crm/crm.module';
+import { CareersModule } from './careers/careers.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { CrmModule } from './crm/crm.module';
     PromotionsModule,
     GiftCardsModule,
     CrmModule,
+    CareersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

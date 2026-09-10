@@ -1642,6 +1642,15 @@ export const INTERNAL_PERMISSION_KEYS = [
   //   customers.notes.manage  — add an internal CRM note to a customer.
   "customers.view",
   "customers.notes.manage",
+  // Milestone 8B — HQ Careers / Job Openings. A job opening is a
+  // company-wide record (even when tied to one location), so both keys are
+  // CORPORATE-only and a Store Manager never holds them.
+  //   careers.view    — view job openings in Admin (draft / published /
+  //                     archived) and their detail.
+  //   careers.manage  — create, edit, publish, unpublish and archive a job
+  //                     opening.
+  "careers.view",
+  "careers.manage",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1867,6 +1876,18 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "customers.notes.manage",
     description:
       "Add an internal CRM note to a customer record. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "careers.view": {
+    key: "careers.view",
+    description:
+      "View job openings in Admin, including drafts and archived openings, and their detail. Read-only. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "careers.manage": {
+    key: "careers.manage",
+    description:
+      "Create, edit, publish, unpublish and archive job openings. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
@@ -2538,4 +2559,101 @@ export interface AdminCustomerDetail {
   communicationPreferences: CustomerCommunicationPreferences;
   notes: CustomerNote[];
   activity: AdminCustomerActivityItem[];
+}
+
+// --- Milestone 8B: Careers / Job Openings ---------------------------
+// HQ manages job openings (Admin → Careers); the public site lists and
+// shows PUBLISHED ones (Careers → Job Openings → detail). Applicant
+// submission and applicant management are Milestone 8C — NOT here.
+
+export type JobOpeningStatus = "DRAFT" | "PUBLISHED" | "ARCHIVED";
+
+export type JobEmploymentType =
+  | "FULL_TIME"
+  | "PART_TIME"
+  | "TEMPORARY"
+  | "SEASONAL";
+
+// A job opening's location. `null` locationId means a corporate / HQ role.
+export interface JobOpeningLocationRef {
+  id: string;
+  name: string;
+}
+
+// The full Admin view of a job opening (all statuses).
+export interface AdminJobOpening {
+  id: string;
+  title: string;
+  employmentType: JobEmploymentType;
+  location: JobOpeningLocationRef | null;
+  summary: string;
+  description: string;
+  responsibilities: string;
+  qualifications: string;
+  status: JobOpeningStatus;
+  publishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// GET /api/v1/admin/careers/jobs?status= (careers.view)
+export interface AdminJobOpeningsResponse {
+  jobs: AdminJobOpening[];
+}
+
+// GET /api/v1/admin/careers/jobs/options (careers.view) — form inputs.
+export interface AdminJobOpeningOptions {
+  locations: JobOpeningLocationRef[];
+  employmentTypes: JobEmploymentType[];
+}
+
+// POST /api/v1/admin/careers/jobs (careers.manage). Creates a DRAFT.
+// `locationId` null / omitted => a corporate / HQ role.
+export interface CreateJobOpeningRequest {
+  title: string;
+  employmentType: JobEmploymentType;
+  locationId?: string | null;
+  summary: string;
+  description: string;
+  responsibilities: string;
+  qualifications: string;
+}
+
+// PATCH /api/v1/admin/careers/jobs/:jobId (careers.manage). Every field is
+// optional; `status` / `publishedAt` are NOT accepted here — status changes
+// only through the explicit publish / unpublish / archive actions.
+export interface UpdateJobOpeningRequest {
+  title?: string;
+  employmentType?: JobEmploymentType;
+  locationId?: string | null;
+  summary?: string;
+  description?: string;
+  responsibilities?: string;
+  qualifications?: string;
+}
+
+// Reasonable length limits (consistent with promotions / CRM conventions).
+export const JOB_OPENING_TITLE_MAX_LENGTH = 160;
+export const JOB_OPENING_SUMMARY_MAX_LENGTH = 400;
+export const JOB_OPENING_LONG_TEXT_MAX_LENGTH = 8000;
+
+// The public projection — only ever built for a publicly-visible job
+// (PUBLISHED and either corporate or an active location).
+export interface PublicJobOpeningSummary {
+  id: string;
+  title: string;
+  employmentType: JobEmploymentType;
+  locationName: string | null; // null => "Corporate"
+  summary: string;
+  publishedAt: string | null;
+}
+
+export interface PublicJobOpeningsResponse {
+  jobs: PublicJobOpeningSummary[];
+}
+
+export interface PublicJobOpeningDetail extends PublicJobOpeningSummary {
+  description: string;
+  responsibilities: string;
+  qualifications: string;
 }

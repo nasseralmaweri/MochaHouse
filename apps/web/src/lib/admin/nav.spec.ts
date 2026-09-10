@@ -205,6 +205,35 @@ describe("adminNavItems (permission-aware navigation)", () => {
     ]);
   });
 
+  it("shows Careers only when the user holds careers.view (Milestone 8B)", () => {
+    const withView = adminNavItems({
+      "careers.view": { corporate: true, locationIds: [] },
+    });
+    expect(withView.map((i) => i.key)).toEqual(["dashboard", "careers"]);
+    expect(withView.find((i) => i.key === "careers")?.href).toBe(
+      "/admin/careers",
+    );
+
+    const manageOnly = adminNavItems({
+      "careers.manage": { corporate: true, locationIds: [] },
+    });
+    expect(manageOnly.map((i) => i.key)).not.toContain("careers");
+  });
+
+  it("orders Careers immediately after Customers, before Locations", () => {
+    const items = adminNavItems({
+      "customers.view": { corporate: true, locationIds: [] },
+      "careers.view": { corporate: true, locationIds: [] },
+      "locations.view": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual([
+      "dashboard",
+      "customers",
+      "careers",
+      "locations",
+    ]);
+  });
+
   it("shows Locations when the user holds locations.view (any scope)", () => {
     const items = adminNavItems({
       "locations.view": { corporate: false, locationIds: ["loc-a"] },

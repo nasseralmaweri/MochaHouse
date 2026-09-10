@@ -510,6 +510,90 @@ export class InternalAuditService {
     });
   }
 
+  // --- Milestone 8B, Careers / Job Openings ---------------------
+  // Same contract as every method here — written in the SAME transaction as
+  // the job-opening change it records. The JobOpening table stays the
+  // source of truth; these events are the "who changed what, when" trail.
+  // targetType 'job_opening' is a new polymorphic target; the Admin
+  // Activity Log is scoped to 'internal_user' and ignores it, exactly as it
+  // ignores the 7A–8A events.
+
+  async recordJobOpeningCreated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      jobOpeningId: string;
+      snapshot: Prisma.InputJsonValue;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'careers.job_created',
+        targetType: 'job_opening',
+        targetId: input.jobOpeningId,
+        afterData: input.snapshot,
+        reason: 'Job opening created.',
+      },
+    });
+  }
+
+  async recordJobOpeningUpdated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      jobOpeningId: string;
+      before: Prisma.InputJsonValue;
+      after: Prisma.InputJsonValue;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'careers.job_updated',
+        targetType: 'job_opening',
+        targetId: input.jobOpeningId,
+        beforeData: input.before,
+        afterData: input.after,
+        reason: 'Job opening updated.',
+      },
+    });
+  }
+
+  async recordJobOpeningStatusChanged(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      jobOpeningId: string;
+      change: 'published' | 'unpublished' | 'archived';
+      before: { status: string; publishedAt: string | null };
+      after: { status: string; publishedAt: string | null };
+    },
+  ): Promise<void> {
+    const action =
+      input.change === 'published'
+        ? 'careers.job_published'
+        : input.change === 'unpublished'
+          ? 'careers.job_unpublished'
+          : 'careers.job_archived';
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action,
+        targetType: 'job_opening',
+        targetId: input.jobOpeningId,
+        beforeData: input.before,
+        afterData: input.after,
+        reason:
+          input.change === 'published'
+            ? 'Job opening published.'
+            : input.change === 'unpublished'
+              ? 'Job opening unpublished.'
+              : 'Job opening archived.',
+      },
+    });
+  }
+
   async recordChecklistExceptionCleared(
     tx: Prisma.TransactionClient,
     input: ChecklistExceptionAuditInput & { previousReason: string },

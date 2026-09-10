@@ -206,6 +206,19 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Add internal CRM notes to a customer',
     definition: 'Add internal CRM notes to a customer',
   },
+  'careers.view': {
+    group: 'Careers',
+    effectiveAll: 'View job openings, including drafts and archived',
+    effectiveScoped: 'View job openings, including drafts and archived',
+    definition: 'View job openings, including drafts and archived',
+  },
+  'careers.manage': {
+    group: 'Careers',
+    effectiveAll: 'Create, edit, publish, unpublish and archive job openings',
+    effectiveScoped:
+      'Create, edit, publish, unpublish and archive job openings',
+    definition: 'Create, edit, publish, unpublish and archive job openings',
+  },
 };
 
 const GROUP_ORDER = [
@@ -217,6 +230,7 @@ const GROUP_ORDER = [
   'Promotions',
   'Gift Cards',
   'Customers',
+  'Careers',
   'Administration',
 ];
 
@@ -246,6 +260,8 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'giftcards.configure',
   'customers.view',
   'customers.notes.manage',
+  'careers.view',
+  'careers.manage',
   'users.view',
   'roles.view',
   'audit.view',

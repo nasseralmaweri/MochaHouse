@@ -106,6 +106,17 @@ export function adminNavItems(
     });
   }
 
+  // Careers (Milestone 8B — HQ job openings). Shown only if the user
+  // effectively holds `careers.view` (CORPORATE-only). Create/edit/publish
+  // controls inside the pages re-check `careers.manage`.
+  if (can(capabilities, "careers.view")) {
+    items.push({
+      key: "careers",
+      label: "Careers",
+      href: "/admin/careers",
+    });
+  }
+
   if (can(capabilities, "locations.view")) {
     items.push({
       key: "locations",

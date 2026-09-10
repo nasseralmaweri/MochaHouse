@@ -812,7 +812,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
@@ -1140,5 +1140,69 @@ export interface AdminCustomerDetail {
     communicationPreferences: CustomerCommunicationPreferences;
     notes: CustomerNote[];
     activity: AdminCustomerActivityItem[];
+}
+export type JobOpeningStatus = "DRAFT" | "PUBLISHED" | "ARCHIVED";
+export type JobEmploymentType = "FULL_TIME" | "PART_TIME" | "TEMPORARY" | "SEASONAL";
+export interface JobOpeningLocationRef {
+    id: string;
+    name: string;
+}
+export interface AdminJobOpening {
+    id: string;
+    title: string;
+    employmentType: JobEmploymentType;
+    location: JobOpeningLocationRef | null;
+    summary: string;
+    description: string;
+    responsibilities: string;
+    qualifications: string;
+    status: JobOpeningStatus;
+    publishedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+export interface AdminJobOpeningsResponse {
+    jobs: AdminJobOpening[];
+}
+export interface AdminJobOpeningOptions {
+    locations: JobOpeningLocationRef[];
+    employmentTypes: JobEmploymentType[];
+}
+export interface CreateJobOpeningRequest {
+    title: string;
+    employmentType: JobEmploymentType;
+    locationId?: string | null;
+    summary: string;
+    description: string;
+    responsibilities: string;
+    qualifications: string;
+}
+export interface UpdateJobOpeningRequest {
+    title?: string;
+    employmentType?: JobEmploymentType;
+    locationId?: string | null;
+    summary?: string;
+    description?: string;
+    responsibilities?: string;
+    qualifications?: string;
+}
+export declare const JOB_OPENING_TITLE_MAX_LENGTH = 160;
+export declare const JOB_OPENING_SUMMARY_MAX_LENGTH = 400;
+export declare const JOB_OPENING_LONG_TEXT_MAX_LENGTH = 8000;
+export interface PublicJobOpeningSummary {
+    id: string;
+    title: string;
+    employmentType: JobEmploymentType;
+    locationName: string | null;
+    summary: string;
+    publishedAt: string | null;
+}
+export interface PublicJobOpeningsResponse {
+    jobs: PublicJobOpeningSummary[];
+}
+export interface PublicJobOpeningDetail extends PublicJobOpeningSummary {
+    description: string;
+    responsibilities: string;
+    qualifications: string;
 }
 //# sourceMappingURL=index.d.ts.map
