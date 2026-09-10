@@ -9,6 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type {
+  CreateGiftCardPurchaseIntentRequest,
   GiftCardBalanceRequest,
   PurchaseGiftCardRequest,
 } from '@mocha-house/contracts';
@@ -20,14 +21,18 @@ import { GiftCardPurchaseService } from '../application/gift-card-purchase.servi
 import { GiftCardConfigurationService } from '../application/gift-card-configuration.service';
 
 // Milestone 7H — the PUBLIC customer gift-card surface (no HQ permissions).
-//   GET  /api/v1/gift-cards/purchase-options  — amount rules for the page.
-//   POST /api/v1/gift-cards/purchase          — buy a digital gift card
-//        (OptionalCustomerAuthGuard: guests allowed; a valid session links
-//        the purchase to the customer).
+//   GET  /api/v1/gift-cards/purchase-options  — amount rules for the page
+//        (read-only; no throttle).
+//   POST /api/v1/gift-cards/purchase-intents  — step 1: establish a PENDING
+//        purchase, no charge; returns a guest's one-time recovery credential.
+//   POST /api/v1/gift-cards/purchase          — step 2: charge + issue, or
+//        replay the confirmation (full code only to an authorised caller).
 //   POST /api/v1/gift-cards/balance           — check a balance by code.
-// The gift-card code travels ONLY in POST request bodies. The two POST
-// routes carry the minimal endpoint-specific throttle
+// The two purchase steps and the balance lookup carry code / credentials in
+// the POST body ONLY and the minimal endpoint-specific throttle
 // (GiftCardPublicThrottleGuard) — 20 req/min/IP, fail-open on Redis error.
+// OptionalCustomerAuthGuard: guests allowed; a valid session links the
+// purchase to the customer.
 @Controller('api/v1/gift-cards')
 export class GiftCardsController {
   constructor(
@@ -39,6 +44,15 @@ export class GiftCardsController {
   @Get('purchase-options')
   purchaseOptions() {
     return this.configuration.getPublicOptions();
+  }
+
+  @UseGuards(GiftCardPublicThrottleGuard, OptionalCustomerAuthGuard)
+  @Post('purchase-intents')
+  createPurchaseIntent(
+    @Body() body: CreateGiftCardPurchaseIntentRequest,
+    @Req() request: CustomerAuthenticatedRequest,
+  ) {
+    return this.purchaseService.createIntent(body, request.customerIdentity);
   }
 
   @UseGuards(GiftCardPublicThrottleGuard, OptionalCustomerAuthGuard)

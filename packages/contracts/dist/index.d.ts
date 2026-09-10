@@ -1031,13 +1031,25 @@ export interface GiftCardPurchaseOptions {
     customAmountMaxMinorUnits: number;
     currency: string;
 }
-export interface PurchaseGiftCardRequest {
+export interface CreateGiftCardPurchaseIntentRequest {
     idempotencyKey: string;
     amountMinorUnits: number;
     purchaserEmail: string;
     purchaserName?: string | null;
 }
 export type GiftCardPurchaseStatus = "PENDING" | "ISSUED" | "RECONCILIATION_REQUIRED";
+export interface GiftCardPurchaseIntentResponse {
+    purchaseId: string;
+    status: GiftCardPurchaseStatus;
+    amountMinorUnits: number;
+    currency: string;
+    customerOwned: boolean;
+    recoveryCredential: string | null;
+}
+export interface PurchaseGiftCardRequest {
+    idempotencyKey: string;
+    recoveryCredential?: string | null;
+}
 export interface PurchaseGiftCardResponse {
     purchaseId: string;
     status: GiftCardPurchaseStatus;

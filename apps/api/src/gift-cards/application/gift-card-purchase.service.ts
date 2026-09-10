@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Inject,
@@ -9,6 +10,8 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import type {
+  CreateGiftCardPurchaseIntentRequest,
+  GiftCardPurchaseIntentResponse,
   PurchaseGiftCardRequest,
   PurchaseGiftCardResponse,
 } from '@mocha-house/contracts';
@@ -28,21 +31,38 @@ import {
   decryptGiftCardCode,
   encryptGiftCardCode,
 } from '../infrastructure/gift-card-purchase-code-cipher';
+import {
+  generateRecoveryCredential,
+  hashRecoveryCredential,
+  recoveryCredentialMatches,
+} from '../infrastructure/gift-card-recovery-credential';
 import { GiftCardConfigurationService } from './gift-card-configuration.service';
 import { GiftCardIssuanceService } from './gift-card-issuance.service';
 
-// Milestone 7H — customer digital gift-card purchase. Reuses PaymentAttempt
-// (1:1) and the PaymentProvider boundary; it is NOT an Order. On a
-// successful payment the shared issuance core creates the GiftCard + its one
-// ISSUANCE ledger entry, this row goes PENDING -> ISSUED, and the plaintext
-// code is (a) returned once and (b) stored AES-256-GCM-encrypted for a
-// 7-day recovery window — never persisted in plaintext, never audited,
-// never in the outbox or payment metadata.
+// Milestone 7H — customer digital gift-card purchase, a bounded TWO-STEP
+// protocol over ONE persisted aggregate (GiftCardPurchase):
 //
-// Idempotency: PaymentAttempt.idempotencyKey is the single anchor. For a
-// purchase it MUST be a UUID (the web sends crypto.randomUUID() — 122 bits
-// of CSPRNG entropy) so it doubles as the unguessable recovery credential a
-// signed-out buyer supplies to re-obtain the code.
+//   STEP 1  createIntent()  POST /gift-cards/purchase-intents
+//     Establishes (or replays) a PENDING GiftCardPurchase + PaymentAttempt.
+//     DOES NOT CHARGE, DOES NOT ISSUE. For a GUEST it mints a 256-bit CSPRNG
+//     recovery credential, stores only its HMAC verifier, and returns the
+//     credential exactly once — so the client holds it BEFORE step 2.
+//
+//   STEP 2  purchase()      POST /gift-cards/purchase
+//     Charges the PaymentProvider once (concurrency-claimed) and issues the
+//     card via the shared issuance core; on every later call it replays the
+//     confirmation, returning the full plaintext code only to an authorised
+//     caller within the 7-day window.
+//
+// SEPARATION OF CONCERNS: PaymentAttempt.idempotencyKey is PAYMENT
+// IDEMPOTENCY ONLY. Guest full-code recovery needs BOTH that key (to find
+// the purchase) AND the server-generated recoveryCredential (to authorise
+// disclosure) — the key alone never yields the code. A signed-in purchase
+// carries no credential; customer ownership is the authorisation.
+//
+// The plaintext code is (a) returned once on issuance, (b) returned on an
+// authorised in-window replay, and otherwise never — never persisted in
+// plaintext, never audited, never in the outbox or payment metadata.
 
 const RECOVERY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const EMAIL_MAX_LENGTH = 320;
@@ -51,13 +71,13 @@ const NAME_MAX_LENGTH = 120;
 const UUID_PATTERN =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
-type PurchaseWithGiftCard = Prisma.GiftCardPurchaseGetPayload<{
-  include: { giftCard: { select: { last4: true } } };
+type AttemptWithPurchase = Prisma.PaymentAttemptGetPayload<{
+  include: {
+    giftCardPurchase: { include: { giftCard: { select: { last4: true } } } };
+  };
 }>;
 
-type AttemptWithPurchase = Prisma.PaymentAttemptGetPayload<{
-  include: { giftCardPurchase: { include: { giftCard: { select: { last4: true } } } } };
-}>;
+type PurchaseRow = NonNullable<AttemptWithPurchase['giftCardPurchase']>;
 
 @Injectable()
 export class GiftCardPurchaseService implements OnModuleInit {
@@ -72,14 +92,14 @@ export class GiftCardPurchaseService implements OnModuleInit {
     private readonly paymentProvider: PaymentProvider,
   ) {}
 
-  // Fail fast at boot if the recovery KEK is missing / wrong length, rather
-  // than pushing every purchase into RECONCILIATION_REQUIRED at runtime.
+  // Fail fast at boot if either purpose-specific secret is missing / unusable.
   onModuleInit(): void {
     try {
       encryptGiftCardCode('kek-startup-probe');
+      hashRecoveryCredential('recovery-secret-startup-probe');
     } catch (error) {
       this.logger.error(
-        `GIFT_CARD_PURCHASE_CODE_KEK is not usable: ${
+        `gift-card purchase secrets are not usable: ${
           error instanceof Error ? error.message : 'unknown'
         }`,
       );
@@ -87,32 +107,40 @@ export class GiftCardPurchaseService implements OnModuleInit {
     }
   }
 
-  async purchase(
-    request: PurchaseGiftCardRequest,
-    customerIdentity?: CustomerIdentity,
-  ): Promise<PurchaseGiftCardResponse> {
-    const idempotencyKey = this.validateIdempotencyKey(request?.idempotencyKey);
-    const purchaserEmail = this.validateEmail(request?.purchaserEmail);
-    const purchaserName = this.validateName(request?.purchaserName);
-    const amountMinorUnits = await this.validateAmount(
-      request?.amountMinorUnits,
-    );
-    const currency = 'USD';
+  // --- STEP 1: establish the purchase intent (no charge, no issue) -----
 
+  async createIntent(
+    request: CreateGiftCardPurchaseIntentRequest,
+    customerIdentity?: CustomerIdentity,
+  ): Promise<GiftCardPurchaseIntentResponse> {
+    const idempotencyKey = this.validateIdempotencyKey(request?.idempotencyKey);
+
+    // An intent already exists for this key → return it AS PERSISTED. Its
+    // amount / contact / ownership are immutable now, and current
+    // configuration must not be able to reject it (correction E). The
+    // credential is not re-derivable, so a replay returns null: the client
+    // kept it, or restarts with a fresh key (nothing was charged).
     const existing = await this.prisma.paymentAttempt.findUnique({
       where: { idempotencyKey },
-      include: {
-        giftCardPurchase: { include: { giftCard: { select: { last4: true } } } },
-      },
+      include: { giftCardPurchase: true },
     });
-    if (existing) {
-      return this.replay(existing, idempotencyKey, customerIdentity);
+    if (existing?.giftCardPurchase) {
+      return this.intentResponse(existing.giftCardPurchase, null);
     }
 
+    // A brand-new intent — validate everything against CURRENT config.
+    const purchaserEmail = this.validateEmail(request?.purchaserEmail);
+    const purchaserName = this.validateName(request?.purchaserName);
+    const amountMinorUnits = await this.validateAmount(request?.amountMinorUnits);
+    const currency = 'USD';
     const customerId = await this.resolveCustomerId(customerIdentity);
 
-    // Race-safe attempt creation (the checkout pattern).
-    let attempt;
+    // Guest → mint the recovery credential now, BEFORE any charge, and
+    // persist only its verifier.
+    const credential =
+      customerId === null ? generateRecoveryCredential() : null;
+
+    let attempt: { id: string };
     try {
       attempt = await this.prisma.paymentAttempt.create({
         data: {
@@ -122,6 +150,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
           amount: amountMinorUnits,
           currency,
         },
+        select: { id: true },
       });
     } catch (error) {
       if (!isUniqueConstraintViolation(error)) {
@@ -129,32 +158,153 @@ export class GiftCardPurchaseService implements OnModuleInit {
       }
       const raced = await this.prisma.paymentAttempt.findUniqueOrThrow({
         where: { idempotencyKey },
-        include: {
-          giftCardPurchase: {
-            include: { giftCard: { select: { last4: true } } },
-          },
-        },
+        include: { giftCardPurchase: true },
       });
-      return this.replay(raced, idempotencyKey, customerIdentity);
+      if (raced.giftCardPurchase) {
+        return this.intentResponse(raced.giftCardPurchase, null);
+      }
+      attempt = { id: raced.id };
     }
 
-    // PENDING purchase, linked 1:1 — so a replay observing "SUCCEEDED, no
-    // card yet" finds this row.
-    const purchase = await this.prisma.giftCardPurchase.create({
-      data: {
-        paymentAttemptId: attempt.id,
-        amountMinorUnits,
-        currency,
-        customerId,
-        purchaserEmail,
-        purchaserName,
+    try {
+      const purchase = await this.prisma.giftCardPurchase.create({
+        data: {
+          paymentAttemptId: attempt.id,
+          amountMinorUnits,
+          currency,
+          customerId,
+          purchaserEmail,
+          purchaserName,
+          recoveryCredentialHash: credential
+            ? hashRecoveryCredential(credential)
+            : null,
+        },
+      });
+      return this.intentResponse(purchase, credential);
+    } catch (error) {
+      if (!isUniqueConstraintViolation(error)) {
+        throw error;
+      }
+      // A concurrent step-1 for the same key won — return its intent; the
+      // losing caller gets no credential (its client should use the winning
+      // response, or restart with a fresh key).
+      const raced = await this.prisma.giftCardPurchase.findUniqueOrThrow({
+        where: { paymentAttemptId: attempt.id },
+      });
+      return this.intentResponse(raced, null);
+    }
+  }
+
+  private intentResponse(
+    purchase: {
+      id: string;
+      status: 'PENDING' | 'ISSUED' | 'RECONCILIATION_REQUIRED';
+      amountMinorUnits: number;
+      currency: string;
+      customerId: string | null;
+    },
+    recoveryCredential: string | null,
+  ): GiftCardPurchaseIntentResponse {
+    return {
+      purchaseId: purchase.id,
+      status: purchase.status,
+      amountMinorUnits: purchase.amountMinorUnits,
+      currency: purchase.currency,
+      customerOwned: purchase.customerId !== null,
+      recoveryCredential,
+    };
+  }
+
+  // --- STEP 2: charge + issue, or replay -------------------------------
+
+  async purchase(
+    request: PurchaseGiftCardRequest,
+    customerIdentity?: CustomerIdentity,
+  ): Promise<PurchaseGiftCardResponse> {
+    const idempotencyKey = this.validateIdempotencyKey(request?.idempotencyKey);
+    const suppliedCredential =
+      typeof request?.recoveryCredential === 'string'
+        ? request.recoveryCredential
+        : null;
+
+    const attempt = await this.prisma.paymentAttempt.findUnique({
+      where: { idempotencyKey },
+      include: {
+        giftCardPurchase: {
+          include: { giftCard: { select: { last4: true } } },
+        },
       },
     });
+    if (!attempt || !attempt.giftCardPurchase) {
+      throw new ConflictException(
+        'No gift-card purchase was started for this key. Start a new purchase.',
+      );
+    }
+    const purchase = attempt.giftCardPurchase;
+
+    // Decide, once, whether this caller may see the full code for THIS
+    // purchase (guest: valid recovery credential; signed-in: the owning
+    // customer). Read-only — never JIT-creates a customer for a probe.
+    const authorised = await this.isAuthorisedForCode(
+      purchase,
+      suppliedCredential,
+      customerIdentity,
+    );
+
+    // Terminal / in-flight states → replay.
+    if (attempt.status === 'DECLINED' || attempt.status === 'FAILED') {
+      throw new HttpException(
+        {
+          outcome: attempt.status === 'DECLINED' ? 'declined' : 'failed',
+          message: attempt.failureReason ?? 'Payment was not successful.',
+        },
+        HttpStatus.PAYMENT_REQUIRED,
+      );
+    }
+    if (
+      attempt.reconciliationRequired ||
+      purchase.status === 'RECONCILIATION_REQUIRED'
+    ) {
+      throw new ConflictException(
+        `Your payment succeeded but the gift card could not be issued ` +
+          `automatically. Do not pay again — reference ${purchase.id} for support.`,
+      );
+    }
+    if (attempt.status === 'SUCCEEDED') {
+      if (purchase.status !== 'ISSUED' || !purchase.giftCard) {
+        throw new ConflictException(
+          'A gift-card purchase with this key is already being processed.',
+        );
+      }
+      const code = authorised ? await this.recoverCode(purchase) : null;
+      return this.confirmation(purchase, purchase.giftCard.last4, code);
+    }
+
+    // attempt.status === 'PENDING' → the first (charging) call. Enforce the
+    // two-step protocol: the caller must prove they established this intent.
+    if (!authorised) {
+      throw new ForbiddenException(
+        purchase.customerId === null
+          ? 'A valid recovery credential from the first step is required to complete this purchase.'
+          : 'Only the signed-in buyer can complete this purchase.',
+      );
+    }
+
+    // Concurrency claim — exactly one request charges.
+    const claim = await this.prisma.giftCardPurchase.updateMany({
+      where: { id: purchase.id, status: 'PENDING', chargeClaimedAt: null },
+      data: { chargeClaimedAt: new Date() },
+    });
+    if (claim.count === 0) {
+      throw new ConflictException(
+        'A gift-card purchase with this key is already being processed.',
+      );
+    }
 
     const chargeResult = await this.paymentProvider.charge({
       idempotencyKey,
-      amount: amountMinorUnits,
-      currency,
+      amount: purchase.amountMinorUnits,
+      currency: purchase.currency,
       metadata: {},
     });
 
@@ -186,8 +336,8 @@ export class GiftCardPurchaseService implements OnModuleInit {
     try {
       const issued = await this.issuance.issue(
         {
-          originalValueMinorUnits: amountMinorUnits,
-          currency,
+          originalValueMinorUnits: purchase.amountMinorUnits,
+          currency: purchase.currency,
           giftCardPurchaseId: purchase.id,
         },
         async (tx, issuedCard) => {
@@ -209,9 +359,6 @@ export class GiftCardPurchaseService implements OnModuleInit {
       displayCode = issued.displayCode;
       last4 = issued.last4;
     } catch (error) {
-      // Payment already succeeded; issuance did not commit. Durably record
-      // the reconciliation condition, mark the purchase, and never retry the
-      // financial effect automatically.
       await this.markReconciliationRequired(attempt.id, error);
       await this.prisma.giftCardPurchase
         .update({
@@ -228,8 +375,8 @@ export class GiftCardPurchaseService implements OnModuleInit {
     return {
       purchaseId: purchase.id,
       status: 'ISSUED',
-      amountMinorUnits,
-      currency,
+      amountMinorUnits: purchase.amountMinorUnits,
+      currency: purchase.currency,
       maskedCode: maskGiftCardCode(last4),
       last4,
       code: displayCode,
@@ -238,60 +385,18 @@ export class GiftCardPurchaseService implements OnModuleInit {
     };
   }
 
-  // --- replay -----------------------------------------------------
-
-  private async replay(
-    attempt: AttemptWithPurchase,
-    suppliedIdempotencyKey: string,
-    customerIdentity: CustomerIdentity | undefined,
-  ): Promise<PurchaseGiftCardResponse> {
-    if (attempt.status === 'PENDING') {
-      throw new ConflictException(
-        'A gift-card purchase with this key is already being processed.',
-      );
-    }
-    if (attempt.status === 'DECLINED' || attempt.status === 'FAILED') {
-      throw new HttpException(
-        {
-          outcome: attempt.status === 'DECLINED' ? 'declined' : 'failed',
-          message: attempt.failureReason ?? 'Payment was not successful.',
-        },
-        HttpStatus.PAYMENT_REQUIRED,
-      );
-    }
-
-    // SUCCEEDED.
-    const purchase = attempt.giftCardPurchase;
-    if (attempt.reconciliationRequired || purchase?.status === 'RECONCILIATION_REQUIRED') {
-      throw new ConflictException(
-        `Your payment succeeded but the gift card could not be issued ` +
-          `automatically. Do not pay again — reference ${
-            purchase?.id ?? attempt.id
-          } for support.`,
-      );
-    }
-    if (!purchase || purchase.status !== 'ISSUED' || !purchase.giftCard) {
-      // Issuance still in flight (the update above commits after the payment
-      // update). A retry shortly resolves to ISSUED or reconciliation.
-      throw new ConflictException(
-        'A gift-card purchase with this key is already being processed.',
-      );
-    }
-
-    const code = await this.recoverCode(
-      attempt.idempotencyKey,
-      suppliedIdempotencyKey,
-      purchase,
-      customerIdentity,
-    );
-
+  private confirmation(
+    purchase: PurchaseRow,
+    last4: string,
+    code: string | null,
+  ): PurchaseGiftCardResponse {
     return {
       purchaseId: purchase.id,
       status: 'ISSUED',
       amountMinorUnits: purchase.amountMinorUnits,
       currency: purchase.currency,
-      maskedCode: maskGiftCardCode(purchase.giftCard.last4),
-      last4: purchase.giftCard.last4,
+      maskedCode: maskGiftCardCode(last4),
+      last4,
       code,
       codeRetrievable: code !== null,
       codeRetrievableUntil:
@@ -299,45 +404,44 @@ export class GiftCardPurchaseService implements OnModuleInit {
     };
   }
 
-  // Decrypt + return the full code ONLY when every condition holds:
-  //   - within the 7-day window (server-enforced deadline)
-  //   - the caller proved ownership
-  //   - decryption + auth-tag verification succeed
-  // Any failure returns null (a non-disclosing "not retrievable" confirmation).
-  private async recoverCode(
-    storedIdempotencyKey: string,
-    suppliedIdempotencyKey: string,
-    purchase: PurchaseWithGiftCard,
+  // Guest: possession of the server-issued recovery credential (verified in
+  // constant time against the stored HMAC). Signed-in: the caller resolves
+  // to the owning customer. Read-only — a wrong / anonymous caller never
+  // creates a customer row here.
+  private async isAuthorisedForCode(
+    purchase: PurchaseRow,
+    suppliedCredential: string | null,
     customerIdentity: CustomerIdentity | undefined,
-  ): Promise<string | null> {
+  ): Promise<boolean> {
+    if (purchase.customerId !== null) {
+      if (!customerIdentity) {
+        return false;
+      }
+      const customer = await this.prisma.customer.findUnique({
+        where: {
+          externalProvider_externalSubject: {
+            externalProvider: customerIdentity.provider,
+            externalSubject: customerIdentity.subject,
+          },
+        },
+        select: { id: true },
+      });
+      return customer?.id === purchase.customerId;
+    }
+    return recoveryCredentialMatches(
+      suppliedCredential,
+      purchase.recoveryCredentialHash,
+    );
+  }
+
+  // Deadline + decrypt only — authorisation is already decided by the caller.
+  private async recoverCode(purchase: PurchaseRow): Promise<string | null> {
     if (
       !purchase.codeRetrievableUntil ||
       purchase.codeRetrievableUntil.getTime() <= Date.now()
     ) {
       return null;
     }
-
-    // Ownership.
-    if (purchase.customerId !== null) {
-      // Signed-in purchase: only the same authenticated customer.
-      if (!customerIdentity) {
-        return null;
-      }
-      const customer =
-        await this.customersService.resolveOrCreateFromIdentity(
-          customerIdentity,
-        );
-      if (customer.id !== purchase.customerId) {
-        return null;
-      }
-    } else {
-      // Guest purchase: possession of the original high-entropy
-      // idempotencyKey (supplied in the POST body) is the credential.
-      if (suppliedIdempotencyKey !== storedIdempotencyKey) {
-        return null;
-      }
-    }
-
     const canonical = decryptGiftCardCode({
       ciphertext: purchase.codeCiphertext,
       iv: purchase.codeIv,
@@ -351,8 +455,6 @@ export class GiftCardPurchaseService implements OnModuleInit {
     }
     return groupCode(canonical);
   }
-
-  // --- reconciliation -------------------------------------------
 
   private async markReconciliationRequired(
     paymentAttemptId: string,
@@ -418,8 +520,8 @@ export class GiftCardPurchaseService implements OnModuleInit {
   }
 
   // A purchase amount is valid when it matches an HQ-configured preset, OR
-  // custom amounts are enabled and it is within [MIN, MAX]. Absolute ceiling
-  // GIFT_CARD_MAX_VALUE_MINOR_UNITS always applies.
+  // custom amounts are enabled and it is within [MIN, MAX]. The absolute
+  // ceiling always applies. Governs NEW intents only (correction E).
   private async validateAmount(raw: unknown): Promise<number> {
     if (
       typeof raw !== 'number' ||

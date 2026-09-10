@@ -49,11 +49,20 @@ export class GiftCardConfigurationService {
   // authorization: it exposes only the amount rules a buyer needs (presets,
   // whether custom is allowed, the fixed custom bounds, currency) and no
   // internal configuration metadata.
+  //
+  // READ-ONLY (post-review correction D): an anonymous GET must never write.
+  // If the singleton row does not exist yet it returns the same safe
+  // defaults in memory WITHOUT persisting them — an authorised HQ write path
+  // (getConfiguration / updateConfiguration) creates the row when needed.
   async getPublicOptions(): Promise<GiftCardPurchaseOptions> {
-    const config = await this.ensureConfiguration();
+    const config = await this.prisma.giftCardConfiguration.findUnique({
+      where: { key: GIFT_CARD_CONFIGURATION_KEY },
+      select: { presetAmountsMinorUnits: true, customAmountEnabled: true },
+    });
     return {
-      presetAmountsMinorUnits: config.presetAmountsMinorUnits,
-      customAmountEnabled: config.customAmountEnabled,
+      presetAmountsMinorUnits:
+        config?.presetAmountsMinorUnits ?? DEFAULT_PRESET_AMOUNTS_MINOR_UNITS,
+      customAmountEnabled: config?.customAmountEnabled ?? true,
       customAmountMinMinorUnits: GIFT_CARD_CUSTOM_MIN_MINOR_UNITS,
       customAmountMaxMinorUnits: GIFT_CARD_CUSTOM_MAX_MINOR_UNITS,
       currency: 'USD',

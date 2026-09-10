@@ -23,6 +23,12 @@ import { RedisService } from '../../redis/redis.service';
 // PaymentAttempt.idempotencyKey + the DB uniqueness constraints, which are
 // unaffected by the throttle. A Redis outage only removes the abuse
 // dampener, not the correctness guarantees.
+//
+// CLIENT IP (post-review correction C): the bucket key uses `request.ip`,
+// which Express derives according to the `trust proxy` hop count configured
+// in main.ts (default 0 = the direct socket peer, ignoring any client-sent
+// X-Forwarded-For). A raw header is never trusted here, so a client cannot
+// mint a fresh bucket by spoofing X-Forwarded-For.
 
 const LIMIT = 20;
 const WINDOW_SECONDS = 60;
@@ -67,9 +73,7 @@ export class GiftCardPublicThrottleGuard implements CanActivate {
 }
 
 function clientIp(request: Request): string {
-  const forwarded = request.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.length > 0) {
-    return forwarded.split(',')[0]!.trim();
-  }
+  // `request.ip` is resolved by Express from the configured `trust proxy`
+  // setting — never from an unvalidated header. See the class comment.
   return request.ip ?? request.socket?.remoteAddress ?? 'unknown';
 }

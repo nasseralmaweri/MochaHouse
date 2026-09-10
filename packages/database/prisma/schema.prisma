@@ -325,10 +325,11 @@ model PaymentAttempt {
 
   // A PaymentAttempt backs AT MOST ONE domain object — a food Order OR a
   // gift-card purchase, never both. Each side is a 1:1 (Order.paymentAttemptId
-  // and GiftCardPurchase.paymentAttemptId are both @unique). The migration
-  // adds BEFORE INSERT triggers on Order and GiftCardPurchase that reject an
-  // insert whose paymentAttemptId is already claimed by the other table —
-  // declarative cross-table enforcement, not programmer convention.
+  // and GiftCardPurchase.paymentAttemptId are both @unique). BEFORE INSERT OR
+  // UPDATE OF "paymentAttemptId" triggers on Order and GiftCardPurchase
+  // (migration 20260910..._harden_gift_card_purchase_recovery) reject any
+  // insert OR update whose paymentAttemptId is already claimed by the other
+  // table — declarative cross-table enforcement, not programmer convention.
   order            Order?
   giftCardPurchase GiftCardPurchase?
 
@@ -1575,10 +1576,19 @@ model OrderGiftCardRedemption {
 // FULL-CODE LOST-RESPONSE RECOVERY: the plaintext code is NEVER persisted.
 // For a bounded 7-day window it is recoverable via AES-256-GCM ciphertext
 // (`codeCiphertext` + `codeIv` + `codeAuthTag`, key GIFT_CARD_PURCHASE_CODE_KEK)
-// stored here, decryptable only server-side, only through the same
-// idempotent purchase POST flow (never a purchase-id-only endpoint), and
-// only until `codeRetrievableUntil`. After that the ciphertext is dead
-// weight (no cleanup worker in 7H) and the code is gone.
+// stored here, decryptable only server-side, only through the two-step
+// purchase flow (never a purchase-id-only endpoint), and only until
+// `codeRetrievableUntil`. After that the ciphertext is dead weight (no
+// cleanup worker in 7H) and the code is gone.
+//
+// GUEST RECOVERY CREDENTIAL: a guest purchase carries `recoveryCredentialHash`
+// — the HMAC-SHA-256 verifier (keyed by GIFT_CARD_PURCHASE_RECOVERY_SECRET)
+// of a 256-bit CSPRNG credential the server generates when the PENDING
+// purchase is first established (step 1, BEFORE any charge) and returns to
+// the buyer exactly once. Guest full-code recovery requires BOTH the
+// PaymentAttempt.idempotencyKey (payment idempotency) AND this credential —
+// the idempotency key alone never yields the code. A signed-in purchase
+// leaves this null and is authorised by customer ownership instead.
 enum GiftCardPurchaseStatus {
   PENDING
   ISSUED
@@ -1615,6 +1625,20 @@ model GiftCardPurchase {
   codeIv              Bytes?
   codeAuthTag         Bytes?
   codeRetrievableUntil DateTime?
+
+  // Guest recovery: HMAC-SHA-256 verifier of the server-generated 256-bit
+  // recovery credential (see the model comment). Never the plaintext
+  // credential. Set for a guest purchase at step-1 establishment; null for a
+  // signed-in purchase (customer ownership is the authorisation there).
+  recoveryCredentialHash String?
+
+  // Step-2 concurrency claim: the FIRST request to atomically flip this from
+  // null (guarded by status = PENDING) owns the single payment-provider
+  // charge; every concurrent step-2 request then replays instead. Like a
+  // stuck food checkout, a process that dies after claiming but before the
+  // charge settles leaves the purchase PENDING (no double charge, no value
+  // created) — the buyer restarts with a fresh idempotency key.
+  chargeClaimedAt DateTime?
 
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   GiftCardBalanceResponse,
   GiftCardPublicStatus,
+  GiftCardPurchaseIntentResponse,
   GiftCardPurchaseOptions,
   PurchaseGiftCardResponse,
 } from "@mocha-house/contracts";
@@ -89,9 +90,23 @@ function PurchasePanel({ options }: { options: GiftCardPurchaseOptions }) {
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<PurchaseGiftCardResponse | null>(null);
 
-  // Held across retries so a lost success response can be recovered by
-  // replaying the SAME idempotency key (never stored anywhere but memory).
+  // Two-step purchase state, held in memory ONLY (never localStorage / URL):
+  //   - idempotencyKey: the payment-idempotency anchor for both steps.
+  //   - recoveryCredential: the server-issued guest recovery secret from
+  //     step 1; required on step 2 and for any later lost-response replay.
+  //   - customerOwned: a signed-in purchase needs no credential.
+  //   - intentEstablished: step 1 has succeeded for the current key.
   const idempotencyKeyRef = useRef<string | null>(null);
+  const recoveryCredentialRef = useRef<string | null>(null);
+  const customerOwnedRef = useRef<boolean>(false);
+  const intentEstablishedRef = useRef<boolean>(false);
+
+  function resetPurchaseState() {
+    idempotencyKeyRef.current = null;
+    recoveryCredentialRef.current = null;
+    customerOwnedRef.current = false;
+    intentEstablishedRef.current = false;
+  }
 
   const resolveAmount = useCallback((): number | null => {
     if (useCustom) {
@@ -105,8 +120,65 @@ function PurchasePanel({ options }: { options: GiftCardPurchaseOptions }) {
     return selectedPreset;
   }, [useCustom, customEntry, options, selectedPreset]);
 
+  // Step 1 — establish the PENDING purchase and obtain a guest's recovery
+  // credential BEFORE any charge. Returns true on success. Safe to retry: a
+  // replay for the same key returns no new credential, so if we're a guest
+  // and hold none we start over with a fresh key (nothing was charged).
+  async function establishIntent(amountMinorUnits: number): Promise<boolean> {
+    if (intentEstablishedRef.current && idempotencyKeyRef.current) {
+      return true;
+    }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!idempotencyKeyRef.current) {
+        idempotencyKeyRef.current = crypto.randomUUID();
+      }
+      const res = await fetch("/api/gift-cards/purchase-intents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          idempotencyKey: idempotencyKeyRef.current,
+          amountMinorUnits,
+          purchaserEmail: email.trim(),
+          purchaserName: name.trim() === "" ? null : name.trim(),
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | (GiftCardPurchaseIntentResponse & { message?: string })
+        | { message?: string }
+        | null;
+
+      if (!res.ok || !data || !("purchaseId" in data)) {
+        setError(
+          (data && "message" in data && data.message) ||
+            "We couldn't start your purchase. Please try again.",
+        );
+        return false;
+      }
+
+      customerOwnedRef.current = data.customerOwned;
+      if (data.recoveryCredential) {
+        recoveryCredentialRef.current = data.recoveryCredential;
+      }
+      if (
+        data.customerOwned ||
+        recoveryCredentialRef.current !== null
+      ) {
+        intentEstablishedRef.current = true;
+        return true;
+      }
+      // Guest, replayed intent, and we hold no credential (lost step-1
+      // response). Discard the key and try once more with a fresh one.
+      idempotencyKeyRef.current = null;
+    }
+    setError("We couldn't start your purchase. Please try again.");
+    return false;
+  }
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (pending) {
+      return;
+    }
     setError(null);
 
     const amountMinorUnits = resolveAmount();
@@ -122,20 +194,18 @@ function PurchasePanel({ options }: { options: GiftCardPurchaseOptions }) {
       return;
     }
 
-    if (!idempotencyKeyRef.current) {
-      idempotencyKeyRef.current = crypto.randomUUID();
-    }
-
     setPending(true);
     try {
+      if (!(await establishIntent(amountMinorUnits))) {
+        return;
+      }
+
       const res = await fetch("/api/gift-cards/purchase", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           idempotencyKey: idempotencyKeyRef.current,
-          amountMinorUnits,
-          purchaserEmail: email.trim(),
-          purchaserName: name.trim() === "" ? null : name.trim(),
+          recoveryCredential: recoveryCredentialRef.current,
         }),
       });
       const data = (await res.json().catch(() => null)) as
@@ -152,7 +222,14 @@ function PurchasePanel({ options }: { options: GiftCardPurchaseOptions }) {
           "Your payment couldn't be completed. No charge was made — please try a different card.",
         );
         // A declined payment is terminal for this key; start fresh next time.
-        idempotencyKeyRef.current = null;
+        resetPurchaseState();
+        return;
+      }
+      if (res.status === 403) {
+        setError(
+          "Your purchase session expired. Please start again.",
+        );
+        resetPurchaseState();
         return;
       }
       if (res.status === 409) {
@@ -169,7 +246,7 @@ function PurchasePanel({ options }: { options: GiftCardPurchaseOptions }) {
       );
     } catch {
       setError(
-        "We couldn't reach the server. If you were charged, reload this page to retrieve your code.",
+        "We couldn't reach the server. If the charge went through, submit again to retrieve your code.",
       );
     } finally {
       setPending(false);

@@ -2321,15 +2321,20 @@ export interface GiftCardPurchaseOptions {
   currency: string;
 }
 
-// POST /api/v1/gift-cards/purchase
-// `idempotencyKey` is the logical-purchase anchor AND the credential a
-// signed-out buyer supplies to recover the full code within the window — it
-// must be a fresh, cryptographically-random value per purchase attempt.
-// `amountMinorUnits` must match an HQ preset, or be within
-// [GIFT_CARD_CUSTOM_MIN, GIFT_CARD_CUSTOM_MAX] when custom amounts are
-// enabled. `purchaserEmail` is the BUYER's own contact (support / future
-// receipt) — NOT a recipient-delivery field.
-export interface PurchaseGiftCardRequest {
+// The customer purchase is a bounded TWO-STEP protocol so that a
+// server-generated recovery credential can reach a guest buyer BEFORE any
+// charge (step 1), which is what makes a lost step-2 response recoverable.
+// There is ONE persisted aggregate (GiftCardPurchase, status PENDING after
+// step 1). Step 1 does not charge and does not issue.
+
+// STEP 1 — POST /api/v1/gift-cards/purchase-intents
+// `idempotencyKey` is the payment-idempotency anchor — a fresh
+// crypto.randomUUID() per purchase. `amountMinorUnits` must match an HQ
+// preset, or be within [GIFT_CARD_CUSTOM_MIN, GIFT_CARD_CUSTOM_MAX] when
+// custom amounts are enabled (validated against the CURRENT configuration —
+// step 1 only). `purchaserEmail` is the BUYER's own contact (support /
+// future receipt) — NOT a recipient-delivery field.
+export interface CreateGiftCardPurchaseIntentRequest {
   idempotencyKey: string;
   amountMinorUnits: number;
   purchaserEmail: string;
@@ -2340,6 +2345,35 @@ export type GiftCardPurchaseStatus =
   | "PENDING"
   | "ISSUED"
   | "RECONCILIATION_REQUIRED";
+
+// Step-1 response. `recoveryCredential` is the one-time, server-generated
+// 256-bit secret a GUEST must retain (in memory only) and send back on
+// step 2 / recovery — it is returned ONLY here and ONLY when the purchase is
+// first established for a guest. `customerOwned` is true when the caller is
+// authenticated and owns this purchase (no credential needed then). A
+// replay of step 1 for an already-established purchase returns
+// `recoveryCredential: null` (the client kept it, or must start over with a
+// fresh idempotencyKey — nothing was charged).
+export interface GiftCardPurchaseIntentResponse {
+  purchaseId: string;
+  status: GiftCardPurchaseStatus;
+  amountMinorUnits: number;
+  currency: string;
+  customerOwned: boolean;
+  recoveryCredential: string | null;
+}
+
+// STEP 2 — POST /api/v1/gift-cards/purchase
+// Requires an established intent for `idempotencyKey`. It charges + issues on
+// the first call and replays the confirmation (with the full code, if
+// authorised and in-window) on later calls. `recoveryCredential` is REQUIRED
+// for a guest purchase (both the charging call and every recovery replay);
+// it is ignored for a signed-in owner. Step 2 never changes the amount,
+// contact, or ownership established by step 1.
+export interface PurchaseGiftCardRequest {
+  idempotencyKey: string;
+  recoveryCredential?: string | null;
+}
 
 // The purchase confirmation. `code` (the full plaintext, grouped display
 // form) is present ONLY on the initial successful issuance and on an
