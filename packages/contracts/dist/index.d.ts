@@ -812,7 +812,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
@@ -1072,5 +1072,73 @@ export interface GiftCardBalanceResponse {
     balanceMinorUnits?: number;
     currency?: string;
     status?: GiftCardPublicStatus;
+}
+export interface AdminCustomerSummary {
+    id: string;
+    email: string | null;
+    displayName: string | null;
+    status: CustomerAccountStatus;
+    emailVerified: boolean;
+    marketingEmailOptIn: boolean;
+    createdAt: string;
+}
+export interface AdminCustomerListResponse {
+    customers: AdminCustomerSummary[];
+    nextCursor: string | null;
+}
+export interface AdminCustomerGiftCardPurchase {
+    purchaseId: string;
+    status: GiftCardPurchaseStatus;
+    amountMinorUnits: number;
+    currency: string;
+    maskedCode: string | null;
+    last4: string | null;
+    createdAt: string;
+}
+export interface AdminCustomerGiftCardRedemption {
+    orderId: string;
+    orderNumber: string;
+    last4: string;
+    amountMinorUnits: number;
+    currency: string;
+    createdAt: string;
+}
+export interface AdminCustomerGiftCardSummary {
+    purchases: AdminCustomerGiftCardPurchase[];
+    redemptions: AdminCustomerGiftCardRedemption[];
+}
+export interface AdminCustomerActivityItem {
+    id: string;
+    summary: string;
+    reason: string | null;
+    actorLabel: string | null;
+    createdAt: string;
+}
+export interface CustomerNote {
+    id: string;
+    body: string;
+    authorLabel: string | null;
+    createdAt: string;
+}
+export interface CreateCustomerNoteRequest {
+    body: string;
+}
+export declare const CUSTOMER_NOTE_MAX_LENGTH = 2000;
+export interface AdminCustomerDetail {
+    customer: AdminCustomerSummary;
+    orders: {
+        count: number;
+        recent: CustomerOrderSummary[];
+    };
+    mochaBeans: {
+        balance: number;
+        recentActivity: AdminMochaBeanLedgerEntry[];
+    };
+    affordableRewards: CustomerLoyaltyReward[];
+    giftCards: AdminCustomerGiftCardSummary;
+    preferredLocations: LocationSummary[];
+    communicationPreferences: CustomerCommunicationPreferences;
+    notes: CustomerNote[];
+    activity: AdminCustomerActivityItem[];
 }
 //# sourceMappingURL=index.d.ts.map

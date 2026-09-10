@@ -10,6 +10,7 @@ import { GiftCardRedemptionService } from './application/gift-card-redemption.se
 import { GiftCardIssuanceService } from './application/gift-card-issuance.service';
 import { GiftCardBalanceService } from './application/gift-card-balance.service';
 import { GiftCardPurchaseService } from './application/gift-card-purchase.service';
+import { GiftCardCustomerSummaryService } from './application/gift-card-customer-summary.service';
 import { GiftCardPublicThrottleGuard } from './infrastructure/gift-card-public-throttle.guard';
 import { AdminGiftCardsController } from './api/admin-gift-cards.controller';
 import { GiftCardsController } from './api/gift-cards.controller';
@@ -51,8 +52,12 @@ import { GiftCardsController } from './api/gift-cards.controller';
     GiftCardRedemptionService,
     GiftCardBalanceService,
     GiftCardPurchaseService,
+    GiftCardCustomerSummaryService,
     GiftCardPublicThrottleGuard,
   ],
-  exports: [GiftCardRedemptionService],
+  // GiftCardRedemptionService — for OrdersModule's checkout.
+  // GiftCardCustomerSummaryService — Milestone 8A, so CrmModule can project a
+  // customer's purchased / redeemed gift cards (masked) into the HQ CRM view.
+  exports: [GiftCardRedemptionService, GiftCardCustomerSummaryService],
 })
 export class GiftCardsModule {}

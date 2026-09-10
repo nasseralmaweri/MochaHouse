@@ -17,6 +17,7 @@ import { OperationsModule } from './operations/operations.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { GiftCardsModule } from './gift-cards/gift-cards.module';
+import { CrmModule } from './crm/crm.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { GiftCardsModule } from './gift-cards/gift-cards.module';
     LoyaltyModule,
     PromotionsModule,
     GiftCardsModule,
+    CrmModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -51,6 +51,9 @@ describe('internal permission catalog', () => {
         'giftcards.view',
         'giftcards.manage',
         'giftcards.configure',
+        // Milestone 8A
+        'customers.view',
+        'customers.notes.manage',
       ].sort(),
     );
   });
@@ -110,6 +113,12 @@ describe('internal permission catalog', () => {
     expect(allowedScopeTypesFor('giftcards.view')).toEqual(['CORPORATE']);
     expect(allowedScopeTypesFor('giftcards.manage')).toEqual(['CORPORATE']);
     expect(allowedScopeTypesFor('giftcards.configure')).toEqual(['CORPORATE']);
+    // customers.* — a Mocha House customer is a company-wide record; the CRM
+    // directory and note-taking are HQ capabilities (Milestone 8A).
+    expect(allowedScopeTypesFor('customers.view')).toEqual(['CORPORATE']);
+    expect(allowedScopeTypesFor('customers.notes.manage')).toEqual([
+      'CORPORATE',
+    ]);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {

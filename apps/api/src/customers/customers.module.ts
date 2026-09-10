@@ -24,9 +24,18 @@ import { CustomerPreferencesService } from './application/customer-preferences.s
     CustomerPreferredLocationsService,
     CustomerPreferencesService,
   ],
-  // Needed by CustomerAuthModule (registration/verification) and
-  // OrdersModule (checkout's optional customer association, and the
-  // customer order-history endpoints).
-  exports: [CustomersService],
+  // CustomersService — needed by CustomerAuthModule (registration/
+  // verification) and OrdersModule (checkout's optional customer
+  // association, and the customer order-history endpoints).
+  // CustomerPreferredLocationsService / CustomerPreferencesService — read
+  // sides exported (Milestone 8A) so CrmModule can project a customer's
+  // preferred locations and communication preferences into the HQ CRM view
+  // without re-implementing those reads. They stay customerId-scoped and
+  // read-only; CRM authorises with `customers.view`.
+  exports: [
+    CustomersService,
+    CustomerPreferredLocationsService,
+    CustomerPreferencesService,
+  ],
 })
 export class CustomersModule {}

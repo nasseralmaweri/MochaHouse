@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@mocha-house/database';
+import type { AdminMochaBeanLedgerEntry } from '@mocha-house/contracts';
 import {
   DEFAULT_MOCHA_BEANS_PER_DOLLAR,
   mochaBeansForQualifyingSpend,
@@ -131,6 +132,47 @@ export class LoyaltyService {
       select: { balance: true },
     });
     return account?.balance ?? 0;
+  }
+
+  // Milestone 8A — the balance plus the most-recent ledger entries for a
+  // customer, projected for the HQ CRM view. Read-only and customerId-scoped
+  // exactly like getBalanceForCustomer; the caller (CrmModule) authorises
+  // with `customers.view`. Same projection as the loyalty-admin ledger read
+  // so the two HQ surfaces stay consistent.
+  async getLedgerSummaryForCustomer(
+    customerId: string,
+    limit = 15,
+  ): Promise<{ balance: number; recentActivity: AdminMochaBeanLedgerEntry[] }> {
+    const account = await this.prisma.customerLoyaltyAccount.findUnique({
+      where: { customerId },
+      select: { id: true, balance: true },
+    });
+    if (!account) {
+      return { balance: 0, recentActivity: [] };
+    }
+    const entries = await this.prisma.mochaBeanLedgerEntry.findMany({
+      where: { loyaltyAccountId: account.id },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      include: {
+        order: { select: { orderNumber: true } },
+        actorInternalUser: { select: { displayName: true, email: true } },
+      },
+    });
+    return {
+      balance: account.balance,
+      recentActivity: entries.map((entry) => ({
+        id: entry.id,
+        type: entry.type,
+        amount: entry.amount,
+        reason: entry.reason,
+        orderNumber: entry.order?.orderNumber ?? null,
+        actorLabel: entry.actorInternalUser
+          ? entry.actorInternalUser.displayName ?? entry.actorInternalUser.email
+          : null,
+        createdAt: entry.createdAt.toISOString(),
+      })),
+    };
   }
 }
 

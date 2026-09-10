@@ -1633,6 +1633,15 @@ export const INTERNAL_PERMISSION_KEYS = [
   "giftcards.view",
   "giftcards.manage",
   "giftcards.configure",
+  // Milestone 8A — HQ CRM. A Mocha House customer is a company-wide record,
+  // so both keys are CORPORATE-only and a Store Manager never holds them.
+  //   customers.view          — the HQ customer directory + an individual
+  //                             customer's aggregated profile / status /
+  //                             loyalty / gift-card / order / preference
+  //                             summary and CRM notes (all read-only).
+  //   customers.notes.manage  — add an internal CRM note to a customer.
+  "customers.view",
+  "customers.notes.manage",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1846,6 +1855,18 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "giftcards.configure",
     description:
       "View and update the gift-card purchasing configuration — preset purchase amounts and whether custom amounts are allowed. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "customers.view": {
+    key: "customers.view",
+    description:
+      "View the HQ customer directory and an individual customer's profile, contact details, account status and their loyalty / gift-card / order / preference summary and internal CRM notes. Read-only. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "customers.notes.manage": {
+    key: "customers.notes.manage",
+    description:
+      "Add an internal CRM note to a customer record. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
@@ -2410,4 +2431,111 @@ export interface GiftCardBalanceResponse {
   balanceMinorUnits?: number;
   currency?: string;
   status?: GiftCardPublicStatus;
+}
+
+// --- Milestone 8A: HQ CRM foundation --------------------------------
+// The HQ/Admin read-only view OVER the authoritative customer information
+// that already lives in the platform (Milestone 4 identity/profile/prefs +
+// Milestone 7 loyalty/gift-cards + orders). Nothing here is a new customer
+// system: every field is projected from an existing domain service and no
+// business data is copied into CRM-specific storage. `customers.view` gates
+// the whole surface; `customers.notes.manage` gates adding a note. Both are
+// CORPORATE-only. All endpoints are under /api/v1/admin/customers.
+
+// One row of the Admin customer directory / the header of the detail page.
+// Email verification is a boolean derived from the Customer's
+// emailVerifiedAt — the timestamp itself is never exposed.
+export interface AdminCustomerSummary {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  status: CustomerAccountStatus;
+  emailVerified: boolean;
+  marketingEmailOptIn: boolean;
+  createdAt: string;
+}
+
+// GET /api/v1/admin/customers?q=&cursor= — cursor-paginated, createdAt
+// descending. `nextCursor` is null on the last page; pass it back as
+// `cursor` for the next page. `q` (optional) matches a case-insensitive
+// email OR displayName substring, or an exact customer id.
+export interface AdminCustomerListResponse {
+  customers: AdminCustomerSummary[];
+  nextCursor: string | null;
+}
+
+// A gift card this customer BOUGHT while signed in — masked identity only.
+export interface AdminCustomerGiftCardPurchase {
+  purchaseId: string;
+  status: GiftCardPurchaseStatus;
+  amountMinorUnits: number;
+  currency: string;
+  maskedCode: string | null;
+  last4: string | null;
+  createdAt: string;
+}
+
+// A gift card redeemed as tender on one of this customer's orders — the
+// immutable OrderGiftCardRedemption snapshot, masked.
+export interface AdminCustomerGiftCardRedemption {
+  orderId: string;
+  orderNumber: string;
+  last4: string;
+  amountMinorUnits: number;
+  currency: string;
+  createdAt: string;
+}
+
+export interface AdminCustomerGiftCardSummary {
+  purchases: AdminCustomerGiftCardPurchase[];
+  redemptions: AdminCustomerGiftCardRedemption[];
+}
+
+// One entry of the customer's HQ activity timeline — projected from the
+// polymorphic InternalAuditEvent rows whose targetType is 'customer' (Bean
+// adjustments, CRM notes). `summary` is a rendered human sentence; the raw
+// action string / target ids are never exposed.
+export interface AdminCustomerActivityItem {
+  id: string;
+  summary: string;
+  reason: string | null;
+  actorLabel: string | null;
+  createdAt: string;
+}
+
+// One internal CRM note. Append-only in 8A — there is no edit or delete.
+export interface CustomerNote {
+  id: string;
+  body: string;
+  authorLabel: string | null;
+  createdAt: string;
+}
+
+// POST /api/v1/admin/customers/:customerId/notes
+export interface CreateCustomerNoteRequest {
+  body: string;
+}
+
+export const CUSTOMER_NOTE_MAX_LENGTH = 2000;
+
+// GET /api/v1/admin/customers/:customerId — the aggregated CRM view. Every
+// section is a projection of an existing authoritative source; an absent
+// section (no orders, no loyalty account, …) is an empty value, not an
+// error.
+export interface AdminCustomerDetail {
+  customer: AdminCustomerSummary;
+  orders: {
+    count: number;
+    recent: CustomerOrderSummary[];
+  };
+  mochaBeans: {
+    balance: number;
+    recentActivity: AdminMochaBeanLedgerEntry[];
+  };
+  affordableRewards: CustomerLoyaltyReward[];
+  giftCards: AdminCustomerGiftCardSummary;
+  preferredLocations: LocationSummary[];
+  communicationPreferences: CustomerCommunicationPreferences;
+  notes: CustomerNote[];
+  activity: AdminCustomerActivityItem[];
 }

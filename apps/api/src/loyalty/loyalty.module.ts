@@ -45,7 +45,14 @@ import { AdminLoyaltyController } from './api/admin-loyalty.controller';
   // Exported so OrdersModule's CheckoutService can earn Beans, apply a
   // reward redemption and award bonus-promotion Beans inside the
   // order-creation transaction, and the checkout reward-eligibility
-  // endpoint can quote a cart.
-  exports: [LoyaltyService, LoyaltyRedemptionService, LoyaltyBonusService],
+  // endpoint can quote a cart. LoyaltyRewardsService is exported
+  // additionally for Milestone 8A so CrmModule can list a customer's
+  // currently-affordable rewards (read-only) in the HQ CRM view.
+  exports: [
+    LoyaltyService,
+    LoyaltyRedemptionService,
+    LoyaltyBonusService,
+    LoyaltyRewardsService,
+  ],
 })
 export class LoyaltyModule {}

@@ -228,6 +228,11 @@ model Customer {
   // (see GiftCardPurchase) keeps the purchase + its financial history intact
   // if the Customer is later removed.
   giftCardPurchases   GiftCardPurchase[]
+  // Milestone 8A — internal CRM notes attached to this customer. onDelete:
+  // Cascade (see CustomerNote): a note is meaningless without its customer,
+  // and the customer row has no FK pointing here so removing notes can
+  // never corrupt it.
+  crmNotes            CustomerNote[]
 
   @@unique([externalProvider, externalSubject])
 }
@@ -549,6 +554,11 @@ model InternalUser {
   // GiftCardTransaction) so an internal user who has moved stored value
   // cannot be hard-deleted and orphan that financial record.
   giftCardTransactionsActed GiftCardTransaction[]      @relation("GiftCardTransactionActor")
+  // Milestone 8A — internal CRM notes this HQ user authored. onDelete:
+  // Restrict (see CustomerNote) mirrors the audit-actor relation: an
+  // internal user who has authored CRM history cannot be hard-deleted and
+  // orphan that record.
+  customerNotesAuthored     CustomerNote[]             @relation("CustomerNoteAuthor")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -1668,4 +1678,27 @@ model GiftCardConfiguration {
   customAmountEnabled      Boolean  @default(true)
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
+}
+
+// --- Milestone 8A, HQ CRM foundation ---------------------------------
+// An internal, free-text note an authorized HQ user attaches to a customer
+// record. APPEND-ONLY in 8A: there is no edit or delete route. It is the
+// ONLY CRM-specific storage this slice adds — every other CRM screen field
+// is projected live from the authoritative domain (Customer / Order /
+// loyalty / gift cards / preferences). Creating a note also writes an
+// InternalAuditEvent (`crm.note_added`, targetType 'customer') in the SAME
+// transaction, so the note and its audit trail can never disagree.
+model CustomerNote {
+  id                   String   @id @default(uuid(7))
+  customerId           String
+  authorInternalUserId String
+  // Trimmed, 1..2000 characters (enforced in the service before the write).
+  body                 String
+  createdAt            DateTime @default(now())
+
+  customer           Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  authorInternalUser InternalUser @relation("CustomerNoteAuthor", fields: [authorInternalUserId], references: [id], onDelete: Restrict)
+
+  @@index([customerId, createdAt])
+  @@index([authorInternalUserId])
 }

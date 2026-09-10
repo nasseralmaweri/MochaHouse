@@ -94,6 +94,18 @@ export function adminNavItems(
     });
   }
 
+  // Customers (Milestone 8A — the HQ CRM view over authoritative customer
+  // data). Shown only if the user effectively holds `customers.view`
+  // (CORPORATE-only). The detail page's "add note" control re-checks
+  // `customers.notes.manage` separately.
+  if (can(capabilities, "customers.view")) {
+    items.push({
+      key: "customers",
+      label: "Customers",
+      href: "/admin/customers",
+    });
+  }
+
   if (can(capabilities, "locations.view")) {
     items.push({
       key: "locations",

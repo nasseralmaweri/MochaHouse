@@ -75,7 +75,12 @@ describe('capability presentation (Milestone 5E)', () => {
         'Loyalty',
         'Promotions',
         'Gift Cards',
+        'Customers',
         'Administration',
+      ]);
+      expect(groups.find((g) => g.group === 'Customers')?.items).toEqual([
+        'View the customer directory and customer details',
+        'Add internal CRM notes to a customer',
       ]);
       expect(groups.find((g) => g.group === 'Operations')?.items).toEqual([
         'View store operations',

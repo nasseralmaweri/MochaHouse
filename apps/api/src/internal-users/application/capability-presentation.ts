@@ -194,6 +194,18 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Configure gift-card purchasing options',
     definition: 'Configure gift-card purchasing options',
   },
+  'customers.view': {
+    group: 'Customers',
+    effectiveAll: 'View the customer directory and customer details',
+    effectiveScoped: 'View the customer directory and customer details',
+    definition: 'View the customer directory and customer details',
+  },
+  'customers.notes.manage': {
+    group: 'Customers',
+    effectiveAll: 'Add internal CRM notes to a customer',
+    effectiveScoped: 'Add internal CRM notes to a customer',
+    definition: 'Add internal CRM notes to a customer',
+  },
 };
 
 const GROUP_ORDER = [
@@ -204,6 +216,7 @@ const GROUP_ORDER = [
   'Loyalty',
   'Promotions',
   'Gift Cards',
+  'Customers',
   'Administration',
 ];
 
@@ -231,6 +244,8 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'giftcards.view',
   'giftcards.manage',
   'giftcards.configure',
+  'customers.view',
+  'customers.notes.manage',
   'users.view',
   'roles.view',
   'audit.view',

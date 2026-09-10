@@ -479,6 +479,37 @@ export class InternalAuditService {
     });
   }
 
+  // --- Milestone 8A, HQ CRM foundation --------------------------
+  // Adding an internal CRM note to a customer is a significant CRM
+  // administrative action, so it is durable history in addition to the
+  // CustomerNote row the SAME transaction writes. Call with the SAME `tx`
+  // that created the note. targetType is 'customer' (the polymorphic target
+  // 7A already introduced); the Admin Activity Log is scoped to
+  // 'internal_user' targets and ignores this. The note body is NOT copied
+  // into beforeData / afterData — only its id and length — so the audit
+  // trail records "a note was added" without duplicating its content.
+  async recordCustomerNoteAdded(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      customerId: string;
+      noteId: string;
+      noteLength: number;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'crm.note_added',
+        targetType: 'customer',
+        targetId: input.customerId,
+        // No beforeData — the note did not exist.
+        afterData: { noteId: input.noteId, noteLength: input.noteLength },
+        reason: 'Internal CRM note added.',
+      },
+    });
+  }
+
   async recordChecklistExceptionCleared(
     tx: Prisma.TransactionClient,
     input: ChecklistExceptionAuditInput & { previousReason: string },

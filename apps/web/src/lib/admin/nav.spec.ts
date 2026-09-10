@@ -176,6 +176,35 @@ describe("adminNavItems (permission-aware navigation)", () => {
     ]);
   });
 
+  it("shows Customers only when the user holds customers.view (Milestone 8A)", () => {
+    const withKey = adminNavItems({
+      "customers.view": { corporate: true, locationIds: [] },
+    });
+    expect(withKey.map((i) => i.key)).toEqual(["dashboard", "customers"]);
+    expect(withKey.find((i) => i.key === "customers")?.href).toBe(
+      "/admin/customers",
+    );
+
+    const notesOnly = adminNavItems({
+      "customers.notes.manage": { corporate: true, locationIds: [] },
+    });
+    expect(notesOnly.map((i) => i.key)).not.toContain("customers");
+  });
+
+  it("orders Customers immediately after Gift Cards, before Locations", () => {
+    const items = adminNavItems({
+      "giftcards.view": { corporate: true, locationIds: [] },
+      "customers.view": { corporate: true, locationIds: [] },
+      "locations.view": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual([
+      "dashboard",
+      "gift-cards",
+      "customers",
+      "locations",
+    ]);
+  });
+
   it("shows Locations when the user holds locations.view (any scope)", () => {
     const items = adminNavItems({
       "locations.view": { corporate: false, locationIds: ["loc-a"] },

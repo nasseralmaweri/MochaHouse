@@ -1,8 +1,10 @@
 import type {
   AdminAdjustMochaBeansRequest,
+  AdminCustomerListResponse,
   AdminGiftCardDetail,
   AdminGiftCardSearchResponse,
   AdjustGiftCardBalanceRequest,
+  CustomerNote,
   GiftCardConfiguration,
   GiftCardSearchRequest,
   IssueGiftCardRequest,
@@ -1563,4 +1565,107 @@ export function updateGiftCardConfigurationFromBrowser(
     "PUT",
     input,
   );
+}
+
+// --- Admin: HQ CRM (Milestone 8A) ---------------------------------
+// Browser-side reads/writes for Admin → Customers, via the generic internal
+// admin proxy. The API (`/api/v1/admin/customers*`, `customers.view` /
+// `customers.notes.manage`, CORPORATE-only) is the sole authority.
+
+export type AdminCustomersListResult =
+  | { outcome: "success"; data: AdminCustomerListResponse }
+  | { outcome: "forbidden" }
+  | { outcome: "error"; message: string };
+
+export async function listAdminCustomersFromBrowser(params: {
+  q?: string;
+  cursor?: string;
+}): Promise<AdminCustomersListResult> {
+  const search = new URLSearchParams();
+  if (params.q && params.q.trim().length > 0) {
+    search.set("q", params.q.trim());
+  }
+  if (params.cursor) {
+    search.set("cursor", params.cursor);
+  }
+  const qs = search.toString();
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/customers${qs.length > 0 ? `?${qs}` : ""}`,
+      { cache: "no-store" },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return {
+    outcome: "success",
+    data: (await response.json()) as AdminCustomerListResponse,
+  };
+}
+
+export type AddCustomerNoteResult =
+  | { outcome: "success"; notes: CustomerNote[] }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function addCustomerNoteFromBrowser(
+  customerId: string,
+  body: string,
+): Promise<AddCustomerNoteResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/customers/${encodeURIComponent(customerId)}/notes`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body }),
+      },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "Please check the note and try again.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return { outcome: "success", notes: (await response.json()) as CustomerNote[] };
 }

@@ -48,8 +48,11 @@ import { CustomerReorderService } from './application/customer-reorder.service';
     CustomerOrdersService,
     CustomerReorderService,
   ],
-  // Re-exported so the Milestone 5G platform-status read keeps reaching the
-  // payment-integration posture through OrdersModule unchanged.
-  exports: [PaymentModule],
+  // PaymentModule — re-exported so the Milestone 5G platform-status read
+  // keeps reaching the payment-integration posture through OrdersModule
+  // unchanged. CustomerOrdersService — exported (Milestone 8A) so CrmModule
+  // can project a customer's order history into the HQ CRM view; it reads
+  // the same authoritative Order table, customerId-scoped and read-only.
+  exports: [PaymentModule, CustomerOrdersService],
 })
 export class OrdersModule {}
