@@ -248,6 +248,20 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: "Change an inquiry's status and add internal notes",
     definition: "Change an inquiry's status and add internal notes",
   },
+  // Milestone 8E — CMS foundation. Both CORPORATE-only (public site
+  // content is company-wide), so the two phrasings are the same.
+  'cms.view': {
+    group: 'Content',
+    effectiveAll: 'View managed content pages, including draft content',
+    effectiveScoped: 'View managed content pages, including draft content',
+    definition: 'View managed content pages, including draft content',
+  },
+  'cms.manage': {
+    group: 'Content',
+    effectiveAll: 'Save draft content and publish a content page',
+    effectiveScoped: 'Save draft content and publish a content page',
+    definition: 'Save draft content and publish a content page',
+  },
 };
 
 const GROUP_ORDER = [
@@ -261,6 +275,7 @@ const GROUP_ORDER = [
   'Customers',
   'Careers',
   'Franchising',
+  'Content',
   'Administration',
 ];
 
@@ -296,6 +311,8 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'applicants.manage',
   'franchising.view',
   'franchising.manage',
+  'cms.view',
+  'cms.manage',
   'users.view',
   'roles.view',
   'audit.view',

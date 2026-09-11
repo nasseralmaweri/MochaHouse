@@ -1,6 +1,8 @@
 import type {
+  FranchisingPageContent,
   LocationMenuResponse,
   LocationSummary,
+  PublicCmsPageContentResponse,
   PublicJobOpeningDetail,
   PublicJobOpeningsResponse,
 } from "@mocha-house/contracts";
@@ -72,4 +74,26 @@ export async function getPublicJobOpening(
     throw new Error(`Failed to load job opening (${response.status}).`);
   }
   return response.json() as Promise<PublicJobOpeningDetail>;
+}
+
+// --- Public CMS content (Milestone 8E) -----------------------------
+// Structured content for a small, code-defined set of page keys — NOT a
+// page builder. `getPublishedFranchisingContent` NEVER throws: a missing
+// key, no row, a draft-only page, or any fetch/parse failure all resolve
+// to null so the calling page can fall back to its own hard-coded content.
+// CMS failure must never break a public page.
+
+export async function getPublishedFranchisingContent(): Promise<FranchisingPageContent | null> {
+  try {
+    const response = await fetch(`${getApiUrl()}/content/franchising`, {
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const body = (await response.json()) as PublicCmsPageContentResponse;
+    return body?.content ?? null;
+  } catch {
+    return null;
+  }
 }

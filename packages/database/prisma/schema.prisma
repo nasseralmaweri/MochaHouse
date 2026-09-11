@@ -1877,3 +1877,28 @@ model FranchiseInquiryNote {
   @@index([franchiseInquiryId, createdAt])
   @@index([authorInternalUserId])
 }
+
+// --- Milestone 8E, CMS foundation --------------------------------------
+// Structured content management for a small, code-defined set of public
+// page keys (see CMS_PAGE_KEYS in @mocha-house/contracts) — NOT a page
+// builder. `draftContent` is the Admin working copy; `publishedContent` is
+// the public snapshot, replaced wholesale only by an explicit publish
+// action (no revisions kept). `status` becomes PUBLISHED on the first
+// publish and stays PUBLISHED thereafter — there is no unpublish. No row
+// is seeded; the first PATCH (save draft) or POST .../publish creates it.
+enum CmsPageStatus {
+  DRAFT
+  PUBLISHED
+}
+
+model CmsPage {
+  id               String        @id @default(uuid(7))
+  key              String        @unique
+  title            String
+  status           CmsPageStatus @default(DRAFT)
+  draftContent     Json
+  publishedContent Json?
+  publishedAt      DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+}

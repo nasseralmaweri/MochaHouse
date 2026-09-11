@@ -812,7 +812,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "cms.view", "cms.manage"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
@@ -1351,5 +1351,69 @@ export interface AdminFranchiseInquiryActivityItem {
     summary: string;
     actorLabel: string | null;
     createdAt: string;
+}
+export type CmsPageStatus = "DRAFT" | "PUBLISHED";
+export declare const CMS_PAGE_KEYS: readonly ["franchising"];
+export type CmsPageKey = (typeof CMS_PAGE_KEYS)[number];
+export declare const CMS_TEXT_MAX_LENGTH = 200;
+export declare const CMS_BODY_MAX_LENGTH = 2000;
+export declare const CMS_BUTTON_LABEL_MAX_LENGTH = 60;
+export declare const CMS_SEO_TITLE_MAX_LENGTH = 70;
+export declare const CMS_SEO_DESCRIPTION_MAX_LENGTH = 200;
+export declare const CMS_PROCESS_STEPS_MIN = 1;
+export declare const CMS_PROCESS_STEPS_MAX = 6;
+export interface CmsSeoFields {
+    pageTitle?: string | null;
+    metaDescription?: string | null;
+}
+export interface FranchisingPageContent {
+    intro: {
+        heading: string;
+        body: string;
+    };
+    opportunity: {
+        heading: string;
+        body: string;
+    };
+    process: {
+        heading: string;
+        steps: {
+            title: string;
+            body: string;
+        }[];
+    };
+    cta: {
+        heading: string;
+        body: string;
+        buttonLabel: string;
+    };
+    seo: CmsSeoFields;
+}
+export interface PublicCmsPageContentResponse {
+    content: FranchisingPageContent;
+}
+export interface AdminCmsPageSummary {
+    key: CmsPageKey;
+    title: string;
+    status: CmsPageStatus;
+    publishedAt: string | null;
+    updatedAt: string | null;
+    hasUnpublishedChanges: boolean;
+}
+export interface AdminCmsPagesResponse {
+    pages: AdminCmsPageSummary[];
+}
+export interface AdminCmsPageDetail {
+    key: CmsPageKey;
+    title: string;
+    status: CmsPageStatus;
+    draftContent: FranchisingPageContent;
+    publishedContent: FranchisingPageContent | null;
+    publishedAt: string | null;
+    updatedAt: string | null;
+    hasUnpublishedChanges: boolean;
+}
+export interface UpdateCmsPageContentRequest {
+    content: FranchisingPageContent;
 }
 //# sourceMappingURL=index.d.ts.map

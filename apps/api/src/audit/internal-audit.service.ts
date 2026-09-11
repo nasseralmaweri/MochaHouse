@@ -698,6 +698,62 @@ export class InternalAuditService {
     });
   }
 
+  // --- Milestone 8E, CMS foundation -------------------------------
+  // Written in the SAME transaction as the change. targetType 'cms_page'
+  // is a new polymorphic target; the Admin Activity Log is scoped to
+  // 'internal_user' and ignores it. Content VALUES are never placed in
+  // beforeData / afterData / reason — a draft-save event carries only the
+  // changed field keys, a publish event only the resulting status.
+
+  async recordCmsContentUpdated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      cmsPageId: string;
+      pageKey: string;
+      changedFieldKeys: string[];
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'cms.content_updated',
+        targetType: 'cms_page',
+        targetId: input.cmsPageId,
+        afterData: {
+          pageKey: input.pageKey,
+          changedFieldKeys: input.changedFieldKeys,
+        },
+        reason: `CMS draft content updated for '${input.pageKey}'.`,
+      },
+    });
+  }
+
+  async recordCmsContentPublished(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      cmsPageId: string;
+      pageKey: string;
+      publishedAt: Date;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'cms.content_published',
+        targetType: 'cms_page',
+        targetId: input.cmsPageId,
+        afterData: {
+          pageKey: input.pageKey,
+          status: 'PUBLISHED',
+          publishedAt: input.publishedAt.toISOString(),
+        },
+        reason: `CMS content published for '${input.pageKey}'.`,
+      },
+    });
+  }
+
   async recordChecklistExceptionCleared(
     tx: Prisma.TransactionClient,
     input: ChecklistExceptionAuditInput & { previousReason: string },

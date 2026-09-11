@@ -134,6 +134,17 @@ export function adminNavItems(
     });
   }
 
+  // Content (Milestone 8E — CMS foundation). Shown only if the user
+  // effectively holds `cms.view` (CORPORATE-only). Save draft / publish
+  // controls inside re-check `cms.manage`.
+  if (can(capabilities, "cms.view")) {
+    items.push({
+      key: "content",
+      label: "Content",
+      href: "/admin/content",
+    });
+  }
+
   if (can(capabilities, "locations.view")) {
     items.push({
       key: "locations",

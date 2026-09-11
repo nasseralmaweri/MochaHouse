@@ -20,6 +20,7 @@ import { GiftCardsModule } from './gift-cards/gift-cards.module';
 import { CrmModule } from './crm/crm.module';
 import { CareersModule } from './careers/careers.module';
 import { FranchisingModule } from './franchising/franchising.module';
+import { CmsModule } from './cms/cms.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { FranchisingModule } from './franchising/franchising.module';
     CrmModule,
     CareersModule,
     FranchisingModule,
+    CmsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

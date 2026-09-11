@@ -1,5 +1,6 @@
 import type {
   AdminAdjustMochaBeansRequest,
+  AdminCmsPageDetail,
   AdminCustomerListResponse,
   AdminFranchiseInquiriesResponse,
   AdminFranchiseInquiryDetail,
@@ -9,6 +10,7 @@ import type {
   CreateJobOpeningRequest,
   FranchiseInquiryNote,
   FranchiseInquiryStatus,
+  FranchisingPageContent,
   JobApplicationNote,
   JobApplicationStatus,
   SubmitFranchiseInquiryRequest,
@@ -2226,4 +2228,79 @@ export async function submitFranchiseInquiryFromBrowser(
     };
   }
   return { outcome: "success" };
+}
+
+// --- Admin: HQ Content / CMS (Milestone 8E) -----------------------
+// Browser-side writes for Admin → Content, via the generic internal admin
+// proxy. The API (`cms.manage`, CORPORATE-only) is the sole authority.
+// Save draft only ever touches draftContent; publish is a separate,
+// explicit action.
+
+export type CmsPageMutationResult =
+  | { outcome: "success"; detail: AdminCmsPageDetail }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+async function cmsRequest(
+  pageKey: string,
+  path: string,
+  method: "PATCH" | "POST",
+  body?: unknown,
+): Promise<CmsPageMutationResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/content/${encodeURIComponent(pageKey)}${path}`,
+      {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body ?? {}),
+      },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "Please check the content and try again.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return {
+    outcome: "success",
+    detail: (await response.json()) as AdminCmsPageDetail,
+  };
+}
+
+export function saveCmsPageDraftFromBrowser(
+  pageKey: string,
+  content: FranchisingPageContent,
+): Promise<CmsPageMutationResult> {
+  return cmsRequest(pageKey, "", "PATCH", { content });
+}
+
+export function publishCmsPageFromBrowser(
+  pageKey: string,
+): Promise<CmsPageMutationResult> {
+  return cmsRequest(pageKey, "/publish", "POST");
 }

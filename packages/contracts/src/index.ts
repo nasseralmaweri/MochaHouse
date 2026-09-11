@@ -1667,6 +1667,12 @@ export const INTERNAL_PERMISSION_KEYS = [
   //                         note.
   "franchising.view",
   "franchising.manage",
+  // Milestone 8E — CMS foundation. Public site content is a company-wide
+  // concern, so both keys are CORPORATE-only.
+  //   cms.view    — read managed content pages (draft + published).
+  //   cms.manage  — save draft content and publish a page.
+  "cms.view",
+  "cms.manage",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1928,6 +1934,18 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "franchising.manage",
     description:
       "Change a franchise inquiry's status and add an internal note. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "cms.view": {
+    key: "cms.view",
+    description:
+      "View managed public content pages, including draft content. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "cms.manage": {
+    key: "cms.manage",
+    description:
+      "Save draft content and publish a managed public content page. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
@@ -2927,3 +2945,96 @@ export interface AdminFranchiseInquiryActivityItem {
   actorLabel: string | null;
   createdAt: string;
 }
+
+// --- Milestone 8E, CMS foundation --------------------------------------
+// Structured content management for a small, code-defined set of public
+// page keys — NOT a page builder. Layout/design stay owned by the Next.js
+// pages/components; the CMS only supplies structured field values. Each
+// page key has ONE fixed content shape (defined in the registry, mirrored
+// here per key) — no arbitrary fields, no HTML, no dynamic sections.
+//
+// A CmsPage row always carries a draft; `publishedContent` is a separate
+// snapshot copied over only by an explicit publish action. Before the
+// first publish, status is DRAFT and there is no public content. After the
+// first publish, status is PUBLISHED for good (no unpublish) — further
+// draft edits never affect the live `publishedContent` until the next
+// publish. `hasUnpublishedChanges` is derived (true whenever draftContent
+// differs from publishedContent, or nothing has been published yet).
+
+export type CmsPageStatus = "DRAFT" | "PUBLISHED";
+
+export const CMS_PAGE_KEYS = ["franchising"] as const;
+export type CmsPageKey = (typeof CMS_PAGE_KEYS)[number];
+
+export const CMS_TEXT_MAX_LENGTH = 200;
+export const CMS_BODY_MAX_LENGTH = 2000;
+export const CMS_BUTTON_LABEL_MAX_LENGTH = 60;
+export const CMS_SEO_TITLE_MAX_LENGTH = 70;
+export const CMS_SEO_DESCRIPTION_MAX_LENGTH = 200;
+export const CMS_PROCESS_STEPS_MIN = 1;
+export const CMS_PROCESS_STEPS_MAX = 6;
+
+export interface CmsSeoFields {
+  pageTitle?: string | null;
+  metaDescription?: string | null;
+}
+
+// The ONE 8E content shape (page key "franchising"). Every field is plain
+// text — no HTML, no arbitrary URLs (the CTA's destination stays
+// code-owned by the page component).
+export interface FranchisingPageContent {
+  intro: { heading: string; body: string };
+  opportunity: { heading: string; body: string };
+  process: {
+    heading: string;
+    // 1..6 steps (CMS_PROCESS_STEPS_MIN..CMS_PROCESS_STEPS_MAX).
+    steps: { title: string; body: string }[];
+  };
+  cta: { heading: string; body: string; buttonLabel: string };
+  seo: CmsSeoFields;
+}
+
+// GET /api/v1/content/:pageKey — no auth. Published content only; 404 for
+// an unknown key, a key with no row, or a key never published. Never
+// exposes draft content.
+export interface PublicCmsPageContentResponse {
+  content: FranchisingPageContent;
+}
+
+// One row of GET /api/v1/admin/content (cms.view).
+export interface AdminCmsPageSummary {
+  key: CmsPageKey;
+  title: string;
+  status: CmsPageStatus;
+  publishedAt: string | null;
+  updatedAt: string | null;
+  hasUnpublishedChanges: boolean;
+}
+
+export interface AdminCmsPagesResponse {
+  pages: AdminCmsPageSummary[];
+}
+
+// GET /api/v1/admin/content/:pageKey (cms.view). When no row exists yet,
+// this is synthesized from the registry default — DRAFT,
+// publishedContent null, hasUnpublishedChanges true — WITHOUT writing to
+// the database.
+export interface AdminCmsPageDetail {
+  key: CmsPageKey;
+  title: string;
+  status: CmsPageStatus;
+  draftContent: FranchisingPageContent;
+  publishedContent: FranchisingPageContent | null;
+  publishedAt: string | null;
+  updatedAt: string | null;
+  hasUnpublishedChanges: boolean;
+}
+
+// PATCH /api/v1/admin/content/:pageKey (cms.manage) — save draft. The full
+// content shape is required (not a partial patch); the row is
+// created/upserted on first save.
+export interface UpdateCmsPageContentRequest {
+  content: FranchisingPageContent;
+}
+
+// POST /api/v1/admin/content/:pageKey/publish (cms.manage). No body.

@@ -63,6 +63,9 @@ describe('internal permission catalog', () => {
         // Milestone 8D
         'franchising.view',
         'franchising.manage',
+        // Milestone 8E
+        'cms.view',
+        'cms.manage',
       ].sort(),
     );
   });
@@ -139,6 +142,10 @@ describe('internal permission catalog', () => {
     // franchising surface is CORPORATE-only (Milestone 8D).
     expect(allowedScopeTypesFor('franchising.view')).toEqual(['CORPORATE']);
     expect(allowedScopeTypesFor('franchising.manage')).toEqual(['CORPORATE']);
+    // cms.* — public site content is company-wide; the CMS surface is
+    // CORPORATE-only (Milestone 8E).
+    expect(allowedScopeTypesFor('cms.view')).toEqual(['CORPORATE']);
+    expect(allowedScopeTypesFor('cms.manage')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {
