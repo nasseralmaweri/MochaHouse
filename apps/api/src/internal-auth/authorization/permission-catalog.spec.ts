@@ -60,6 +60,9 @@ describe('internal permission catalog', () => {
         // Milestone 8C
         'applicants.view',
         'applicants.manage',
+        // Milestone 8D
+        'franchising.view',
+        'franchising.manage',
       ].sort(),
     );
   });
@@ -132,6 +135,10 @@ describe('internal permission catalog', () => {
     // applicant surface is CORPORATE-only (Milestone 8C).
     expect(allowedScopeTypesFor('applicants.view')).toEqual(['CORPORATE']);
     expect(allowedScopeTypesFor('applicants.manage')).toEqual(['CORPORATE']);
+    // franchising.* — a franchise prospect's contact details are PII; the
+    // franchising surface is CORPORATE-only (Milestone 8D).
+    expect(allowedScopeTypesFor('franchising.view')).toEqual(['CORPORATE']);
+    expect(allowedScopeTypesFor('franchising.manage')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {

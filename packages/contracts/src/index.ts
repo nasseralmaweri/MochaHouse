@@ -1659,6 +1659,14 @@ export const INTERNAL_PERMISSION_KEYS = [
   //                        internal applicant note.
   "applicants.view",
   "applicants.manage",
+  // Milestone 8D — Franchising inquiries. A franchise prospect's contact
+  // details are PII, so both keys are CORPORATE-only and a Store Manager
+  // never holds them.
+  //   franchising.view    — read franchise inquiries and their notes.
+  //   franchising.manage  — change an inquiry's status and add an internal
+  //                         note.
+  "franchising.view",
+  "franchising.manage",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1908,6 +1916,18 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "applicants.manage",
     description:
       "Change a job application's status and add an internal applicant note. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "franchising.view": {
+    key: "franchising.view",
+    description:
+      "View franchise inquiries and their internal notes. Read-only. Prospect PII, so a corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "franchising.manage": {
+    key: "franchising.manage",
+    description:
+      "Change a franchise inquiry's status and add an internal note. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
@@ -2787,6 +2807,121 @@ export interface CreateJobApplicationNoteRequest {
 // One entry of the applicant activity timeline (from InternalAuditEvent,
 // targetType 'job_application'). No answer data / PII.
 export interface AdminJobApplicationActivityItem {
+  id: string;
+  summary: string;
+  actorLabel: string | null;
+  createdAt: string;
+}
+
+// --- Milestone 8D, Franchising inquiries -----------------------------
+// A prospective franchisee's contact + interest record. One flat model, no
+// separate "prospect" identity — mirrors the 8C Applicants shape. No file
+// uploads, no financial documents; investmentRange / timeframe are free
+// text (no invented $ or time buckets).
+
+export type FranchiseInquiryStatus =
+  | "NEW"
+  | "REVIEWING"
+  | "CONTACTED"
+  | "QUALIFIED"
+  | "CLOSED";
+
+export const FRANCHISE_INQUIRY_STATUSES: readonly FranchiseInquiryStatus[] = [
+  "NEW",
+  "REVIEWING",
+  "CONTACTED",
+  "QUALIFIED",
+  "CLOSED",
+];
+
+export const FRANCHISE_INQUIRY_NAME_MAX_LENGTH = 120;
+export const FRANCHISE_INQUIRY_SHORT_MAX_LENGTH = 200;
+export const FRANCHISE_INQUIRY_MESSAGE_MAX_LENGTH = 4000;
+export const FRANCHISE_INQUIRY_NOTE_MAX_LENGTH = 2000;
+
+// POST /api/v1/franchising/inquiries — no auth. Response is only
+// { ok: true }; no id, no submitted data.
+export interface SubmitFranchiseInquiryRequest {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  city: string;
+  state: string;
+  country: string;
+  preferredMarket: string;
+  investmentRange?: string | null;
+  timeframe?: string | null;
+  businessExperience?: string | null;
+  message?: string | null;
+  consentAcknowledged: boolean;
+}
+
+export interface SubmitFranchiseInquiryResponse {
+  ok: true;
+}
+
+// One row of the Admin franchising inquiries list.
+export interface AdminFranchiseInquirySummary {
+  id: string;
+  prospectName: string;
+  email: string;
+  preferredMarket: string;
+  status: FranchiseInquiryStatus;
+  createdAt: string;
+}
+
+// GET /api/v1/admin/franchising/inquiries?status=&cursor= (franchising.view)
+// — cursor-paginated, newest first.
+export interface AdminFranchiseInquiriesResponse {
+  inquiries: AdminFranchiseInquirySummary[];
+  nextCursor: string | null;
+}
+
+// GET /api/v1/admin/franchising/inquiries/:id (franchising.view).
+export interface AdminFranchiseInquiryDetail {
+  id: string;
+  status: FranchiseInquiryStatus;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  city: string;
+  state: string;
+  country: string;
+  preferredMarket: string;
+  investmentRange: string | null;
+  timeframe: string | null;
+  businessExperience: string | null;
+  message: string | null;
+  consentAcknowledged: boolean;
+  createdAt: string;
+  updatedAt: string;
+  notes: FranchiseInquiryNote[];
+  activity: AdminFranchiseInquiryActivityItem[];
+}
+
+// POST /api/v1/admin/franchising/inquiries/:id/status (franchising.manage).
+export interface UpdateFranchiseInquiryStatusRequest {
+  status: FranchiseInquiryStatus;
+}
+
+// One internal inquiry note. Append-only in 8D.
+export interface FranchiseInquiryNote {
+  id: string;
+  body: string;
+  authorLabel: string | null;
+  createdAt: string;
+}
+
+// POST /api/v1/admin/franchising/inquiries/:id/notes (franchising.manage).
+export interface CreateFranchiseInquiryNoteRequest {
+  body: string;
+}
+
+// One entry of the inquiry activity timeline (from InternalAuditEvent,
+// targetType 'franchise_inquiry'). No answer data / PII.
+export interface AdminFranchiseInquiryActivityItem {
   id: string;
   summary: string;
   actorLabel: string | null;

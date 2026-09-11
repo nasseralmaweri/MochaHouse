@@ -1,12 +1,17 @@
 import type {
   AdminAdjustMochaBeansRequest,
   AdminCustomerListResponse,
+  AdminFranchiseInquiriesResponse,
+  AdminFranchiseInquiryDetail,
   AdminJobApplicationDetail,
   AdminJobApplicationsResponse,
   AdminJobOpening,
   CreateJobOpeningRequest,
+  FranchiseInquiryNote,
+  FranchiseInquiryStatus,
   JobApplicationNote,
   JobApplicationStatus,
+  SubmitFranchiseInquiryRequest,
   UpdateJobOpeningRequest,
   AdminGiftCardDetail,
   AdminGiftCardSearchResponse,
@@ -1978,6 +1983,224 @@ export async function submitJobApplicationFromBrowser(
   }
   if (response.status === 404) {
     return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "Please check the form and try again.",
+    };
+  }
+  if (response.status === 429) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "throttled",
+      message:
+        parsed?.message ??
+        "Too many submissions right now. Please wait a minute and try again.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return { outcome: "success" };
+}
+
+// --- Admin: HQ Franchising (Milestone 8D) -------------------------
+// Browser-side reads/writes for Admin → Franchising, via the generic
+// internal admin proxy. The API (`franchising.view` / `franchising.manage`,
+// CORPORATE-only) is the sole authority. There is no general inquiry
+// PATCH — status moves only through the dedicated `/status` action; notes
+// are append-only.
+
+export type AdminFranchiseInquiriesListResult =
+  | { outcome: "success"; data: AdminFranchiseInquiriesResponse }
+  | { outcome: "forbidden" }
+  | { outcome: "error"; message: string };
+
+export async function listAdminFranchiseInquiriesFromBrowser(params: {
+  status?: string;
+  cursor?: string;
+}): Promise<AdminFranchiseInquiriesListResult> {
+  const search = new URLSearchParams();
+  if (params.status && params.status.trim().length > 0) {
+    search.set("status", params.status.trim());
+  }
+  if (params.cursor) {
+    search.set("cursor", params.cursor);
+  }
+  const qs = search.toString();
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/franchising/inquiries${
+        qs.length > 0 ? `?${qs}` : ""
+      }`,
+      { cache: "no-store" },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return {
+    outcome: "success",
+    data: (await response.json()) as AdminFranchiseInquiriesResponse,
+  };
+}
+
+export type FranchiseInquiryStatusResult =
+  | { outcome: "success"; detail: AdminFranchiseInquiryDetail }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function updateFranchiseInquiryStatusFromBrowser(
+  inquiryId: string,
+  status: FranchiseInquiryStatus,
+): Promise<FranchiseInquiryStatusResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/franchising/inquiries/${encodeURIComponent(
+        inquiryId,
+      )}/status`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "That status isn't valid.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return {
+    outcome: "success",
+    detail: (await response.json()) as AdminFranchiseInquiryDetail,
+  };
+}
+
+export type AddFranchiseInquiryNoteResult =
+  | { outcome: "success"; notes: FranchiseInquiryNote[] }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function addFranchiseInquiryNoteFromBrowser(
+  inquiryId: string,
+  body: string,
+): Promise<AddFranchiseInquiryNoteResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/franchising/inquiries/${encodeURIComponent(
+        inquiryId,
+      )}/notes`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body }),
+      },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "Please check the note and try again.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return {
+    outcome: "success",
+    notes: (await response.json()) as FranchiseInquiryNote[],
+  };
+}
+
+// --- Public: submit a franchise inquiry (Milestone 8D) -----------
+// Anonymous, no session. Posts through a same-origin proxy route
+// (app/api/franchising/inquiry) so the API's ~5/min IP throttle applies
+// unchanged. The response is only { ok: true }.
+
+export type SubmitFranchiseInquiryResult =
+  | { outcome: "success" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "throttled"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function submitFranchiseInquiryFromBrowser(
+  input: SubmitFranchiseInquiryRequest,
+): Promise<SubmitFranchiseInquiryResult> {
+  let response: Response;
+  try {
+    response = await fetch("/api/franchising/inquiry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
   }
   if (response.status === 400) {
     const parsed = await safeJson(response);

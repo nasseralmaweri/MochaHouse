@@ -122,6 +122,18 @@ export function adminNavItems(
     });
   }
 
+  // Franchising (Milestone 8D — franchise inquiries). Shown only if the
+  // user effectively holds `franchising.view` (CORPORATE-only). A single
+  // flat area — no sub-tabs. Status/note controls re-check
+  // `franchising.manage`.
+  if (can(capabilities, "franchising.view")) {
+    items.push({
+      key: "franchising",
+      label: "Franchising",
+      href: "/admin/franchising",
+    });
+  }
+
   if (can(capabilities, "locations.view")) {
     items.push({
       key: "locations",

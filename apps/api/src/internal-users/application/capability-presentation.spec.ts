@@ -77,6 +77,7 @@ describe('capability presentation (Milestone 5E)', () => {
         'Gift Cards',
         'Customers',
         'Careers',
+        'Franchising',
         'Administration',
       ]);
       expect(groups.find((g) => g.group === 'Customers')?.items).toEqual([
@@ -88,6 +89,10 @@ describe('capability presentation (Milestone 5E)', () => {
         'Create, edit, publish, unpublish and archive job openings',
         'View job applicants, applications and internal notes',
         "Change an application's status and add internal notes",
+      ]);
+      expect(groups.find((g) => g.group === 'Franchising')?.items).toEqual([
+        'View franchise inquiries and internal notes',
+        "Change an inquiry's status and add internal notes",
       ]);
       expect(groups.find((g) => g.group === 'Operations')?.items).toEqual([
         'View store operations',

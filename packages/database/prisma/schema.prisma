@@ -566,6 +566,9 @@ model InternalUser {
   // Milestone 8C — internal applicant notes this HQ user authored. Same
   // onDelete: Restrict integrity reason.
   jobApplicationNotesAuthored JobApplicationNote[]     @relation("JobApplicationNoteAuthor")
+  // Milestone 8D — internal franchise-inquiry notes this HQ user authored.
+  // Same onDelete: Restrict integrity reason.
+  franchiseInquiryNotesAuthored FranchiseInquiryNote[] @relation("FranchiseInquiryNoteAuthor")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -1814,5 +1817,63 @@ model CustomerNote {
   authorInternalUser InternalUser @relation("CustomerNoteAuthor", fields: [authorInternalUserId], references: [id], onDelete: Restrict)
 
   @@index([customerId, createdAt])
+  @@index([authorInternalUserId])
+}
+
+// --- Milestone 8D, Franchising inquiries ------------------------------
+// A prospective franchisee's contact + interest record, captured from the
+// public /franchising/inquiry form. One flat model — no separate
+// "prospect" identity, mirroring the 8C Applicants shape. No file
+// references; investmentRange / timeframe are free text (no invented $ or
+// time buckets). consentAcknowledged records the visitor's own consent
+// checkbox at submission time.
+enum FranchiseInquiryStatus {
+  NEW
+  REVIEWING
+  CONTACTED
+  QUALIFIED
+  CLOSED
+}
+
+model FranchiseInquiry {
+  id                  String                 @id @default(uuid(7))
+  firstName           String
+  lastName            String
+  email               String
+  phone               String
+  city                String
+  state               String
+  country             String
+  preferredMarket     String
+  investmentRange     String?
+  timeframe           String?
+  businessExperience  String?
+  message             String?
+  consentAcknowledged Boolean
+  status              FranchiseInquiryStatus @default(NEW)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  notes FranchiseInquiryNote[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+// An internal note an authorized HQ user attaches to a franchise inquiry.
+// APPEND-ONLY in 8D: no edit, no delete. Adding one also writes an
+// InternalAuditEvent (`franchising.note_added`, targetType
+// 'franchise_inquiry') in the SAME transaction — only the note id and
+// length, never the body.
+model FranchiseInquiryNote {
+  id                   String           @id @default(uuid(7))
+  franchiseInquiryId   String
+  franchiseInquiry     FranchiseInquiry @relation(fields: [franchiseInquiryId], references: [id], onDelete: Cascade)
+  authorInternalUserId String
+  authorInternalUser   InternalUser     @relation("FranchiseInquiryNoteAuthor", fields: [authorInternalUserId], references: [id], onDelete: Restrict)
+  body                 String
+  createdAt            DateTime         @default(now())
+
+  @@index([franchiseInquiryId, createdAt])
   @@index([authorInternalUserId])
 }

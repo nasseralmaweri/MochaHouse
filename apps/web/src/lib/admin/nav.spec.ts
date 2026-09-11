@@ -235,6 +235,35 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(manageOnly.map((i) => i.key)).not.toContain("careers");
   });
 
+  it("shows Franchising only when the user holds franchising.view (Milestone 8D)", () => {
+    const withView = adminNavItems({
+      "franchising.view": { corporate: true, locationIds: [] },
+    });
+    expect(withView.map((i) => i.key)).toEqual(["dashboard", "franchising"]);
+    expect(withView.find((i) => i.key === "franchising")?.href).toBe(
+      "/admin/franchising",
+    );
+
+    const manageOnly = adminNavItems({
+      "franchising.manage": { corporate: true, locationIds: [] },
+    });
+    expect(manageOnly.map((i) => i.key)).not.toContain("franchising");
+  });
+
+  it("orders Franchising immediately after Careers, before Locations", () => {
+    const items = adminNavItems({
+      "careers.view": { corporate: true, locationIds: [] },
+      "franchising.view": { corporate: true, locationIds: [] },
+      "locations.view": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual([
+      "dashboard",
+      "careers",
+      "franchising",
+      "locations",
+    ]);
+  });
+
   it("orders Careers immediately after Customers, before Locations", () => {
     const items = adminNavItems({
       "customers.view": { corporate: true, locationIds: [] },

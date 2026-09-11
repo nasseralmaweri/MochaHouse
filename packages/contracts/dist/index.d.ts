@@ -812,7 +812,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
@@ -1272,6 +1272,81 @@ export interface CreateJobApplicationNoteRequest {
     body: string;
 }
 export interface AdminJobApplicationActivityItem {
+    id: string;
+    summary: string;
+    actorLabel: string | null;
+    createdAt: string;
+}
+export type FranchiseInquiryStatus = "NEW" | "REVIEWING" | "CONTACTED" | "QUALIFIED" | "CLOSED";
+export declare const FRANCHISE_INQUIRY_STATUSES: readonly FranchiseInquiryStatus[];
+export declare const FRANCHISE_INQUIRY_NAME_MAX_LENGTH = 120;
+export declare const FRANCHISE_INQUIRY_SHORT_MAX_LENGTH = 200;
+export declare const FRANCHISE_INQUIRY_MESSAGE_MAX_LENGTH = 4000;
+export declare const FRANCHISE_INQUIRY_NOTE_MAX_LENGTH = 2000;
+export interface SubmitFranchiseInquiryRequest {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    city: string;
+    state: string;
+    country: string;
+    preferredMarket: string;
+    investmentRange?: string | null;
+    timeframe?: string | null;
+    businessExperience?: string | null;
+    message?: string | null;
+    consentAcknowledged: boolean;
+}
+export interface SubmitFranchiseInquiryResponse {
+    ok: true;
+}
+export interface AdminFranchiseInquirySummary {
+    id: string;
+    prospectName: string;
+    email: string;
+    preferredMarket: string;
+    status: FranchiseInquiryStatus;
+    createdAt: string;
+}
+export interface AdminFranchiseInquiriesResponse {
+    inquiries: AdminFranchiseInquirySummary[];
+    nextCursor: string | null;
+}
+export interface AdminFranchiseInquiryDetail {
+    id: string;
+    status: FranchiseInquiryStatus;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    city: string;
+    state: string;
+    country: string;
+    preferredMarket: string;
+    investmentRange: string | null;
+    timeframe: string | null;
+    businessExperience: string | null;
+    message: string | null;
+    consentAcknowledged: boolean;
+    createdAt: string;
+    updatedAt: string;
+    notes: FranchiseInquiryNote[];
+    activity: AdminFranchiseInquiryActivityItem[];
+}
+export interface UpdateFranchiseInquiryStatusRequest {
+    status: FranchiseInquiryStatus;
+}
+export interface FranchiseInquiryNote {
+    id: string;
+    body: string;
+    authorLabel: string | null;
+    createdAt: string;
+}
+export interface CreateFranchiseInquiryNoteRequest {
+    body: string;
+}
+export interface AdminFranchiseInquiryActivityItem {
     id: string;
     summary: string;
     actorLabel: string | null;

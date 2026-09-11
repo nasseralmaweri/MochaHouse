@@ -233,6 +233,21 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: "Change an application's status and add internal notes",
     definition: "Change an application's status and add internal notes",
   },
+  // Milestone 8D — Franchising inquiries. Both CORPORATE-only (prospect PII
+  // must never reach a location-scoped role), so the two phrasings are the
+  // same.
+  'franchising.view': {
+    group: 'Franchising',
+    effectiveAll: 'View franchise inquiries and internal notes',
+    effectiveScoped: 'View franchise inquiries and internal notes',
+    definition: 'View franchise inquiries and internal notes',
+  },
+  'franchising.manage': {
+    group: 'Franchising',
+    effectiveAll: "Change an inquiry's status and add internal notes",
+    effectiveScoped: "Change an inquiry's status and add internal notes",
+    definition: "Change an inquiry's status and add internal notes",
+  },
 };
 
 const GROUP_ORDER = [
@@ -245,6 +260,7 @@ const GROUP_ORDER = [
   'Gift Cards',
   'Customers',
   'Careers',
+  'Franchising',
   'Administration',
 ];
 
@@ -278,6 +294,8 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'careers.manage',
   'applicants.view',
   'applicants.manage',
+  'franchising.view',
+  'franchising.manage',
   'users.view',
   'roles.view',
   'audit.view',

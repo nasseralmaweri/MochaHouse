@@ -646,6 +646,58 @@ export class InternalAuditService {
     });
   }
 
+  // --- Milestone 8D, Franchising inquiries -----------------------
+  // Written in the SAME transaction as the change. targetType
+  // 'franchise_inquiry' is a new polymorphic target; the Admin Activity Log
+  // is scoped to 'internal_user' and ignores it. Prospect contact details /
+  // answers are NEVER placed in beforeData / afterData / reason — a status
+  // event carries only the status, a note event only the note id + length.
+  // The public inquiry submission itself is not audited.
+
+  async recordFranchiseInquiryStatusChanged(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      franchiseInquiryId: string;
+      before: string;
+      after: string;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'franchising.inquiry_status_changed',
+        targetType: 'franchise_inquiry',
+        targetId: input.franchiseInquiryId,
+        beforeData: { status: input.before },
+        afterData: { status: input.after },
+        reason: `Franchise inquiry status changed from ${input.before} to ${input.after}.`,
+      },
+    });
+  }
+
+  async recordFranchiseInquiryNoteAdded(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      franchiseInquiryId: string;
+      noteId: string;
+      noteLength: number;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'franchising.note_added',
+        targetType: 'franchise_inquiry',
+        targetId: input.franchiseInquiryId,
+        // No beforeData — the note did not exist.
+        afterData: { noteId: input.noteId, noteLength: input.noteLength },
+        reason: 'Internal franchise inquiry note added.',
+      },
+    });
+  }
+
   async recordChecklistExceptionCleared(
     tx: Prisma.TransactionClient,
     input: ChecklistExceptionAuditInput & { previousReason: string },
