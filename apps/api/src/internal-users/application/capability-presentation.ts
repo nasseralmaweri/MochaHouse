@@ -262,6 +262,21 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Save draft content and publish a content page',
     definition: 'Save draft content and publish a content page',
   },
+  // Milestone 8F — Media Library. Both CORPORATE-only (shared, company-wide
+  // assets), so the two phrasings are the same. Grouped with Content since
+  // media exists to back CMS pages.
+  'media.view': {
+    group: 'Content',
+    effectiveAll: 'Browse the media library',
+    effectiveScoped: 'Browse the media library',
+    definition: 'Browse the media library',
+  },
+  'media.manage': {
+    group: 'Content',
+    effectiveAll: 'Upload and deactivate media library images',
+    effectiveScoped: 'Upload and deactivate media library images',
+    definition: 'Upload and deactivate media library images',
+  },
 };
 
 const GROUP_ORDER = [
@@ -313,6 +328,8 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'franchising.manage',
   'cms.view',
   'cms.manage',
+  'media.view',
+  'media.manage',
   'users.view',
   'roles.view',
   'audit.view',

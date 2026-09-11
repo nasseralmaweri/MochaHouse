@@ -145,6 +145,17 @@ export function adminNavItems(
     });
   }
 
+  // Media (Milestone 8F — the media library backing CMS images). Shown
+  // only if the user effectively holds `media.view` (CORPORATE-only).
+  // Upload / deactivate controls inside re-check `media.manage`.
+  if (can(capabilities, "media.view")) {
+    items.push({
+      key: "media",
+      label: "Media",
+      href: "/admin/media",
+    });
+  }
+
   if (can(capabilities, "locations.view")) {
     items.push({
       key: "locations",

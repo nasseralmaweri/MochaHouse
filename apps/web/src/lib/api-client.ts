@@ -2,6 +2,8 @@ import type {
   AdminAdjustMochaBeansRequest,
   AdminCmsPageDetail,
   AdminCustomerListResponse,
+  AdminMediaAsset,
+  AdminMediaAssetsResponse,
   AdminFranchiseInquiriesResponse,
   AdminFranchiseInquiryDetail,
   AdminJobApplicationDetail,
@@ -10,7 +12,7 @@ import type {
   CreateJobOpeningRequest,
   FranchiseInquiryNote,
   FranchiseInquiryStatus,
-  FranchisingPageContent,
+  CmsPageContent,
   JobApplicationNote,
   JobApplicationStatus,
   SubmitFranchiseInquiryRequest,
@@ -2294,7 +2296,7 @@ async function cmsRequest(
 
 export function saveCmsPageDraftFromBrowser(
   pageKey: string,
-  content: FranchisingPageContent,
+  content: CmsPageContent,
 ): Promise<CmsPageMutationResult> {
   return cmsRequest(pageKey, "", "PATCH", { content });
 }
@@ -2303,4 +2305,148 @@ export function publishCmsPageFromBrowser(
   pageKey: string,
 ): Promise<CmsPageMutationResult> {
   return cmsRequest(pageKey, "/publish", "POST");
+}
+
+// --- Admin: Media Library (Milestone 8F) --------------------------
+// Browser-side reads/writes for Admin → Media, via the generic internal
+// admin proxy for list/deactivate. Upload goes through a DEDICATED proxy
+// route (app/api/internal/admin/media/route.ts) instead of the generic
+// JSON proxy — the generic proxy reads the body as text, which would
+// corrupt binary multipart image bytes. The API (`media.view` /
+// `media.manage`, CORPORATE-only) is the sole authority.
+
+export type AdminMediaAssetsListResult =
+  | { outcome: "success"; data: AdminMediaAssetsResponse }
+  | { outcome: "forbidden" }
+  | { outcome: "error"; message: string };
+
+export async function listAdminMediaAssetsFromBrowser(params: {
+  cursor?: string;
+}): Promise<AdminMediaAssetsListResult> {
+  const search = new URLSearchParams();
+  if (params.cursor) {
+    search.set("cursor", params.cursor);
+  }
+  const qs = search.toString();
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/media${qs.length > 0 ? `?${qs}` : ""}`,
+      { cache: "no-store" },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return {
+    outcome: "success",
+    data: (await response.json()) as AdminMediaAssetsResponse,
+  };
+}
+
+export type UploadMediaAssetResult =
+  | { outcome: "success"; asset: AdminMediaAsset }
+  | { outcome: "forbidden" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function uploadMediaAssetFromBrowser(
+  file: File,
+): Promise<UploadMediaAssetResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  let response: Response;
+  try {
+    response = await fetch("/api/internal/admin/media", {
+      method: "POST",
+      body: formData,
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "That image couldn't be uploaded.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  const body = (await response.json()) as { asset: AdminMediaAsset };
+  return { outcome: "success", asset: body.asset };
+}
+
+export type DeactivateMediaAssetResult =
+  | { outcome: "success"; asset: AdminMediaAsset }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "conflict"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function deactivateMediaAssetFromBrowser(
+  mediaAssetId: string,
+): Promise<DeactivateMediaAssetResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/media/${encodeURIComponent(mediaAssetId)}/deactivate`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 409) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "conflict",
+      message: parsed?.message ?? "That image is currently in use and can't be removed.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  const body = (await response.json()) as { asset: AdminMediaAsset };
+  return { outcome: "success", asset: body.asset };
 }

@@ -1673,6 +1673,12 @@ export const INTERNAL_PERMISSION_KEYS = [
   //   cms.manage  — save draft content and publish a page.
   "cms.view",
   "cms.manage",
+  // Milestone 8F — Media Library. Uploaded images are shared, company-wide
+  // assets, so both keys are CORPORATE-only.
+  //   media.view    — browse the media library.
+  //   media.manage  — upload a new asset and deactivate an unused one.
+  "media.view",
+  "media.manage",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1946,6 +1952,17 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "cms.manage",
     description:
       "Save draft content and publish a managed public content page. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "media.view": {
+    key: "media.view",
+    description: "Browse the media library. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "media.manage": {
+    key: "media.manage",
+    description:
+      "Upload a new media asset and deactivate an unused one. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
@@ -2963,7 +2980,7 @@ export interface AdminFranchiseInquiryActivityItem {
 
 export type CmsPageStatus = "DRAFT" | "PUBLISHED";
 
-export const CMS_PAGE_KEYS = ["franchising"] as const;
+export const CMS_PAGE_KEYS = ["franchising", "home"] as const;
 export type CmsPageKey = (typeof CMS_PAGE_KEYS)[number];
 
 export const CMS_TEXT_MAX_LENGTH = 200;
@@ -2973,6 +2990,8 @@ export const CMS_SEO_TITLE_MAX_LENGTH = 70;
 export const CMS_SEO_DESCRIPTION_MAX_LENGTH = 200;
 export const CMS_PROCESS_STEPS_MIN = 1;
 export const CMS_PROCESS_STEPS_MAX = 6;
+// Milestone 8F — Home's Featured Products strip.
+export const CMS_FEATURED_PRODUCTS_MAX = 8;
 
 export interface CmsSeoFields {
   pageTitle?: string | null;
@@ -2994,11 +3013,63 @@ export interface FranchisingPageContent {
   seo: CmsSeoFields;
 }
 
+// Milestone 8F — the Home page content shape (page key "home"). The hero's
+// CTA destination stays code-owned (no URL field, same rule as
+// Franchising's CTA). `backgroundImageId` references a MediaAsset by id —
+// resolved to a URL server-side, never stored as a URL here.
+// `featuredProducts.productIds` references authoritative catalog Product
+// ids ONLY — no name / price / description / availability is ever
+// duplicated into CMS content.
+export interface HomePageContent {
+  hero: {
+    headline: string;
+    supportingText: string;
+    buttonLabel: string;
+    backgroundImageId: string | null;
+  };
+  featuredProducts: {
+    heading: string;
+    // Ordered, 0..CMS_FEATURED_PRODUCTS_MAX, no duplicates.
+    productIds: string[];
+  };
+  seo: CmsSeoFields;
+}
+
+// The content shape varies by page key — this union is narrowed by the
+// caller using the known `key`.
+export type CmsPageContent = FranchisingPageContent | HomePageContent;
+
 // GET /api/v1/content/:pageKey — no auth. Published content only; 404 for
 // an unknown key, a key with no row, or a key never published. Never
 // exposes draft content.
 export interface PublicCmsPageContentResponse {
+  content: CmsPageContent;
+}
+
+// GET /api/v1/content/franchising specifically.
+export interface PublicFranchisingPageContentResponse {
   content: FranchisingPageContent;
+}
+
+// GET /api/v1/content/home specifically. `hero.backgroundImageUrl` and each
+// featured product are resolved server-side — the public response never
+// carries a bare `backgroundImageId` or product id needing a second fetch.
+export interface PublicHomePageContent {
+  hero: {
+    headline: string;
+    supportingText: string;
+    buttonLabel: string;
+    backgroundImageUrl: string | null;
+  };
+  featuredProducts: {
+    heading: string;
+    products: ProductSummary[];
+  };
+  seo: CmsSeoFields;
+}
+
+export interface PublicHomePageContentResponse {
+  content: PublicHomePageContent;
 }
 
 // One row of GET /api/v1/admin/content (cms.view).
@@ -3023,8 +3094,8 @@ export interface AdminCmsPageDetail {
   key: CmsPageKey;
   title: string;
   status: CmsPageStatus;
-  draftContent: FranchisingPageContent;
-  publishedContent: FranchisingPageContent | null;
+  draftContent: CmsPageContent;
+  publishedContent: CmsPageContent | null;
   publishedAt: string | null;
   updatedAt: string | null;
   hasUnpublishedChanges: boolean;
@@ -3034,7 +3105,55 @@ export interface AdminCmsPageDetail {
 // content shape is required (not a partial patch); the row is
 // created/upserted on first save.
 export interface UpdateCmsPageContentRequest {
-  content: FranchisingPageContent;
+  content: CmsPageContent;
 }
 
 // POST /api/v1/admin/content/:pageKey/publish (cms.manage). No body.
+
+// --- Milestone 8F, Media Library ---------------------------------------
+// A minimal, HQ-only image library backing CMS content (currently Home's
+// hero background). No folders, tags, cropping, or transformations — a
+// flat, append-mostly list of uploaded images. Deletion is soft
+// (`isActive`) and the API blocks deactivating an asset that is still
+// referenced by known CMS content (see 409 behavior on the deactivate
+// route) — the S3 object itself is never removed in 8F.
+
+export const MEDIA_ALLOWED_CONTENT_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const;
+export type MediaContentType = (typeof MEDIA_ALLOWED_CONTENT_TYPES)[number];
+
+export const MEDIA_MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+
+// One row of GET /api/v1/admin/media (media.view). `publicUrl` is resolved
+// server-side from the configured MediaStorage — the object key itself is
+// not exposed.
+export interface AdminMediaAsset {
+  id: string;
+  fileName: string;
+  contentType: string;
+  fileSizeBytes: number;
+  publicUrl: string;
+  uploadedByLabel: string | null;
+  createdAt: string;
+}
+
+export interface AdminMediaAssetsResponse {
+  assets: AdminMediaAsset[];
+  nextCursor: string | null;
+}
+
+// POST /api/v1/admin/media (media.manage) — multipart/form-data, field
+// "file". No JSON request type; the response is the created asset.
+export interface UploadMediaAssetResponse {
+  asset: AdminMediaAsset;
+}
+
+// POST /api/v1/admin/media/:mediaAssetId/deactivate (media.manage). 409
+// (not 200) when the asset is still referenced by known CMS content
+// (draft or published) — the deactivation is refused, not applied.
+export interface DeactivateMediaAssetResponse {
+  asset: AdminMediaAsset;
+}

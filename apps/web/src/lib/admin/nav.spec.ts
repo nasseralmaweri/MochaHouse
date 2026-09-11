@@ -279,18 +279,33 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(manageOnly.map((i) => i.key)).not.toContain("content");
   });
 
-  it("orders Content immediately after Franchising, before Locations", () => {
+  it("orders Content immediately after Franchising, before Media and Locations", () => {
     const items = adminNavItems({
       "franchising.view": { corporate: true, locationIds: [] },
       "cms.view": { corporate: true, locationIds: [] },
+      "media.view": { corporate: true, locationIds: [] },
       "locations.view": { corporate: true, locationIds: [] },
     });
     expect(items.map((i) => i.key)).toEqual([
       "dashboard",
       "franchising",
       "content",
+      "media",
       "locations",
     ]);
+  });
+
+  it("shows Media only when the user holds media.view (Milestone 8F)", () => {
+    const withView = adminNavItems({
+      "media.view": { corporate: true, locationIds: [] },
+    });
+    expect(withView.map((i) => i.key)).toEqual(["dashboard", "media"]);
+    expect(withView.find((i) => i.key === "media")?.href).toBe("/admin/media");
+
+    const manageOnly = adminNavItems({
+      "media.manage": { corporate: true, locationIds: [] },
+    });
+    expect(manageOnly.map((i) => i.key)).not.toContain("media");
   });
 
   it("orders Careers immediately after Customers, before Locations", () => {

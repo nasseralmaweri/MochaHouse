@@ -569,6 +569,9 @@ model InternalUser {
   // Milestone 8D — internal franchise-inquiry notes this HQ user authored.
   // Same onDelete: Restrict integrity reason.
   franchiseInquiryNotesAuthored FranchiseInquiryNote[] @relation("FranchiseInquiryNoteAuthor")
+  // Milestone 8F — media assets this HQ user uploaded. Same onDelete:
+  // Restrict integrity reason.
+  mediaAssetsUploaded MediaAsset[] @relation("MediaAssetUploader")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -1901,4 +1904,26 @@ model CmsPage {
   publishedAt      DateTime?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
+}
+
+// --- Milestone 8F, Media Library --------------------------------------
+// A minimal HQ image library backing CMS content. `objectKey` is the
+// storage-provider key (S3 or the local/test MediaStorage stub) — the
+// public URL is resolved from configuration, never stored here. Deletion
+// is soft (`isActive`); the API refuses to deactivate an asset still
+// referenced by known CMS content, and the underlying object is never
+// removed from storage in 8F.
+model MediaAsset {
+  id                       String       @id @default(uuid(7))
+  objectKey                String       @unique
+  fileName                 String
+  contentType              String
+  fileSizeBytes            Int
+  isActive                 Boolean      @default(true)
+  uploadedByInternalUserId String
+  uploadedByInternalUser   InternalUser @relation("MediaAssetUploader", fields: [uploadedByInternalUserId], references: [id], onDelete: Restrict)
+  createdAt                DateTime     @default(now())
+
+  @@index([isActive, createdAt])
+  @@index([uploadedByInternalUserId])
 }

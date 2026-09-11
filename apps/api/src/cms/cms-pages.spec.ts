@@ -221,11 +221,12 @@ describe('CMS / Content pages (integration)', () => {
 
   // --- registry / read ------------------------------------
 
-  it('lists only the approved registry key; unknown key -> 404; GET never creates a row', async () => {
+  it('lists exactly the approved registry keys; unknown key -> 404; GET never creates a row', async () => {
     const list = (
       await adminReq('get', '', `viewer-${suffix}`).expect(200)
     ).body as AdminCmsPagesResponse;
-    expect(list.pages.map((p) => p.key)).toEqual(['franchising']);
+    // Registry order — franchising (8E) then home (8F).
+    expect(list.pages.map((p) => p.key)).toEqual(['franchising', 'home']);
     expect(list.pages[0]).toMatchObject({
       status: 'DRAFT',
       publishedAt: null,

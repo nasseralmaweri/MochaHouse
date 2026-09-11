@@ -754,6 +754,55 @@ export class InternalAuditService {
     });
   }
 
+  // --- Milestone 8F, Media Library --------------------------------
+  // Written in the SAME transaction as the change. targetType 'media_asset'
+  // is a new polymorphic target; the Admin Activity Log is scoped to
+  // 'internal_user' and ignores it. No file bytes, storage credentials, or
+  // object payload are ever placed in the audit — only compact metadata.
+
+  async recordMediaAssetUploaded(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      mediaAssetId: string;
+      fileName: string;
+      contentType: string;
+      fileSizeBytes: number;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'media.asset_uploaded',
+        targetType: 'media_asset',
+        targetId: input.mediaAssetId,
+        afterData: {
+          mediaAssetId: input.mediaAssetId,
+          fileName: input.fileName,
+          contentType: input.contentType,
+          fileSizeBytes: input.fileSizeBytes,
+        },
+        reason: `Media asset uploaded: '${input.fileName}'.`,
+      },
+    });
+  }
+
+  async recordMediaAssetDeactivated(
+    tx: Prisma.TransactionClient,
+    input: { actorInternalUserId: string; mediaAssetId: string },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'media.asset_deactivated',
+        targetType: 'media_asset',
+        targetId: input.mediaAssetId,
+        afterData: { mediaAssetId: input.mediaAssetId },
+        reason: 'Media asset deactivated.',
+      },
+    });
+  }
+
   async recordChecklistExceptionCleared(
     tx: Prisma.TransactionClient,
     input: ChecklistExceptionAuditInput & { previousReason: string },

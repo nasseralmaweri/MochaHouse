@@ -98,6 +98,8 @@ describe('capability presentation (Milestone 5E)', () => {
       expect(groups.find((g) => g.group === 'Content')?.items).toEqual([
         'View managed content pages, including draft content',
         'Save draft content and publish a content page',
+        'Browse the media library',
+        'Upload and deactivate media library images',
       ]);
       expect(groups.find((g) => g.group === 'Operations')?.items).toEqual([
         'View store operations',

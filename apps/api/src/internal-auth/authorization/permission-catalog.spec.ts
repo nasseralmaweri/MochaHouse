@@ -66,6 +66,9 @@ describe('internal permission catalog', () => {
         // Milestone 8E
         'cms.view',
         'cms.manage',
+        // Milestone 8F
+        'media.view',
+        'media.manage',
       ].sort(),
     );
   });
@@ -146,6 +149,10 @@ describe('internal permission catalog', () => {
     // CORPORATE-only (Milestone 8E).
     expect(allowedScopeTypesFor('cms.view')).toEqual(['CORPORATE']);
     expect(allowedScopeTypesFor('cms.manage')).toEqual(['CORPORATE']);
+    // media.* — uploaded images are shared, company-wide assets; the media
+    // library is CORPORATE-only (Milestone 8F).
+    expect(allowedScopeTypesFor('media.view')).toEqual(['CORPORATE']);
+    expect(allowedScopeTypesFor('media.manage')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {

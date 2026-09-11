@@ -3,8 +3,8 @@ import type {
   AdminCmsPageDetail,
   AdminCmsPageSummary,
   AdminCmsPagesResponse,
+  CmsPageContent,
   CmsPageKey,
-  FranchisingPageContent,
 } from '@mocha-house/contracts';
 import { CMS_PAGE_KEYS } from '@mocha-house/contracts';
 import { Prisma } from '@mocha-house/database';
@@ -66,12 +66,15 @@ export class CmsPagesAdminService {
     authorization.assertCorporate('cms.manage');
     const entry = this.entryOrThrow(rawKey);
     const content = entry.validate(rawContent);
+    if (entry.validateReferences) {
+      await entry.validateReferences(content, this.prisma);
+    }
 
     const existing = await this.prisma.cmsPage.findUnique({
       where: { key: entry.key },
     });
     const previousDraft = existing
-      ? (existing.draftContent as unknown as FranchisingPageContent)
+      ? (existing.draftContent as unknown as CmsPageContent)
       : entry.defaultContent;
     const changedFieldKeys = entry.changedFieldKeys(previousDraft, content);
 
@@ -114,10 +117,15 @@ export class CmsPagesAdminService {
       where: { key: entry.key },
     });
     // Re-validate defensively — the stored draft was already validated on
-    // save, but this guards against any out-of-band data.
+    // save, but this guards against any out-of-band data (and catches a
+    // reference that became invalid, e.g. a media asset deactivated, or a
+    // product deactivated, since the draft was last saved).
     const draft = entry.validate(
       existing ? existing.draftContent : entry.defaultContent,
     );
+    if (entry.validateReferences) {
+      await entry.validateReferences(draft, this.prisma);
+    }
     const publishedAt = new Date();
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -201,9 +209,9 @@ export class CmsPagesAdminService {
       key: entry.key,
       title: entry.title,
       status: row.status,
-      draftContent: row.draftContent as unknown as FranchisingPageContent,
+      draftContent: row.draftContent as unknown as CmsPageContent,
       publishedContent:
-        (row.publishedContent as unknown as FranchisingPageContent | null) ?? null,
+        (row.publishedContent as unknown as CmsPageContent | null) ?? null,
       publishedAt: row.publishedAt?.toISOString() ?? null,
       updatedAt: row.updatedAt.toISOString(),
       hasUnpublishedChanges: this.hasUnpublishedChanges(row),

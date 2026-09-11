@@ -812,7 +812,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "cms.view", "cms.manage"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "cms.view", "cms.manage", "media.view", "media.manage"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
@@ -1353,7 +1353,7 @@ export interface AdminFranchiseInquiryActivityItem {
     createdAt: string;
 }
 export type CmsPageStatus = "DRAFT" | "PUBLISHED";
-export declare const CMS_PAGE_KEYS: readonly ["franchising"];
+export declare const CMS_PAGE_KEYS: readonly ["franchising", "home"];
 export type CmsPageKey = (typeof CMS_PAGE_KEYS)[number];
 export declare const CMS_TEXT_MAX_LENGTH = 200;
 export declare const CMS_BODY_MAX_LENGTH = 2000;
@@ -1362,6 +1362,7 @@ export declare const CMS_SEO_TITLE_MAX_LENGTH = 70;
 export declare const CMS_SEO_DESCRIPTION_MAX_LENGTH = 200;
 export declare const CMS_PROCESS_STEPS_MIN = 1;
 export declare const CMS_PROCESS_STEPS_MAX = 6;
+export declare const CMS_FEATURED_PRODUCTS_MAX = 8;
 export interface CmsSeoFields {
     pageTitle?: string | null;
     metaDescription?: string | null;
@@ -1389,8 +1390,41 @@ export interface FranchisingPageContent {
     };
     seo: CmsSeoFields;
 }
+export interface HomePageContent {
+    hero: {
+        headline: string;
+        supportingText: string;
+        buttonLabel: string;
+        backgroundImageId: string | null;
+    };
+    featuredProducts: {
+        heading: string;
+        productIds: string[];
+    };
+    seo: CmsSeoFields;
+}
+export type CmsPageContent = FranchisingPageContent | HomePageContent;
 export interface PublicCmsPageContentResponse {
+    content: CmsPageContent;
+}
+export interface PublicFranchisingPageContentResponse {
     content: FranchisingPageContent;
+}
+export interface PublicHomePageContent {
+    hero: {
+        headline: string;
+        supportingText: string;
+        buttonLabel: string;
+        backgroundImageUrl: string | null;
+    };
+    featuredProducts: {
+        heading: string;
+        products: ProductSummary[];
+    };
+    seo: CmsSeoFields;
+}
+export interface PublicHomePageContentResponse {
+    content: PublicHomePageContent;
 }
 export interface AdminCmsPageSummary {
     key: CmsPageKey;
@@ -1407,13 +1441,35 @@ export interface AdminCmsPageDetail {
     key: CmsPageKey;
     title: string;
     status: CmsPageStatus;
-    draftContent: FranchisingPageContent;
-    publishedContent: FranchisingPageContent | null;
+    draftContent: CmsPageContent;
+    publishedContent: CmsPageContent | null;
     publishedAt: string | null;
     updatedAt: string | null;
     hasUnpublishedChanges: boolean;
 }
 export interface UpdateCmsPageContentRequest {
-    content: FranchisingPageContent;
+    content: CmsPageContent;
+}
+export declare const MEDIA_ALLOWED_CONTENT_TYPES: readonly ["image/jpeg", "image/png", "image/webp"];
+export type MediaContentType = (typeof MEDIA_ALLOWED_CONTENT_TYPES)[number];
+export declare const MEDIA_MAX_FILE_SIZE_BYTES: number;
+export interface AdminMediaAsset {
+    id: string;
+    fileName: string;
+    contentType: string;
+    fileSizeBytes: number;
+    publicUrl: string;
+    uploadedByLabel: string | null;
+    createdAt: string;
+}
+export interface AdminMediaAssetsResponse {
+    assets: AdminMediaAsset[];
+    nextCursor: string | null;
+}
+export interface UploadMediaAssetResponse {
+    asset: AdminMediaAsset;
+}
+export interface DeactivateMediaAssetResponse {
+    asset: AdminMediaAsset;
 }
 //# sourceMappingURL=index.d.ts.map

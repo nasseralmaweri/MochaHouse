@@ -42,7 +42,7 @@ export function FranchisingContentEditor({
   const router = useRouter();
   const [detail, setDetail] = useState(initial);
   const [content, setContent] = useState<FranchisingPageContent>(
-    initial.draftContent,
+    initial.draftContent as FranchisingPageContent,
   );
   const [savePending, setSavePending] = useState(false);
   const [publishPending, setPublishPending] = useState(false);
@@ -96,7 +96,7 @@ export function FranchisingContentEditor({
     setSavePending(false);
     if (result.outcome === "success") {
       setDetail(result.detail);
-      setContent(result.detail.draftContent);
+      setContent(result.detail.draftContent as FranchisingPageContent);
       setSavedNotice(true);
       router.refresh();
       return;
@@ -117,7 +117,7 @@ export function FranchisingContentEditor({
     setPublishPending(false);
     if (result.outcome === "success") {
       setDetail(result.detail);
-      setContent(result.detail.draftContent);
+      setContent(result.detail.draftContent as FranchisingPageContent);
       setSavedNotice(false);
       router.refresh();
       return;

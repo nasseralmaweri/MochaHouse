@@ -3,6 +3,8 @@ import type {
   LocationMenuResponse,
   LocationSummary,
   PublicCmsPageContentResponse,
+  PublicHomePageContent,
+  PublicHomePageContentResponse,
   PublicJobOpeningDetail,
   PublicJobOpeningsResponse,
 } from "@mocha-house/contracts";
@@ -92,6 +94,27 @@ export async function getPublishedFranchisingContent(): Promise<FranchisingPageC
       return null;
     }
     const body = (await response.json()) as PublicCmsPageContentResponse;
+    return (body?.content as FranchisingPageContent | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// --- Public Home content (Milestone 8F) -----------------------------
+// Same never-throws contract as Franchising's — a missing/draft-only "home"
+// page or any fetch/parse failure resolves to null. The API has already
+// resolved `backgroundImageUrl` and `featuredProducts.products` server-
+// side, so this call is the ONLY fetch the Home page needs.
+
+export async function getPublishedHomeContent(): Promise<PublicHomePageContent | null> {
+  try {
+    const response = await fetch(`${getApiUrl()}/content/home`, {
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const body = (await response.json()) as PublicHomePageContentResponse;
     return body?.content ?? null;
   } catch {
     return null;
