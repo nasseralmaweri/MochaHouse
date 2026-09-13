@@ -48,7 +48,10 @@ export default async function AdminMediaPage() {
       </AdminPage>
     );
   }
-  if (result.outcome === "error") {
+  if (result.outcome === "error" || result.outcome === "not-found") {
+    // "not-found" cannot actually happen for a list endpoint — the shared
+    // read<T> helper's outcome type includes it for admin-media.ts's other
+    // export (getAdminMediaAsset); handled here only for exhaustiveness.
     return (
       <AdminPage>
         {header}
@@ -61,7 +64,7 @@ export default async function AdminMediaPage() {
     <AdminPage>
       {header}
       <MediaLibraryGrid
-        initial={result.data.assets}
+        initial={result.data}
         canManage={can(caps, "media.manage")}
       />
     </AdminPage>

@@ -10,6 +10,7 @@ import {
 import type {
   AdminMediaAsset,
   AdminMediaAssetsResponse,
+  UpdateMediaAssetMetadataRequest,
 } from '@mocha-house/contracts';
 import {
   MEDIA_ALLOWED_CONTENT_TYPES,
@@ -38,6 +39,8 @@ const EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
 // `media.manage` are CORPORATE-only; every method also calls
 // assertCorporate. Deletion is soft (isActive) and refused (409) while the
 // asset is referenced by known CMS content — see media-reference-check.
+// Milestone 8I added getOne/updateMetadata (title/altText only — the file
+// itself is immutable once uploaded) and optional search on list().
 @Injectable()
 export class MediaAssetsAdminService {
   private readonly logger = new Logger(MediaAssetsAdminService.name);
@@ -49,12 +52,21 @@ export class MediaAssetsAdminService {
   ) {}
 
   async list(
-    query: { cursor?: string },
+    query: { cursor?: string; q?: string },
     authorization: AuthorizationContext,
   ): Promise<AdminMediaAssetsResponse> {
     authorization.assertCorporate('media.view');
 
     const where: Prisma.MediaAssetWhereInput = { isActive: true };
+    const q = typeof query.q === 'string' ? query.q.trim() : '';
+    if (q.length > 0) {
+      // Same simple contains/insensitive pattern as CrmCustomersService —
+      // no search service, no external index.
+      where.OR = [
+        { fileName: { contains: q, mode: 'insensitive' } },
+        { title: { contains: q, mode: 'insensitive' } },
+      ];
+    }
     if (typeof query.cursor === 'string' && query.cursor.length > 0) {
       // MediaAsset.id is a uuid7 — id-desc is monotonic with createdAt.
       where.id = { lt: query.cursor };
@@ -75,6 +87,23 @@ export class MediaAssetsAdminService {
       assets: page.map((row) => this.toSummary(row)),
       nextCursor: hasMore ? page[page.length - 1]!.id : null,
     };
+  }
+
+  async getOne(
+    mediaAssetId: string,
+    authorization: AuthorizationContext,
+  ): Promise<AdminMediaAsset> {
+    authorization.assertCorporate('media.view');
+    const row = await this.prisma.mediaAsset.findUnique({
+      where: { id: mediaAssetId },
+      include: {
+        uploadedByInternalUser: { select: { displayName: true, email: true } },
+      },
+    });
+    if (!row) {
+      throw new NotFoundException('Media asset not found.');
+    }
+    return this.toSummary(row);
   }
 
   async upload(
@@ -181,6 +210,82 @@ export class MediaAssetsAdminService {
     return this.toSummary(updated);
   }
 
+  async updateMetadata(
+    mediaAssetId: string,
+    input: UpdateMediaAssetMetadataRequest,
+    actorInternalUserId: string,
+    authorization: AuthorizationContext,
+  ): Promise<AdminMediaAsset> {
+    authorization.assertCorporate('media.manage');
+
+    if (
+      input.title !== undefined &&
+      input.title !== null &&
+      typeof input.title !== 'string'
+    ) {
+      throw new BadRequestException('Title must be a string or null.');
+    }
+    if (
+      input.altText !== undefined &&
+      input.altText !== null &&
+      typeof input.altText !== 'string'
+    ) {
+      throw new BadRequestException('Alt text must be a string or null.');
+    }
+
+    const existing = await this.prisma.mediaAsset.findUnique({
+      where: { id: mediaAssetId },
+      include: {
+        uploadedByInternalUser: { select: { displayName: true, email: true } },
+      },
+    });
+    if (!existing) {
+      throw new NotFoundException('Media asset not found.');
+    }
+
+    const nextTitle =
+      input.title === undefined ? existing.title : this.normalizeText(input.title);
+    const nextAltText =
+      input.altText === undefined
+        ? existing.altText
+        : this.normalizeText(input.altText);
+
+    if (nextTitle === existing.title && nextAltText === existing.altText) {
+      // Idempotent no-op — nothing actually changed, nothing to audit.
+      return this.toSummary(existing);
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.mediaAsset.update({
+        where: { id: mediaAssetId },
+        data: { title: nextTitle, altText: nextAltText },
+        include: {
+          uploadedByInternalUser: { select: { displayName: true, email: true } },
+        },
+      });
+      await this.audit.recordMediaAssetMetadataUpdated(tx, {
+        actorInternalUserId,
+        mediaAssetId,
+        before: { title: existing.title, altText: existing.altText },
+        after: { title: nextTitle, altText: nextAltText },
+      });
+      return row;
+    });
+
+    return this.toSummary(updated);
+  }
+
+  // Empty/whitespace-only clears the field to null, matching the
+  // description-field convention used elsewhere in Admin (e.g. product
+  // edit) — an admin clearing a text box means "no value", not "".
+  private normalizeText(value: string | null): string | null {
+    if (value === null) {
+      return null;
+    }
+    const trimmed = value.trim();
+    return trimmed.length === 0 ? null : trimmed;
+  }
+
   private validateFile(
     file: { buffer: Buffer; mimetype: string; size: number } | undefined,
   ): void {
@@ -207,13 +312,17 @@ export class MediaAssetsAdminService {
     return {
       id: row.id,
       fileName: row.fileName,
+      title: row.title,
+      altText: row.altText,
       contentType: row.contentType,
       fileSizeBytes: row.fileSizeBytes,
       publicUrl: this.storage.resolvePublicUrl(row.objectKey),
+      isActive: row.isActive,
       uploadedByLabel: row.uploadedByInternalUser
         ? row.uploadedByInternalUser.displayName ?? row.uploadedByInternalUser.email
         : null,
       createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
     };
   }
 }

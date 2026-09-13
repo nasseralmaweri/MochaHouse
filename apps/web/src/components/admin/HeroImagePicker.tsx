@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AdminMediaAsset } from "@mocha-house/contracts";
 import {
+  getAdminMediaAssetFromBrowser,
   listAdminMediaAssetsFromBrowser,
   uploadMediaAssetFromBrowser,
 } from "@/lib/api-client";
@@ -23,37 +24,24 @@ type Resolution =
   | { status: "unavailable" }
   | { status: "forbidden" };
 
-// Bounded pagination walk over the existing admin media list endpoint —
-// reused as-is, no new Media API. The library is small in this V1, so a
-// capped number of pages is a safe, simple way to find a specific id
-// without adding a dedicated "get one asset" route.
-const MAX_LOOKUP_PAGES = 20;
-
+// Milestone 8I — resolves the current selection via the dedicated
+// get-one endpoint (GET /admin/media/:id) instead of the bounded
+// paginated scan this used before it existed. "not-found" (already
+// deactivated assets stay resolvable-by-id, so this really means the id
+// never existed) collapses into "unavailable", the same state a scan
+// miss used to produce.
 async function findAssetById(
   mediaAssetId: string,
 ): Promise<AdminMediaAsset | "unavailable" | "forbidden"> {
-  let cursor: string | undefined;
-  for (let page = 0; page < MAX_LOOKUP_PAGES; page += 1) {
-    const result = await listAdminMediaAssetsFromBrowser({ cursor });
-    if (result.outcome === "forbidden") {
-      return "forbidden";
-    }
-    if (result.outcome !== "success") {
-      // A transient error resolving the preview isn't the same as a
-      // genuinely missing/deactivated asset — but there's no dedicated
-      // state for it here, and treating it as "unavailable" keeps this a
-      // simple, safe display rather than a stuck loading spinner.
-      return "unavailable";
-    }
-    const match = result.data.assets.find((asset) => asset.id === mediaAssetId);
-    if (match) {
-      return match;
-    }
-    if (!result.data.nextCursor) {
-      return "unavailable";
-    }
-    cursor = result.data.nextCursor;
+  const result = await getAdminMediaAssetFromBrowser(mediaAssetId);
+  if (result.outcome === "success") {
+    return result.asset;
   }
+  if (result.outcome === "forbidden") {
+    return "forbidden";
+  }
+  // "not-found" or a transient error — treated the same as a scan miss:
+  // a simple, safe display rather than a stuck loading spinner.
   return "unavailable";
 }
 

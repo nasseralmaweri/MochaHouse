@@ -1456,17 +1456,31 @@ export declare const MEDIA_MAX_FILE_SIZE_BYTES: number;
 export interface AdminMediaAsset {
     id: string;
     fileName: string;
+    title: string | null;
+    altText: string | null;
     contentType: string;
     fileSizeBytes: number;
     publicUrl: string;
+    isActive: boolean;
     uploadedByLabel: string | null;
     createdAt: string;
+    updatedAt: string;
 }
 export interface AdminMediaAssetsResponse {
     assets: AdminMediaAsset[];
     nextCursor: string | null;
 }
 export interface UploadMediaAssetResponse {
+    asset: AdminMediaAsset;
+}
+export interface GetMediaAssetResponse {
+    asset: AdminMediaAsset;
+}
+export interface UpdateMediaAssetMetadataRequest {
+    title?: string | null;
+    altText?: string | null;
+}
+export interface UpdateMediaAssetMetadataResponse {
     asset: AdminMediaAsset;
 }
 export interface DeactivateMediaAssetResponse {

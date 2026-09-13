@@ -803,6 +803,30 @@ export class InternalAuditService {
     });
   }
 
+  // Milestone 8I — title/altText only. Never the file itself (immutable
+  // once uploaded), never uploader/object-key/content-type/size.
+  async recordMediaAssetMetadataUpdated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      mediaAssetId: string;
+      before: { title: string | null; altText: string | null };
+      after: { title: string | null; altText: string | null };
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'media.asset_metadata_updated',
+        targetType: 'media_asset',
+        targetId: input.mediaAssetId,
+        beforeData: input.before,
+        afterData: input.after,
+        reason: 'Media asset metadata updated.',
+      },
+    });
+  }
+
   // --- Milestone 8G, Marketing Campaigns --------------------------
   // Written in the SAME transaction as the change. targetType 'campaign'
   // is a new polymorphic target; the Admin Activity Log is scoped to

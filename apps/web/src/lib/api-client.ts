@@ -2326,10 +2326,14 @@ export type AdminMediaAssetsListResult =
 
 export async function listAdminMediaAssetsFromBrowser(params: {
   cursor?: string;
+  q?: string;
 }): Promise<AdminMediaAssetsListResult> {
   const search = new URLSearchParams();
   if (params.cursor) {
     search.set("cursor", params.cursor);
+  }
+  if (params.q) {
+    search.set("q", params.q);
   }
   const qs = search.toString();
 
@@ -2402,6 +2406,97 @@ export async function uploadMediaAssetFromBrowser(
     return {
       outcome: "error",
       message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  const body = (await response.json()) as { asset: AdminMediaAsset };
+  return { outcome: "success", asset: body.asset };
+}
+
+export type GetAdminMediaAssetResult =
+  | { outcome: "success"; asset: AdminMediaAsset }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "error"; message: string };
+
+export async function getAdminMediaAssetFromBrowser(
+  mediaAssetId: string,
+): Promise<GetAdminMediaAssetResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/media/${encodeURIComponent(mediaAssetId)}`,
+      { cache: "no-store" },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  const body = (await response.json()) as { asset: AdminMediaAsset };
+  return { outcome: "success", asset: body.asset };
+}
+
+export type UpdateMediaAssetMetadataResult =
+  | { outcome: "success"; asset: AdminMediaAsset }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+export async function updateMediaAssetMetadataFromBrowser(
+  mediaAssetId: string,
+  input: { title?: string | null; altText?: string | null },
+): Promise<UpdateMediaAssetMetadataResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/media/${encodeURIComponent(mediaAssetId)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const body = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: body?.message ?? "Please check the form and try again.",
+    };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
     };
   }
   const body = (await response.json()) as { asset: AdminMediaAsset };

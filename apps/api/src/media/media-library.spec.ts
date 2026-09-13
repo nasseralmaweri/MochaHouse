@@ -6,6 +6,8 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import type {
   AdminMediaAssetsResponse,
+  GetMediaAssetResponse,
+  UpdateMediaAssetMetadataResponse,
   UploadMediaAssetResponse,
 } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -330,6 +332,213 @@ describe('Media Library (integration)', () => {
     ).body as AdminMediaAssetsResponse;
     expect(after.assets.map((asset) => asset.id)).not.toContain(a.id);
     expect(after.assets.map((asset) => asset.id)).toContain(b.id);
+  });
+
+  it('search filters by fileName and by title, case-insensitively', async () => {
+    const marker = `srch-${randomUUID().slice(0, 8)}`;
+    const byFileName = await uploadReq(`manager-${suffix}`)
+      .attach('file', Buffer.from('bytes'), {
+        filename: `${marker}-photo.jpg`,
+        contentType: 'image/jpeg',
+      })
+      .expect(201);
+    const fileNameAsset = (byFileName.body as UploadMediaAssetResponse).asset;
+    mediaAssetIds.push(fileNameAsset.id);
+
+    const titledAsset = await uploadValidImage();
+    await request(app.getHttpServer())
+      .patch(`/api/v1/admin/media/${titledAsset.id}`)
+      .set('Authorization', auth(`manager-${suffix}`))
+      .send({ title: `Title ${marker}` })
+      .expect(200);
+
+    const byFile = (
+      await request(app.getHttpServer())
+        .get(`/api/v1/admin/media?q=${marker.toUpperCase()}`)
+        .set('Authorization', auth(`viewer-${suffix}`))
+        .expect(200)
+    ).body as AdminMediaAssetsResponse;
+    expect(byFile.assets.map((a) => a.id)).toContain(fileNameAsset.id);
+    expect(byFile.assets.map((a) => a.id)).toContain(titledAsset.id);
+
+    const noMatch = (
+      await request(app.getHttpServer())
+        .get(`/api/v1/admin/media?q=${randomUUID()}`)
+        .set('Authorization', auth(`viewer-${suffix}`))
+        .expect(200)
+    ).body as AdminMediaAssetsResponse;
+    expect(noMatch.assets).toHaveLength(0);
+  });
+
+  it('paginates correctly across an explicit cursor walk', async () => {
+    const a = await uploadValidImage();
+    const b = await uploadValidImage();
+    const c = await uploadValidImage();
+
+    const page1 = (
+      await request(app.getHttpServer())
+        .get('/api/v1/admin/media')
+        .set('Authorization', auth(`viewer-${suffix}`))
+        .expect(200)
+    ).body as AdminMediaAssetsResponse;
+    const idxC = page1.assets.findIndex((x) => x.id === c.id);
+    expect(idxC).toBeGreaterThanOrEqual(0);
+
+    // Walk forward from c's own cursor and confirm a/b appear afterward,
+    // and c itself never reappears on a later page.
+    const cursor = c.id;
+    const page2 = (
+      await request(app.getHttpServer())
+        .get(`/api/v1/admin/media?cursor=${cursor}`)
+        .set('Authorization', auth(`viewer-${suffix}`))
+        .expect(200)
+    ).body as AdminMediaAssetsResponse;
+    expect(page2.assets.map((x) => x.id)).not.toContain(c.id);
+    expect(page2.assets.map((x) => x.id)).toEqual(
+      expect.arrayContaining([a.id, b.id]),
+    );
+  });
+
+  // --- get one / metadata (Milestone 8I) ---------------------
+
+  it('gets one asset by id; 404 for an unknown id; requires media.view', async () => {
+    const asset = await uploadValidImage();
+
+    const got = (
+      await request(app.getHttpServer())
+        .get(`/api/v1/admin/media/${asset.id}`)
+        .set('Authorization', auth(`viewer-${suffix}`))
+        .expect(200)
+    ).body as GetMediaAssetResponse;
+    expect(got.asset.id).toBe(asset.id);
+    expect(got.asset.isActive).toBe(true);
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/admin/media/${randomUUID()}`)
+      .set('Authorization', auth(`viewer-${suffix}`))
+      .expect(404);
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/admin/media/${asset.id}`)
+      .expect(401);
+    await request(app.getHttpServer())
+      .get(`/api/v1/admin/media/${asset.id}`)
+      .set('Authorization', auth(`noPerm-${suffix}`))
+      .expect(403);
+  });
+
+  it('get-one still resolves an already-archived asset (for the detail screen)', async () => {
+    const asset = await uploadValidImage();
+    await request(app.getHttpServer())
+      .post(`/api/v1/admin/media/${asset.id}/deactivate`)
+      .set('Authorization', auth(`manager-${suffix}`))
+      .expect(201);
+
+    const got = (
+      await request(app.getHttpServer())
+        .get(`/api/v1/admin/media/${asset.id}`)
+        .set('Authorization', auth(`viewer-${suffix}`))
+        .expect(200)
+    ).body as GetMediaAssetResponse;
+    expect(got.asset.isActive).toBe(false);
+  });
+
+  it('updates title and altText independently, requires media.manage, changes only those two fields', async () => {
+    const asset = await uploadValidImage();
+    expect(asset.title).toBeNull();
+    expect(asset.altText).toBeNull();
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/admin/media/${asset.id}`)
+      .set('Authorization', auth(`viewer-${suffix}`))
+      .send({ title: 'Nope' })
+      .expect(403);
+
+    const afterTitle = (
+      await request(app.getHttpServer())
+        .patch(`/api/v1/admin/media/${asset.id}`)
+        .set('Authorization', auth(`manager-${suffix}`))
+        .send({ title: '  Hero background  ' })
+        .expect(200)
+    ).body as UpdateMediaAssetMetadataResponse;
+    expect(afterTitle.asset.title).toBe('Hero background');
+    expect(afterTitle.asset.altText).toBeNull();
+    expect(afterTitle.asset.fileName).toBe(asset.fileName);
+    expect(afterTitle.asset.contentType).toBe(asset.contentType);
+    expect(afterTitle.asset.fileSizeBytes).toBe(asset.fileSizeBytes);
+    expect(afterTitle.asset.publicUrl).toBe(asset.publicUrl);
+
+    const afterAlt = (
+      await request(app.getHttpServer())
+        .patch(`/api/v1/admin/media/${asset.id}`)
+        .set('Authorization', auth(`manager-${suffix}`))
+        .send({ altText: 'A steaming cup of coffee' })
+        .expect(200)
+    ).body as UpdateMediaAssetMetadataResponse;
+    expect(afterAlt.asset.altText).toBe('A steaming cup of coffee');
+    // title is untouched by an altText-only request.
+    expect(afterAlt.asset.title).toBe('Hero background');
+
+    // Blank clears the field to null.
+    const cleared = (
+      await request(app.getHttpServer())
+        .patch(`/api/v1/admin/media/${asset.id}`)
+        .set('Authorization', auth(`manager-${suffix}`))
+        .send({ title: '   ' })
+        .expect(200)
+    ).body as UpdateMediaAssetMetadataResponse;
+    expect(cleared.asset.title).toBeNull();
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/admin/media/${randomUUID()}`)
+      .set('Authorization', auth(`manager-${suffix}`))
+      .send({ title: 'x' })
+      .expect(404);
+  });
+
+  it('audits a metadata update with before/after title+altText only, no PII/file content, and skips audit on a true no-op', async () => {
+    const asset = await uploadValidImage();
+    const before = await prisma.internalAuditEvent.count({
+      where: { targetType: 'media_asset', action: 'media.asset_metadata_updated' },
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/admin/media/${asset.id}`)
+      .set('Authorization', auth(`manager-${suffix}`))
+      .send({ title: 'Audited title', altText: 'Audited alt' })
+      .expect(200);
+
+    const events = await prisma.internalAuditEvent.findMany({
+      where: {
+        targetType: 'media_asset',
+        targetId: asset.id,
+        action: 'media.asset_metadata_updated',
+      },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]!.actorInternalUserId).toBe(users[`manager-${suffix}`]);
+    expect(events[0]!.beforeData).toEqual({ title: null, altText: null });
+    expect(events[0]!.afterData).toEqual({
+      title: 'Audited title',
+      altText: 'Audited alt',
+    });
+    expect(
+      await prisma.internalAuditEvent.count({
+        where: { targetType: 'media_asset', action: 'media.asset_metadata_updated' },
+      }),
+    ).toBe(before + 1);
+
+    // Re-sending the exact same values is a no-op — no new audit event.
+    await request(app.getHttpServer())
+      .patch(`/api/v1/admin/media/${asset.id}`)
+      .set('Authorization', auth(`manager-${suffix}`))
+      .send({ title: 'Audited title', altText: 'Audited alt' })
+      .expect(200);
+    expect(
+      await prisma.internalAuditEvent.count({
+        where: { targetType: 'media_asset', action: 'media.asset_metadata_updated' },
+      }),
+    ).toBe(before + 1);
   });
 
   // --- deactivate -------------------------------------------

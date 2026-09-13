@@ -1,4 +1,21 @@
-import { formatFileSize, formatMediaDate } from "./media";
+import { formatFileSize, formatMediaDate, mediaAssetDisplayTitle } from "./media";
+
+describe("mediaAssetDisplayTitle", () => {
+  it("prefers the title when set", () => {
+    expect(
+      mediaAssetDisplayTitle({ title: "Hero background", fileName: "img-1.jpg" }),
+    ).toBe("Hero background");
+  });
+
+  it("falls back to the filename when title is null or blank", () => {
+    expect(mediaAssetDisplayTitle({ title: null, fileName: "img-1.jpg" })).toBe(
+      "img-1.jpg",
+    );
+    expect(mediaAssetDisplayTitle({ title: "   ", fileName: "img-1.jpg" })).toBe(
+      "img-1.jpg",
+    );
+  });
+});
 
 describe("formatFileSize", () => {
   it("formats bytes, kilobytes, and megabytes", () => {

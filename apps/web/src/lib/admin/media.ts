@@ -1,5 +1,17 @@
-// Plain-language presentation helpers for Admin → Media (Milestone 8F).
-// Read-only: the API is the authority for every value.
+// Plain-language presentation helpers for Admin → Media (Milestone 8F;
+// mediaAssetDisplayTitle added in 8I). Read-only: the API is the authority
+// for every value.
+
+// title (Milestone 8I) is optional — falls back to the original filename
+// wherever a single display label is needed (grid cards, picker previews).
+export function mediaAssetDisplayTitle(asset: {
+  title: string | null;
+  fileName: string;
+}): string {
+  return asset.title && asset.title.trim().length > 0
+    ? asset.title
+    : asset.fileName;
+}
 
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) {

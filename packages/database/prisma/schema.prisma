@@ -1979,10 +1979,17 @@ model MediaAsset {
   fileName                 String
   contentType              String
   fileSizeBytes            Int
+  // Milestone 8I — optional, admin-editable metadata. Neither is used for
+  // search ranking or any business logic beyond display; altText has no
+  // fallback enforced here (CMS/Marketing consumers decide their own
+  // fallback-to-fileName behavior).
+  title                    String?
+  altText                  String?
   isActive                 Boolean      @default(true)
   uploadedByInternalUserId String
   uploadedByInternalUser   InternalUser @relation("MediaAssetUploader", fields: [uploadedByInternalUserId], references: [id], onDelete: Restrict)
   createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
 
   @@index([isActive, createdAt])
   @@index([uploadedByInternalUserId])

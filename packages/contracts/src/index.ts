@@ -3149,15 +3149,24 @@ export const MEDIA_MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
 // One row of GET /api/v1/admin/media (media.view). `publicUrl` is resolved
 // server-side from the configured MediaStorage — the object key itself is
-// not exposed.
+// not exposed. title/altText (Milestone 8I) are optional, admin-editable
+// metadata — never derived from the file itself.
 export interface AdminMediaAsset {
   id: string;
   fileName: string;
+  title: string | null;
+  altText: string | null;
   contentType: string;
   fileSizeBytes: number;
   publicUrl: string;
+  // Always true in GET /admin/media (list) results — that endpoint only
+  // ever returns active assets. GET /admin/media/:id (Milestone 8I) is the
+  // only place this can be false, since the detail screen must be able to
+  // show an already-archived asset's state.
+  isActive: boolean;
   uploadedByLabel: string | null;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface AdminMediaAssetsResponse {
@@ -3168,6 +3177,25 @@ export interface AdminMediaAssetsResponse {
 // POST /api/v1/admin/media (media.manage) — multipart/form-data, field
 // "file". No JSON request type; the response is the created asset.
 export interface UploadMediaAssetResponse {
+  asset: AdminMediaAsset;
+}
+
+// GET /api/v1/admin/media/:mediaAssetId (media.view, Milestone 8I).
+export interface GetMediaAssetResponse {
+  asset: AdminMediaAsset;
+}
+
+// PATCH /api/v1/admin/media/:mediaAssetId (media.manage, Milestone 8I).
+// title/altText ONLY — file/object metadata (fileName, contentType,
+// fileSizeBytes, objectKey), uploader, active state, and ids are never
+// editable through this route. Omitted fields are left unchanged; an
+// explicit null clears the field.
+export interface UpdateMediaAssetMetadataRequest {
+  title?: string | null;
+  altText?: string | null;
+}
+
+export interface UpdateMediaAssetMetadataResponse {
   asset: AdminMediaAsset;
 }
 

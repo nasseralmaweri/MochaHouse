@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AdminMediaAsset } from "@mocha-house/contracts";
 import {
+  getAdminMediaAssetFromBrowser,
   listAdminMediaAssetsFromBrowser,
   uploadMediaAssetFromBrowser,
 } from "@/lib/api-client";
@@ -19,30 +20,18 @@ type Resolution =
   | { status: "unavailable" }
   | { status: "forbidden" };
 
-// Bounded pagination walk over the existing admin media list endpoint —
-// reused as-is, no new Media API.
-const MAX_LOOKUP_PAGES = 20;
-
+// Milestone 8I — resolves via the dedicated get-one endpoint (GET
+// /admin/media/:id), replacing the bounded paginated scan this used
+// before it existed — see HeroImagePicker for the full rationale.
 async function findAssetById(
   mediaAssetId: string,
 ): Promise<AdminMediaAsset | "unavailable" | "forbidden"> {
-  let cursor: string | undefined;
-  for (let page = 0; page < MAX_LOOKUP_PAGES; page += 1) {
-    const result = await listAdminMediaAssetsFromBrowser({ cursor });
-    if (result.outcome === "forbidden") {
-      return "forbidden";
-    }
-    if (result.outcome !== "success") {
-      return "unavailable";
-    }
-    const match = result.data.assets.find((asset) => asset.id === mediaAssetId);
-    if (match) {
-      return match;
-    }
-    if (!result.data.nextCursor) {
-      return "unavailable";
-    }
-    cursor = result.data.nextCursor;
+  const result = await getAdminMediaAssetFromBrowser(mediaAssetId);
+  if (result.outcome === "success") {
+    return result.asset;
+  }
+  if (result.outcome === "forbidden") {
+    return "forbidden";
   }
   return "unavailable";
 }
