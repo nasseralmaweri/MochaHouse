@@ -5,6 +5,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import type { AdminCampaign } from '@mocha-house/contracts';
+import { CAMPAIGN_FEATURED_PRODUCTS_MAX } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { CustomerAuthModule } from '../customer-auth/customer-auth.module';
@@ -389,6 +390,39 @@ describe('Marketing Campaigns admin (integration)', () => {
       'hq',
       validCampaign({ featuredProductIds: [productActiveId, productActiveId] }),
     ).expect(400);
+  });
+
+  it(`rejects more than ${CAMPAIGN_FEATURED_PRODUCTS_MAX} featured products and accepts exactly ${CAMPAIGN_FEATURED_PRODUCTS_MAX}`, async () => {
+    const productIds: string[] = [];
+    for (let i = 0; i < CAMPAIGN_FEATURED_PRODUCTS_MAX + 1; i += 1) {
+      const id = (
+        await prisma.product.create({
+          data: {
+            name: `Marketing Cap Product ${i} ${suffix}`,
+            slug: `marketing-cap-product-${i}-${suffix}`,
+            categoryId,
+            isActive: true,
+          },
+        })
+      ).id;
+      extraProductIds.push(id);
+      productIds.push(id);
+    }
+
+    await create(
+      'hq',
+      validCampaign({ featuredProductIds: productIds }),
+    ).expect(400);
+
+    const campaign = track(
+      await create(
+        'hq',
+        validCampaign({
+          featuredProductIds: productIds.slice(0, CAMPAIGN_FEATURED_PRODUCTS_MAX),
+        }),
+      ).expect(201),
+    );
+    expect(campaign.featuredProducts).toHaveLength(CAMPAIGN_FEATURED_PRODUCTS_MAX);
   });
 
   it('persists deterministic featured-product display order and lets update replace it', async () => {

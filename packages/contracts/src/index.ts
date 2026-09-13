@@ -3194,7 +3194,7 @@ export type CampaignStatus = "DRAFT" | "ACTIVE" | "ENDED";
 
 export const CAMPAIGN_NAME_MAX_LENGTH = 120;
 export const CAMPAIGN_DESCRIPTION_MAX_LENGTH = 1000;
-export const CAMPAIGN_FEATURED_PRODUCTS_MAX = 24;
+export const CAMPAIGN_FEATURED_PRODUCTS_MAX = 8;
 
 // A featured product as shown on a campaign — id/name/category only, read
 // live from the authoritative catalog at request time. Price, availability

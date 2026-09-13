@@ -1475,7 +1475,7 @@ export interface DeactivateMediaAssetResponse {
 export type CampaignStatus = "DRAFT" | "ACTIVE" | "ENDED";
 export declare const CAMPAIGN_NAME_MAX_LENGTH = 120;
 export declare const CAMPAIGN_DESCRIPTION_MAX_LENGTH = 1000;
-export declare const CAMPAIGN_FEATURED_PRODUCTS_MAX = 24;
+export declare const CAMPAIGN_FEATURED_PRODUCTS_MAX = 8;
 export interface AdminCampaignProductRef {
     id: string;
     name: string;
