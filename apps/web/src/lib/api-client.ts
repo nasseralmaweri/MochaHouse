@@ -1,5 +1,9 @@
 import type {
   AdminAdjustMochaBeansRequest,
+  AdminCampaign,
+  CreateCampaignRequest,
+  UpdateCampaignRequest,
+  UpdateCampaignStatusRequest,
   AdminCmsPageDetail,
   AdminCustomerListResponse,
   AdminMediaAsset,
@@ -2449,4 +2453,94 @@ export async function deactivateMediaAssetFromBrowser(
   }
   const body = (await response.json()) as { asset: AdminMediaAsset };
   return { outcome: "success", asset: body.asset };
+}
+
+// --- Admin: HQ Marketing Campaigns (Milestone 8G) -----------------
+// Browser-side mutations for Admin → Marketing, via the generic internal
+// admin proxy. The API (`marketing.manage`, CORPORATE-only) is the sole
+// authority; PATCH cannot change status — activate/end are explicit
+// actions.
+
+export type CampaignMutationResult =
+  | { outcome: "success"; campaign: AdminCampaign }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "conflict"; message: string }
+  | { outcome: "error"; message: string };
+
+async function campaignsRequest(
+  path: string,
+  method: "POST" | "PATCH",
+  body: unknown,
+): Promise<CampaignMutationResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${INTERNAL_ADMIN_PROXY}/marketing/campaigns${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "Please check the form and try again.",
+    };
+  }
+  if (response.status === 409) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "conflict",
+      message: parsed?.message ?? "That change isn't allowed right now.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return {
+    outcome: "success",
+    campaign: (await response.json()) as AdminCampaign,
+  };
+}
+
+export function createCampaignFromBrowser(
+  input: CreateCampaignRequest,
+): Promise<CampaignMutationResult> {
+  return campaignsRequest("", "POST", input);
+}
+
+export function updateCampaignFromBrowser(
+  campaignId: string,
+  input: UpdateCampaignRequest,
+): Promise<CampaignMutationResult> {
+  return campaignsRequest(`/${encodeURIComponent(campaignId)}`, "PATCH", input);
+}
+
+export function updateCampaignStatusFromBrowser(
+  campaignId: string,
+  status: UpdateCampaignStatusRequest["status"],
+): Promise<CampaignMutationResult> {
+  return campaignsRequest(
+    `/${encodeURIComponent(campaignId)}/status`,
+    "POST",
+    { status },
+  );
 }

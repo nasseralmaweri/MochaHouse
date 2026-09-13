@@ -68,6 +68,9 @@ model Product {
   loyaltyRewardEligibility LoyaltyRewardProduct[]
   loyaltyBonusPromotionEligibility LoyaltyBonusPromotionProduct[]
   promotionEligibility     PromotionProduct[]
+  // Milestone 8G — a Campaign's ordered Featured Products. onDelete:
+  // Restrict from the Product side (see CampaignProduct).
+  campaignFeatureEligibility CampaignProduct[]
 
   @@index([categoryId])
 }
@@ -1124,6 +1127,12 @@ model LoyaltyBonusPromotion {
 
   eligibleProducts  LoyaltyBonusPromotionProduct[]
   eligibleLocations LoyaltyBonusPromotionLocation[]
+  // Milestone 8G — Campaigns that reference this bonus promotion as an
+  // optional benefit. Campaign.onDelete is Restrict, so a promotion linked
+  // by a Campaign cannot be hard-deleted (it never is anyway — isActive is
+  // the off switch). Purely referential: a Campaign never mutates or
+  // duplicates this promotion's own bonus logic.
+  campaigns Campaign[]
 
   @@index([isActive])
 }
@@ -1301,6 +1310,12 @@ model Promotion {
   eligibleCategories PromotionCategory[]
   eligibleLocations  PromotionLocation[]
   customerUsage      PromotionCustomerUsage[]
+  // Milestone 8G — Campaigns that reference this promotion as an optional
+  // benefit. Campaign.onDelete is Restrict, so a promotion linked by a
+  // Campaign cannot be hard-deleted (it never is anyway — isActive is the
+  // off switch). Purely referential: a Campaign never mutates or duplicates
+  // this promotion's own discount logic.
+  campaigns Campaign[]
 
   @@index([kind, isActive])
   @@index([isActive])
@@ -1926,4 +1941,71 @@ model MediaAsset {
 
   @@index([isActive, createdAt])
   @@index([uploadedByInternalUserId])
+}
+
+// --- Milestone 8G, Marketing Campaigns ---------------------------------
+// The smallest useful HQ "Campaign Management" layer — it ORGANIZES
+// existing systems, never reimplements them. A Campaign optionally
+// references ONE Promotion (discounts/coupons, 7E) AND/OR ONE
+// LoyaltyBonusPromotion (bonus Mocha Beans, 7D) as independent optional
+// benefits. Campaign itself performs NO discount or Mocha Beans
+// calculation — those systems remain fully authoritative for their own
+// eligibility, redemption and checkout behavior; a Campaign's own
+// DRAFT -> ACTIVE -> ENDED lifecycle is purely organizational and NEVER
+// mutates a linked Promotion / LoyaltyBonusPromotion (their own
+// isActive / date-window state is untouched by a Campaign status change).
+// `mediaAssetId` is a plain reference to a MediaAsset by id — no FK, the
+// same pattern as CmsPage's hero.backgroundImageId (see
+// media-reference-check.ts, extended to also protect a Campaign-referenced
+// image from deactivation). There is deliberately NO campaign-to-order
+// attribution/snapshot table in 8G — Campaign has zero checkout/runtime
+// behavior; order attribution, conversion tracking and ROI are deferred.
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  ENDED
+}
+
+model Campaign {
+  id                      String                 @id @default(uuid(7))
+  name                    String
+  description             String?
+  status                  CampaignStatus         @default(DRAFT)
+  startsAt                DateTime?
+  endsAt                  DateTime?
+  mediaAssetId            String?
+  promotionId             String?
+  promotion               Promotion?             @relation(fields: [promotionId], references: [id], onDelete: Restrict)
+  loyaltyBonusPromotionId String?
+  loyaltyBonusPromotion   LoyaltyBonusPromotion? @relation(fields: [loyaltyBonusPromotionId], references: [id], onDelete: Restrict)
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+
+  featuredProducts CampaignProduct[]
+
+  @@index([status])
+  @@index([promotionId])
+  @@index([loyaltyBonusPromotionId])
+}
+
+// Ordered Featured Products targeting. onDelete: Cascade from the campaign
+// (a join row is meaningless without it); onDelete: Restrict from the
+// Product so a catalog product a campaign features cannot be hard-deleted
+// out from under it. Same shape as PromotionProduct /
+// LoyaltyBonusPromotionProduct, plus `displayOrder` so HQ's chosen ordering
+// persists deterministically (mirrors CMS's ordered Home
+// featuredProducts.productIds array, as a column since this is a
+// relational join table rather than JSON). The composite primary key is
+// also the "no duplicate featured product per campaign" constraint.
+model CampaignProduct {
+  campaignId   String
+  productId    String
+  displayOrder Int
+  createdAt    DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@id([campaignId, productId])
+  @@index([productId])
 }

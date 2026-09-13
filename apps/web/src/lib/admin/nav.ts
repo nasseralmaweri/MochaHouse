@@ -156,6 +156,19 @@ export function adminNavItems(
     });
   }
 
+  // Marketing (Milestone 8G — Campaign Management, a thin organizing layer
+  // over Promotions, Bonus Mocha Bean Promotions, Products and Media).
+  // Shown only if the user effectively holds `marketing.view`
+  // (CORPORATE-only). Create/edit/status controls inside re-check
+  // `marketing.manage`.
+  if (can(capabilities, "marketing.view")) {
+    items.push({
+      key: "marketing",
+      label: "Marketing",
+      href: "/admin/marketing",
+    });
+  }
+
   if (can(capabilities, "locations.view")) {
     items.push({
       key: "locations",

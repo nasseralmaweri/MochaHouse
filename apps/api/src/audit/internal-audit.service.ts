@@ -803,6 +803,79 @@ export class InternalAuditService {
     });
   }
 
+  // --- Milestone 8G, Marketing Campaigns --------------------------
+  // Written in the SAME transaction as the change. targetType 'campaign'
+  // is a new polymorphic target; the Admin Activity Log is scoped to
+  // 'internal_user' and ignores it. A Campaign is HQ-authored configuration
+  // (not PII), so before/after snapshots carry its full config — name,
+  // description, dates, status, linked ids, featured product ids — but
+  // NEVER any customer list, PII, media binary, or large content body (the
+  // description itself is bounded HQ copy, not customer content).
+
+  async recordCampaignCreated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      campaignId: string;
+      snapshot: Prisma.InputJsonValue;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'marketing.campaign_created',
+        targetType: 'campaign',
+        targetId: input.campaignId,
+        afterData: input.snapshot,
+        reason: 'Marketing campaign created.',
+      },
+    });
+  }
+
+  async recordCampaignUpdated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      campaignId: string;
+      before: Prisma.InputJsonValue;
+      after: Prisma.InputJsonValue;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'marketing.campaign_updated',
+        targetType: 'campaign',
+        targetId: input.campaignId,
+        beforeData: input.before,
+        afterData: input.after,
+        reason: 'Marketing campaign updated.',
+      },
+    });
+  }
+
+  async recordCampaignStatusChanged(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      campaignId: string;
+      before: 'DRAFT' | 'ACTIVE' | 'ENDED';
+      after: 'DRAFT' | 'ACTIVE' | 'ENDED';
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'marketing.campaign_status_changed',
+        targetType: 'campaign',
+        targetId: input.campaignId,
+        beforeData: { status: input.before },
+        afterData: { status: input.after },
+        reason: `Marketing campaign status changed from ${input.before} to ${input.after}.`,
+      },
+    });
+  }
+
   async recordChecklistExceptionCleared(
     tx: Prisma.TransactionClient,
     input: ChecklistExceptionAuditInput & { previousReason: string },

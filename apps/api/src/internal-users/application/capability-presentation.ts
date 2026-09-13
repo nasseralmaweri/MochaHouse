@@ -277,6 +277,22 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Upload and deactivate media library images',
     definition: 'Upload and deactivate media library images',
   },
+  // Milestone 8G — Marketing Campaigns. Both CORPORATE-only (a thin
+  // organizing layer over company-wide Promotions / Loyalty / Products /
+  // Media), so the two phrasings are the same.
+  'marketing.view': {
+    group: 'Marketing',
+    effectiveAll: 'View marketing campaigns',
+    effectiveScoped: 'View marketing campaigns',
+    definition: 'View marketing campaigns',
+  },
+  'marketing.manage': {
+    group: 'Marketing',
+    effectiveAll: 'Create, edit and change the status of marketing campaigns',
+    effectiveScoped:
+      'Create, edit and change the status of marketing campaigns',
+    definition: 'Create, edit and change the status of marketing campaigns',
+  },
 };
 
 const GROUP_ORDER = [
@@ -291,6 +307,7 @@ const GROUP_ORDER = [
   'Careers',
   'Franchising',
   'Content',
+  'Marketing',
   'Administration',
 ];
 
@@ -330,6 +347,8 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'cms.manage',
   'media.view',
   'media.manage',
+  'marketing.view',
+  'marketing.manage',
   'users.view',
   'roles.view',
   'audit.view',

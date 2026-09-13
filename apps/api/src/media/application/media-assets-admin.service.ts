@@ -159,7 +159,7 @@ export class MediaAssetsAdminService {
     const referenced = await isMediaAssetReferenced(this.prisma, mediaAssetId);
     if (referenced) {
       throw new ConflictException(
-        'This image is currently used as the Home page hero background and cannot be removed. Replace it there first.',
+        'This image is currently used as the Home page hero background or by a marketing campaign and cannot be removed. Replace it there first.',
       );
     }
 

@@ -812,7 +812,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "cms.view", "cms.manage", "media.view", "media.manage"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
@@ -1471,5 +1471,83 @@ export interface UploadMediaAssetResponse {
 }
 export interface DeactivateMediaAssetResponse {
     asset: AdminMediaAsset;
+}
+export type CampaignStatus = "DRAFT" | "ACTIVE" | "ENDED";
+export declare const CAMPAIGN_NAME_MAX_LENGTH = 120;
+export declare const CAMPAIGN_DESCRIPTION_MAX_LENGTH = 1000;
+export declare const CAMPAIGN_FEATURED_PRODUCTS_MAX = 24;
+export interface AdminCampaignProductRef {
+    id: string;
+    name: string;
+    category: {
+        id: string;
+        name: string;
+    };
+    isActive: boolean;
+    displayOrder: number;
+}
+export interface AdminCampaignPromotionRef {
+    id: string;
+    name: string;
+    isActive: boolean;
+}
+export interface AdminCampaignLoyaltyBonusPromotionRef {
+    id: string;
+    name: string;
+    isActive: boolean;
+}
+export interface AdminCampaign {
+    id: string;
+    name: string;
+    description: string | null;
+    status: CampaignStatus;
+    startsAt: string | null;
+    endsAt: string | null;
+    mediaAssetId: string | null;
+    promotion: AdminCampaignPromotionRef | null;
+    loyaltyBonusPromotion: AdminCampaignLoyaltyBonusPromotionRef | null;
+    featuredProducts: AdminCampaignProductRef[];
+    createdAt: string;
+    updatedAt: string;
+}
+export interface AdminCampaignsResponse {
+    campaigns: AdminCampaign[];
+    nextCursor: string | null;
+}
+export interface AdminCampaignOptions {
+    products: {
+        id: string;
+        name: string;
+        category: {
+            id: string;
+            name: string;
+        };
+        isActive: boolean;
+    }[];
+    promotions: AdminCampaignPromotionRef[];
+    loyaltyBonusPromotions: AdminCampaignLoyaltyBonusPromotionRef[];
+}
+export interface CreateCampaignRequest {
+    name: string;
+    description?: string | null;
+    startsAt?: string | null;
+    endsAt?: string | null;
+    mediaAssetId?: string | null;
+    promotionId?: string | null;
+    loyaltyBonusPromotionId?: string | null;
+    featuredProductIds?: string[];
+}
+export interface UpdateCampaignRequest {
+    name?: string;
+    description?: string | null;
+    startsAt?: string | null;
+    endsAt?: string | null;
+    mediaAssetId?: string | null;
+    promotionId?: string | null;
+    loyaltyBonusPromotionId?: string | null;
+    featuredProductIds?: string[];
+}
+export interface UpdateCampaignStatusRequest {
+    status: CampaignStatus;
 }
 //# sourceMappingURL=index.d.ts.map

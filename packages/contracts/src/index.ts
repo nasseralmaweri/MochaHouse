@@ -1679,6 +1679,14 @@ export const INTERNAL_PERMISSION_KEYS = [
   //   media.manage  — upload a new asset and deactivate an unused one.
   "media.view",
   "media.manage",
+  // Milestone 8G — Marketing Campaigns. A thin HQ organizing layer over
+  // existing Promotions / Loyalty Bonus Promotions / Products / Media — a
+  // company-wide concern, so both keys are CORPORATE-only.
+  //   marketing.view    — read campaigns and their detail.
+  //   marketing.manage  — create/edit a campaign, change its status, and
+  //                       manage its featured products.
+  "marketing.view",
+  "marketing.manage",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1963,6 +1971,18 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "media.manage",
     description:
       "Upload a new media asset and deactivate an unused one. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "marketing.view": {
+    key: "marketing.view",
+    description:
+      "View marketing campaigns and their detail. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "marketing.manage": {
+    key: "marketing.manage",
+    description:
+      "Create and edit marketing campaigns, change campaign status, and manage a campaign's featured products. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
@@ -3156,4 +3176,121 @@ export interface UploadMediaAssetResponse {
 // (draft or published) — the deactivation is refused, not applied.
 export interface DeactivateMediaAssetResponse {
   asset: AdminMediaAsset;
+}
+
+// --- Milestone 8G, Marketing Campaigns ---------------------------------
+// A thin HQ "Campaign Management" layer that ORGANIZES existing systems —
+// Promotions & Coupons (7E), Bonus Mocha Bean Promotions (7D), the Product
+// catalog and the Media Library — rather than reimplementing any of them.
+// A campaign optionally references ONE Promotion and/or ONE
+// LoyaltyBonusPromotion as independent optional benefits; it performs NO
+// discount or Mocha Beans calculation itself. Its own DRAFT -> ACTIVE ->
+// ENDED lifecycle (ENDED is terminal, mirroring JobOpening's terminal
+// ARCHIVED) is purely organizational and never mutates a linked record.
+// There is no campaign-to-order attribution in 8G — zero checkout/runtime
+// behavior.
+
+export type CampaignStatus = "DRAFT" | "ACTIVE" | "ENDED";
+
+export const CAMPAIGN_NAME_MAX_LENGTH = 120;
+export const CAMPAIGN_DESCRIPTION_MAX_LENGTH = 1000;
+export const CAMPAIGN_FEATURED_PRODUCTS_MAX = 24;
+
+// A featured product as shown on a campaign — id/name/category only, read
+// live from the authoritative catalog at request time. Price, availability
+// and every other product attribute are NEVER duplicated onto a campaign.
+export interface AdminCampaignProductRef {
+  id: string;
+  name: string;
+  category: { id: string; name: string };
+  isActive: boolean;
+  displayOrder: number;
+}
+
+// A linked Promotion / LoyaltyBonusPromotion — id/name/active-state only.
+// The linked system remains the sole source of truth for everything else
+// (discount rules, bonus rules, eligibility, redemption).
+export interface AdminCampaignPromotionRef {
+  id: string;
+  name: string;
+  isActive: boolean;
+}
+
+export interface AdminCampaignLoyaltyBonusPromotionRef {
+  id: string;
+  name: string;
+  isActive: boolean;
+}
+
+// One campaign, used for both the list and the detail view (GET
+// /api/v1/admin/marketing/campaigns and .../:campaignId, marketing.view).
+export interface AdminCampaign {
+  id: string;
+  name: string;
+  description: string | null;
+  status: CampaignStatus;
+  startsAt: string | null;
+  endsAt: string | null;
+  // A MediaAsset id, resolved to a preview by the Admin media picker —
+  // never a URL stored here (mirrors CmsPage's hero.backgroundImageId).
+  mediaAssetId: string | null;
+  promotion: AdminCampaignPromotionRef | null;
+  loyaltyBonusPromotion: AdminCampaignLoyaltyBonusPromotionRef | null;
+  // Ordered by displayOrder ascending.
+  featuredProducts: AdminCampaignProductRef[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminCampaignsResponse {
+  campaigns: AdminCampaign[];
+  nextCursor: string | null;
+}
+
+// GET /api/v1/admin/marketing/campaigns/options (marketing.view) — the
+// bounded reference lists the campaign editor needs to build its selects.
+// Self-contained (queried directly, like Promotion's own /options), so
+// `marketing.view` alone is enough — a Marketing user does not also need
+// `catalog.view` / `promotions.configure` / `loyalty.configure` just to see
+// what exists to link.
+export interface AdminCampaignOptions {
+  products: { id: string; name: string; category: { id: string; name: string }; isActive: boolean }[];
+  promotions: AdminCampaignPromotionRef[];
+  loyaltyBonusPromotions: AdminCampaignLoyaltyBonusPromotionRef[];
+}
+
+// POST /api/v1/admin/marketing/campaigns (marketing.manage). A new campaign
+// always starts DRAFT. `featuredProductIds` is the ordered list (index =
+// displayOrder); duplicates are rejected.
+export interface CreateCampaignRequest {
+  name: string;
+  description?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  mediaAssetId?: string | null;
+  promotionId?: string | null;
+  loyaltyBonusPromotionId?: string | null;
+  featuredProductIds?: string[];
+}
+
+// PATCH /api/v1/admin/marketing/campaigns/:campaignId (marketing.manage).
+// Never changes status — see UpdateCampaignStatusRequest.
+export interface UpdateCampaignRequest {
+  name?: string;
+  description?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  mediaAssetId?: string | null;
+  promotionId?: string | null;
+  loyaltyBonusPromotionId?: string | null;
+  featuredProductIds?: string[];
+}
+
+// POST /api/v1/admin/marketing/campaigns/:campaignId/status
+// (marketing.manage). The only two allowed moves are DRAFT -> ACTIVE and
+// ACTIVE -> ENDED; ENDED is terminal. Activating revalidates every linked
+// reference (media, featured products, promotion, bonus promotion) and
+// returns 409 without mutating anything if one is not currently usable.
+export interface UpdateCampaignStatusRequest {
+  status: CampaignStatus;
 }

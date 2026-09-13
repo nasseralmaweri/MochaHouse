@@ -69,6 +69,9 @@ describe('internal permission catalog', () => {
         // Milestone 8F
         'media.view',
         'media.manage',
+        // Milestone 8G
+        'marketing.view',
+        'marketing.manage',
       ].sort(),
     );
   });
@@ -153,6 +156,11 @@ describe('internal permission catalog', () => {
     // library is CORPORATE-only (Milestone 8F).
     expect(allowedScopeTypesFor('media.view')).toEqual(['CORPORATE']);
     expect(allowedScopeTypesFor('media.manage')).toEqual(['CORPORATE']);
+    // marketing.* — a Campaign is a thin HQ organizing layer over
+    // company-wide Promotions / Loyalty / Products / Media; CORPORATE-only
+    // (Milestone 8G).
+    expect(allowedScopeTypesFor('marketing.view')).toEqual(['CORPORATE']);
+    expect(allowedScopeTypesFor('marketing.manage')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {

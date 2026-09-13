@@ -22,6 +22,7 @@ import { CareersModule } from './careers/careers.module';
 import { FranchisingModule } from './franchising/franchising.module';
 import { CmsModule } from './cms/cms.module';
 import { MediaModule } from './media/media.module';
+import { MarketingModule } from './marketing/marketing.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { MediaModule } from './media/media.module';
     FranchisingModule,
     CmsModule,
     MediaModule,
+    MarketingModule,
   ],
   controllers: [AppController],
   providers: [AppService],
