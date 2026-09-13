@@ -5,17 +5,22 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationDispatchService } from '../notifications/notification-dispatch.service';
 
 const DEFAULT_POLL_INTERVAL_MS = 2000;
 const DEFAULT_BATCH_SIZE = 20;
 
-// Minimal outbox consumer for this slice: claims PENDING OutboxEvent rows
-// and marks them PROCESSED, which is what makes an order visible to the
-// store queue (AdminOrdersService.listActive, in apps/api, only returns
-// orders with a PROCESSED event). There is no external system to dispatch
-// to yet, so "processed" here just means "published for store visibility"
-// — this is intentionally the smallest possible consumer, not a stand-in
-// for a real fulfillment integration.
+// Outbox consumer: claims PENDING OutboxEvent rows and marks them
+// PROCESSED, which is what makes an order visible to the store queue
+// (AdminOrdersService.listActive, in apps/api, only returns orders with a
+// PROCESSED event). Milestone 8H added a second effect of that same claim:
+// for eventTypes NotificationDispatchService recognizes, it attempts to
+// send a notification — but this is deliberately bolted onto the existing
+// claim rather than a second consumer polling the same table, because two
+// independent consumers racing to claim the same PENDING row would mean
+// only one of them ever gets to act on it. Store-queue visibility and
+// notification dispatch are two ordinary side effects of "this worker
+// process claimed this event", not two competing owners of it.
 //
 // Lives here (apps/worker), not apps/api: the approved architecture
 // assigns asynchronous/background execution to the worker. apps/api stays
@@ -31,7 +36,10 @@ export class OutboxProcessorService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OutboxProcessorService.name);
   private timer?: NodeJS.Timeout;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationDispatchService,
+  ) {}
 
   onModuleInit(): void {
     this.timer = setInterval(() => {
@@ -56,7 +64,7 @@ export class OutboxProcessorService implements OnModuleInit, OnModuleDestroy {
       where: { status: 'PENDING' },
       orderBy: { createdAt: 'asc' },
       take: batchSize,
-      select: { id: true },
+      select: { id: true, aggregateType: true, aggregateId: true, eventType: true },
     });
 
     let processedCount = 0;
@@ -71,6 +79,28 @@ export class OutboxProcessorService implements OnModuleInit, OnModuleDestroy {
         data: { status: 'PROCESSED', processedAt: new Date() },
       });
       processedCount += result.count;
+
+      if (result.count === 0) {
+        // Lost the claim race — some other call already owns this event.
+        continue;
+      }
+
+      // Deliberately AFTER the update above, and deliberately never able
+      // to affect it: this event is PROCESSED no matter what happens next.
+      // A thrown error here would otherwise still leave a caught rejection
+      // in the outer .catch() (see onModuleInit) rather than ever
+      // resurrecting the event or blocking the batch — but
+      // NotificationDispatchService itself is written to never throw for
+      // an expected failure (a bad recipient, a send error); this try/catch
+      // is only a backstop against a genuinely unexpected bug in it.
+      try {
+        await this.notifications.dispatch(event);
+      } catch (error) {
+        this.logger.error(
+          `Notification dispatch threw unexpectedly for outbox event ${event.id} (${event.eventType})`,
+          error,
+        );
+      }
     }
 
     return processedCount;

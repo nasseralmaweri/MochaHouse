@@ -199,6 +199,24 @@ export class AdminOrdersService {
         data: { orderId, status: target },
       });
 
+      // Milestone 8H — only READY triggers a notification (RECEIVED already
+      // has its own event from checkout.service.ts; ACCEPTED/PREPARING/
+      // COMPLETED have no notification in this slice). Written in the same
+      // transaction as the status flip for the same reason the checkout
+      // outbox write is: "the order reached READY" and "an event exists for
+      // it" must never disagree. apps/worker's NotificationDispatchService
+      // is the sole consumer — this module never sends anything itself.
+      if (target === 'READY') {
+        await tx.outboxEvent.create({
+          data: {
+            aggregateType: 'Order',
+            aggregateId: orderId,
+            eventType: 'order.status.ready',
+            payload: { orderId, locationId, status: target },
+          },
+        });
+      }
+
       return { advanced: true };
     });
 

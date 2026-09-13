@@ -300,6 +300,17 @@ enum OutboxEventStatus {
   FAILED
 }
 
+// Milestone 8H — the only channel this slice supports.
+enum NotificationChannel {
+  EMAIL
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
 // A durable, independent record of a payment charge attempt against
 // FakePaymentProvider. Created (PENDING) before the provider is invoked,
 // and preserved regardless of outcome — a decline/failure never deletes or
@@ -490,7 +501,41 @@ model OutboxEvent {
   createdAt     DateTime          @default(now())
   processedAt   DateTime?
 
+  // Milestone 8H — the worker's notification dispatch is one more consumer
+  // of this same row (see NotificationDelivery below); this relation is
+  // just the FK side of that, not a second outbox.
+  notificationDeliveries NotificationDelivery[]
+
   @@index([status])
+  @@index([aggregateType, aggregateId])
+}
+
+// Milestone 8H — a worker-owned delivery log, NOT a second outbox/event
+// queue. API business modules never write this table; only the worker
+// does, at the moment it actually attempts a send, after claiming the
+// triggering OutboxEvent. The @@unique below is the idempotency guard: at
+// most one delivery attempt per (event, channel), so re-encountering the
+// same OutboxEvent (a duplicate claim, a re-run) can never send twice —
+// see NotificationDispatchService (apps/worker) for how it's used.
+// Deliberately does not store message body/rendered content or
+// credentials, only what's needed to know what was sent, to whom, and
+// whether it succeeded.
+model NotificationDelivery {
+  id            String                     @id @default(uuid(7))
+  outboxEventId String
+  outboxEvent   OutboxEvent                @relation(fields: [outboxEventId], references: [id])
+  channel       NotificationChannel
+  recipient     String
+  templateKey   String
+  status        NotificationDeliveryStatus @default(PENDING)
+  aggregateType String
+  aggregateId   String
+  providerMessageId String?
+  failureReason     String?
+  createdAt         DateTime                @default(now())
+  sentAt            DateTime?
+
+  @@unique([outboxEventId, channel])
   @@index([aggregateType, aggregateId])
 }
 

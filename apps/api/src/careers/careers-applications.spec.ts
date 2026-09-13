@@ -245,6 +245,9 @@ describe('Careers / Applicants (integration)', () => {
   });
 
   afterAll(async () => {
+    await prisma.outboxEvent.deleteMany({
+      where: { aggregateType: 'JobApplication', aggregateId: { in: applicationIds } },
+    });
     await prisma.internalAuditEvent.deleteMany({
       where: { actorInternalUserId: { in: userIds } },
     });
@@ -297,6 +300,30 @@ describe('Careers / Applicants (integration)', () => {
     expect(row.email).toBe(body.email);
     expect(row.workAuthorized).toBe(true);
     expect(row.resumeUrl).toBeNull();
+  });
+
+  it('writes a careers.application.submitted OutboxEvent in the same transaction as the application (Milestone 8H)', async () => {
+    const job = await makeJob();
+    const body = applicationBody();
+    await submit(job.id, body).expect(201);
+
+    const row = await prisma.jobApplication.findFirst({
+      where: { jobOpeningId: job.id },
+    });
+    expect(row).not.toBeNull();
+    applicationIds.push(row!.id);
+
+    const event = await prisma.outboxEvent.findFirst({
+      where: { aggregateType: 'JobApplication', aggregateId: row!.id },
+    });
+    expect(event).not.toBeNull();
+    expect(event!.eventType).toBe('careers.application.submitted');
+    expect(event!.status).toBe('PENDING');
+    expect(event!.payload).toMatchObject({
+      jobApplicationId: row!.id,
+      jobOpeningId: job.id,
+      jobTitleSnapshot: job.title,
+    });
   });
 
   it('keeps the job title snapshot even after the job is edited or archived', async () => {

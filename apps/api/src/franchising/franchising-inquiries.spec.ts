@@ -204,6 +204,9 @@ describe('Franchising / Inquiries (integration)', () => {
   });
 
   afterAll(async () => {
+    await prisma.outboxEvent.deleteMany({
+      where: { aggregateType: 'FranchiseInquiry', aggregateId: { in: inquiryIds } },
+    });
     await prisma.internalAuditEvent.deleteMany({
       where: { actorInternalUserId: { in: userIds } },
     });
@@ -247,6 +250,28 @@ describe('Franchising / Inquiries (integration)', () => {
     expect(row!.timeframe).toBeNull();
     expect(row!.businessExperience).toBeNull();
     expect(row!.message).toBeNull();
+  });
+
+  it('writes a franchising.inquiry.submitted OutboxEvent in the same transaction as the inquiry (Milestone 8H)', async () => {
+    const body = inquiryBody({ preferredMarket: `Outbox Market ${suffix}` });
+    await submit(body).expect(201);
+
+    const row = await prisma.franchiseInquiry.findFirst({
+      where: { email: body.email },
+    });
+    expect(row).not.toBeNull();
+    inquiryIds.push(row!.id);
+
+    const event = await prisma.outboxEvent.findFirst({
+      where: { aggregateType: 'FranchiseInquiry', aggregateId: row!.id },
+    });
+    expect(event).not.toBeNull();
+    expect(event!.eventType).toBe('franchising.inquiry.submitted');
+    expect(event!.status).toBe('PENDING');
+    expect(event!.payload).toMatchObject({
+      franchiseInquiryId: row!.id,
+      preferredMarket: body.preferredMarket,
+    });
   });
 
   it('accepts the optional free-text fields untouched (no invented buckets)', async () => {

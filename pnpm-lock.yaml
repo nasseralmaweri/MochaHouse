@@ -397,6 +397,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@aws-sdk/client-ses':
+        specifier: ^3.1130.0
+        version: 3.1131.0
       '@mocha-house/database':
         specifier: workspace:*
         version: link:../../packages/database
@@ -627,6 +630,10 @@ packages:
 
   '@aws-sdk/client-s3@3.1130.0':
     resolution: {integrity: sha512-TUe0hgQi3RtuccmTgpUsRIuPk07ZtJE6s3vpOeWCM8sibLNXPVKweemNEz5gwaRYTor8MAGgjlyVZfKGuu1ZOQ==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-ses@3.1131.0':
+    resolution: {integrity: sha512-/ZZqzmy+t27jKPG6a8yqyph09TMcqY6ExfpGXk7p7pk2GDdObLTCocGklOekHBI1rVMhrV5OyoPnzoPVZBxslA==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/core@3.978.0':
@@ -5492,6 +5499,17 @@ snapshots:
       '@aws-sdk/credential-provider-node': 3.972.83
       '@aws-sdk/middleware-sdk-s3': 3.972.76
       '@aws-sdk/signature-v4-multi-region': 3.996.46
+      '@aws-sdk/types': 3.974.5
+      '@smithy/core': 3.33.3
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.12.1
+      '@smithy/types': 4.18.0
+      tslib: 2.8.1
+
+  '@aws-sdk/client-ses@3.1131.0':
+    dependencies:
+      '@aws-sdk/core': 3.978.0
+      '@aws-sdk/credential-provider-node': 3.972.83
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
       '@smithy/fetch-http-handler': 5.8.0

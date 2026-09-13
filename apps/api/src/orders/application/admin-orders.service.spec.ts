@@ -336,6 +336,80 @@ describe('AdminOrdersService (integration)', () => {
     expect(order.paymentAttempt.status).toBe('SUCCEEDED');
   });
 
+  it('writes an order.status.ready OutboxEvent only on the transition into READY (Milestone 8H)', async () => {
+    const confirmation = await createPublishedOrder();
+
+    await adminOrdersService.advance(
+      confirmation.orderId,
+      locationId,
+      'RECEIVED',
+      corporate,
+    );
+    expect(
+      await prisma.outboxEvent.count({
+        where: {
+          aggregateType: 'Order',
+          aggregateId: confirmation.orderId,
+          eventType: 'order.status.ready',
+        },
+      }),
+    ).toBe(0);
+
+    await adminOrdersService.advance(
+      confirmation.orderId,
+      locationId,
+      'ACCEPTED',
+      corporate,
+    );
+    expect(
+      await prisma.outboxEvent.count({
+        where: {
+          aggregateType: 'Order',
+          aggregateId: confirmation.orderId,
+          eventType: 'order.status.ready',
+        },
+      }),
+    ).toBe(0);
+
+    await adminOrdersService.advance(
+      confirmation.orderId,
+      locationId,
+      'PREPARING',
+      corporate,
+    );
+    const event = await prisma.outboxEvent.findFirst({
+      where: {
+        aggregateType: 'Order',
+        aggregateId: confirmation.orderId,
+        eventType: 'order.status.ready',
+      },
+    });
+    expect(event).not.toBeNull();
+    expect(event!.status).toBe('PENDING');
+    expect(event!.payload).toMatchObject({
+      orderId: confirmation.orderId,
+      locationId,
+      status: 'READY',
+    });
+
+    await adminOrdersService.advance(
+      confirmation.orderId,
+      locationId,
+      'READY',
+      corporate,
+    );
+    // COMPLETED must not create a second READY event or any event of its own.
+    expect(
+      await prisma.outboxEvent.count({
+        where: {
+          aggregateType: 'Order',
+          aggregateId: confirmation.orderId,
+          eventType: 'order.status.ready',
+        },
+      }),
+    ).toBe(1);
+  });
+
   it('rejects advancing an order that is already completed', async () => {
     const confirmation = await createPublishedOrder();
     for (const expected of ['RECEIVED', 'ACCEPTED', 'PREPARING', 'READY']) {

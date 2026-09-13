@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { OutboxProcessorService } from './outbox-processor.service';
 
 describe('OutboxProcessorService (integration)', () => {
@@ -12,7 +13,7 @@ describe('OutboxProcessorService (integration)', () => {
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({
-      imports: [PrismaModule],
+      imports: [PrismaModule, NotificationsModule],
       providers: [OutboxProcessorService],
     }).compile();
 
@@ -25,6 +26,16 @@ describe('OutboxProcessorService (integration)', () => {
 
   afterAll(async () => {
     if (createdEventIds.length > 0) {
+      // Milestone 8H — every event here uses eventType
+      // 'order.checkout.completed', which NotificationDispatchService
+      // recognizes, so processing one of these ALSO creates a
+      // NotificationDelivery row (FAILED, since aggregateId is a random
+      // UUID with no real Order behind it). NotificationDelivery has a
+      // required FK to OutboxEvent (ON DELETE RESTRICT), so those rows
+      // must go first or the OutboxEvent delete below fails.
+      await prisma.notificationDelivery.deleteMany({
+        where: { outboxEventId: { in: createdEventIds } },
+      });
       await prisma.outboxEvent.deleteMany({
         where: { id: { in: createdEventIds } },
       });

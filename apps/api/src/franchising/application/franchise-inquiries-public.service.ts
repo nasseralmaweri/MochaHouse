@@ -78,7 +78,30 @@ export class FranchiseInquiriesPublicService {
       consentAcknowledged: this.consent(request?.consentAcknowledged),
     };
 
-    await this.prisma.franchiseInquiry.create({ data, select: { id: true } });
+    await this.prisma.$transaction(async (tx) => {
+      const inquiry = await tx.franchiseInquiry.create({
+        data,
+        select: { id: true },
+      });
+
+      // Milestone 8H — same generic, aggregate-agnostic outbox Order
+      // checkout already writes to (see checkout.service.ts). Nothing in
+      // this module ever sends a notification itself; apps/worker's
+      // NotificationDispatchService is the sole consumer that decides what
+      // to do with this eventType.
+      await tx.outboxEvent.create({
+        data: {
+          aggregateType: 'FranchiseInquiry',
+          aggregateId: inquiry.id,
+          eventType: 'franchising.inquiry.submitted',
+          payload: {
+            franchiseInquiryId: inquiry.id,
+            preferredMarket: data.preferredMarket,
+          },
+        },
+      });
+    });
+
     return { ok: true };
   }
 
