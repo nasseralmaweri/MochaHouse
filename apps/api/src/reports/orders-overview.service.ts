@@ -10,6 +10,7 @@ import {
   businessDateRangeToUtcInstants,
   MOCHA_HOUSE_TIME_ZONE,
 } from '../operations/application/business-date';
+import { requireReportDateRange } from './report-date-range';
 
 export interface OrdersOverviewQuery {
   startDate?: string;
@@ -24,8 +25,6 @@ const ORDER_STATUSES: readonly OrderStatus[] = [
   'READY',
   'COMPLETED',
 ];
-
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 // Milestone 9A — HQ Digital Sales & Orders overview. Read-only. This is
 // deliberately a digital-platform report: there is no KwickPOS integration
@@ -46,13 +45,10 @@ export class OrdersOverviewReportService {
     // matching service-layer defense (same pattern as AdminPlatformStatusService).
     authorization.assertCorporate('reports.view');
 
-    const startDate = this.requireBusinessDate(query.startDate, 'startDate');
-    const endDate = this.requireBusinessDate(query.endDate, 'endDate');
-    if (startDate > endDate) {
-      throw new BadRequestException(
-        'startDate must be on or before endDate.',
-      );
-    }
+    const { startDate, endDate } = requireReportDateRange(
+      query.startDate,
+      query.endDate,
+    );
 
     const locationId = this.normalizeLocationId(query.locationId);
 
@@ -138,27 +134,6 @@ export class OrdersOverviewReportService {
         freshnessLabel: 'Live platform data',
       },
     };
-  }
-
-  private requireBusinessDate(
-    value: string | undefined,
-    field: 'startDate' | 'endDate',
-  ): string {
-    if (typeof value !== 'string' || !DATE_ONLY.test(value)) {
-      throw new BadRequestException(
-        `${field} is required and must be a valid date in YYYY-MM-DD format.`,
-      );
-    }
-    const [year, month, day] = value.split('-').map(Number);
-    const check = new Date(Date.UTC(year, month - 1, day));
-    if (
-      check.getUTCFullYear() !== year ||
-      check.getUTCMonth() !== month - 1 ||
-      check.getUTCDate() !== day
-    ) {
-      throw new BadRequestException(`${field} is not a valid calendar date.`);
-    }
-    return value;
   }
 
   private normalizeLocationId(value: string | undefined): string | null {

@@ -101,3 +101,30 @@ export function buildReportQuery(filters: ReportFilters): string {
   }
   return `?${params.toString()}`;
 }
+
+// --- Milestone 9B: Location Performance -------------------------------
+// Date-only filters — this report compares every location at once, so
+// unlike ReportFilters above there is no locationId to filter by.
+
+export interface DateRangeFilters {
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+}
+
+export function normalizeDateRangeFilters(raw: {
+  startDate?: RawParam;
+  endDate?: RawParam;
+}): DateRangeFilters {
+  const today = currentBusinessDate();
+  return {
+    startDate: firstValue(raw.startDate) ?? today,
+    endDate: firstValue(raw.endDate) ?? today,
+  };
+}
+
+export function buildDateRangeQuery(filters: DateRangeFilters): string {
+  const params = new URLSearchParams();
+  params.set("startDate", filters.startDate);
+  params.set("endDate", filters.endDate);
+  return `?${params.toString()}`;
+}

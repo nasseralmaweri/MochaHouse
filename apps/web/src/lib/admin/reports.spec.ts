@@ -1,8 +1,11 @@
 import {
+  buildDateRangeQuery,
   buildReportQuery,
   checkReportDateRange,
   currentBusinessDate,
+  normalizeDateRangeFilters,
   normalizeReportFilters,
+  type DateRangeFilters,
   type ReportFilters,
 } from "./reports";
 
@@ -106,6 +109,47 @@ describe("buildReportQuery", () => {
     };
     expect(buildReportQuery(filters)).toBe(
       "?startDate=2026-08-01&endDate=2026-08-31&locationId=loc-1",
+    );
+  });
+});
+
+// --- Milestone 9B: Location Performance date-only filters --------------
+
+describe("normalizeDateRangeFilters", () => {
+  it("defaults startDate and endDate to today's business date when absent", () => {
+    const today = currentBusinessDate();
+    expect(normalizeDateRangeFilters({})).toEqual({
+      startDate: today,
+      endDate: today,
+    });
+  });
+
+  it("keeps explicit dates", () => {
+    expect(
+      normalizeDateRangeFilters({
+        startDate: "2026-08-01",
+        endDate: "2026-08-31",
+      }),
+    ).toEqual({ startDate: "2026-08-01", endDate: "2026-08-31" });
+  });
+
+  it("takes the first value of a repeated param", () => {
+    expect(
+      normalizeDateRangeFilters({
+        startDate: ["2026-08-01", "2026-08-02"],
+      }).startDate,
+    ).toBe("2026-08-01");
+  });
+});
+
+describe("buildDateRangeQuery", () => {
+  it("serialises startDate and endDate only — no locationId", () => {
+    const filters: DateRangeFilters = {
+      startDate: "2026-08-01",
+      endDate: "2026-08-31",
+    };
+    expect(buildDateRangeQuery(filters)).toBe(
+      "?startDate=2026-08-01&endDate=2026-08-31",
     );
   });
 });

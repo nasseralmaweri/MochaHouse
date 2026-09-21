@@ -3499,3 +3499,61 @@ export interface RejectApprovalRequestRequest {
 export interface RejectApprovalRequestResponse {
   approvalRequest: AdminApprovalRequest;
 }
+
+// --- Milestone 9B, HQ Reporting: Location Performance --------------------
+// Served only from `GET /api/v1/admin/reports/location-performance`
+// (InternalAuthGuard + PermissionGuard + `reports.view`, CORPORATE-only —
+// the same permission as 9A's Digital Sales & Orders report; there is no
+// separate `reports.locations.view`).
+//
+// Compares locations against EACH OTHER for digital-platform ordering —
+// `source` below is the exact 9A digital-platform-only disclosure, never a
+// total-store/POS figure. `startDate`/`endDate` use the exact 9A
+// business-calendar-date semantics (America/Detroit, both ends inclusive).
+//
+// Inclusion rule: every currently active Location appears, even with zero
+// orders in the period (that's meaningful management information, not a
+// gap); an INACTIVE location appears only if it has at least one order in
+// the selected period (preserves history without resurrecting a closed
+// location that has nothing to show for this range).
+export interface AdminLocationPerformanceRow {
+  locationId: string;
+  locationName: string;
+  isActive: boolean;
+  isDigitalOrderingEnabled: boolean;
+  // Every digital-platform order created at this location in the selected
+  // period, regardless of status.
+  totalOrders: number;
+  // Of those, the ones whose current status is COMPLETED.
+  completedOrders: number;
+  // completedOrders / totalOrders * 100, rounded to one decimal place; 0
+  // when totalOrders is 0. NOTE: there is no CANCELLED status in the
+  // current OrderStatus vocabulary, so an order that isn't COMPLETED may
+  // simply still be in progress (RECEIVED/ACCEPTED/PREPARING/READY) — this
+  // figure is most meaningful for a period that has already ended, and the
+  // UI must say so visibly (never only in a tooltip).
+  completedPercent: number;
+  // SUM(subtotal - promotionDiscountMinorUnits - rewardDiscountMinorUnits)
+  // at this location over the selected period — identical definition to
+  // AdminOrdersOverviewReport.digitalSalesMinorUnits. Gift card tender is a
+  // payment method, not a discount, and is deliberately NOT subtracted.
+  digitalSalesMinorUnits: number;
+  // digitalSalesMinorUnits / totalOrders, rounded to the nearest minor
+  // unit; 0 when totalOrders is 0.
+  averageOrderValueMinorUnits: number;
+}
+
+// Deliberately no overall summary field — calling
+// GET /admin/reports/orders-overview with no locationId already gives the
+// combined all-location figure for the same range; duplicating that
+// computation here would just be two sources of truth for one number.
+export interface AdminLocationPerformanceReport {
+  filters: {
+    startDate: string; // YYYY-MM-DD, business calendar date, inclusive
+    endDate: string; // YYYY-MM-DD, business calendar date, inclusive
+  };
+  // Sorted locationName ascending, locationId ascending as a tiebreaker.
+  // Never sorted by a metric — this is a comparison table, not a ranking.
+  locations: AdminLocationPerformanceRow[];
+  source: AdminReportDataSource;
+}

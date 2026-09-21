@@ -1624,4 +1624,23 @@ export interface RejectApprovalRequestRequest {
 export interface RejectApprovalRequestResponse {
     approvalRequest: AdminApprovalRequest;
 }
+export interface AdminLocationPerformanceRow {
+    locationId: string;
+    locationName: string;
+    isActive: boolean;
+    isDigitalOrderingEnabled: boolean;
+    totalOrders: number;
+    completedOrders: number;
+    completedPercent: number;
+    digitalSalesMinorUnits: number;
+    averageOrderValueMinorUnits: number;
+}
+export interface AdminLocationPerformanceReport {
+    filters: {
+        startDate: string;
+        endDate: string;
+    };
+    locations: AdminLocationPerformanceRow[];
+    source: AdminReportDataSource;
+}
 //# sourceMappingURL=index.d.ts.map
