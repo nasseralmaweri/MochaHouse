@@ -5,10 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { AdminCampaign, AdminCampaignOptions } from "@mocha-house/contracts";
 import {
+  requestCampaignApprovalFromBrowser,
   updateCampaignFromBrowser,
   updateCampaignStatusFromBrowser,
 } from "@/lib/api-client";
 import {
+  campaignApprovalStatusLabel,
+  campaignApprovalStatusTone,
   campaignStatusLabel,
   campaignStatusTone,
   formatCampaignDate,
@@ -45,6 +48,11 @@ export function CampaignEditor({
   const [pending, setPending] = useState<string | null>(null);
 
   const ended = campaign.status === "ENDED";
+  // Milestone 8J — a DRAFT campaign with a PENDING approval request cannot
+  // be edited (the API enforces this too; this just keeps the form out of
+  // the way rather than letting a submit fail).
+  const pendingApproval =
+    campaign.status === "DRAFT" && campaign.approvalStatus === "PENDING";
   const [name, setName] = useState(campaign.name);
   const [description, setDescription] = useState(campaign.description ?? "");
   const [startsAt, setStartsAt] = useState(toDateInputValue(campaign.startsAt));
@@ -103,6 +111,12 @@ export function CampaignEditor({
     setPending(null);
   }
 
+  async function requestApproval() {
+    setPending("REQUEST_APPROVAL");
+    applyResult(await requestCampaignApprovalFromBrowser(campaign.id));
+    setPending(null);
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <Card className="flex flex-col gap-2">
@@ -110,10 +124,18 @@ export function CampaignEditor({
           <span className="text-base font-semibold text-text-primary">
             {campaign.name}
           </span>
-          <StatusBadge
-            label={campaignStatusLabel(campaign.status)}
-            tone={campaignStatusTone(campaign.status)}
-          />
+          <div className="flex items-center gap-2">
+            {campaign.status === "DRAFT" ? (
+              <StatusBadge
+                label={campaignApprovalStatusLabel(campaign.approvalStatus)}
+                tone={campaignApprovalStatusTone(campaign.approvalStatus)}
+              />
+            ) : null}
+            <StatusBadge
+              label={campaignStatusLabel(campaign.status)}
+              tone={campaignStatusTone(campaign.status)}
+            />
+          </div>
         </div>
         <p className="text-sm text-text-secondary">
           {formatCampaignDate(campaign.startsAt)} –{" "}
@@ -121,8 +143,39 @@ export function CampaignEditor({
         </p>
 
         {canManage ? (
-          <div className="flex flex-wrap gap-2 pt-1">
-            {campaign.status === "DRAFT" ? (
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {campaign.status === "DRAFT" && campaign.approvalStatus === "NONE" ? (
+              <Button
+                onClick={() => void requestApproval()}
+                disabled={pending !== null}
+              >
+                {pending === "REQUEST_APPROVAL"
+                  ? "Requesting…"
+                  : "Request Approval"}
+              </Button>
+            ) : null}
+            {pendingApproval ? (
+              <span className="text-sm text-text-secondary">
+                Awaiting an approval decision. Editing is disabled until
+                then.
+              </span>
+            ) : null}
+            {campaign.status === "DRAFT" && campaign.approvalStatus === "REJECTED" ? (
+              <>
+                <span className="text-sm text-text-secondary">
+                  This request was rejected.
+                </span>
+                {campaign.latestApprovalRequestId ? (
+                  <Link
+                    href={`/admin/approvals/${campaign.latestApprovalRequestId}`}
+                    className="text-sm font-medium text-text-primary underline underline-offset-2"
+                  >
+                    View reason
+                  </Link>
+                ) : null}
+              </>
+            ) : null}
+            {campaign.status === "DRAFT" && campaign.approvalStatus === "APPROVED" ? (
               <Button
                 onClick={() => runStatusAction("ACTIVE")}
                 disabled={pending !== null}
@@ -153,7 +206,7 @@ export function CampaignEditor({
         ) : null}
       </Card>
 
-      {canManage && !ended ? (
+      {canManage && !ended && !pendingApproval ? (
         <form onSubmit={saveFields} className="flex flex-col gap-6">
           <AdminSection title="Basics">
             <Card className="flex flex-col gap-3">

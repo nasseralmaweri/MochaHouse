@@ -1687,6 +1687,13 @@ export const INTERNAL_PERMISSION_KEYS = [
   //                       manage its featured products.
   "marketing.view",
   "marketing.manage",
+  // Milestone 8J — Approvals. A generic request/decide primitive; the only
+  // workflow wired to it in this slice is Marketing Campaign activation.
+  // Both CORPORATE-only.
+  //   approvals.view    — list/see approval requests and their detail.
+  //   approvals.decide  — approve or reject a pending request.
+  "approvals.view",
+  "approvals.decide",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -1983,6 +1990,18 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "marketing.manage",
     description:
       "Create and edit marketing campaigns, change campaign status, and manage a campaign's featured products. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "approvals.view": {
+    key: "approvals.view",
+    description:
+      "View approval requests and their detail. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "approvals.decide": {
+    key: "approvals.decide",
+    description:
+      "Approve or reject a pending approval request. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
@@ -3250,6 +3269,14 @@ export interface AdminCampaignLoyaltyBonusPromotionRef {
   isActive: boolean;
 }
 
+// Milestone 8J — a campaign's derived approval state, computed server-side
+// on every read (never persisted on Campaign itself). An APPROVED request
+// that has gone stale (the campaign was edited after it was decided —
+// campaign.updatedAt > that request's decidedAt) is reported as "NONE",
+// not "APPROVED": from the UI/activation-gate's perspective a stale
+// approval simply isn't a valid one anymore.
+export type CampaignApprovalStatus = "NONE" | "PENDING" | "APPROVED" | "REJECTED";
+
 // One campaign, used for both the list and the detail view (GET
 // /api/v1/admin/marketing/campaigns and .../:campaignId, marketing.view).
 export interface AdminCampaign {
@@ -3268,6 +3295,11 @@ export interface AdminCampaign {
   featuredProducts: AdminCampaignProductRef[];
   createdAt: string;
   updatedAt: string;
+  // Milestone 8J — the latest ApprovalRequest for this campaign's
+  // activation, collapsed to the four states above. `latestApprovalRequestId`
+  // is null exactly when approvalStatus is "NONE".
+  approvalStatus: CampaignApprovalStatus;
+  latestApprovalRequestId: string | null;
 }
 
 export interface AdminCampaignsResponse {
@@ -3321,4 +3353,68 @@ export interface UpdateCampaignRequest {
 // returns 409 without mutating anything if one is not currently usable.
 export interface UpdateCampaignStatusRequest {
   status: CampaignStatus;
+}
+
+// POST /api/v1/admin/marketing/campaigns/:campaignId/request-approval
+// (marketing.manage, Milestone 8J). Campaign must be DRAFT. Idempotent: a
+// second call while a request is already PENDING reuses that same request
+// rather than creating a duplicate. Returns the bare campaign (approvalStatus
+// now "PENDING") — the same unwrapped shape create/update/status already
+// return; the full ApprovalRequest detail lives on the dedicated
+// /admin/approvals screens instead.
+
+// --- Milestone 8J, Approvals -------------------------------------------
+// A generic request/decide primitive (see ApprovalRequest in the Prisma
+// schema for the full rationale). Only one workflow is wired to it in this
+// slice — see APPROVAL_TARGET_TYPE_CAMPAIGN / APPROVAL_ACTION below.
+
+export const APPROVAL_TARGET_TYPE_CAMPAIGN = "Campaign";
+export const APPROVAL_ACTION_CAMPAIGN_ACTIVATE = "marketing.campaign_activate";
+
+export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+// One row of GET /api/v1/admin/approvals (approvals.view). `targetLabel` is
+// a short human-readable description of the target — for this slice's only
+// target type (Campaign) that's the campaign's own name. There is
+// deliberately no "forbidden, degraded view" case: for a Campaign-targeted
+// request the service ALSO requires marketing.view (see
+// ApprovalsAdminService), so a caller either sees the full row or gets a
+// 403 — never a row with this blanked out.
+export interface AdminApprovalRequest {
+  id: string;
+  targetType: string;
+  targetId: string;
+  targetLabel: string;
+  action: string;
+  status: ApprovalStatus;
+  requestedByLabel: string;
+  createdAt: string;
+  decidedByLabel: string | null;
+  decisionReason: string | null;
+  decidedAt: string | null;
+}
+
+export interface AdminApprovalRequestsResponse {
+  approvalRequests: AdminApprovalRequest[];
+  nextCursor: string | null;
+}
+
+export interface GetApprovalRequestResponse {
+  approvalRequest: AdminApprovalRequest;
+}
+
+// POST /api/v1/admin/approvals/:approvalRequestId/approve (approvals.decide).
+export interface ApproveApprovalRequestResponse {
+  approvalRequest: AdminApprovalRequest;
+}
+
+// POST /api/v1/admin/approvals/:approvalRequestId/reject (approvals.decide).
+// `reason` is required (non-empty, trimmed) — validated the same way as
+// every other required-reason field in Admin (e.g. loyalty adjustments).
+export interface RejectApprovalRequestRequest {
+  reason: string;
+}
+
+export interface RejectApprovalRequestResponse {
+  approvalRequest: AdminApprovalRequest;
 }

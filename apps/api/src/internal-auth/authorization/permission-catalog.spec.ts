@@ -72,6 +72,9 @@ describe('internal permission catalog', () => {
         // Milestone 8G
         'marketing.view',
         'marketing.manage',
+        // Milestone 8J
+        'approvals.view',
+        'approvals.decide',
       ].sort(),
     );
   });
@@ -161,6 +164,9 @@ describe('internal permission catalog', () => {
     // (Milestone 8G).
     expect(allowedScopeTypesFor('marketing.view')).toEqual(['CORPORATE']);
     expect(allowedScopeTypesFor('marketing.manage')).toEqual(['CORPORATE']);
+    // approvals.* — Milestone 8J.
+    expect(allowedScopeTypesFor('approvals.view')).toEqual(['CORPORATE']);
+    expect(allowedScopeTypesFor('approvals.decide')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {

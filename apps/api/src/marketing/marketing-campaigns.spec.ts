@@ -13,6 +13,7 @@ import { InternalAuthModule } from '../internal-auth/internal-auth.module';
 import { signInternalDevJwt } from '../internal-auth/infrastructure/internal-dev-jwt';
 import { MediaModule } from '../media/media.module';
 import { MarketingModule } from './marketing.module';
+import { ApprovalsModule } from '../approvals/approvals.module';
 
 type Scope = { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null };
 
@@ -32,6 +33,7 @@ describe('Marketing Campaigns admin (integration)', () => {
   const userIds: string[] = [];
   const roleIds: string[] = [];
   const campaignIds: string[] = [];
+  const approvalRequestIds: string[] = [];
   const mediaAssetIds: string[] = [];
   const promotionIds: string[] = [];
   const bonusPromotionIds: string[] = [];
@@ -108,6 +110,31 @@ describe('Marketing Campaigns admin (integration)', () => {
       .post(`/api/v1/admin/marketing/campaigns/${id}/status`)
       .set('Authorization', `Bearer ${token(key)}`)
       .send({ status });
+
+  const requestApproval = (key: string, id: string) =>
+    request(app.getHttpServer())
+      .post(`/api/v1/admin/marketing/campaigns/${id}/request-approval`)
+      .set('Authorization', `Bearer ${token(key)}`)
+      .send({});
+
+  const decideApproval = (key: string, approvalRequestId: string, decision: 'approve' | 'reject', reason?: string) =>
+    request(app.getHttpServer())
+      .post(`/api/v1/admin/approvals/${approvalRequestId}/${decision}`)
+      .set('Authorization', `Bearer ${token(key)}`)
+      .send(decision === 'reject' ? { reason } : {});
+
+  // Milestone 8J — request + approve in one step, the precondition every
+  // pre-8J activation test now needs before setStatus('ACTIVE') can
+  // succeed. Returns the approvalRequestId in case a test wants it.
+  async function approveForActivation(campaignId: string): Promise<string> {
+    const afterRequest = (
+      await requestApproval('hq', campaignId).expect(201)
+    ).body as AdminCampaign;
+    const approvalRequestId = afterRequest.latestApprovalRequestId!;
+    approvalRequestIds.push(approvalRequestId);
+    await decideApproval('approver', approvalRequestId, 'approve').expect(201);
+    return approvalRequestId;
+  }
 
   const deactivateMedia = (key: string, mediaAssetId: string) =>
     request(app.getHttpServer())
@@ -191,6 +218,7 @@ describe('Marketing Campaigns admin (integration)', () => {
         InternalAuthModule,
         MarketingModule,
         MediaModule,
+        ApprovalsModule,
       ],
     }).compile();
     app = moduleFixture.createNestApplication();
@@ -240,6 +268,14 @@ describe('Marketing Campaigns admin (integration)', () => {
       scopeType: 'LOCATION',
       scopeId: locId,
     });
+    // Milestone 8J — a distinct decider (never the same user as 'hq', who
+    // requests approval in these fixtures) so activation tests can
+    // actually get past the approval precondition.
+    await makeUserWithRole(
+      'approver',
+      ['approvals.view', 'approvals.decide', 'marketing.view'],
+      { scopeType: 'CORPORATE', scopeId: null },
+    );
     const storeManager = await prisma.internalRole.findUniqueOrThrow({
       where: { key: 'store-manager' },
     });
@@ -269,6 +305,12 @@ describe('Marketing Campaigns admin (integration)', () => {
         where: { campaignId: { in: campaignIds } },
       });
     }
+    await prisma.internalAuditEvent.deleteMany({
+      where: { targetType: 'approval_request', targetId: { in: approvalRequestIds } },
+    });
+    await prisma.approvalRequest.deleteMany({
+      where: { id: { in: approvalRequestIds } },
+    });
     await prisma.internalAuditEvent.deleteMany({
       where: { targetType: 'campaign', targetId: { in: campaignIds } },
     });
@@ -467,6 +509,7 @@ describe('Marketing Campaigns admin (integration)', () => {
 
   it('rejects editing an ENDED campaign', async () => {
     const campaign = track(await create('hq', validCampaign()).expect(201));
+    await approveForActivation(campaign.id);
     await setStatus('hq', campaign.id, 'ACTIVE').expect(201);
     await setStatus('hq', campaign.id, 'ENDED').expect(201);
     await patch('hq', campaign.id, { name: 'New name' }).expect(409);
@@ -477,6 +520,7 @@ describe('Marketing Campaigns admin (integration)', () => {
   it('moves DRAFT -> ACTIVE -> ENDED and rejects invalid transitions', async () => {
     const campaign = track(await create('hq', validCampaign()).expect(201));
     await setStatus('hq', campaign.id, 'ENDED').expect(409); // DRAFT -> ENDED invalid
+    await approveForActivation(campaign.id);
     const active = (
       await setStatus('hq', campaign.id, 'ACTIVE').expect(201)
     ).body as AdminCampaign;
@@ -494,6 +538,7 @@ describe('Marketing Campaigns admin (integration)', () => {
     const campaign = track(
       await create('hq', validCampaign({ promotionId })).expect(201),
     );
+    await approveForActivation(campaign.id);
     await setStatus('hq', campaign.id, 'ACTIVE').expect(409);
 
     const promotion = await prisma.promotion.findUniqueOrThrow({
@@ -519,6 +564,7 @@ describe('Marketing Campaigns admin (integration)', () => {
     const campaign = track(
       await create('hq', validCampaign({ loyaltyBonusPromotionId })).expect(201),
     );
+    await approveForActivation(campaign.id);
     await setStatus('hq', campaign.id, 'ACTIVE').expect(409);
     const bonus = await prisma.loyaltyBonusPromotion.findUniqueOrThrow({
       where: { id: loyaltyBonusPromotionId },
@@ -533,6 +579,7 @@ describe('Marketing Campaigns admin (integration)', () => {
         201,
       ),
     );
+    await approveForActivation(campaign.id);
     // Deactivate the product out from under the (still DRAFT) campaign.
     await prisma.product.update({
       where: { id: productActiveId },
@@ -577,6 +624,10 @@ describe('Marketing Campaigns admin (integration)', () => {
   it('records compact audit events for create, update and status change', async () => {
     const campaign = track(await create('hq', validCampaign()).expect(201));
     await patch('hq', campaign.id, { name: 'Renamed campaign' }).expect(200);
+    // Approval requests/decisions audit under targetType 'approval_request',
+    // never 'campaign' — this campaign's own audit trail is unaffected by
+    // the new precondition (asserted below).
+    await approveForActivation(campaign.id);
     await setStatus('hq', campaign.id, 'ACTIVE').expect(201);
 
     const events = await auditFor(campaign.id);
@@ -607,5 +658,125 @@ describe('Marketing Campaigns admin (integration)', () => {
         'featuredProductIds',
       ].sort(),
     );
+  });
+
+  // --- Milestone 8J — Approvals gate on activation -----------------
+
+  describe('Approvals integration (Milestone 8J)', () => {
+    it('requests approval for a DRAFT campaign; requires marketing.manage; campaign stays DRAFT', async () => {
+      const campaign = track(await create('hq', validCampaign()).expect(201));
+
+      await requestApproval('viewerOnly', campaign.id).expect(403);
+
+      const afterRequest = (
+        await requestApproval('hq', campaign.id).expect(201)
+      ).body as AdminCampaign;
+      approvalRequestIds.push(afterRequest.latestApprovalRequestId!);
+      expect(afterRequest.status).toBe('DRAFT');
+      expect(afterRequest.approvalStatus).toBe('PENDING');
+      expect(afterRequest.latestApprovalRequestId).toBeTruthy();
+    });
+
+    it('a second request while one is PENDING reuses it rather than creating a duplicate', async () => {
+      const campaign = track(await create('hq', validCampaign()).expect(201));
+      const first = (
+        await requestApproval('hq', campaign.id).expect(201)
+      ).body as AdminCampaign;
+      approvalRequestIds.push(first.latestApprovalRequestId!);
+
+      const second = (
+        await requestApproval('hq', campaign.id).expect(201)
+      ).body as AdminCampaign;
+      expect(second.latestApprovalRequestId).toBe(first.latestApprovalRequestId);
+
+      const count = await prisma.approvalRequest.count({
+        where: { targetType: 'Campaign', targetId: campaign.id, status: 'PENDING' },
+      });
+      expect(count).toBe(1);
+    });
+
+    it('only a DRAFT campaign can be submitted for approval', async () => {
+      const campaign = track(await create('hq', validCampaign()).expect(201));
+      await approveForActivation(campaign.id);
+      await setStatus('hq', campaign.id, 'ACTIVE').expect(201);
+      await requestApproval('hq', campaign.id).expect(409);
+    });
+
+    it('cannot edit a campaign while its approval request is PENDING; can edit again once REJECTED', async () => {
+      const campaign = track(await create('hq', validCampaign()).expect(201));
+      const afterRequest = (
+        await requestApproval('hq', campaign.id).expect(201)
+      ).body as AdminCampaign;
+      const approvalRequestId = afterRequest.latestApprovalRequestId!;
+      approvalRequestIds.push(approvalRequestId);
+
+      await patch('hq', campaign.id, { name: 'Blocked edit' }).expect(409);
+
+      await decideApproval('approver', approvalRequestId, 'reject', 'Needs work').expect(
+        201,
+      );
+      await patch('hq', campaign.id, { name: 'Allowed after rejection' }).expect(200);
+
+      const fresh = (await detail('hq', campaign.id).expect(200)).body as AdminCampaign;
+      expect(fresh.status).toBe('DRAFT');
+      expect(fresh.approvalStatus).toBe('REJECTED');
+      expect(fresh.name).toBe('Allowed after rejection');
+    });
+
+    it('activation is blocked with no approval request at all', async () => {
+      const campaign = track(await create('hq', validCampaign()).expect(201));
+      await setStatus('hq', campaign.id, 'ACTIVE').expect(409);
+    });
+
+    it('activation is blocked while the approval request is still PENDING', async () => {
+      const campaign = track(await create('hq', validCampaign()).expect(201));
+      const afterRequest = (
+        await requestApproval('hq', campaign.id).expect(201)
+      ).body as AdminCampaign;
+      approvalRequestIds.push(afterRequest.latestApprovalRequestId!);
+      await setStatus('hq', campaign.id, 'ACTIVE').expect(409);
+    });
+
+    it('activation is blocked after the approval request was REJECTED', async () => {
+      const campaign = track(await create('hq', validCampaign()).expect(201));
+      const afterRequest = (
+        await requestApproval('hq', campaign.id).expect(201)
+      ).body as AdminCampaign;
+      const approvalRequestId = afterRequest.latestApprovalRequestId!;
+      approvalRequestIds.push(approvalRequestId);
+      await decideApproval('approver', approvalRequestId, 'reject', 'No').expect(201);
+      await setStatus('hq', campaign.id, 'ACTIVE').expect(409);
+    });
+
+    it('activation succeeds once a currently-valid APPROVED request exists', async () => {
+      const campaign = track(await create('hq', validCampaign()).expect(201));
+      await approveForActivation(campaign.id);
+      const activated = (
+        await setStatus('hq', campaign.id, 'ACTIVE').expect(201)
+      ).body as AdminCampaign;
+      expect(activated.status).toBe('ACTIVE');
+    });
+
+    it('editing an APPROVED campaign makes the approval stale (approvalStatus reverts to NONE) and blocks activation until re-approved', async () => {
+      const campaign = track(await create('hq', validCampaign()).expect(201));
+      await approveForActivation(campaign.id);
+
+      const afterEdit = (
+        await patch('hq', campaign.id, { name: 'Edited after approval' }).expect(200)
+      ).body as AdminCampaign;
+      expect(afterEdit.approvalStatus).toBe('NONE');
+      expect(afterEdit.latestApprovalRequestId).toBeNull();
+
+      // The old APPROVED row is never mutated — it's simply no longer
+      // valid, which activate() re-derives rather than reading a stored flag.
+      await setStatus('hq', campaign.id, 'ACTIVE').expect(409);
+
+      // A fresh request can be made and approved after the stale one.
+      await approveForActivation(campaign.id);
+      const activated = (
+        await setStatus('hq', campaign.id, 'ACTIVE').expect(201)
+      ).body as AdminCampaign;
+      expect(activated.status).toBe('ACTIVE');
+    });
   });
 });

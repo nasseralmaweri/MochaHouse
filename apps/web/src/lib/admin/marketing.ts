@@ -1,7 +1,36 @@
-import type { CampaignStatus } from "@mocha-house/contracts";
+import type { CampaignApprovalStatus, CampaignStatus } from "@mocha-house/contracts";
 
 // Plain-language presentation helpers for Marketing Campaigns (Milestone
-// 8G). Read-only; the API is the authority for every value.
+// 8G; approval-state helpers added in 8J). Read-only; the API is the
+// authority for every value.
+
+const APPROVAL_STATUS_LABEL: Record<CampaignApprovalStatus, string> = {
+  NONE: "Not submitted",
+  PENDING: "Pending approval",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
+};
+
+export function campaignApprovalStatusLabel(
+  status: CampaignApprovalStatus,
+): string {
+  return APPROVAL_STATUS_LABEL[status];
+}
+
+export function campaignApprovalStatusTone(
+  status: CampaignApprovalStatus,
+): "neutral" | "positive" | "warning" {
+  if (status === "APPROVED") {
+    return "positive";
+  }
+  if (status === "REJECTED") {
+    return "neutral";
+  }
+  if (status === "PENDING") {
+    return "warning";
+  }
+  return "neutral";
+}
 
 const STATUS_LABEL: Record<CampaignStatus, string> = {
   DRAFT: "Draft",

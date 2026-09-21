@@ -805,6 +805,99 @@ export class InternalAuditService {
 
   // Milestone 8I — title/altText only. Never the file itself (immutable
   // once uploaded), never uploader/object-key/content-type/size.
+  // Milestone 8J — Approvals. targetType/targetId/action identify the
+  // THING being approved (e.g. 'Campaign' / campaignId /
+  // 'marketing.campaign_activate'), never a copy of its content — the
+  // audited targetType here is 'approval_request' (this record's own
+  // identity), matching every other audit action's convention of auditing
+  // the row this module itself owns.
+  async recordApprovalRequested(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      approvalRequestId: string;
+      targetType: string;
+      targetId: string;
+      action: string;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'approvals.request_created',
+        targetType: 'approval_request',
+        targetId: input.approvalRequestId,
+        afterData: {
+          targetType: input.targetType,
+          targetId: input.targetId,
+          action: input.action,
+          status: 'PENDING',
+        },
+        reason: 'Approval requested.',
+      },
+    });
+  }
+
+  async recordApprovalApproved(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      approvalRequestId: string;
+      targetType: string;
+      targetId: string;
+      action: string;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'approvals.request_approved',
+        targetType: 'approval_request',
+        targetId: input.approvalRequestId,
+        beforeData: { status: 'PENDING' },
+        afterData: {
+          targetType: input.targetType,
+          targetId: input.targetId,
+          action: input.action,
+          status: 'APPROVED',
+        },
+        reason: 'Approval request approved.',
+      },
+    });
+  }
+
+  async recordApprovalRejected(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      approvalRequestId: string;
+      targetType: string;
+      targetId: string;
+      action: string;
+      reason: string;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'approvals.request_rejected',
+        targetType: 'approval_request',
+        targetId: input.approvalRequestId,
+        beforeData: { status: 'PENDING' },
+        afterData: {
+          targetType: input.targetType,
+          targetId: input.targetId,
+          action: input.action,
+          status: 'REJECTED',
+        },
+        // The rejection reason is HQ's own business justification for the
+        // decision — unlike a candidate/prospect note body, it is
+        // appropriate audit content, not PII.
+        reason: `Approval request rejected: ${input.reason}`,
+      },
+    });
+  }
+
   async recordMediaAssetMetadataUpdated(
     tx: Prisma.TransactionClient,
     input: {

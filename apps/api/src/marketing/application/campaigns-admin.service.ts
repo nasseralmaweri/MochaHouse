@@ -8,11 +8,14 @@ import type {
   AdminCampaign,
   AdminCampaignOptions,
   AdminCampaignsResponse,
+  CampaignApprovalStatus,
   CampaignStatus,
   CreateCampaignRequest,
   UpdateCampaignRequest,
 } from '@mocha-house/contracts';
 import {
+  APPROVAL_ACTION_CAMPAIGN_ACTIVATE,
+  APPROVAL_TARGET_TYPE_CAMPAIGN,
   CAMPAIGN_DESCRIPTION_MAX_LENGTH,
   CAMPAIGN_FEATURED_PRODUCTS_MAX,
   CAMPAIGN_NAME_MAX_LENGTH,
@@ -21,6 +24,10 @@ import { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
+import {
+  createOrReusePendingApprovalRequest,
+  latestApprovalRequest,
+} from '../../approvals/application/approval-requests';
 
 const LIST_PAGE_SIZE = 25;
 
@@ -49,15 +56,22 @@ const CAMPAIGN_ORDER_BY: Prisma.CampaignOrderByWithRelationInput[] = [
   { id: 'desc' },
 ];
 
-// HQ management of Marketing Campaigns (Milestone 8G). `marketing.view` /
-// `marketing.manage` are CORPORATE-only in the permission catalog —
-// PermissionGuard rejects a LOCATION grant and every method here also calls
-// assertCorporate. A campaign ORGANIZES existing systems — it optionally
-// references ONE Promotion and/or ONE LoyaltyBonusPromotion as independent
-// optional benefits, and NEVER performs discount or Mocha Beans
-// calculation itself. Status moves only through the dedicated
-// DRAFT -> ACTIVE -> ENDED action (ENDED is terminal); activating or ending
-// a campaign never mutates a linked Promotion / LoyaltyBonusPromotion.
+// HQ management of Marketing Campaigns (Milestone 8G; Approvals added in
+// 8J). `marketing.view` / `marketing.manage` are CORPORATE-only in the
+// permission catalog — PermissionGuard rejects a LOCATION grant and every
+// method here also calls assertCorporate. A campaign ORGANIZES existing
+// systems — it optionally references ONE Promotion and/or ONE
+// LoyaltyBonusPromotion as independent optional benefits, and NEVER
+// performs discount or Mocha Beans calculation itself. Status moves only
+// through the dedicated DRAFT -> ACTIVE -> ENDED action (ENDED is
+// terminal); activating or ending a campaign never mutates a linked
+// Promotion / LoyaltyBonusPromotion.
+//
+// Milestone 8J: activating now ALSO requires a currently-valid APPROVED
+// ApprovalRequest (see activate()) — CampaignStatus itself is unchanged
+// (still exactly DRAFT/ACTIVE/ENDED); approval state lives entirely in
+// ApprovalRequest and is derived fresh on every read via
+// computeApprovalState(), never persisted on Campaign.
 @Injectable()
 export class CampaignsAdminService {
   constructor(
@@ -90,7 +104,7 @@ export class CampaignsAdminService {
     const page = hasMore ? rows.slice(0, LIST_PAGE_SIZE) : rows;
 
     return {
-      campaigns: page.map((row) => this.toAdminCampaign(row)),
+      campaigns: await Promise.all(page.map((row) => this.toAdminCampaign(row))),
       nextCursor: hasMore ? page[page.length - 1]!.id : null,
     };
   }
@@ -203,6 +217,21 @@ export class CampaignsAdminService {
       throw new ConflictException('An ended campaign cannot be edited.');
     }
 
+    // Milestone 8J — a campaign with a pending approval request cannot be
+    // edited (mirrors the ENDED check immediately above). The requester
+    // must wait for a decision; once REJECTED, editing is allowed again.
+    const pendingApproval = await latestApprovalRequest(
+      this.prisma,
+      APPROVAL_TARGET_TYPE_CAMPAIGN,
+      campaignId,
+      APPROVAL_ACTION_CAMPAIGN_ACTIVATE,
+    );
+    if (pendingApproval?.status === 'PENDING') {
+      throw new ConflictException(
+        'This campaign has a pending approval request. Wait for a decision before editing.',
+      );
+    }
+
     // Reject a status write smuggled through PATCH.
     if (
       request !== null &&
@@ -306,8 +335,67 @@ export class CampaignsAdminService {
     if (current.status !== 'DRAFT') {
       throw new ConflictException('Only a draft campaign can be activated.');
     }
+    // Milestone 8J — an ADDITIONAL precondition, never a replacement for
+    // the existing reference revalidation below: even an approved,
+    // still-valid campaign must still pass it (a linked reference can go
+    // inactive after approval, independent of any edit).
+    await this.assertApproved(current);
     await this.assertReferencesUsableForActivation(current);
     return this.transition(campaignId, current.status, 'ACTIVE', actorInternalUserId);
+  }
+
+  // Milestone 8J — DRAFT only (mirrors activate()'s own precondition;
+  // there is nothing to approve for a campaign that isn't a candidate for
+  // activation). Idempotent: a second call while one is already PENDING
+  // reuses it rather than creating a duplicate — the campaign itself is
+  // never mutated by this call.
+  async requestApproval(
+    campaignId: string,
+    actorInternalUserId: string,
+    authorization: AuthorizationContext,
+  ): Promise<AdminCampaign> {
+    authorization.assertCorporate('marketing.manage');
+    const current = await this.loadOrThrow(campaignId);
+    if (current.status !== 'DRAFT') {
+      throw new ConflictException(
+        'Only a draft campaign can be submitted for approval.',
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const { request, created } = await createOrReusePendingApprovalRequest(tx, {
+        targetType: APPROVAL_TARGET_TYPE_CAMPAIGN,
+        targetId: campaignId,
+        action: APPROVAL_ACTION_CAMPAIGN_ACTIVATE,
+        requestedByInternalUserId: actorInternalUserId,
+      });
+      if (created) {
+        await this.audit.recordApprovalRequested(tx, {
+          actorInternalUserId,
+          approvalRequestId: request.id,
+          targetType: APPROVAL_TARGET_TYPE_CAMPAIGN,
+          targetId: campaignId,
+          action: APPROVAL_ACTION_CAMPAIGN_ACTIVATE,
+        });
+      }
+    });
+
+    const fresh = await this.loadOrThrow(campaignId);
+    return this.toAdminCampaign(fresh);
+  }
+
+  // Requires a currently-valid (non-stale) APPROVED request. Never mutates
+  // the request row itself — see computeApprovalState for how staleness is
+  // derived rather than stored.
+  private async assertApproved(campaign: CampaignRow): Promise<void> {
+    const { approvalStatus } = await this.computeApprovalState(campaign);
+    if (approvalStatus !== 'APPROVED') {
+      throw new ConflictException(
+        approvalStatus === 'PENDING'
+          ? 'This campaign is still awaiting an approval decision.'
+          : 'This campaign has not been approved for activation. Request approval first.',
+      );
+    }
   }
 
   async end(
@@ -404,7 +492,9 @@ export class CampaignsAdminService {
 
   // --- helpers -------------------------------------------------
 
-  private toAdminCampaign(campaign: CampaignRow): AdminCampaign {
+  private async toAdminCampaign(campaign: CampaignRow): Promise<AdminCampaign> {
+    const { approvalStatus, latestApprovalRequestId } =
+      await this.computeApprovalState(campaign);
     return {
       id: campaign.id,
       name: campaign.name,
@@ -436,6 +526,40 @@ export class CampaignsAdminService {
       })),
       createdAt: campaign.createdAt.toISOString(),
       updatedAt: campaign.updatedAt.toISOString(),
+      approvalStatus,
+      latestApprovalRequestId,
+    };
+  }
+
+  // Milestone 8J — derives the campaign's approval state from the latest
+  // ApprovalRequest for its activation action. An APPROVED request that
+  // has gone STALE (the campaign was edited after it was decided) is
+  // reported as "NONE": nothing is mutated on the stale row itself, this
+  // is purely how it's presented and how activate() gates on it.
+  private async computeApprovalState(
+    campaign: Pick<CampaignRow, 'id' | 'updatedAt'>,
+  ): Promise<{
+    approvalStatus: CampaignApprovalStatus;
+    latestApprovalRequestId: string | null;
+  }> {
+    const request = await latestApprovalRequest(
+      this.prisma,
+      APPROVAL_TARGET_TYPE_CAMPAIGN,
+      campaign.id,
+      APPROVAL_ACTION_CAMPAIGN_ACTIVATE,
+    );
+    if (!request) {
+      return { approvalStatus: 'NONE', latestApprovalRequestId: null };
+    }
+    if (request.status === 'APPROVED') {
+      const stale = campaign.updatedAt > (request.decidedAt ?? new Date(0));
+      return stale
+        ? { approvalStatus: 'NONE', latestApprovalRequestId: null }
+        : { approvalStatus: 'APPROVED', latestApprovalRequestId: request.id };
+    }
+    return {
+      approvalStatus: request.status,
+      latestApprovalRequestId: request.id,
     };
   }
 

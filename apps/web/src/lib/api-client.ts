@@ -1,5 +1,7 @@
 import type {
   AdminAdjustMochaBeansRequest,
+  AdminApprovalRequest,
+  AdminApprovalRequestsResponse,
   AdminCampaign,
   CreateCampaignRequest,
   UpdateCampaignRequest,
@@ -2638,4 +2640,145 @@ export function updateCampaignStatusFromBrowser(
     "POST",
     { status },
   );
+}
+
+// Milestone 8J — idempotent: reuses an existing pending request rather
+// than creating a duplicate. The campaign itself is never mutated.
+export function requestCampaignApprovalFromBrowser(
+  campaignId: string,
+): Promise<CampaignMutationResult> {
+  return campaignsRequest(
+    `/${encodeURIComponent(campaignId)}/request-approval`,
+    "POST",
+    {},
+  );
+}
+
+// --- Admin: Approvals (Milestone 8J) ------------------------------
+// Browser-side reads/writes for Admin → Approvals, via the generic
+// internal admin proxy. The API (`approvals.view` / `approvals.decide`,
+// CORPORATE-only — and, for this slice's only target type, ALSO
+// marketing.view) is the sole authority.
+
+export type AdminApprovalsListResult =
+  | { outcome: "success"; data: AdminApprovalRequestsResponse }
+  | { outcome: "forbidden" }
+  | { outcome: "error"; message: string };
+
+export async function listAdminApprovalsFromBrowser(params: {
+  status?: string;
+  cursor?: string;
+}): Promise<AdminApprovalsListResult> {
+  const search = new URLSearchParams();
+  if (params.status) {
+    search.set("status", params.status);
+  }
+  if (params.cursor) {
+    search.set("cursor", params.cursor);
+  }
+  const qs = search.toString();
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/approvals${qs.length > 0 ? `?${qs}` : ""}`,
+      { cache: "no-store" },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return {
+      outcome: "error",
+      message: body?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return {
+    outcome: "success",
+    data: (await response.json()) as AdminApprovalRequestsResponse,
+  };
+}
+
+export type ApprovalDecisionResult =
+  | { outcome: "success"; approvalRequest: AdminApprovalRequest }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "conflict"; message: string }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "error"; message: string };
+
+async function approvalDecisionRequest(
+  approvalRequestId: string,
+  action: "approve" | "reject",
+  body?: unknown,
+): Promise<ApprovalDecisionResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${INTERNAL_ADMIN_PROXY}/approvals/${encodeURIComponent(approvalRequestId)}/${action}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body ?? {}),
+      },
+    );
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return { outcome: "error", message: "Your internal session has expired." };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "invalid",
+      message: parsed?.message ?? "Please check the form and try again.",
+    };
+  }
+  if (response.status === 409) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "conflict",
+      message: parsed?.message ?? "That decision isn't allowed right now.",
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  const parsedBody = (await response.json()) as {
+    approvalRequest: AdminApprovalRequest;
+  };
+  return { outcome: "success", approvalRequest: parsedBody.approvalRequest };
+}
+
+export function approveApprovalRequestFromBrowser(
+  approvalRequestId: string,
+): Promise<ApprovalDecisionResult> {
+  return approvalDecisionRequest(approvalRequestId, "approve");
+}
+
+export function rejectApprovalRequestFromBrowser(
+  approvalRequestId: string,
+  reason: string,
+): Promise<ApprovalDecisionResult> {
+  return approvalDecisionRequest(approvalRequestId, "reject", { reason });
 }

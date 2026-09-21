@@ -293,6 +293,19 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
       'Create, edit and change the status of marketing campaigns',
     definition: 'Create, edit and change the status of marketing campaigns',
   },
+  // Milestone 8J — Approvals. Both CORPORATE-only.
+  'approvals.view': {
+    group: 'Approvals',
+    effectiveAll: 'View approval requests',
+    effectiveScoped: 'View approval requests',
+    definition: 'View approval requests',
+  },
+  'approvals.decide': {
+    group: 'Approvals',
+    effectiveAll: 'Approve or reject a pending approval request',
+    effectiveScoped: 'Approve or reject a pending approval request',
+    definition: 'Approve or reject a pending approval request',
+  },
 };
 
 const GROUP_ORDER = [
@@ -308,6 +321,7 @@ const GROUP_ORDER = [
   'Franchising',
   'Content',
   'Marketing',
+  'Approvals',
   'Administration',
 ];
 
@@ -349,6 +363,8 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'media.manage',
   'marketing.view',
   'marketing.manage',
+  'approvals.view',
+  'approvals.decide',
   'users.view',
   'roles.view',
   'audit.view',

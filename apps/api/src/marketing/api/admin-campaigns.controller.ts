@@ -85,6 +85,19 @@ export class AdminCampaignsController {
   }
 
   @RequirePermission('marketing.manage')
+  @Post(':campaignId/request-approval')
+  requestApproval(
+    @Param('campaignId') campaignId: string,
+    @Req() request: InternalAuthenticatedRequest,
+  ) {
+    return this.service.requestApproval(
+      campaignId,
+      request.internalUser!.id,
+      request.authorization!,
+    );
+  }
+
+  @RequirePermission('marketing.manage')
   @Post(':campaignId/status')
   updateStatus(
     @Param('campaignId') campaignId: string,

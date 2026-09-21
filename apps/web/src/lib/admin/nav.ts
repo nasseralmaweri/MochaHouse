@@ -169,6 +169,18 @@ export function adminNavItems(
     });
   }
 
+  // Approvals (Milestone 8J — a generic request/decide primitive; only
+  // Marketing Campaign activation is wired to it). Shown only if the user
+  // effectively holds `approvals.view` (CORPORATE-only). Approve/reject
+  // controls inside re-check `approvals.decide`.
+  if (can(capabilities, "approvals.view")) {
+    items.push({
+      key: "approvals",
+      label: "Approvals",
+      href: "/admin/approvals",
+    });
+  }
+
   if (can(capabilities, "locations.view")) {
     items.push({
       key: "locations",

@@ -812,7 +812,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
@@ -1510,6 +1510,7 @@ export interface AdminCampaignLoyaltyBonusPromotionRef {
     name: string;
     isActive: boolean;
 }
+export type CampaignApprovalStatus = "NONE" | "PENDING" | "APPROVED" | "REJECTED";
 export interface AdminCampaign {
     id: string;
     name: string;
@@ -1523,6 +1524,8 @@ export interface AdminCampaign {
     featuredProducts: AdminCampaignProductRef[];
     createdAt: string;
     updatedAt: string;
+    approvalStatus: CampaignApprovalStatus;
+    latestApprovalRequestId: string | null;
 }
 export interface AdminCampaignsResponse {
     campaigns: AdminCampaign[];
@@ -1563,5 +1566,37 @@ export interface UpdateCampaignRequest {
 }
 export interface UpdateCampaignStatusRequest {
     status: CampaignStatus;
+}
+export declare const APPROVAL_TARGET_TYPE_CAMPAIGN = "Campaign";
+export declare const APPROVAL_ACTION_CAMPAIGN_ACTIVATE = "marketing.campaign_activate";
+export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
+export interface AdminApprovalRequest {
+    id: string;
+    targetType: string;
+    targetId: string;
+    targetLabel: string;
+    action: string;
+    status: ApprovalStatus;
+    requestedByLabel: string;
+    createdAt: string;
+    decidedByLabel: string | null;
+    decisionReason: string | null;
+    decidedAt: string | null;
+}
+export interface AdminApprovalRequestsResponse {
+    approvalRequests: AdminApprovalRequest[];
+    nextCursor: string | null;
+}
+export interface GetApprovalRequestResponse {
+    approvalRequest: AdminApprovalRequest;
+}
+export interface ApproveApprovalRequestResponse {
+    approvalRequest: AdminApprovalRequest;
+}
+export interface RejectApprovalRequestRequest {
+    reason: string;
+}
+export interface RejectApprovalRequestResponse {
+    approvalRequest: AdminApprovalRequest;
 }
 //# sourceMappingURL=index.d.ts.map

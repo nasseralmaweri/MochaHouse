@@ -620,6 +620,12 @@ model InternalUser {
   // Milestone 8F — media assets this HQ user uploaded. Same onDelete:
   // Restrict integrity reason.
   mediaAssetsUploaded MediaAsset[] @relation("MediaAssetUploader")
+  // Milestone 8J — approval requests this HQ user made and decided. Same
+  // onDelete: Restrict integrity reason; also structurally prevents a
+  // requester and decider from ever being reconciled to "nobody" in a way
+  // that would hide who made which side of a decision.
+  approvalRequestsMade    ApprovalRequest[] @relation("ApprovalRequester")
+  approvalRequestsDecided ApprovalRequest[] @relation("ApprovalDecider")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -2060,4 +2066,48 @@ model CampaignProduct {
 
   @@id([campaignId, productId])
   @@index([productId])
+}
+
+// --- Milestone 8J, Approvals ------------------------------------------
+// The smallest reusable "request -> decide" primitive, deliberately shaped
+// like OutboxEvent (targetType/targetId, aggregate-agnostic) rather than a
+// per-feature table. Only ONE business workflow is wired to it in 8J:
+// Marketing Campaign activation (targetType "Campaign", action
+// "marketing.campaign_activate" — see @mocha-house/contracts for the
+// stable constants). Approving or rejecting NEVER mutates the target
+// itself; a PENDING/APPROVED/REJECTED row here only ever gates a
+// precondition the target's own service checks (see
+// CampaignsAdminService.activate()). Staleness (the target changed after
+// approval) is derived by comparing the target's own updatedAt to
+// decidedAt — never stored, and an old APPROVED row is never mutated or
+// relabeled; a fresh request is simply created when one is needed again.
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model ApprovalRequest {
+  id     String         @id @default(uuid(7))
+  targetType String
+  targetId   String
+  action     String
+  status     ApprovalStatus @default(PENDING)
+
+  requestedByInternalUserId String
+  requestedByInternalUser   InternalUser @relation("ApprovalRequester", fields: [requestedByInternalUserId], references: [id], onDelete: Restrict)
+  decidedByInternalUserId   String?
+  decidedByInternalUser     InternalUser? @relation("ApprovalDecider", fields: [decidedByInternalUserId], references: [id], onDelete: Restrict)
+  decisionReason            String?
+
+  createdAt DateTime  @default(now())
+  decidedAt DateTime?
+
+  // The structural "at most one PENDING request per target+action"
+  // guarantee is a PARTIAL unique index (status = 'PENDING' only), added by
+  // hand to the migration SQL — @@unique here can't express a partial
+  // condition, and a plain unique on (targetType, targetId, action) would
+  // wrongly forbid ever requesting approval again after a decision.
+  @@index([targetType, targetId, action])
+  @@index([status])
 }

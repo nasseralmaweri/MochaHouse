@@ -23,6 +23,7 @@ import { FranchisingModule } from './franchising/franchising.module';
 import { CmsModule } from './cms/cms.module';
 import { MediaModule } from './media/media.module';
 import { MarketingModule } from './marketing/marketing.module';
+import { ApprovalsModule } from './approvals/approvals.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { MarketingModule } from './marketing/marketing.module';
     CmsModule,
     MediaModule,
     MarketingModule,
+    ApprovalsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

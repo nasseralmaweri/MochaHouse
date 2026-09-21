@@ -308,6 +308,21 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(manageOnly.map((i) => i.key)).not.toContain("media");
   });
 
+  it("shows Approvals only when the user holds approvals.view (Milestone 8J)", () => {
+    const withView = adminNavItems({
+      "approvals.view": { corporate: true, locationIds: [] },
+    });
+    expect(withView.map((i) => i.key)).toEqual(["dashboard", "approvals"]);
+    expect(withView.find((i) => i.key === "approvals")?.href).toBe(
+      "/admin/approvals",
+    );
+
+    const decideOnly = adminNavItems({
+      "approvals.decide": { corporate: true, locationIds: [] },
+    });
+    expect(decideOnly.map((i) => i.key)).not.toContain("approvals");
+  });
+
   it("orders Careers immediately after Customers, before Locations", () => {
     const items = adminNavItems({
       "customers.view": { corporate: true, locationIds: [] },

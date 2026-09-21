@@ -80,6 +80,7 @@ describe('capability presentation (Milestone 5E)', () => {
         'Franchising',
         'Content',
         'Marketing',
+        'Approvals',
         'Administration',
       ]);
       expect(groups.find((g) => g.group === 'Customers')?.items).toEqual([
@@ -105,6 +106,10 @@ describe('capability presentation (Milestone 5E)', () => {
       expect(groups.find((g) => g.group === 'Marketing')?.items).toEqual([
         'View marketing campaigns',
         'Create, edit and change the status of marketing campaigns',
+      ]);
+      expect(groups.find((g) => g.group === 'Approvals')?.items).toEqual([
+        'View approval requests',
+        'Approve or reject a pending approval request',
       ]);
       expect(groups.find((g) => g.group === 'Operations')?.items).toEqual([
         'View store operations',
