@@ -812,7 +812,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide", "reports.view"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
@@ -1589,6 +1589,31 @@ export interface AdminApprovalRequestsResponse {
 }
 export interface GetApprovalRequestResponse {
     approvalRequest: AdminApprovalRequest;
+}
+export type AdminReportDataSourceScope = "DIGITAL_PLATFORM_ONLY";
+export interface AdminReportDataSource {
+    scope: AdminReportDataSourceScope;
+    scopeLabel: string;
+    freshnessLabel: string;
+}
+export interface AdminReportLocationRef {
+    id: string;
+    name: string;
+}
+export interface AdminOrdersOverviewReport {
+    filters: {
+        startDate: string;
+        endDate: string;
+        locationId: string | null;
+    };
+    location: AdminReportLocationRef | null;
+    availableLocations: AdminReportLocationRef[];
+    totalOrders: number;
+    completedOrders: number;
+    digitalSalesMinorUnits: number;
+    averageOrderValueMinorUnits: number;
+    statusBreakdown: Record<OrderStatus, number>;
+    source: AdminReportDataSource;
 }
 export interface ApproveApprovalRequestResponse {
     approvalRequest: AdminApprovalRequest;

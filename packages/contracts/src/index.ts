@@ -1694,6 +1694,14 @@ export const INTERNAL_PERMISSION_KEYS = [
   //   approvals.decide  — approve or reject a pending request.
   "approvals.view",
   "approvals.decide",
+  // Milestone 9A — HQ Reporting & Management Visibility. Read-only, and
+  // company-wide by nature (a report spans every location unless the caller
+  // narrows it), so CORPORATE-only; a Store Manager never holds it.
+  //   reports.view — view HQ reporting (Milestone 9A: Digital Sales &
+  //                  Orders). One key covers every report in this area —
+  //                  reports are read-only, so there is no separate
+  //                  "manage" action, and no per-report key is warranted.
+  "reports.view",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -2002,6 +2010,12 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "approvals.decide",
     description:
       "Approve or reject a pending approval request. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "reports.view": {
+    key: "reports.view",
+    description:
+      "View HQ reporting — read-only, aggregated business figures. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
@@ -3401,6 +3415,73 @@ export interface AdminApprovalRequestsResponse {
 
 export interface GetApprovalRequestResponse {
   approvalRequest: AdminApprovalRequest;
+}
+
+// --- Milestone 9A, HQ Reporting: Digital Sales & Orders -----------------
+// Served only from `GET /api/v1/admin/reports/orders-overview`
+// (InternalAuthGuard + PermissionGuard + `reports.view`, CORPORATE-only).
+//
+// This is a digital-platform report, not a total-store-sales report — there
+// is no KwickPOS integration and no in-store/register order path in this
+// codebase, so `Order` rows only ever originate from the digital checkout
+// flow. `source` below exists precisely so the UI never has to guess or
+// silently imply a broader scope than the data actually has.
+//
+// `startDate` / `endDate` are business-calendar dates ('YYYY-MM-DD') in the
+// platform's single business timezone (America/Detroit, see
+// MOCHA_HOUSE_TIME_ZONE) — both ends inclusive. An order is "in range" when
+// its `createdAt` instant falls on one of those business calendar days,
+// not when its UTC clock date does.
+export type AdminReportDataSourceScope = "DIGITAL_PLATFORM_ONLY";
+
+export interface AdminReportDataSource {
+  scope: AdminReportDataSourceScope;
+  // "Digital-platform orders only. In-store/POS transactions are not
+  // included." — shown in the UI without a tooltip, never abbreviated to
+  // "Total sales" or similar.
+  scopeLabel: string;
+  // "Live platform data" — every figure is a live PostgreSQL read; there is
+  // no import, cache or external system behind it.
+  freshnessLabel: string;
+}
+
+export interface AdminReportLocationRef {
+  id: string;
+  name: string;
+}
+
+// Money fields stay integer minor units through this contract — formatting
+// to dollars is a presentation-layer concern (see apps/web `lib/money.ts`).
+export interface AdminOrdersOverviewReport {
+  filters: {
+    startDate: string; // YYYY-MM-DD, business calendar date, inclusive
+    endDate: string; // YYYY-MM-DD, business calendar date, inclusive
+    locationId: string | null; // null = every location
+  };
+  // The filtered location's id/name, or null when the report spans every
+  // location ("All locations").
+  location: AdminReportLocationRef | null;
+  // Every active location, for the report's own location filter control.
+  // Included here (rather than requiring a second call to
+  // `/admin/locations`, which needs `locations.view`) so `reports.view`
+  // alone is sufficient to use this report.
+  availableLocations: AdminReportLocationRef[];
+  // Every digital-platform order created in the selected period/location —
+  // regardless of its current status.
+  totalOrders: number;
+  // Of those, the ones whose current status is COMPLETED.
+  completedOrders: number;
+  // SUM(subtotal - promotionDiscountMinorUnits - rewardDiscountMinorUnits)
+  // over the selected population. Gift card tender is a payment method, not
+  // a discount, and is deliberately NOT subtracted. Excludes tax, tips and
+  // refunds — none of those are modelled in the current Order schema.
+  digitalSalesMinorUnits: number;
+  // digitalSalesMinorUnits / totalOrders, rounded to the nearest minor
+  // unit; 0 when totalOrders is 0.
+  averageOrderValueMinorUnits: number;
+  // Count per OrderStatus within the selected population (not completed-only).
+  statusBreakdown: Record<OrderStatus, number>;
+  source: AdminReportDataSource;
 }
 
 // POST /api/v1/admin/approvals/:approvalRequestId/approve (approvals.decide).

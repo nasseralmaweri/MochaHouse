@@ -31,6 +31,8 @@ export interface AdminNavItem {
 //     + access levels; Milestone 5F — the activity log; Milestone 5G —
 //     platform status, all read-only). Each card inside the section gates on
 //     its own permission.
+//   - Reports: shown only if the user effectively holds `reports.view`
+//     (Milestone 9A — Digital Sales & Orders, CORPORATE-only). Read-only.
 // Driven by the capability map, never a role name. No "coming soon" items,
 // no fake routes — future modules are added here only when their pages ship.
 export function adminNavItems(
@@ -207,6 +209,16 @@ export function adminNavItems(
       key: "administration",
       label: "Administration",
       href: "/admin/administration",
+    });
+  }
+
+  // Reports (Milestone 9A — Digital Sales & Orders). Shown only if the user
+  // effectively holds `reports.view` (CORPORATE-only). The page re-checks.
+  if (can(capabilities, "reports.view")) {
+    items.push({
+      key: "reports",
+      label: "Reports",
+      href: "/admin/reports",
     });
   }
 

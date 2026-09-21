@@ -420,6 +420,34 @@ describe("adminNavItems (permission-aware navigation)", () => {
     );
   });
 
+  it("shows Reports only when the user holds reports.view (Milestone 9A)", () => {
+    const withView = adminNavItems({
+      "reports.view": { corporate: true, locationIds: [] },
+    });
+    expect(withView.map((i) => i.key)).toEqual(["dashboard", "reports"]);
+    expect(withView.find((i) => i.key === "reports")?.href).toBe(
+      "/admin/reports",
+    );
+    expect(withView.find((i) => i.key === "reports")?.label).toBe("Reports");
+
+    const noReports = adminNavItems({
+      "orders.view": { corporate: true, locationIds: [] },
+    });
+    expect(noReports.map((i) => i.key)).not.toContain("reports");
+  });
+
+  it("orders Reports immediately after Administration", () => {
+    const items = adminNavItems({
+      "audit.view": { corporate: true, locationIds: [] },
+      "reports.view": { corporate: true, locationIds: [] },
+    });
+    expect(items.map((i) => i.key)).toEqual([
+      "dashboard",
+      "administration",
+      "reports",
+    ]);
+  });
+
   it("does not add Tasks / Checklists / Issues / Tickets / anything without a shipped page", () => {
     const caps: AdminCapabilities = {
       "operations.view": { corporate: true, locationIds: [] },

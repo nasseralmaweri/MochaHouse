@@ -306,6 +306,14 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Approve or reject a pending approval request',
     definition: 'Approve or reject a pending approval request',
   },
+  // Milestone 9A — HQ Reporting. CORPORATE-only, so the two phrasings are
+  // the same.
+  'reports.view': {
+    group: 'Reports',
+    effectiveAll: 'View HQ reporting',
+    effectiveScoped: 'View HQ reporting',
+    definition: 'View HQ reporting',
+  },
 };
 
 const GROUP_ORDER = [
@@ -322,6 +330,7 @@ const GROUP_ORDER = [
   'Content',
   'Marketing',
   'Approvals',
+  'Reports',
   'Administration',
 ];
 
@@ -365,6 +374,7 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'marketing.manage',
   'approvals.view',
   'approvals.decide',
+  'reports.view',
   'users.view',
   'roles.view',
   'audit.view',

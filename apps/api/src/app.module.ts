@@ -24,6 +24,7 @@ import { CmsModule } from './cms/cms.module';
 import { MediaModule } from './media/media.module';
 import { MarketingModule } from './marketing/marketing.module';
 import { ApprovalsModule } from './approvals/approvals.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { ApprovalsModule } from './approvals/approvals.module';
     MediaModule,
     MarketingModule,
     ApprovalsModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

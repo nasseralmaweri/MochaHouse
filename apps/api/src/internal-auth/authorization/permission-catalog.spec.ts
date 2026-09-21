@@ -75,6 +75,8 @@ describe('internal permission catalog', () => {
         // Milestone 8J
         'approvals.view',
         'approvals.decide',
+        // Milestone 9A
+        'reports.view',
       ].sort(),
     );
   });
@@ -167,6 +169,8 @@ describe('internal permission catalog', () => {
     // approvals.* — Milestone 8J.
     expect(allowedScopeTypesFor('approvals.view')).toEqual(['CORPORATE']);
     expect(allowedScopeTypesFor('approvals.decide')).toEqual(['CORPORATE']);
+    // reports.view — HQ reporting is company-wide by nature (Milestone 9A).
+    expect(allowedScopeTypesFor('reports.view')).toEqual(['CORPORATE']);
   });
 
   it('location-capable permissions accept CORPORATE and LOCATION scope', () => {
