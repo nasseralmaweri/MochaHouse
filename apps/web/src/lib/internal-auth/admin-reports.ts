@@ -1,6 +1,7 @@
 import "server-only";
 import type {
   AdminLocationPerformanceReport,
+  AdminOperationsChecklistReport,
   AdminOrdersOverviewReport,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
@@ -130,5 +131,62 @@ export async function getAdminLocationPerformanceReport(query: {
   return {
     outcome: "success",
     data: (await response.json()) as AdminLocationPerformanceReport,
+  };
+}
+
+// Milestone 9C — Operations Checklist Visibility. Mirrors
+// getAdminOrdersOverviewReport above; the API
+// (`GET /api/v1/admin/reports/operations-checklists`, same
+// InternalAuthGuard + PermissionGuard + `reports.view`) is the sole
+// authorization authority.
+export type AdminOperationsChecklistReportResult =
+  | { outcome: "success"; data: AdminOperationsChecklistReport }
+  | { outcome: "unauthenticated" }
+  | { outcome: "forbidden" }
+  | { outcome: "invalid" }
+  | { outcome: "error" };
+
+export async function getAdminOperationsChecklistReport(query: {
+  startDate: string;
+  endDate: string;
+}): Promise<AdminOperationsChecklistReportResult> {
+  const token = await getInternalSessionToken();
+  if (!token) {
+    return { outcome: "unauthenticated" };
+  }
+
+  const params = new URLSearchParams();
+  params.set("startDate", query.startDate);
+  params.set("endDate", query.endDate);
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${getApiUrl()}/admin/reports/operations-checklists?${params.toString()}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      },
+    );
+  } catch {
+    return { outcome: "error" };
+  }
+
+  if (response.status === 401) {
+    return { outcome: "unauthenticated" };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 400) {
+    return { outcome: "invalid" };
+  }
+  if (!response.ok) {
+    return { outcome: "error" };
+  }
+
+  return {
+    outcome: "success",
+    data: (await response.json()) as AdminOperationsChecklistReport,
   };
 }

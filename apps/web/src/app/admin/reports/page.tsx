@@ -47,6 +47,13 @@ export default async function AdminReportsHomePage() {
             description="Compare digital ordering across every location for a date range."
           />
         </li>
+        <li>
+          <ReportCard
+            href="/admin/reports/operations"
+            title="Operations Checklist Visibility"
+            description="Opening and closing checklist activity recorded across locations for a date range."
+          />
+        </li>
       </ul>
     </AdminPage>
   );

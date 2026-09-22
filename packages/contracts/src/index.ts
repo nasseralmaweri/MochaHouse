@@ -3432,7 +3432,15 @@ export interface GetApprovalRequestResponse {
 // MOCHA_HOUSE_TIME_ZONE) — both ends inclusive. An order is "in range" when
 // its `createdAt` instant falls on one of those business calendar days,
 // not when its UTC clock date does.
-export type AdminReportDataSourceScope = "DIGITAL_PLATFORM_ONLY";
+//
+// "INTERNAL_OPERATIONS" (Milestone 9C) is a second, unrelated source scope
+// for store-operations data (checklist activity) — never sales data. This
+// is deliberately kept as a small closed union, not a generalized data
+// catalog: each report states its own scope explicitly so the UI never has
+// to guess or silently imply a broader meaning than the data actually has.
+export type AdminReportDataSourceScope =
+  | "DIGITAL_PLATFORM_ONLY"
+  | "INTERNAL_OPERATIONS";
 
 export interface AdminReportDataSource {
   scope: AdminReportDataSourceScope;
@@ -3555,5 +3563,74 @@ export interface AdminLocationPerformanceReport {
   // Sorted locationName ascending, locationId ascending as a tiebreaker.
   // Never sorted by a metric — this is a comparison table, not a ranking.
   locations: AdminLocationPerformanceRow[];
+  source: AdminReportDataSource;
+}
+
+// --- Milestone 9C, HQ Reporting: Operations Checklist Visibility --------
+// Served only from `GET /api/v1/admin/reports/operations-checklists`
+// (InternalAuthGuard + PermissionGuard + `reports.view`, CORPORATE-only —
+// the same permission as 9A/9B; there is no separate operations-report
+// permission). `source.scope` is "INTERNAL_OPERATIONS", never
+// "DIGITAL_PLATFORM_ONLY" — this has nothing to do with sales or orders.
+//
+// This is OPERATIONS VISIBILITY, not compliance scoring. It is NOT proof
+// that a checklist was missed, and it is NOT proof a store failed to open
+// or close correctly:
+//
+//   - A ChecklistInstance is created lazily, only when staff actually open
+//     a checklist screen for that location on that business day. A
+//     location with zero recorded activity in the selected period may
+//     simply mean nobody opened the screen that day (holiday, a closed
+//     location, or staff completing the physical checklist without ever
+//     loading it) — it is NOT evidence the checklist was skipped or the
+//     store failed to open/close. The UI MUST say this plainly, not only
+//     in a tooltip.
+//   - "Current Exceptions" counts ChecklistInstanceItem rows whose
+//     `exceptionAt` is currently set. If an exception was logged and later
+//     cleared, `exceptionAt` reverts to null and that event is no longer
+//     represented here — this field is a live-state count, not a
+//     historical log of every exception ever raised. The UI MUST disclose
+//     this plainly as well.
+//
+// `startDate`/`endDate` use `ChecklistInstance.businessDate` directly (a
+// stored `@db.Date` value, resolved once at instance creation) — NOT
+// `createdAt`, and NOT the Order-report instant-range conversion used by
+// 9A/9B. The range is a simple inclusive comparison:
+// `businessDate >= startDate AND businessDate <= endDate`.
+//
+// Opening vs closing is classified by the stable `ChecklistTemplate.key`
+// ("opening" / "closing"), never by the template's display name.
+//
+// Deliberately excluded: any completion percentage, exception rate,
+// missed/compliance metric, actor identifiers, employee names, or
+// individual completion counts — none of that is either persisted in a
+// trustworthy form or in scope for this slice.
+export interface AdminOperationsChecklistRow {
+  locationId: string;
+  locationName: string;
+  isActive: boolean;
+  // Count of opening ChecklistInstance rows in the selected business-date
+  // range at this location — an engagement fact ("a device loaded the
+  // checklist"), not a compliance fact.
+  openingStarted: number;
+  // Of those, the ones with `completedAt` set — trusts the persisted
+  // ChecklistInstance.completedAt projection maintained by the Operations
+  // domain; never recomputed from items here.
+  openingCompleted: number;
+  // Current-state count only — see the section comment above.
+  openingCurrentExceptions: number;
+  closingStarted: number;
+  closingCompleted: number;
+  closingCurrentExceptions: number;
+}
+
+export interface AdminOperationsChecklistReport {
+  filters: {
+    startDate: string; // YYYY-MM-DD, business calendar date, inclusive
+    endDate: string; // YYYY-MM-DD, business calendar date, inclusive
+  };
+  // Sorted locationName ascending, locationId ascending as a tiebreaker.
+  // Never sorted by a metric — this is a comparison table, not a ranking.
+  locations: AdminOperationsChecklistRow[];
   source: AdminReportDataSource;
 }

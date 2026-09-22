@@ -1590,7 +1590,7 @@ export interface AdminApprovalRequestsResponse {
 export interface GetApprovalRequestResponse {
     approvalRequest: AdminApprovalRequest;
 }
-export type AdminReportDataSourceScope = "DIGITAL_PLATFORM_ONLY";
+export type AdminReportDataSourceScope = "DIGITAL_PLATFORM_ONLY" | "INTERNAL_OPERATIONS";
 export interface AdminReportDataSource {
     scope: AdminReportDataSourceScope;
     scopeLabel: string;
@@ -1641,6 +1641,25 @@ export interface AdminLocationPerformanceReport {
         endDate: string;
     };
     locations: AdminLocationPerformanceRow[];
+    source: AdminReportDataSource;
+}
+export interface AdminOperationsChecklistRow {
+    locationId: string;
+    locationName: string;
+    isActive: boolean;
+    openingStarted: number;
+    openingCompleted: number;
+    openingCurrentExceptions: number;
+    closingStarted: number;
+    closingCompleted: number;
+    closingCurrentExceptions: number;
+}
+export interface AdminOperationsChecklistReport {
+    filters: {
+        startDate: string;
+        endDate: string;
+    };
+    locations: AdminOperationsChecklistRow[];
     source: AdminReportDataSource;
 }
 //# sourceMappingURL=index.d.ts.map
