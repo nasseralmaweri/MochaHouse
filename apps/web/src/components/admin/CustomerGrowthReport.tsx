@@ -11,6 +11,7 @@ import {
 import { Card } from "@/components/Card";
 import { ADMIN_FIELD_CLASS, FormField } from "./form";
 import { Button } from "./Button";
+import { ExportCsvButton } from "./ExportCsvButton";
 
 const ROUTE = "/admin/reports/customers";
 
@@ -85,8 +86,13 @@ export function CustomerGrowthReport({
             {error}
           </p>
         ) : null}
-        <div>
+        <div className="flex flex-wrap items-center gap-2">
           <Button onClick={applyFilters}>Apply</Button>
+          {/* Uses the applied `filters` prop, never `draft` — the export
+              must always correspond to the report currently on screen. */}
+          <ExportCsvButton
+            href={`/api/internal/admin/reports/customer-growth/export${buildDateRangeQuery(filters)}`}
+          />
         </div>
       </Card>
 

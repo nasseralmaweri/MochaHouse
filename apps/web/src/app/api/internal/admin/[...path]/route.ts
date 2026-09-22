@@ -78,13 +78,26 @@ async function proxy(
     );
   }
 
-  const responseBody = await response.text();
+  // Raw bytes, never `.text()` — decoding to a string and back would
+  // silently strip a leading UTF-8 BOM (the Encoding Standard's decoder
+  // removes it by default), which a Milestone 9E CSV export relies on.
+  // Passing an ArrayBuffer straight through is also simply more correct
+  // for a generic proxy that should never assume upstream content is text.
+  const responseBody = await response.arrayBuffer();
+  const responseHeaders: Record<string, string> = {
+    "Content-Type":
+      response.headers.get("content-type") ?? "application/json",
+  };
+  // Forwarded generically for any upstream response that sets it (e.g. a
+  // Milestone 9E CSV export) — this route stays report-agnostic; it only
+  // passes the header through when present, never inspects or builds one.
+  const contentDisposition = response.headers.get("content-disposition");
+  if (contentDisposition) {
+    responseHeaders["Content-Disposition"] = contentDisposition;
+  }
   return new NextResponse(responseBody, {
     status: response.status,
-    headers: {
-      "Content-Type":
-        response.headers.get("content-type") ?? "application/json",
-    },
+    headers: responseHeaders,
   });
 }
 
