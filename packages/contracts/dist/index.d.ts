@@ -1590,7 +1590,7 @@ export interface AdminApprovalRequestsResponse {
 export interface GetApprovalRequestResponse {
     approvalRequest: AdminApprovalRequest;
 }
-export type AdminReportDataSourceScope = "DIGITAL_PLATFORM_ONLY" | "INTERNAL_OPERATIONS";
+export type AdminReportDataSourceScope = "DIGITAL_PLATFORM_ONLY" | "INTERNAL_OPERATIONS" | "CUSTOMER_PLATFORM";
 export interface AdminReportDataSource {
     scope: AdminReportDataSourceScope;
     scopeLabel: string;
@@ -1660,6 +1660,19 @@ export interface AdminOperationsChecklistReport {
         endDate: string;
     };
     locations: AdminOperationsChecklistRow[];
+    source: AdminReportDataSource;
+}
+export interface AdminCustomerGrowthReport {
+    filters: {
+        startDate: string;
+        endDate: string;
+    };
+    registeredCustomersAsOfEndDate: number;
+    newRegisteredCustomers: number;
+    registeredCustomersWithOrders: number;
+    repeatRegisteredCustomers: number;
+    registeredCustomerOrders: number;
+    guestOrders: number;
     source: AdminReportDataSource;
 }
 //# sourceMappingURL=index.d.ts.map

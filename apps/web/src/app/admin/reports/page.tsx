@@ -54,6 +54,13 @@ export default async function AdminReportsHomePage() {
             description="Opening and closing checklist activity recorded across locations for a date range."
           />
         </li>
+        <li>
+          <ReportCard
+            href="/admin/reports/customers"
+            title="Customer Growth & Ordering"
+            description="Registered customer base size and digital-ordering participation for a date range."
+          />
+        </li>
       </ul>
     </AdminPage>
   );

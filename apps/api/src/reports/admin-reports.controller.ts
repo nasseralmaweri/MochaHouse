@@ -2,14 +2,15 @@ import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
 import { OrdersOverviewReportService } from './orders-overview.service';
 import { LocationPerformanceReportService } from './location-performance.service';
 import { OperationsChecklistReportService } from './operations-checklist.service';
+import { CustomerGrowthReportService } from './customer-growth.service';
 import { InternalAuthGuard } from '../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../internal-auth/infrastructure/internal-identity';
 
 // HQ Reporting (Milestone 9A: Digital Sales & Orders; Milestone 9B:
-// Location Performance; Milestone 9C: Operations Checklist Visibility).
-// Read-only.
+// Location Performance; Milestone 9C: Operations Checklist Visibility;
+// Milestone 9D: Customer Growth & Ordering). Read-only.
 //
 // InternalAuthGuard then PermissionGuard. `reports.view` is CORPORATE-only
 // in the permission catalog, so a LOCATION-scoped grant can never satisfy
@@ -22,6 +23,7 @@ export class AdminReportsController {
     private readonly ordersOverview: OrdersOverviewReportService,
     private readonly locationPerformance: LocationPerformanceReportService,
     private readonly operationsChecklist: OperationsChecklistReportService,
+    private readonly customerGrowth: CustomerGrowthReportService,
   ) {}
 
   @RequirePermission('reports.view')
@@ -59,6 +61,19 @@ export class AdminReportsController {
     @Query('endDate') endDate?: string,
   ) {
     return this.operationsChecklist.getOperationsChecklistReport(
+      { startDate, endDate },
+      request.authorization!,
+    );
+  }
+
+  @RequirePermission('reports.view')
+  @Get('customer-growth')
+  customerGrowthReport(
+    @Req() request: InternalAuthenticatedRequest,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.customerGrowth.getCustomerGrowthReport(
       { startDate, endDate },
       request.authorization!,
     );

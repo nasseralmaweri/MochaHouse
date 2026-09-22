@@ -3438,9 +3438,14 @@ export interface GetApprovalRequestResponse {
 // is deliberately kept as a small closed union, not a generalized data
 // catalog: each report states its own scope explicitly so the UI never has
 // to guess or silently imply a broader meaning than the data actually has.
+// "CUSTOMER_PLATFORM" (Milestone 9D) is a third source scope for reports
+// that combine Customer account records with digital-platform Order
+// records — never POS/in-store customer or order data, and never sales
+// data on its own (that's "DIGITAL_PLATFORM_ONLY").
 export type AdminReportDataSourceScope =
   | "DIGITAL_PLATFORM_ONLY"
-  | "INTERNAL_OPERATIONS";
+  | "INTERNAL_OPERATIONS"
+  | "CUSTOMER_PLATFORM";
 
 export interface AdminReportDataSource {
   scope: AdminReportDataSourceScope;
@@ -3632,5 +3637,60 @@ export interface AdminOperationsChecklistReport {
   // Sorted locationName ascending, locationId ascending as a tiebreaker.
   // Never sorted by a metric — this is a comparison table, not a ranking.
   locations: AdminOperationsChecklistRow[];
+  source: AdminReportDataSource;
+}
+
+// --- Milestone 9D, HQ Reporting: Customer Growth & Ordering --------------
+// Served only from `GET /api/v1/admin/reports/customer-growth`
+// (InternalAuthGuard + PermissionGuard + `reports.view`, CORPORATE-only —
+// the same permission as 9A/9B/9C; there is no separate customer-report
+// permission). `source.scope` is "CUSTOMER_PLATFORM" — this report
+// combines Customer account records with digital-platform Order records,
+// never POS/in-store data.
+//
+// `startDate`/`endDate` are business-calendar dates ('YYYY-MM-DD',
+// America/Detroit, both ends inclusive) converted to UTC instant
+// boundaries exactly like 9A/9B (`createdAt >= start instant`,
+// `createdAt < end-date-next-day instant`) — both `Customer.createdAt` and
+// `Order.createdAt` are real timestamp columns, so this uses the same
+// instant-range strategy as the Order reports, NOT 9C's `@db.Date`
+// direct-range strategy (Customer/Order have no stored calendar-date
+// column to compare against).
+//
+// This is customer-base SIZE and digital-ordering PARTICIPATION during a
+// period — deliberately NOT retention, churn, conversion, lifetime value,
+// customer scoring, or segmentation. None of those concepts are defined
+// here and none are computed.
+export interface AdminCustomerGrowthReport {
+  filters: {
+    startDate: string; // YYYY-MM-DD, business calendar date, inclusive
+    endDate: string; // YYYY-MM-DD, business calendar date, inclusive
+  };
+  // COUNT(Customer) WHERE createdAt < end-date-next-day instant. A
+  // cumulative "as of" figure, NOT scoped to the selected period alone —
+  // deliberately not called "Total Customers" so it's never mistaken for
+  // a period metric.
+  registeredCustomersAsOfEndDate: number;
+  // COUNT(Customer) WHERE createdAt is within [start instant, end-date-
+  // next-day instant) — customers who joined during the selected period.
+  newRegisteredCustomers: number;
+  // Distinct non-null Order.customerId among digital-platform orders
+  // created in the selected period. NOT "active", "retained" or
+  // "engaged" customers — just "placed at least one digital order in
+  // this period."
+  registeredCustomersWithOrders: number;
+  // Registered customers with >= 2 digital-platform orders created WITHIN
+  // the selected period specifically — never a lifetime or cross-period
+  // count. A customer with one order last period and one this period is
+  // NOT counted here.
+  repeatRegisteredCustomers: number;
+  // COUNT(Order) WHERE customerId IS NOT NULL, in the selected period —
+  // the direct counterpart to guestOrders; together they sum to every
+  // digital-platform order created in the period.
+  registeredCustomerOrders: number;
+  // COUNT(Order) WHERE customerId IS NULL, in the selected period. Guest
+  // orders are legitimate digital-platform orders, never an "unidentified
+  // registered customer."
+  guestOrders: number;
   source: AdminReportDataSource;
 }

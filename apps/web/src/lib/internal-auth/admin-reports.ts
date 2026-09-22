@@ -1,5 +1,6 @@
 import "server-only";
 import type {
+  AdminCustomerGrowthReport,
   AdminLocationPerformanceReport,
   AdminOperationsChecklistReport,
   AdminOrdersOverviewReport,
@@ -188,5 +189,61 @@ export async function getAdminOperationsChecklistReport(query: {
   return {
     outcome: "success",
     data: (await response.json()) as AdminOperationsChecklistReport,
+  };
+}
+
+// Milestone 9D — Customer Growth & Ordering. Mirrors
+// getAdminOrdersOverviewReport above; the API
+// (`GET /api/v1/admin/reports/customer-growth`, same InternalAuthGuard +
+// PermissionGuard + `reports.view`) is the sole authorization authority.
+export type AdminCustomerGrowthReportResult =
+  | { outcome: "success"; data: AdminCustomerGrowthReport }
+  | { outcome: "unauthenticated" }
+  | { outcome: "forbidden" }
+  | { outcome: "invalid" }
+  | { outcome: "error" };
+
+export async function getAdminCustomerGrowthReport(query: {
+  startDate: string;
+  endDate: string;
+}): Promise<AdminCustomerGrowthReportResult> {
+  const token = await getInternalSessionToken();
+  if (!token) {
+    return { outcome: "unauthenticated" };
+  }
+
+  const params = new URLSearchParams();
+  params.set("startDate", query.startDate);
+  params.set("endDate", query.endDate);
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${getApiUrl()}/admin/reports/customer-growth?${params.toString()}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      },
+    );
+  } catch {
+    return { outcome: "error" };
+  }
+
+  if (response.status === 401) {
+    return { outcome: "unauthenticated" };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 400) {
+    return { outcome: "invalid" };
+  }
+  if (!response.ok) {
+    return { outcome: "error" };
+  }
+
+  return {
+    outcome: "success",
+    data: (await response.json()) as AdminCustomerGrowthReport,
   };
 }
