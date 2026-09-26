@@ -25,10 +25,14 @@ import { MediaModule } from './media/media.module';
 import { MarketingModule } from './marketing/marketing.module';
 import { ApprovalsModule } from './approvals/approvals.module';
 import { ReportsModule } from './reports/reports.module';
+import { TenancyModule } from './tenancy/tenancy.module';
 
 @Module({
   imports: [
     PrismaModule,
+    // Milestone S0C — validates SINGLE_TENANT_ID at startup and establishes
+    // a TenantContext on every request.
+    TenancyModule,
     RedisModule,
     PaymentModule,
     LocationsModule,

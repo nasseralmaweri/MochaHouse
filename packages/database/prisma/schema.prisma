@@ -13,6 +13,51 @@ datasource db {
   provider = "postgresql"
 }
 
+// --- Milestone S0C, SaaS tenant foundation -----------------------------
+// A Tenant is one independent business subscribing to the platform. It is
+// PLATFORM-PLANE metadata, not any one tenant's business data (see
+// MODEL_TENANCY in src/tenancy/model-tenancy.ts).
+//
+// Mocha House is Tenant #1 with a FIXED id (TENANT_1_MOCHA_HOUSE_ID,
+// 01a0db02-f800-7000-8000-000000000001) inserted by this milestone's
+// migration, so every environment — including one that never runs the
+// seed — has the same Tenant #1 for S0D backfills and recovery tooling.
+//
+// S0C adds NO tenantId to any existing table (that is S0D), and there is
+// deliberately no column default anywhere that assigns a record to a
+// tenant: tenant ownership is always explicit.
+
+// ADR-5 foundation. Only the shape is introduced here — nothing enforces
+// suspension yet (that is S0L-2). A DECOMMISSIONED value is intentionally
+// NOT added until decommissioning has defined behaviour; adding an enum
+// value later is a non-breaking migration.
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+// Why a tenant is SUSPENDED. The migration's CHECK constraint makes this
+// non-null exactly when status = SUSPENDED.
+enum TenantSuspensionReason {
+  SECURITY
+  BILLING
+  REQUESTED
+}
+
+model Tenant {
+  id               String                  @id @default(uuid(7))
+  // Stable, URL-safe key (lowercase words separated by single hyphens —
+  // enforced by a CHECK constraint in the migration). Reserved for future
+  // host/domain resolution; nothing resolves tenants by slug in S0C.
+  slug             String                  @unique
+  name             String
+  // No default: provisioning must choose a status explicitly.
+  status           TenantStatus
+  suspensionReason TenantSuspensionReason?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+}
+
 model Location {
   id                           String                                @id @default(uuid(7))
   name                         String

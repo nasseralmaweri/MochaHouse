@@ -4,8 +4,10 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
+import { runWithTenantContext } from '@mocha-house/database';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationDispatchService } from '../notifications/notification-dispatch.service';
+import { WorkerTenantContextFactory } from '../tenancy/worker-tenant-context.factory';
 
 const DEFAULT_POLL_INTERVAL_MS = 2000;
 const DEFAULT_BATCH_SIZE = 20;
@@ -39,6 +41,7 @@ export class OutboxProcessorService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationDispatchService,
+    private readonly tenantContexts: WorkerTenantContextFactory,
   ) {}
 
   onModuleInit(): void {
@@ -94,7 +97,15 @@ export class OutboxProcessorService implements OnModuleInit, OnModuleDestroy {
       // an expected failure (a bad recipient, a send error); this try/catch
       // is only a backstop against a genuinely unexpected bug in it.
       try {
-        await this.notifications.dispatch(event);
+        // Milestone S0C — the claimed event's side effects run inside an
+        // explicit worker TenantContext obtained for THIS event. (The
+        // pending-row poll and claim above deliberately run outside any
+        // tenant: they span every event, and the query audit reports them
+        // as such.)
+        const tenantContext = this.tenantContexts.forOutboxEvent(event);
+        await runWithTenantContext(tenantContext, () =>
+          this.notifications.dispatch(event),
+        );
       } catch (error) {
         this.logger.error(
           `Notification dispatch threw unexpectedly for outbox event ${event.id} (${event.eventType})`,

@@ -1,6 +1,17 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '@mocha-house/database';
+import {
+  PrismaClient,
+  parseTenantQueryAuditMode,
+  tenantQueryAuditExtension,
+} from '@mocha-house/database';
+
+const auditLogger = new Logger('TenantQueryAudit');
 
 @Injectable()
 export class PrismaService
@@ -13,6 +24,20 @@ export class PrismaService
     });
 
     super({ adapter });
+
+    // Milestone S0C — the report-only tenant query audit; identical to
+    // apps/api's PrismaService (observer only, never alters or blocks a
+    // query; TENANT_QUERY_AUDIT=off disables it).
+    if (
+      parseTenantQueryAuditMode(process.env.TENANT_QUERY_AUDIT) === 'report'
+    ) {
+      return this.$extends(
+        tenantQueryAuditExtension({
+          onFirstObservation: (observation) =>
+            auditLogger.debug(JSON.stringify(observation)),
+        }),
+      ) as unknown as PrismaService;
+    }
   }
 
   async onModuleInit() {

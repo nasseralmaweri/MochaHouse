@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { WorkerTenancyModule } from '../tenancy/worker-tenancy.module';
 import { OutboxProcessorService } from './outbox-processor.service';
 
 describe('OutboxProcessorService (integration)', () => {
@@ -13,7 +14,7 @@ describe('OutboxProcessorService (integration)', () => {
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({
-      imports: [PrismaModule, NotificationsModule],
+      imports: [PrismaModule, WorkerTenancyModule, NotificationsModule],
       providers: [OutboxProcessorService],
     }).compile();
 

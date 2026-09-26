@@ -1,7 +1,14 @@
 import 'dotenv/config';
+import { randomUUID } from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { INTERNAL_PERMISSION_KEYS } from '@mocha-house/contracts';
 import { PrismaClient } from '../src/generated/prisma/client';
+import {
+  TENANT_1_MOCHA_HOUSE_ID,
+  createTenantContext,
+  ensureTenantOne,
+  runWithTenantContext,
+} from '../src/tenancy';
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL!,
@@ -9,7 +16,28 @@ const adapter = new PrismaPg({
 
 const prisma = new PrismaClient({ adapter });
 
+// Milestone S0C — Tenant #1 is established FIRST, then every business seed
+// step runs inside an explicit Tenant #1 `system` TenantContext. The seed is
+// the one legitimate place that names Tenant #1 directly: it is bootstrap
+// code that creates that tenant, not a request path choosing a default.
+// The business rows below are Mocha House data; they gain their tenantId
+// column in S0D, not here.
 async function main() {
+  const tenantId = await ensureTenantOne(prisma);
+  if (tenantId !== TENANT_1_MOCHA_HOUSE_ID) {
+    throw new Error('Seed resolved an unexpected Tenant #1 id.');
+  }
+
+  const seedContext = createTenantContext({
+    tenantId,
+    principalType: 'system',
+    requestId: `seed:${randomUUID()}`,
+  });
+
+  await runWithTenantContext(seedContext, () => seedMochaHouseBusinessData());
+}
+
+async function seedMochaHouseBusinessData() {
   const location = await prisma.location.upsert({
     where: {
       slug: 'dearborn-heights',

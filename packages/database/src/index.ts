@@ -4,3 +4,7 @@
 // module init, disconnect on module destroy) — this package only owns the
 // schema, migrations, and generated client, not the app-lifecycle wiring.
 export { PrismaClient, Prisma } from './generated/prisma/client';
+
+// S0C — tenant foundation (framework-neutral): TenantContext, the model
+// tenancy registry, the report-only query audit and single-tenant config.
+export * from './tenancy';

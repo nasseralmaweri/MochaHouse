@@ -264,6 +264,9 @@ importers:
       '@eslint/js':
         specifier: ^9.18.0
         version: 9.39.5
+      '@mocha-house/testing':
+        specifier: workspace:*
+        version: link:../../packages/testing
       '@nestjs/cli':
         specifier: ^11.0.0
         version: 11.0.24(@types/node@24.13.3)(esbuild@0.28.2)(lightningcss@1.32.0)(postcss@8.5.26)(prettier@3.9.6)(uglify-js@3.19.3)
@@ -437,6 +440,9 @@ importers:
       '@eslint/js':
         specifier: ^9.18.0
         version: 9.39.5
+      '@mocha-house/testing':
+        specifier: workspace:*
+        version: link:../../packages/testing
       '@nestjs/cli':
         specifier: ^11.0.0
         version: 11.0.24(@types/node@24.13.3)(esbuild@0.28.2)(lightningcss@1.32.0)(postcss@8.5.26)(prettier@3.9.6)(uglify-js@3.19.3)
@@ -566,6 +572,10 @@ importers:
   packages/observability: {}
 
   packages/testing:
+    dependencies:
+      '@mocha-house/database':
+        specifier: workspace:*
+        version: link:../database
     devDependencies:
       typescript:
         specifier: ^5.9.3
