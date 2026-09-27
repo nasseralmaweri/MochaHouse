@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -96,6 +97,7 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
   async function makeLocation(name: string): Promise<string> {
     const location = await prisma.location.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name,
         slug: `customer-growth-loc-${randomUUID()}`,
         isActive: true,

@@ -7,8 +7,9 @@ import type {
   OperationsTaskView,
   OperationsTasksResponse,
 } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import {
   businessDateToProjection,
@@ -34,6 +35,7 @@ type TaskRow = Prisma.OperationsTaskGetPayload<{ select: typeof TASK_SELECT }>;
 interface LocationRef {
   id: string;
   name: string;
+  tenantId: string;
 }
 
 // Today's Tasks (Milestone 6C). Simple, location-scoped operational to-dos
@@ -69,6 +71,7 @@ export class OperationsTasksService {
     input: { title?: unknown; note?: unknown },
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<OperationsTasksResponse> {
     const trimmedLocationId = assertLocationId(locationId);
     authorization.assertCanActOnLocation(
@@ -101,9 +104,18 @@ export class OperationsTasksService {
     }
 
     const location = await this.requireLocation(trimmedLocationId);
+    // Milestone S0D-2A — the task belongs to its Location's tenant, copied
+    // from the server-loaded Location after checking it belongs to the
+    // request's tenant. (The client-supplied locationId is only a lookup key.)
+    const tenantId = requireTenantOwnership(
+      location,
+      tenant,
+      'Location not found.',
+    );
 
     await this.prisma.operationsTask.create({
       data: {
+        tenantId,
         locationId: trimmedLocationId,
         businessDate: this.today(),
         title,
@@ -229,7 +241,7 @@ export class OperationsTasksService {
   private async requireLocation(locationId: string): Promise<LocationRef> {
     const location = await this.prisma.location.findUnique({
       where: { id: locationId },
-      select: { id: true, name: true },
+      select: { id: true, name: true, tenantId: true },
     });
     if (!location) {
       throw new NotFoundException('Location not found.');

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -90,6 +91,7 @@ describe('Opening Checklist (integration)', () => {
   async function makeLocation(): Promise<string> {
     const location = await prisma.location.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Opening Spec Loc ${randomUUID()}`,
         slug: `opening-loc-${randomUUID()}`,
         isActive: true,
@@ -427,12 +429,18 @@ describe('Opening Checklist (integration)', () => {
 
     const stale = await prisma.checklistInstance.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         templateId,
         locationId: locA,
         businessDate: yesterday,
         items: {
           create: [
-            { section: 'Building & Security', label: 'Old item', sortOrder: 1 },
+            {
+              tenantId: TENANT_1_MOCHA_HOUSE_ID,
+              section: 'Building & Security',
+              label: 'Old item',
+              sortOrder: 1,
+            },
           ],
         },
       },

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -130,6 +131,7 @@ describe('Loyalty Rewards Catalog (integration)', () => {
     locId = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Rewards Spec Loc ${suffix}`,
           slug: `rewards-spec-${suffix}`,
           isActive: true,
@@ -139,12 +141,17 @@ describe('Loyalty Rewards Catalog (integration)', () => {
     ).id;
 
     const category = await prisma.category.create({
-      data: { name: `Rewards Spec Cat ${suffix}`, slug: `rewards-cat-${suffix}` },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        name: `Rewards Spec Cat ${suffix}`,
+        slug: `rewards-cat-${suffix}`,
+      },
     });
     categoryId = category.id;
     productAId = (
       await prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Rewards Spec Latte ${suffix}`,
           slug: `rewards-latte-${suffix}`,
           categoryId,
@@ -154,6 +161,7 @@ describe('Loyalty Rewards Catalog (integration)', () => {
     productBId = (
       await prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Rewards Spec Pastry ${suffix}`,
           slug: `rewards-pastry-${suffix}`,
           categoryId,

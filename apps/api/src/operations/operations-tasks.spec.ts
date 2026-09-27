@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -85,6 +86,7 @@ describe("Today's Tasks (integration)", () => {
   async function makeLocation(): Promise<string> {
     const location = await prisma.location.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Tasks Spec Loc ${randomUUID()}`,
         slug: `tasks-loc-${randomUUID()}`,
         isActive: true,
@@ -208,6 +210,7 @@ describe("Today's Tasks (integration)", () => {
   it('a viewer can read but not write', async () => {
     const created = await prisma.operationsTask.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         locationId: locA,
         businessDate: today(),
         title: 'Seeded task',
@@ -352,6 +355,7 @@ describe("Today's Tasks (integration)", () => {
     yesterday.setUTCDate(yesterday.getUTCDate() - 1);
     const stale = await prisma.operationsTask.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         locationId: locA,
         businessDate: yesterday,
         title: 'Yesterday task',

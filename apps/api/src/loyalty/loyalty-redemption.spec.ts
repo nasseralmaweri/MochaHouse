@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { BadRequestException, ConflictException } from '@nestjs/common';
@@ -69,6 +70,7 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
 
     const location = await prisma.location.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Redeem Spec Loc ${suffix}`,
         slug: `redeem-spec-${suffix}`,
         isActive: true,
@@ -78,10 +80,18 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     locationId = location.id;
 
     const drinks = await prisma.category.create({
-      data: { name: `Redeem Drinks ${suffix}`, slug: `redeem-drinks-${suffix}` },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        name: `Redeem Drinks ${suffix}`,
+        slug: `redeem-drinks-${suffix}`,
+      },
     });
     const food = await prisma.category.create({
-      data: { name: `Redeem Food ${suffix}`, slug: `redeem-food-${suffix}` },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        name: `Redeem Food ${suffix}`,
+        slug: `redeem-food-${suffix}`,
+      },
     });
     drinksCategoryId = drinks.id;
     foodCategoryId = food.id;
@@ -89,6 +99,7 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     const mk = (name: string, slug: string, price: number, categoryId: string) =>
       prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name,
           slug: `${slug}-${suffix}`,
           basePrice: price,
@@ -101,10 +112,15 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     muffinId = (await mk('Redeem Muffin', 'redeem-muffin', 400, foodCategoryId)).id;
 
     const menu = await prisma.menu.create({
-      data: { name: `Redeem Menu ${suffix}`, slug: `redeem-menu-${suffix}` },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        name: `Redeem Menu ${suffix}`,
+        slug: `redeem-menu-${suffix}`,
+      },
     });
     await prisma.menuProduct.createMany({
       data: [latteId, pastryId, muffinId].map((productId, i) => ({
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         menuId: menu.id,
         productId,
         displayOrder: i,
@@ -112,7 +128,12 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
       })),
     });
     await prisma.locationMenu.create({
-      data: { locationId, menuId: menu.id, isActive: true },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        locationId,
+        menuId: menu.id,
+        isActive: true,
+      },
     });
   });
 

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -160,7 +161,11 @@ describe('Gift Card administration (integration)', () => {
 
     locId = (
       await prisma.location.create({
-        data: { name: `GC Loc ${suffix}`, slug: `gc-loc-${suffix}` },
+        data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          name: `GC Loc ${suffix}`,
+          slug: `gc-loc-${suffix}`,
+        },
       })
     ).id;
 

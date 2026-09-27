@@ -7,6 +7,8 @@ import type {
 import { ChecklistExecutionService } from '../application/checklist-execution.service';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 
 // The shared route surface for a daily checklist's store execution
 // (Milestone 6B; Closing added in 6D). Opening and Closing controllers
@@ -33,11 +35,13 @@ export abstract class ChecklistExecutionControllerBase {
   getToday(
     @Query('locationId') locationId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.getToday(
       this.templateKey,
       locationId,
       request.authorization!,
+      tenant,
     );
   }
 

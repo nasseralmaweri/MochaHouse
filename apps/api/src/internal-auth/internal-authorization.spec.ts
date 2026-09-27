@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -142,6 +143,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     prodEdit = (
       await prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Authz Edit Product ${suffix}`,
           slug: `authz-edit-product-${suffix}`,
           description: 'editable',
@@ -155,6 +157,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     prodInactive = (
       await prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Authz Inactive Product ${suffix}`,
           slug: `authz-inactive-product-${suffix}`,
           basePrice: null,
@@ -169,6 +172,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     menuInactive = (
       await prisma.menu.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Authz Inactive Menu ${suffix}`,
           slug: `authz-inactive-menu-${suffix}`,
           isActive: false,
@@ -181,6 +185,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     menuPricing = (
       await prisma.menu.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Authz Pricing Menu ${suffix}`,
           slug: `authz-pricing-menu-${suffix}`,
           isActive: true,
@@ -190,6 +195,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     prodPricing = (
       await prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Authz Pricing Product ${suffix}`,
           slug: `authz-pricing-product-${suffix}`,
           basePrice: 300,
@@ -201,6 +207,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     ).id;
     await prisma.menuProduct.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         menuId: menuPricing,
         productId: prodPricing,
         displayOrder: 1,
@@ -212,6 +219,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     locA = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Authz A ${suffix}`,
           slug: `authz-a-${suffix}`,
           isActive: true,
@@ -222,6 +230,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     locB = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Authz B ${suffix}`,
           slug: `authz-b-${suffix}`,
           isActive: true,
@@ -232,6 +241,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     locCInactive = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Authz C ${suffix}`,
           slug: `authz-c-${suffix}`,
           isActive: false,
@@ -242,6 +252,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     locEdit = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Authz Edit ${suffix}`,
           slug: `authz-edit-${suffix}`,
           isActive: true,
@@ -250,11 +261,21 @@ describe('Internal admin authorization matrix (integration)', () => {
       })
     ).id;
     await prisma.locationMenu.create({
-      data: { locationId: locA, menuId, isActive: true },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        locationId: locA,
+        menuId,
+        isActive: true,
+      },
     });
     // 5D-4: the isolated pricing menu is assigned only to locB.
     await prisma.locationMenu.create({
-      data: { locationId: locB, menuId: menuPricing, isActive: true },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        locationId: locB,
+        menuId: menuPricing,
+        isActive: true,
+      },
     });
 
     // A published, active order in locA.

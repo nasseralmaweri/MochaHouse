@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { FakePaymentProvider } from '@mocha-house/integrations';
@@ -67,6 +68,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const mkLocation = (n: string) =>
       prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Bonus Loc ${n} ${suffix}`,
           slug: `bonus-loc-${n}-${suffix}`,
           isActive: true,
@@ -78,18 +80,27 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
 
     drinksCategoryId = (
       await prisma.category.create({
-        data: { name: `Bonus Drinks ${suffix}`, slug: `bonus-drinks-${suffix}` },
+        data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          name: `Bonus Drinks ${suffix}`,
+          slug: `bonus-drinks-${suffix}`,
+        },
       })
     ).id;
     foodCategoryId = (
       await prisma.category.create({
-        data: { name: `Bonus Food ${suffix}`, slug: `bonus-food-${suffix}` },
+        data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          name: `Bonus Food ${suffix}`,
+          slug: `bonus-food-${suffix}`,
+        },
       })
     ).id;
 
     const mk = (name: string, slug: string, price: number, categoryId: string) =>
       prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name,
           slug: `${slug}-${suffix}`,
           basePrice: price,
@@ -102,10 +113,15 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     pastryId = (await mk('Bonus Pastry', 'bonus-pastry', 300, foodCategoryId)).id;
 
     const menu = await prisma.menu.create({
-      data: { name: `Bonus Menu ${suffix}`, slug: `bonus-menu-${suffix}` },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        name: `Bonus Menu ${suffix}`,
+        slug: `bonus-menu-${suffix}`,
+      },
     });
     await prisma.menuProduct.createMany({
       data: [matchaId, latteId, pastryId].map((productId, i) => ({
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         menuId: menu.id,
         productId,
         displayOrder: i,
@@ -115,6 +131,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     // Both test locations share the menu.
     await prisma.locationMenu.createMany({
       data: [locationId, otherLocationId].map((locId) => ({
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         locationId: locId,
         menuId: menu.id,
         isActive: true,

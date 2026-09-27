@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -63,6 +64,7 @@ describe('POST /api/v1/orders/reward-eligibility (integration)', () => {
 
     const location = await prisma.location.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `CR Spec Loc ${suffix}`,
         slug: `cr-spec-${suffix}`,
         isActive: true,
@@ -71,12 +73,17 @@ describe('POST /api/v1/orders/reward-eligibility (integration)', () => {
     });
     locationId = location.id;
     const category = await prisma.category.create({
-      data: { name: `CR Cat ${suffix}`, slug: `cr-cat-${suffix}` },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        name: `CR Cat ${suffix}`,
+        slug: `cr-cat-${suffix}`,
+      },
     });
     categoryId = category.id;
     latteId = (
       await prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: 'CR Latte',
           slug: `cr-latte-${suffix}`,
           basePrice: 500,
@@ -87,6 +94,7 @@ describe('POST /api/v1/orders/reward-eligibility (integration)', () => {
     pastryId = (
       await prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: 'CR Pastry',
           slug: `cr-pastry-${suffix}`,
           basePrice: 300,
@@ -95,10 +103,15 @@ describe('POST /api/v1/orders/reward-eligibility (integration)', () => {
       })
     ).id;
     const menu = await prisma.menu.create({
-      data: { name: `CR Menu ${suffix}`, slug: `cr-menu-${suffix}` },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        name: `CR Menu ${suffix}`,
+        slug: `cr-menu-${suffix}`,
+      },
     });
     await prisma.menuProduct.createMany({
       data: [latteId, pastryId].map((productId, i) => ({
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         menuId: menu.id,
         productId,
         displayOrder: i,
@@ -106,7 +119,12 @@ describe('POST /api/v1/orders/reward-eligibility (integration)', () => {
       })),
     });
     await prisma.locationMenu.create({
-      data: { locationId, menuId: menu.id, isActive: true },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        locationId,
+        menuId: menu.id,
+        isActive: true,
+      },
     });
 
     const fixed = await prisma.loyaltyReward.create({

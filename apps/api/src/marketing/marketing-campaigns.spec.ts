@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -227,16 +228,25 @@ describe('Marketing Campaigns admin (integration)', () => {
 
     locId = (
       await prisma.location.create({
-        data: { name: `Marketing Loc ${suffix}`, slug: `marketing-loc-${suffix}` },
+        data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          name: `Marketing Loc ${suffix}`,
+          slug: `marketing-loc-${suffix}`,
+        },
       })
     ).id;
     const category = await prisma.category.create({
-      data: { name: `Marketing Cat ${suffix}`, slug: `marketing-cat-${suffix}` },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        name: `Marketing Cat ${suffix}`,
+        slug: `marketing-cat-${suffix}`,
+      },
     });
     categoryId = category.id;
     productActiveId = (
       await prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Marketing Product Active ${suffix}`,
           slug: `marketing-product-active-${suffix}`,
           categoryId,
@@ -247,6 +257,7 @@ describe('Marketing Campaigns admin (integration)', () => {
     productInactiveId = (
       await prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Marketing Product Inactive ${suffix}`,
           slug: `marketing-product-inactive-${suffix}`,
           categoryId,
@@ -440,6 +451,7 @@ describe('Marketing Campaigns admin (integration)', () => {
       const id = (
         await prisma.product.create({
           data: {
+            tenantId: TENANT_1_MOCHA_HOUSE_ID,
             name: `Marketing Cap Product ${i} ${suffix}`,
             slug: `marketing-cap-product-${i}-${suffix}`,
             categoryId,
@@ -471,6 +483,7 @@ describe('Marketing Campaigns admin (integration)', () => {
     const productB = (
       await prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Marketing Product B ${suffix}`,
           slug: `marketing-product-b-${suffix}`,
           categoryId,

@@ -17,3 +17,4 @@ export {
   type MigrationFile,
   type ScratchDatabase,
 } from "./scratch-database";
+export { TENANT_ID_REQUIRED_MODELS } from './tenant-conversion';

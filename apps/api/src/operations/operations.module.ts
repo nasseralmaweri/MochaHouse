@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AuditModule } from '../audit/audit.module';
+import { TenancyModule } from '../tenancy/tenancy.module';
 import { OpeningChecklistController } from './api/opening-checklist.controller';
 import { ClosingChecklistController } from './api/closing-checklist.controller';
 import { OpeningChecklistTemplateConfigController } from './api/opening-checklist-template-config.controller';
@@ -22,8 +23,10 @@ import { OperationsTasksService } from './application/operations-tasks.service';
 // InternalAuthGuard / PermissionGuard / AuthorizationService come from the
 // @Global InternalAuthModule; PrismaService from the @Global PrismaModule;
 // InternalAuditService from AuditModule (exception events only).
+// TenancyModule (Milestone S0D-2A): checklist-instance, template-item and
+// task creation require the request's TenantContext.
 @Module({
-  imports: [PrismaModule, AuditModule],
+  imports: [PrismaModule, AuditModule, TenancyModule],
   controllers: [
     OpeningChecklistController,
     ClosingChecklistController,

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -159,6 +160,7 @@ describe('Admin reports — CSV export (integration, Milestone 9E)', () => {
   async function makeLocation(name: string): Promise<string> {
     const location = await prisma.location.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name,
         slug: `export-spec-loc-${randomUUID()}`,
         isActive: true,
@@ -584,6 +586,7 @@ describe('Admin reports — CSV export (integration, Milestone 9E)', () => {
     it('a location name with a comma and quote is escaped correctly in a data row', async () => {
       const specialLocation = await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Special, "Loc" ${suffix}`,
           slug: `export-spec-b-${randomUUID()}`,
           isActive: true,
@@ -606,6 +609,7 @@ describe('Admin reports — CSV export (integration, Milestone 9E)', () => {
     it('a location name starting with whitespace + a formula-trigger character is protected in the real export', async () => {
       const formulaLocation = await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `   =SUM(A1:A2) ${suffix}`,
           slug: `export-spec-formula-${randomUUID()}`,
           isActive: true,

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -80,6 +81,7 @@ describe('Customer reorder (integration)', () => {
 
     const location = await prisma.location.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Reorder Loc ${tag}`,
         slug: `reorder-loc-${tag}`,
         isActive: true,
@@ -88,16 +90,23 @@ describe('Customer reorder (integration)', () => {
     });
     const menu = await prisma.menu.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Reorder Menu ${tag}`,
         slug: `reorder-menu-${tag}`,
         isActive: true,
       },
     });
     await prisma.locationMenu.create({
-      data: { locationId: location.id, menuId: menu.id, isActive: true },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        locationId: location.id,
+        menuId: menu.id,
+        isActive: true,
+      },
     });
     const category = await prisma.category.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Reorder Cat ${tag}`,
         slug: `reorder-cat-${tag}`,
         displayOrder: 1,
@@ -106,6 +115,7 @@ describe('Customer reorder (integration)', () => {
     });
     const product = await prisma.product.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Reorder Latte ${tag}`,
         slug: `reorder-latte-${tag}`,
         basePrice: 500,
@@ -116,6 +126,7 @@ describe('Customer reorder (integration)', () => {
     });
     await prisma.menuProduct.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         menuId: menu.id,
         productId: product.id,
         displayOrder: 1,
@@ -124,6 +135,7 @@ describe('Customer reorder (integration)', () => {
     });
     const sizeGroup = await prisma.modifierGroup.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Size ${tag}`,
         displayOrder: 1,
         isRequired: true,
@@ -134,6 +146,7 @@ describe('Customer reorder (integration)', () => {
     });
     await prisma.productModifierGroup.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         productId: product.id,
         modifierGroupId: sizeGroup.id,
         displayOrder: 1,
@@ -141,6 +154,7 @@ describe('Customer reorder (integration)', () => {
     });
     await prisma.modifierOption.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: 'Small',
         priceAdjustment: 0,
         displayOrder: 1,
@@ -150,6 +164,7 @@ describe('Customer reorder (integration)', () => {
     });
     const medium = await prisma.modifierOption.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: 'Medium',
         priceAdjustment: 50,
         displayOrder: 2,
@@ -429,6 +444,7 @@ describe('Customer reorder (integration)', () => {
     const order = await placeOrder(id, mediumOptionId);
     await prisma.locationProductAvailabilityOverride.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         locationId,
         menuId,
         productId,
@@ -498,6 +514,7 @@ describe('Customer reorder (integration)', () => {
 
     const strength = await prisma.modifierGroup.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Strength ${tag}`,
         displayOrder: 2,
         isRequired: true,
@@ -507,6 +524,7 @@ describe('Customer reorder (integration)', () => {
         options: {
           create: [
             {
+              tenantId: TENANT_1_MOCHA_HOUSE_ID,
               name: 'Regular',
               priceAdjustment: 0,
               displayOrder: 1,
@@ -517,7 +535,12 @@ describe('Customer reorder (integration)', () => {
       },
     });
     await prisma.productModifierGroup.create({
-      data: { productId, modifierGroupId: strength.id, displayOrder: 2 },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        productId,
+        modifierGroupId: strength.id,
+        displayOrder: 2,
+      },
     });
 
     const res = await request(app.getHttpServer())

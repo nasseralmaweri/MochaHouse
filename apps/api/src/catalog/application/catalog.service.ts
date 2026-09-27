@@ -17,6 +17,8 @@ import type {
   ProductSummary,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { TenantContext } from '@mocha-house/database';
+import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 
 interface UpdateProductInput {
@@ -506,6 +508,7 @@ export class CatalogService {
     productId: string,
     price: number,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ) {
     // A per-location override — a LOCATION-scoped manager may set it for
     // their own location(s); CORPORATE covers any. Checked before any read.
@@ -528,6 +531,7 @@ export class CatalogService {
         select: {
           locationId: true,
           menuId: true,
+          location: { select: { tenantId: true } },
         },
       }),
       this.prisma.menuProduct.findUnique({
@@ -556,6 +560,15 @@ export class CatalogService {
       );
     }
 
+    // Milestone S0D-2A — the override belongs to its Location's tenant,
+    // copied from the server-loaded Location after checking it belongs to
+    // the request's tenant (a Location of another tenant reads as absent).
+    const tenantId = requireTenantOwnership(
+      locationMenu.location,
+      tenant,
+      'The selected menu is not assigned to this location.',
+    );
+
     return this.prisma.locationProductPriceOverride.upsert({
       where: {
         locationId_menuId_productId: {
@@ -568,6 +581,7 @@ export class CatalogService {
         price,
       },
       create: {
+        tenantId,
         locationId,
         menuId,
         productId,
@@ -636,6 +650,7 @@ export class CatalogService {
     productId: string,
     isAvailable: boolean,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ) {
     authorization.assertCanActOnLocation('catalog.overrides.manage', locationId);
 
@@ -656,6 +671,7 @@ export class CatalogService {
         select: {
           locationId: true,
           menuId: true,
+          location: { select: { tenantId: true } },
         },
       }),
       this.prisma.menuProduct.findUnique({
@@ -684,6 +700,15 @@ export class CatalogService {
       );
     }
 
+    // Milestone S0D-2A — the override belongs to its Location's tenant,
+    // copied from the server-loaded Location after checking it belongs to
+    // the request's tenant (a Location of another tenant reads as absent).
+    const tenantId = requireTenantOwnership(
+      locationMenu.location,
+      tenant,
+      'The selected menu is not assigned to this location.',
+    );
+
     return this.prisma.locationProductAvailabilityOverride.upsert({
       where: {
         locationId_menuId_productId: {
@@ -696,6 +721,7 @@ export class CatalogService {
         isAvailable,
       },
       create: {
+        tenantId,
         locationId,
         menuId,
         productId,

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -151,7 +152,11 @@ describe('Approvals admin (integration)', () => {
 
     locId = (
       await prisma.location.create({
-        data: { name: `Approvals Loc ${suffix}`, slug: `approvals-loc-${suffix}` },
+        data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          name: `Approvals Loc ${suffix}`,
+          slug: `approvals-loc-${suffix}`,
+        },
       })
     ).id;
 

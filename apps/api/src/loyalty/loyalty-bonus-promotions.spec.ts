@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -139,6 +140,7 @@ describe('Bonus Mocha Beans Promotions admin (integration)', () => {
     locId = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Bonus Promo Loc ${suffix}`,
           slug: `bonus-promo-loc-${suffix}`,
           isActive: true,
@@ -148,6 +150,7 @@ describe('Bonus Mocha Beans Promotions admin (integration)', () => {
     otherLocId = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Bonus Promo Loc 2 ${suffix}`,
           slug: `bonus-promo-loc2-${suffix}`,
           isActive: true,
@@ -156,11 +159,16 @@ describe('Bonus Mocha Beans Promotions admin (integration)', () => {
     ).id;
 
     const category = await prisma.category.create({
-      data: { name: `Bonus Promo Cat ${suffix}`, slug: `bonus-promo-cat-${suffix}` },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        name: `Bonus Promo Cat ${suffix}`,
+        slug: `bonus-promo-cat-${suffix}`,
+      },
     });
     productAId = (
       await prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Bonus Promo Matcha ${suffix}`,
           slug: `bonus-promo-matcha-${suffix}`,
           categoryId: category.id,
@@ -170,6 +178,7 @@ describe('Bonus Mocha Beans Promotions admin (integration)', () => {
     productBId = (
       await prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Bonus Promo Latte ${suffix}`,
           slug: `bonus-promo-latte-${suffix}`,
           categoryId: category.id,

@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { MODEL_TENANCY, TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
+import { TENANT_ID_REQUIRED_MODELS } from '@mocha-house/testing';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -31,7 +32,13 @@ describe('S0D-1 tenant columns — schema introspection', () => {
     expect(tenantTables).not.toContain('Tenant');
   });
 
-  it('every tenant-owned table has a nullable TEXT tenantId with NO default, and no other table has one', async () => {
+  it('every model recorded as converted is a real tenant-owned model', () => {
+    for (const model of TENANT_ID_REQUIRED_MODELS) {
+      expect(tenantTables).toContain(model);
+    }
+  });
+
+  it('every tenant-owned table has a TEXT tenantId with NO default — NOT NULL exactly for the converted S0D-2 models — and no other table has one', async () => {
     const columns = await prisma.$queryRaw<
       {
         table_name: string;
@@ -51,8 +58,17 @@ describe('S0D-1 tenant columns — schema introspection', () => {
         table: column.table_name,
         type: 'text',
       });
-      // Nullable is intentional until each domain's S0D-2 slice.
-      expect(column.is_nullable).toBe('YES');
+      // NOT NULL exactly for the models converted so far by S0D-2 slices;
+      // every other tenant-owned model is still intentionally nullable.
+      expect({
+        table: column.table_name,
+        nullable: column.is_nullable,
+      }).toEqual({
+        table: column.table_name,
+        nullable: TENANT_ID_REQUIRED_MODELS.includes(column.table_name)
+          ? 'NO'
+          : 'YES',
+      });
       expect(column.column_default).toBeNull();
     }
   });

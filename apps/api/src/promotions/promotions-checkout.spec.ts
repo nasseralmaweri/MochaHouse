@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
@@ -68,6 +69,7 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     const mkLoc = (n: string) =>
       prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Promo Chk ${n} ${suffix}`,
           slug: `promo-chk-${n}-${suffix}`,
           isActive: true,
@@ -79,18 +81,27 @@ describe('Promotions & Coupons at checkout (integration)', () => {
 
     drinksCategoryId = (
       await prisma.category.create({
-        data: { name: `PC Drinks ${suffix}`, slug: `pc-drinks-${suffix}` },
+        data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          name: `PC Drinks ${suffix}`,
+          slug: `pc-drinks-${suffix}`,
+        },
       })
     ).id;
     foodCategoryId = (
       await prisma.category.create({
-        data: { name: `PC Food ${suffix}`, slug: `pc-food-${suffix}` },
+        data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          name: `PC Food ${suffix}`,
+          slug: `pc-food-${suffix}`,
+        },
       })
     ).id;
 
     const mk = (name: string, slug: string, price: number, categoryId: string) =>
       prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name,
           slug: `${slug}-${suffix}`,
           basePrice: price,
@@ -106,6 +117,7 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     // priced lines with different modifier-inclusive unit prices.
     const sizeGroup = await prisma.modifierGroup.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `PC Size ${suffix}`,
         displayOrder: 1,
         // Optional so existing `line(latteId)` cases (no selection) keep the
@@ -118,11 +130,17 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     });
     sizeGroupId = sizeGroup.id;
     await prisma.productModifierGroup.create({
-      data: { productId: latteId, modifierGroupId: sizeGroup.id, displayOrder: 1 },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        productId: latteId,
+        modifierGroupId: sizeGroup.id,
+        displayOrder: 1,
+      },
     });
     sizeSmallId = (
       await prisma.modifierOption.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: 'Small',
           priceAdjustment: 0,
           displayOrder: 1,
@@ -134,6 +152,7 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     sizeLargeId = (
       await prisma.modifierOption.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: 'Large',
           priceAdjustment: 200,
           displayOrder: 2,
@@ -144,10 +163,15 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     ).id;
 
     const menu = await prisma.menu.create({
-      data: { name: `PC Menu ${suffix}`, slug: `pc-menu-${suffix}` },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        name: `PC Menu ${suffix}`,
+        slug: `pc-menu-${suffix}`,
+      },
     });
     await prisma.menuProduct.createMany({
       data: [latteId, pastryId, muffinId].map((productId, i) => ({
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         menuId: menu.id,
         productId,
         displayOrder: i,
@@ -156,6 +180,7 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     });
     await prisma.locationMenu.createMany({
       data: [locationId, otherLocationId].map((locId) => ({
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         locationId: locId,
         menuId: menu.id,
         isActive: true,

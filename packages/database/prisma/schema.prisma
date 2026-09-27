@@ -146,11 +146,11 @@ model Location {
   // hard-deleted out from under it (the codebase uses isActive anyway).
   jobOpenings                  JobOpening[]
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([tenantId])
 }
@@ -167,11 +167,11 @@ model Category {
   loyaltyRewardEligibility LoyaltyRewardCategory[]
   promotionEligibility     PromotionCategory[]
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([tenantId])
 }
@@ -199,11 +199,11 @@ model Product {
   // Restrict from the Product side (see CampaignProduct).
   campaignFeatureEligibility CampaignProduct[]
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([categoryId])
   @@index([tenantId])
@@ -221,11 +221,11 @@ model Menu {
   createdAt             DateTime                              @default(now())
   updatedAt             DateTime                              @updatedAt
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([tenantId])
 }
@@ -243,11 +243,11 @@ model ModifierGroup {
   options       ModifierOption[]
   products      ProductModifierGroup[]
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([tenantId])
 }
@@ -263,11 +263,11 @@ model ModifierOption {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([modifierGroupId])
   @@index([tenantId])
@@ -281,11 +281,11 @@ model ProductModifierGroup {
   product       Product       @relation(fields: [productId], references: [id])
   modifierGroup ModifierGroup @relation(fields: [modifierGroupId], references: [id])
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@id([productId, modifierGroupId])
   @@index([modifierGroupId])
@@ -301,11 +301,11 @@ model MenuProduct {
   menu    Menu    @relation(fields: [menuId], references: [id])
   product Product @relation(fields: [productId], references: [id])
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@id([menuId, productId])
   @@index([productId])
@@ -320,11 +320,11 @@ model LocationMenu {
   location Location @relation(fields: [locationId], references: [id])
   menu     Menu     @relation(fields: [menuId], references: [id])
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@id([locationId, menuId])
   @@index([menuId])
@@ -343,11 +343,11 @@ model LocationProductPriceOverride {
   menu     Menu     @relation(fields: [menuId], references: [id])
   product  Product  @relation(fields: [productId], references: [id])
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@id([locationId, menuId, productId])
   @@index([menuId])
@@ -367,11 +367,11 @@ model LocationProductAvailabilityOverride {
   menu     Menu     @relation(fields: [menuId], references: [id])
   product  Product  @relation(fields: [productId], references: [id])
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@id([locationId, menuId, productId])
   @@index([menuId])
@@ -1055,11 +1055,11 @@ model ChecklistTemplate {
   items     ChecklistTemplateItem[]
   instances ChecklistInstance[]
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([tenantId])
 }
@@ -1080,11 +1080,11 @@ model ChecklistTemplateItem {
 
   template ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([templateId])
   @@index([tenantId])
@@ -1115,11 +1115,11 @@ model ChecklistInstance {
   location Location                @relation(fields: [locationId], references: [id])
   items    ChecklistInstanceItem[]
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([templateId, locationId, businessDate])
   @@index([locationId, businessDate])
@@ -1161,11 +1161,11 @@ model ChecklistInstanceItem {
   completedBy       InternalUser?     @relation("ChecklistItemCompletedBy", fields: [completedByInternalUserId], references: [id], onDelete: Restrict)
   exceptionBy       InternalUser?     @relation("ChecklistItemExceptionBy", fields: [exceptionByInternalUserId], references: [id], onDelete: Restrict)
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([checklistInstanceId])
   @@index([completedByInternalUserId])
@@ -1201,11 +1201,11 @@ model OperationsTask {
   createdBy   InternalUser  @relation("OperationsTaskCreatedBy", fields: [createdByInternalUserId], references: [id], onDelete: Restrict)
   completedBy InternalUser? @relation("OperationsTaskCompletedBy", fields: [completedByInternalUserId], references: [id], onDelete: Restrict)
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
+  // every write supplies it explicitly (root writes from the request's
+  // TenantContext, child writes from a validated parent). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([locationId, businessDate])
   @@index([createdByInternalUserId])

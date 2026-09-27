@@ -9,8 +9,9 @@ import type {
   OpeningChecklistResponse,
   OpeningChecklistSectionView,
 } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import {
@@ -80,6 +81,7 @@ export class ChecklistExecutionService {
     templateKey: string,
     locationId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<OpeningChecklistResponse> {
     const trimmedLocationId = assertLocationId(locationId);
     authorization.assertCanActOnLocation('operations.view', trimmedLocationId);
@@ -87,11 +89,27 @@ export class ChecklistExecutionService {
     const location = await this.requireLocation(trimmedLocationId);
     const template = await this.requireTemplate(templateKey);
 
+    // Milestone S0D-2A — a GET here may lazily CREATE today's instance, so
+    // its owning tenant is established now: copied from the server-loaded
+    // Location, which (like the template) must belong to the request's
+    // tenant. Another tenant's Location reads as not found.
+    const tenantId = requireTenantOwnership(
+      location,
+      tenant,
+      'Location not found.',
+    );
+    requireTenantOwnership(
+      template,
+      tenant,
+      `The "${templateKey}" checklist template is not configured.`,
+    );
+
     const businessDate = businessDateToStorage(resolveBusinessDate(new Date()));
     const instance = await this.findOrCreateInstance(
       template.id,
       trimmedLocationId,
       businessDate,
+      tenantId,
     );
 
     return this.project(instance, location, template.name);
@@ -305,6 +323,7 @@ export class ChecklistExecutionService {
     templateId: string,
     locationId: string,
     businessDate: Date,
+    tenantId: string,
   ): Promise<InstanceWithItems> {
     const existing = await this.prisma.checklistInstance.findUnique({
       where: {
@@ -332,11 +351,14 @@ export class ChecklistExecutionService {
 
         return tx.checklistInstance.create({
           data: {
+            tenantId,
             templateId,
             locationId,
             businessDate,
             items: {
+              // Each snapshot item belongs to its instance's tenant.
               create: activeItems.map((item) => ({
+                tenantId,
                 section: item.section,
                 label: item.label,
                 sortOrder: item.sortOrder,
@@ -487,10 +509,12 @@ export class ChecklistExecutionService {
 
   // --- lookups ----------------------------------------------------
 
-  private async requireLocation(locationId: string): Promise<LocationRef> {
+  private async requireLocation(
+    locationId: string,
+  ): Promise<LocationRef & { tenantId: string }> {
     const location = await this.prisma.location.findUnique({
       where: { id: locationId },
-      select: { id: true, name: true },
+      select: { id: true, name: true, tenantId: true },
     });
     if (!location) {
       throw new NotFoundException('Location not found.');
@@ -501,10 +525,11 @@ export class ChecklistExecutionService {
   private async requireTemplate(templateKey: string): Promise<{
     id: string;
     name: string;
+    tenantId: string;
   }> {
     const template = await this.prisma.checklistTemplate.findUnique({
       where: { key: templateKey },
-      select: { id: true, name: true },
+      select: { id: true, name: true, tenantId: true },
     });
     if (!template) {
       // Configuration error — the checklist template is seeded.

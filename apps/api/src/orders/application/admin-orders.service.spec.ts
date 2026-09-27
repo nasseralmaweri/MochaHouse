@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import {
@@ -102,6 +103,7 @@ describe('AdminOrdersService (integration)', () => {
       where: { slug: 'admin-orders-spec-other-location' },
       update: {},
       create: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: 'Admin Orders Spec — Other Location',
         slug: 'admin-orders-spec-other-location',
         isActive: true,

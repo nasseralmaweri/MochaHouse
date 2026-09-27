@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, type ExecutionContext } from '@nestjs/common';
@@ -166,6 +167,7 @@ describe('Franchising / Inquiries (integration)', () => {
     activeLocationId = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Franchising Active ${suffix}`,
           slug: `franchising-active-${suffix}`,
           isActive: true,

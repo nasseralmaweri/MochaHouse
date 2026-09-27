@@ -17,6 +17,8 @@ import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-a
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 
 // Admin → Operations → Today → Today's Tasks (Milestone 6C).
 //
@@ -53,12 +55,14 @@ export class OperationsTasksController {
   create(
     @Body() body: CreateOperationsTaskRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.tasksService.create(
       body?.locationId,
       { title: body?.title, note: body?.note },
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 

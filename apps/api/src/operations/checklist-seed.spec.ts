@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -136,6 +137,7 @@ describe('daily-checklist seed is create-once (integration)', () => {
       });
       const added = await prisma.checklistTemplateItem.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           templateId,
           section: 'HQ New Section',
           label: `HQ ADDED to ${key}`,

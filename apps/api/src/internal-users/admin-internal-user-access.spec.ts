@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -197,6 +198,7 @@ describe('Admin internal user access assignment (integration)', () => {
     locA = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Access Spec Loc A ${suffix}`,
           slug: `access-a-${suffix}`,
           isActive: true,
@@ -207,6 +209,7 @@ describe('Admin internal user access assignment (integration)', () => {
     locB = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Access Spec Loc B ${suffix}`,
           slug: `access-b-${suffix}`,
           isActive: true,
@@ -217,6 +220,7 @@ describe('Admin internal user access assignment (integration)', () => {
     locInactive = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Access Spec Loc Inactive ${suffix}`,
           slug: `access-x-${suffix}`,
           isActive: false,

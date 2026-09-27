@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -113,6 +114,7 @@ describe('Admin internal users read (integration)', () => {
     locA = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Users Spec Aardvark ${suffix}`,
           slug: `users-a-${suffix}`,
           isActive: true,
@@ -123,6 +125,7 @@ describe('Admin internal users read (integration)', () => {
     locB = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Users Spec Beluga ${suffix}`,
           slug: `users-b-${suffix}`,
           isActive: true,

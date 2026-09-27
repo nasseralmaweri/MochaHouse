@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -101,6 +102,7 @@ describe('Admin reports — operations checklist visibility (integration)', () =
   ): Promise<string> {
     const location = await prisma.location.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name,
         slug: `ops-checklist-loc-${randomUUID()}`,
         isActive: options.isActive ?? true,
@@ -124,12 +126,14 @@ describe('Admin reports — operations checklist visibility (integration)', () =
   }): Promise<string> {
     const instance = await prisma.checklistInstance.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         templateId: options.templateId,
         locationId: options.locationId,
         businessDate: businessDateToStorage(options.businessDate),
         completedAt: options.completedAt ?? null,
         items: {
           create: (options.items ?? []).map((item, index) => ({
+            tenantId: TENANT_1_MOCHA_HOUSE_ID,
             section: 'Test Section',
             label: `Test item ${index + 1}`,
             sortOrder: index + 1,

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -144,21 +145,34 @@ describe('Promotions & Coupons admin (integration)', () => {
 
     locId = (
       await prisma.location.create({
-        data: { name: `Promo Loc ${suffix}`, slug: `promo-loc-${suffix}` },
+        data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          name: `Promo Loc ${suffix}`,
+          slug: `promo-loc-${suffix}`,
+        },
       })
     ).id;
     otherLocId = (
       await prisma.location.create({
-        data: { name: `Promo Loc 2 ${suffix}`, slug: `promo-loc2-${suffix}` },
+        data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          name: `Promo Loc 2 ${suffix}`,
+          slug: `promo-loc2-${suffix}`,
+        },
       })
     ).id;
     const category = await prisma.category.create({
-      data: { name: `Promo Cat ${suffix}`, slug: `promo-cat-${suffix}` },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        name: `Promo Cat ${suffix}`,
+        slug: `promo-cat-${suffix}`,
+      },
     });
     categoryId = category.id;
     productAId = (
       await prisma.product.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `Promo Product ${suffix}`,
           slug: `promo-product-${suffix}`,
           categoryId: category.id,

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -96,6 +97,7 @@ describe('GET /api/v1/internal/me — authorization summary (integration)', () =
     locA = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `ME Spec A ${suffix}`,
           slug: `me-a-${suffix}`,
           isActive: true,
@@ -106,6 +108,7 @@ describe('GET /api/v1/internal/me — authorization summary (integration)', () =
     locB = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `ME Spec B ${suffix}`,
           slug: `me-b-${suffix}`,
           isActive: true,
@@ -116,6 +119,7 @@ describe('GET /api/v1/internal/me — authorization summary (integration)', () =
     inactiveLoc = (
       await prisma.location.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           name: `ME Spec Inactive ${suffix}`,
           slug: `me-inactive-${suffix}`,
           isActive: false,

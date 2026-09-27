@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { EMAIL_SENDER } from './email/email-sender';
@@ -74,6 +75,7 @@ describe('NotificationDispatchService (integration)', () => {
   async function makeLocation(): Promise<string> {
     const location = await prisma.location.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Notification Spec ${suffix} ${randomUUID().slice(0, 8)}`,
         slug: `notification-spec-${suffix}-${randomUUID().slice(0, 8)}`,
         isActive: true,

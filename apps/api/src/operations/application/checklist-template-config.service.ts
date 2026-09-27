@@ -8,8 +8,9 @@ import type {
   OpeningChecklistTemplateItemConfig,
   OpeningChecklistTemplateSectionConfig,
 } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 
 const CONFIGURE_PERMISSION = 'operations.checklists.configure' as const;
@@ -137,6 +138,7 @@ export class ChecklistTemplateConfigService {
     templateKey: string,
     input: { section?: unknown; label?: unknown },
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<OpeningChecklistTemplateConfigResponse> {
     authorization.assertCorporate(CONFIGURE_PERMISSION);
 
@@ -163,6 +165,14 @@ export class ChecklistTemplateConfigService {
     }
 
     const template = await this.requireTemplate(templateKey);
+    // Milestone S0D-2A — a template item belongs to its template's tenant,
+    // copied from the server-loaded template after checking it belongs to
+    // the request's tenant.
+    const tenantId = requireTenantOwnership(
+      template,
+      tenant,
+      `The "${templateKey}" checklist template is not configured.`,
+    );
     await this.prisma.$transaction(async (tx) => {
       await lockTemplate(tx, template.id);
       const items = await loadItems(tx, template.id);
@@ -180,6 +190,7 @@ export class ChecklistTemplateConfigService {
 
       await tx.checklistTemplateItem.create({
         data: {
+          tenantId,
           templateId: template.id,
           section: resolvedSection,
           label,
@@ -362,10 +373,10 @@ export class ChecklistTemplateConfigService {
 
   private async requireTemplate(
     templateKey: string,
-  ): Promise<{ id: string; name: string }> {
+  ): Promise<{ id: string; name: string; tenantId: string }> {
     const template = await this.prisma.checklistTemplate.findUnique({
       where: { key: templateKey },
-      select: { id: true, name: true },
+      select: { id: true, name: true, tenantId: true },
     });
     if (!template) {
       // Configuration error — the checklist template is seeded.

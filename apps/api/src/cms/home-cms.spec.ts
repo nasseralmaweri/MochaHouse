@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -88,11 +89,16 @@ describe('CMS / Home page (integration)', () => {
 
   async function makeProduct(overrides: { isActive?: boolean } = {}): Promise<string> {
     const category = await prisma.category.create({
-      data: { name: `Cat ${suffix} ${randomUUID().slice(0, 8)}`, slug: `cat-${suffix}-${randomUUID()}` },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        name: `Cat ${suffix} ${randomUUID().slice(0, 8)}`,
+        slug: `cat-${suffix}-${randomUUID()}`,
+      },
     });
     categoryIds.push(category.id);
     const product = await prisma.product.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Product ${randomUUID().slice(0, 8)}`,
         slug: `product-${suffix}-${randomUUID()}`,
         basePrice: 500,

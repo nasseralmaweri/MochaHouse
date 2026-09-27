@@ -9,6 +9,8 @@ import type {
 import { ChecklistTemplateConfigService } from '../application/checklist-template-config.service';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 
 // The shared route surface for HQ configuration of a daily-checklist
 // template (Milestone 6B-2; Closing added in 6D). Opening and Closing
@@ -57,11 +59,13 @@ export abstract class ChecklistTemplateConfigControllerBase {
   addItem(
     @Body() body: AddOpeningChecklistTemplateItemRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.addItem(
       this.templateKey,
       { section: body?.section, label: body?.label },
       request.authorization!,
+      tenant,
     );
   }
 

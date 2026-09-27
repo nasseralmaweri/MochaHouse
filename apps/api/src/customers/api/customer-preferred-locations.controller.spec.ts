@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -42,6 +43,7 @@ describe('CustomerPreferredLocationsController (integration)', () => {
     const tag = randomUUID().slice(0, 8);
     const active = await prisma.location.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `4F Active ${tag}`,
         slug: `4f-active-${tag}`,
         isActive: true,
@@ -50,6 +52,7 @@ describe('CustomerPreferredLocationsController (integration)', () => {
     });
     const activeNoDigital = await prisma.location.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `4F Active NoDigital ${tag}`,
         slug: `4f-active-nodigital-${tag}`,
         isActive: true,
@@ -58,6 +61,7 @@ describe('CustomerPreferredLocationsController (integration)', () => {
     });
     const inactive = await prisma.location.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `4F Inactive ${tag}`,
         slug: `4f-inactive-${tag}`,
         isActive: false,
