@@ -34,10 +34,15 @@ async function main() {
     requestId: `seed:${randomUUID()}`,
   });
 
-  await runWithTenantContext(seedContext, () => seedMochaHouseBusinessData());
+  // Milestone S0D-1 — every seeded tenant-owned row carries this tenant id
+  // EXPLICITLY (passed as a parameter). The surrounding context is for
+  // correlation/diagnostics only; nothing here reads the tenant from it.
+  await runWithTenantContext(seedContext, () =>
+    seedMochaHouseBusinessData(tenantId),
+  );
 }
 
-async function seedMochaHouseBusinessData() {
+async function seedMochaHouseBusinessData(tenantId: string) {
   const location = await prisma.location.upsert({
     where: {
       slug: 'dearborn-heights',
@@ -47,6 +52,7 @@ async function seedMochaHouseBusinessData() {
       isDigitalOrderingEnabled: true,
     },
     create: {
+      tenantId,
       name: 'Mocha House - Dearborn Heights',
       slug: 'dearborn-heights',
       isActive: true,
@@ -69,6 +75,7 @@ async function seedMochaHouseBusinessData() {
       isDigitalOrderingEnabled: true,
     },
     create: {
+      tenantId,
       name: 'Mocha House - Ann Arbor',
       slug: 'ann-arbor',
       isActive: true,
@@ -82,6 +89,7 @@ async function seedMochaHouseBusinessData() {
     },
     update: {},
     create: {
+      tenantId,
       name: 'Coffee',
       slug: 'coffee',
       displayOrder: 1,
@@ -95,6 +103,7 @@ async function seedMochaHouseBusinessData() {
     },
     update: {},
     create: {
+      tenantId,
       name: 'Drip Coffee',
       slug: 'drip-coffee',
       description: 'Freshly brewed drip coffee.',
@@ -111,6 +120,7 @@ async function seedMochaHouseBusinessData() {
     },
     update: {},
     create: {
+      tenantId,
       name: 'Main Menu',
       slug: 'main-menu',
       isActive: true,
@@ -126,6 +136,7 @@ async function seedMochaHouseBusinessData() {
     },
     update: {},
     create: {
+      tenantId,
       menuId: menu.id,
       productId: product.id,
       displayOrder: 1,
@@ -142,6 +153,7 @@ async function seedMochaHouseBusinessData() {
     },
     update: {},
     create: {
+      tenantId,
       locationId: location.id,
       menuId: menu.id,
       isActive: true,
@@ -176,6 +188,7 @@ async function seedMochaHouseBusinessData() {
   if (!sizeGroup) {
     sizeGroup = await prisma.modifierGroup.create({
       data: {
+        tenantId,
         name: 'Size',
         displayOrder: 1,
         isRequired: true,
@@ -239,6 +252,7 @@ async function seedMochaHouseBusinessData() {
     } else {
       await prisma.modifierOption.create({
         data: {
+          tenantId,
           name: option.name,
           priceAdjustment: option.priceAdjustment,
           displayOrder: option.displayOrder,
@@ -260,6 +274,7 @@ async function seedMochaHouseBusinessData() {
       displayOrder: 1,
     },
     create: {
+      tenantId,
       productId: product.id,
       modifierGroupId: sizeGroup.id,
       displayOrder: 1,
@@ -279,6 +294,7 @@ async function seedMochaHouseBusinessData() {
     where: { email: internalAdminEmail },
     update: { status: 'ACTIVE' },
     create: {
+      tenantId,
       externalProvider: 'internal-dev',
       externalSubject: `internal-dev:${internalAdminEmail}`,
       email: internalAdminEmail,
@@ -299,6 +315,7 @@ async function seedMochaHouseBusinessData() {
     where: { key: 'platform-administrator' },
     update: { displayName: 'Platform Administrator', isSystem: true },
     create: {
+      tenantId,
       key: 'platform-administrator',
       displayName: 'Platform Administrator',
       description:
@@ -319,7 +336,7 @@ async function seedMochaHouseBusinessData() {
         roleId_permissionKey: { roleId: platformAdminRole.id, permissionKey },
       },
       update: {},
-      create: { roleId: platformAdminRole.id, permissionKey },
+      create: { tenantId, roleId: platformAdminRole.id, permissionKey },
     });
   }
 
@@ -337,6 +354,7 @@ async function seedMochaHouseBusinessData() {
   if (!existingAssignment) {
     await prisma.internalUserRoleAssignment.create({
       data: {
+        tenantId,
         internalUserId: internalAdmin.id,
         roleId: platformAdminRole.id,
         scopeType: 'CORPORATE',
@@ -386,6 +404,7 @@ async function seedMochaHouseBusinessData() {
       isSystem: true,
     },
     create: {
+      tenantId,
       key: 'store-manager',
       displayName: 'Store Manager',
       description:
@@ -406,7 +425,7 @@ async function seedMochaHouseBusinessData() {
         roleId_permissionKey: { roleId: storeManagerRole.id, permissionKey },
       },
       update: {},
-      create: { roleId: storeManagerRole.id, permissionKey },
+      create: { tenantId, roleId: storeManagerRole.id, permissionKey },
     });
   }
 
@@ -494,7 +513,7 @@ async function seedMochaHouseBusinessData() {
     const template = await prisma.checklistTemplate.upsert({
       where: { key },
       update: { name, isActive: true },
-      create: { key, name, isActive: true },
+      create: { tenantId, key, name, isActive: true },
     });
     const existingItemCount = await prisma.checklistTemplateItem.count({
       where: { templateId: template.id },
@@ -502,6 +521,7 @@ async function seedMochaHouseBusinessData() {
     if (existingItemCount === 0) {
       await prisma.checklistTemplateItem.createMany({
         data: items.map((item, index) => ({
+          tenantId,
           templateId: template.id,
           section: item.section,
           label: item.label,
@@ -523,7 +543,7 @@ async function seedMochaHouseBusinessData() {
   await prisma.loyaltyConfiguration.upsert({
     where: { key: 'company' },
     update: {},
-    create: { key: 'company', earningRatePerDollar: 1 },
+    create: { tenantId, key: 'company', earningRatePerDollar: 1 },
   });
 
   // Milestone 7F — the single company-wide gift-card purchasing
@@ -537,6 +557,7 @@ async function seedMochaHouseBusinessData() {
     where: { key: 'company' },
     update: {},
     create: {
+      tenantId,
       key: 'company',
       presetAmountsMinorUnits: [1000, 2500, 5000, 10000],
       customAmountEnabled: true,

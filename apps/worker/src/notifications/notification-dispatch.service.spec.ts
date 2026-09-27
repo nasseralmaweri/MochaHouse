@@ -267,6 +267,9 @@ describe('NotificationDispatchService (integration)', () => {
         'sentAt',
         'status',
         'templateKey',
+        // Milestone S0D-1 — the owning tenant (ownership metadata, not
+        // message content).
+        'tenantId',
       ].sort(),
     );
   });

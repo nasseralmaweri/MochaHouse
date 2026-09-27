@@ -6,4 +6,14 @@ export {
   TEST_TENANT_B_SLUG,
   createTestTenantB,
   removeTestTenantB,
-} from './tenants';
+} from "./tenants";
+export {
+  applyMigrationSql,
+  applyMigrations,
+  createScratchDatabase,
+  isAppliedAtomically,
+  listMigrations,
+  withScratchClient,
+  type MigrationFile,
+  type ScratchDatabase,
+} from "./scratch-database";

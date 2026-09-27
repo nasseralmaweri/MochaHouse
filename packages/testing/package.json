@@ -9,9 +9,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mocha-house/database": "workspace:*"
+    "@mocha-house/database": "workspace:*",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
+    "@types/pg": "^8.21.0",
     "typescript": "^5.9.3"
   }
 }

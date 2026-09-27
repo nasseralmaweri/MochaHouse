@@ -56,6 +56,72 @@ model Tenant {
   suspensionReason TenantSuspensionReason?
   createdAt        DateTime                @default(now())
   updatedAt        DateTime                @updatedAt
+
+  // Milestone S0D-1 — Prisma back-relations for every tenant-owned model.
+  // Navigational only; a Tenant owns no business columns itself.
+  locations Location[]
+  categories Category[]
+  products Product[]
+  menus Menu[]
+  modifierGroups ModifierGroup[]
+  modifierOptions ModifierOption[]
+  productModifierGroups ProductModifierGroup[]
+  menuProducts MenuProduct[]
+  locationMenus LocationMenu[]
+  locationProductPriceOverrides LocationProductPriceOverride[]
+  locationProductAvailabilityOverrides LocationProductAvailabilityOverride[]
+  customers Customer[]
+  customerPreferredLocations CustomerPreferredLocation[]
+  paymentAttempts PaymentAttempt[]
+  orders Order[]
+  orderLines OrderLine[]
+  orderStatusHistories OrderStatusHistory[]
+  outboxEvents OutboxEvent[]
+  notificationDeliveries NotificationDelivery[]
+  internalUsers InternalUser[]
+  internalAuditEvents InternalAuditEvent[]
+  internalRoles InternalRole[]
+  internalRolePermissions InternalRolePermission[]
+  internalUserRoleAssignments InternalUserRoleAssignment[]
+  checklistTemplates ChecklistTemplate[]
+  checklistTemplateItems ChecklistTemplateItem[]
+  checklistInstances ChecklistInstance[]
+  checklistInstanceItems ChecklistInstanceItem[]
+  operationsTasks OperationsTask[]
+  customerLoyaltyAccounts CustomerLoyaltyAccount[]
+  mochaBeanLedgerEntries MochaBeanLedgerEntry[]
+  loyaltyConfigurations LoyaltyConfiguration[]
+  loyaltyRewards LoyaltyReward[]
+  loyaltyRewardProducts LoyaltyRewardProduct[]
+  loyaltyRewardCategories LoyaltyRewardCategory[]
+  orderLoyaltyRewardRedemptions OrderLoyaltyRewardRedemption[]
+  loyaltyBonusPromotions LoyaltyBonusPromotion[]
+  loyaltyBonusPromotionProducts LoyaltyBonusPromotionProduct[]
+  loyaltyBonusPromotionLocations LoyaltyBonusPromotionLocation[]
+  orderLoyaltyBonuses OrderLoyaltyBonus[]
+  orderLoyaltyBonusItems OrderLoyaltyBonusItem[]
+  promotions Promotion[]
+  promotionProducts PromotionProduct[]
+  promotionCategories PromotionCategory[]
+  promotionLocations PromotionLocation[]
+  promotionCustomerUsages PromotionCustomerUsage[]
+  orderPromotionRedemptions OrderPromotionRedemption[]
+  giftCards GiftCard[]
+  giftCardTransactions GiftCardTransaction[]
+  orderGiftCardRedemptions OrderGiftCardRedemption[]
+  giftCardPurchases GiftCardPurchase[]
+  giftCardConfigurations GiftCardConfiguration[]
+  jobOpenings JobOpening[]
+  jobApplications JobApplication[]
+  jobApplicationNotes JobApplicationNote[]
+  customerNotes CustomerNote[]
+  franchiseInquiries FranchiseInquiry[]
+  franchiseInquiryNotes FranchiseInquiryNote[]
+  cmsPages CmsPage[]
+  mediaAssets MediaAsset[]
+  campaigns Campaign[]
+  campaignProducts CampaignProduct[]
+  approvalRequests ApprovalRequest[]
 }
 
 model Location {
@@ -79,6 +145,14 @@ model Location {
   // (see JobOpening): a location a job opening references cannot be
   // hard-deleted out from under it (the codebase uses isActive anyway).
   jobOpenings                  JobOpening[]
+
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
 }
 
 model Category {
@@ -92,6 +166,14 @@ model Category {
   products     Product[]
   loyaltyRewardEligibility LoyaltyRewardCategory[]
   promotionEligibility     PromotionCategory[]
+
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
 }
 
 model Product {
@@ -117,7 +199,14 @@ model Product {
   // Restrict from the Product side (see CampaignProduct).
   campaignFeatureEligibility CampaignProduct[]
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([categoryId])
+  @@index([tenantId])
 }
 
 model Menu {
@@ -131,6 +220,14 @@ model Menu {
   availabilityOverrides LocationProductAvailabilityOverride[]
   createdAt             DateTime                              @default(now())
   updatedAt             DateTime                              @updatedAt
+
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
 }
 
 model ModifierGroup {
@@ -145,6 +242,14 @@ model ModifierGroup {
   updatedAt     DateTime               @updatedAt
   options       ModifierOption[]
   products      ProductModifierGroup[]
+
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
 }
 
 model ModifierOption {
@@ -158,7 +263,14 @@ model ModifierOption {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([modifierGroupId])
+  @@index([tenantId])
 }
 
 model ProductModifierGroup {
@@ -169,8 +281,15 @@ model ProductModifierGroup {
   product       Product       @relation(fields: [productId], references: [id])
   modifierGroup ModifierGroup @relation(fields: [modifierGroupId], references: [id])
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([productId, modifierGroupId])
   @@index([modifierGroupId])
+  @@index([tenantId])
 }
 
 model MenuProduct {
@@ -182,8 +301,15 @@ model MenuProduct {
   menu    Menu    @relation(fields: [menuId], references: [id])
   product Product @relation(fields: [productId], references: [id])
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([menuId, productId])
   @@index([productId])
+  @@index([tenantId])
 }
 
 model LocationMenu {
@@ -194,8 +320,15 @@ model LocationMenu {
   location Location @relation(fields: [locationId], references: [id])
   menu     Menu     @relation(fields: [menuId], references: [id])
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([locationId, menuId])
   @@index([menuId])
+  @@index([tenantId])
 }
 
 model LocationProductPriceOverride {
@@ -210,9 +343,16 @@ model LocationProductPriceOverride {
   menu     Menu     @relation(fields: [menuId], references: [id])
   product  Product  @relation(fields: [productId], references: [id])
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([locationId, menuId, productId])
   @@index([menuId])
   @@index([productId])
+  @@index([tenantId])
 }
 
 model LocationProductAvailabilityOverride {
@@ -227,9 +367,16 @@ model LocationProductAvailabilityOverride {
   menu     Menu     @relation(fields: [menuId], references: [id])
   product  Product  @relation(fields: [productId], references: [id])
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([locationId, menuId, productId])
   @@index([menuId])
   @@index([productId])
+  @@index([tenantId])
 }
 
 // --- Milestone 4, customer identity foundation -------------------------
@@ -286,7 +433,14 @@ model Customer {
   // never corrupt it.
   crmNotes            CustomerNote[]
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@unique([externalProvider, externalSubject])
+  @@index([tenantId])
 }
 
 // --- Milestone 4F, preferred locations --------------------------------
@@ -310,9 +464,16 @@ model CustomerPreferredLocation {
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@unique([customerId, locationId])
   @@index([customerId])
   @@index([locationId])
+  @@index([tenantId])
 }
 
 // --- Milestone 3, first transaction slice -----------------------------
@@ -401,8 +562,15 @@ model PaymentAttempt {
   order            Order?
   giftCardPurchase GiftCardPurchase?
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([status])
   @@index([reconciliationRequired])
+  @@index([tenantId])
 }
 
 // The durable Mocha House order. Only ever created inside the protected
@@ -486,8 +654,15 @@ model Order {
   giftCardRedemption      OrderGiftCardRedemption?
   giftCardTransactions    GiftCardTransaction[]
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([locationId])
   @@index([customerId])
+  @@index([tenantId])
 }
 
 // Immutable line snapshot captured at order-creation time: prices and
@@ -511,7 +686,14 @@ model OrderLine {
 
   createdAt DateTime @default(now())
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([orderId])
+  @@index([tenantId])
 }
 
 // Append-only. Rows are never updated or deleted — the current status is
@@ -526,7 +708,14 @@ model OrderStatusHistory {
   note      String?
   createdAt DateTime    @default(now())
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([orderId])
+  @@index([tenantId])
 }
 
 // Generic transactional outbox: written in the same database transaction
@@ -551,8 +740,15 @@ model OutboxEvent {
   // just the FK side of that, not a second outbox.
   notificationDeliveries NotificationDelivery[]
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([status])
   @@index([aggregateType, aggregateId])
+  @@index([tenantId])
 }
 
 // Milestone 8H — a worker-owned delivery log, NOT a second outbox/event
@@ -580,8 +776,15 @@ model NotificationDelivery {
   createdAt         DateTime                @default(now())
   sentAt            DateTime?
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@unique([outboxEventId, channel])
   @@index([aggregateType, aggregateId])
+  @@index([tenantId])
 }
 
 // --- Milestone 5A, internal identity & admin authentication -----------
@@ -672,7 +875,14 @@ model InternalUser {
   approvalRequestsMade    ApprovalRequest[] @relation("ApprovalRequester")
   approvalRequestsDecided ApprovalRequest[] @relation("ApprovalDecider")
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@unique([externalProvider, externalSubject])
+  @@index([tenantId])
 }
 
 // --- Milestone 5E-3, access-control audit foundation ------------------
@@ -707,9 +917,16 @@ model InternalAuditEvent {
 
   actorInternalUser InternalUser @relation("InternalAuditEventActor", fields: [actorInternalUserId], references: [id], onDelete: Restrict)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([targetType, targetId])
   @@index([actorInternalUserId])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 // --- Milestone 5B, internal authorization (roles, permissions, scope) --
@@ -749,6 +966,14 @@ model InternalRole {
 
   permissions InternalRolePermission[]
   assignments InternalUserRoleAssignment[]
+
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
 }
 
 // One permission key granted by one role. `permissionKey` is a plain string
@@ -762,8 +987,15 @@ model InternalRolePermission {
 
   role InternalRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([roleId, permissionKey])
   @@index([permissionKey])
+  @@index([tenantId])
 }
 
 // A role granted to an internal user within one scope. The same user may
@@ -784,9 +1016,16 @@ model InternalUserRoleAssignment {
   internalUser InternalUser @relation(fields: [internalUserId], references: [id], onDelete: Cascade)
   role         InternalRole @relation(fields: [roleId], references: [id], onDelete: Restrict)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@unique([internalUserId, roleId, scopeType, scopeId])
   @@index([internalUserId])
   @@index([roleId])
+  @@index([tenantId])
 }
 
 // --- Milestone 6B, Store Operations: the Opening Checklist ------------
@@ -815,6 +1054,14 @@ model ChecklistTemplate {
 
   items     ChecklistTemplateItem[]
   instances ChecklistInstance[]
+
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
 }
 
 // One configured line of a checklist template. `isActive` is the
@@ -833,7 +1080,14 @@ model ChecklistTemplateItem {
 
   template ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([templateId])
+  @@index([tenantId])
 }
 
 // One location's checklist for one business day. Created lazily on the
@@ -861,8 +1115,15 @@ model ChecklistInstance {
   location Location                @relation(fields: [locationId], references: [id])
   items    ChecklistInstanceItem[]
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@unique([templateId, locationId, businessDate])
   @@index([locationId, businessDate])
+  @@index([tenantId])
 }
 
 // The historical snapshot AND the current resolution record for one line of
@@ -900,9 +1161,16 @@ model ChecklistInstanceItem {
   completedBy       InternalUser?     @relation("ChecklistItemCompletedBy", fields: [completedByInternalUserId], references: [id], onDelete: Restrict)
   exceptionBy       InternalUser?     @relation("ChecklistItemExceptionBy", fields: [exceptionByInternalUserId], references: [id], onDelete: Restrict)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([checklistInstanceId])
   @@index([completedByInternalUserId])
   @@index([exceptionByInternalUserId])
+  @@index([tenantId])
 }
 
 // --- Milestone 6C, Store Operations: Today's Tasks -------------------
@@ -933,9 +1201,16 @@ model OperationsTask {
   createdBy   InternalUser  @relation("OperationsTaskCreatedBy", fields: [createdByInternalUserId], references: [id], onDelete: Restrict)
   completedBy InternalUser? @relation("OperationsTaskCompletedBy", fields: [completedByInternalUserId], references: [id], onDelete: Restrict)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([locationId, businessDate])
   @@index([createdByInternalUserId])
   @@index([completedByInternalUserId])
+  @@index([tenantId])
 }
 
 // --- Milestone 7A, Mocha Beans foundation ----------------------------
@@ -992,6 +1267,14 @@ model CustomerLoyaltyAccount {
   customer Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
   entries  MochaBeanLedgerEntry[]
   // No @@index([customerId]) — `customerId @unique` above already indexes it.
+
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
 }
 
 // Append-oriented Mocha Bean transaction history — the authoritative record
@@ -1035,11 +1318,18 @@ model MochaBeanLedgerEntry {
   order             Order?                 @relation(fields: [orderId], references: [id], onDelete: SetNull)
   actorInternalUser InternalUser?          @relation("MochaBeanLedgerActor", fields: [actorInternalUserId], references: [id], onDelete: Restrict)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@unique([type, orderId])
   @@unique([type, operationKey])
   @@index([loyaltyAccountId, createdAt])
   @@index([orderId])
   @@index([actorInternalUserId])
+  @@index([tenantId])
 }
 
 // --- Milestone 7B, HQ loyalty configuration + Rewards Catalog --------
@@ -1063,6 +1353,14 @@ model LoyaltyConfiguration {
   earningRatePerDollar Int      @default(1)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
+
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
 }
 
 enum LoyaltyRewardType {
@@ -1102,7 +1400,14 @@ model LoyaltyReward {
   eligibleProducts   LoyaltyRewardProduct[]
   eligibleCategories LoyaltyRewardCategory[]
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([isActive, sortOrder])
+  @@index([tenantId])
 }
 
 // FREE_ITEM eligibility by Product. onDelete: Cascade from the reward (a
@@ -1117,8 +1422,15 @@ model LoyaltyRewardProduct {
   reward  LoyaltyReward @relation(fields: [rewardId], references: [id], onDelete: Cascade)
   product Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([rewardId, productId])
   @@index([productId])
+  @@index([tenantId])
 }
 
 // FREE_ITEM eligibility by Category — same delete semantics as
@@ -1131,8 +1443,15 @@ model LoyaltyRewardCategory {
   reward   LoyaltyReward @relation(fields: [rewardId], references: [id], onDelete: Cascade)
   category Category      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([rewardId, categoryId])
   @@index([categoryId])
+  @@index([tenantId])
 }
 
 // --- Milestone 7C, Mocha Bean reward redemption --------------------
@@ -1178,7 +1497,14 @@ model OrderLoyaltyRewardRedemption {
 
   createdAt           DateTime          @default(now())
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([sourceRewardId])
+  @@index([tenantId])
 }
 
 // --- Milestone 7D, Bonus Mocha Beans Promotions --------------------
@@ -1230,7 +1556,14 @@ model LoyaltyBonusPromotion {
   // duplicates this promotion's own bonus logic.
   campaigns Campaign[]
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([isActive])
+  @@index([tenantId])
 }
 
 // Product targeting. onDelete: Cascade from the promotion (a join row is
@@ -1244,8 +1577,15 @@ model LoyaltyBonusPromotionProduct {
   promotion LoyaltyBonusPromotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
   product   Product               @relation(fields: [productId], references: [id], onDelete: Restrict)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([promotionId, productId])
   @@index([productId])
+  @@index([tenantId])
 }
 
 // Selected-location targeting — only present when appliesToAllLocations is
@@ -1258,8 +1598,15 @@ model LoyaltyBonusPromotionLocation {
   promotion LoyaltyBonusPromotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
   location  Location              @relation(fields: [locationId], references: [id], onDelete: Restrict)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([promotionId, locationId])
   @@index([locationId])
+  @@index([tenantId])
 }
 
 // The immutable per-order snapshot of the bonus Mocha Beans awarded.
@@ -1280,6 +1627,14 @@ model OrderLoyaltyBonus {
   createdAt       DateTime @default(now())
 
   items OrderLoyaltyBonusItem[]
+
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
 }
 
 // One row per qualifying order line that earned a bonus. Enough detail to
@@ -1312,8 +1667,15 @@ model OrderLoyaltyBonusItem {
   bonusBeans                Int
   createdAt                 DateTime          @default(now())
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([orderLoyaltyBonusId])
   @@index([sourcePromotionId])
+  @@index([tenantId])
 }
 
 // --- Milestone 7E, Promotions & Coupons ---------------------------
@@ -1413,8 +1775,15 @@ model Promotion {
   // this promotion's own discount logic.
   campaigns Campaign[]
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([kind, isActive])
   @@index([isActive])
+  @@index([tenantId])
 }
 
 model PromotionProduct {
@@ -1425,8 +1794,15 @@ model PromotionProduct {
   promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
   product   Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([promotionId, productId])
   @@index([productId])
+  @@index([tenantId])
 }
 
 model PromotionCategory {
@@ -1437,8 +1813,15 @@ model PromotionCategory {
   promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
   category  Category  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([promotionId, categoryId])
   @@index([categoryId])
+  @@index([tenantId])
 }
 
 model PromotionLocation {
@@ -1449,8 +1832,15 @@ model PromotionLocation {
   promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
   location  Location  @relation(fields: [locationId], references: [id], onDelete: Restrict)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([promotionId, locationId])
   @@index([locationId])
+  @@index([tenantId])
 }
 
 // Per-(promotion, customer) redemption counter — the row that is
@@ -1468,8 +1858,15 @@ model PromotionCustomerUsage {
   promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
   customer  Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([promotionId, customerId])
   @@index([customerId])
+  @@index([tenantId])
 }
 
 // The immutable per-order record of the ONE regular Promotion/Coupon used.
@@ -1512,7 +1909,14 @@ model OrderPromotionRedemption {
   customerId          String?
   createdAt           DateTime              @default(now())
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([sourcePromotionId])
+  @@index([tenantId])
 }
 
 // --- Milestone 7F, Gift Card Foundation & Administration -------------
@@ -1590,7 +1994,14 @@ model GiftCard {
   // an HQ-issued card.
   purchase     GiftCardPurchase?
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([status])
+  @@index([tenantId])
 }
 
 // Append-only gift-card transaction history — the authoritative record of
@@ -1654,10 +2065,17 @@ model GiftCardTransaction {
   order             Order?            @relation(fields: [orderId], references: [id], onDelete: SetNull)
   giftCardPurchase  GiftCardPurchase? @relation(fields: [giftCardPurchaseId], references: [id], onDelete: SetNull)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([giftCardId, createdAt])
   @@index([actorInternalUserId])
   @@index([orderId])
   @@index([giftCardPurchaseId])
+  @@index([tenantId])
 }
 
 // --- Milestone 7G, Gift Card Redemption at checkout -----------------
@@ -1692,7 +2110,14 @@ model OrderGiftCardRedemption {
   currency         String
   createdAt        DateTime @default(now())
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([sourceGiftCardId])
+  @@index([tenantId])
 }
 
 // --- Milestone 7H, Customer Digital Gift Card Purchase --------------
@@ -1779,8 +2204,15 @@ model GiftCardPurchase {
 
   transactions GiftCardTransaction[]
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([customerId])
   @@index([status])
+  @@index([tenantId])
 }
 
 // The single company-wide gift-card purchasing configuration, persisted now
@@ -1802,6 +2234,14 @@ model GiftCardConfiguration {
   customAmountEnabled      Boolean  @default(true)
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
+
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
 }
 
 // --- Milestone 8B, Careers / Job Openings ---------------------------
@@ -1850,8 +2290,15 @@ model JobOpening {
   // hard-deleted and orphan candidate history (jobs use status anyway).
   applications   JobApplication[]
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([status])
   @@index([locationId])
+  @@index([tenantId])
 }
 
 // --- Milestone 8C, Applicants -------------------------------------
@@ -1889,9 +2336,16 @@ model JobApplication {
 
   notes JobApplicationNote[]
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([jobOpeningId])
   @@index([status])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 // An internal note an authorized HQ user attaches to an application.
@@ -1907,8 +2361,15 @@ model JobApplicationNote {
   body                 String
   createdAt            DateTime @default(now())
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([jobApplicationId, createdAt])
   @@index([authorInternalUserId])
+  @@index([tenantId])
 }
 
 // --- Milestone 8A, HQ CRM foundation ---------------------------------
@@ -1930,8 +2391,15 @@ model CustomerNote {
   customer           Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   authorInternalUser InternalUser @relation("CustomerNoteAuthor", fields: [authorInternalUserId], references: [id], onDelete: Restrict)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([customerId, createdAt])
   @@index([authorInternalUserId])
+  @@index([tenantId])
 }
 
 // --- Milestone 8D, Franchising inquiries ------------------------------
@@ -1970,8 +2438,15 @@ model FranchiseInquiry {
 
   notes FranchiseInquiryNote[]
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([status])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 // An internal note an authorized HQ user attaches to a franchise inquiry.
@@ -1988,8 +2463,15 @@ model FranchiseInquiryNote {
   body                 String
   createdAt            DateTime         @default(now())
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([franchiseInquiryId, createdAt])
   @@index([authorInternalUserId])
+  @@index([tenantId])
 }
 
 // --- Milestone 8E, CMS foundation --------------------------------------
@@ -2015,6 +2497,14 @@ model CmsPage {
   publishedAt      DateTime?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
+
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
 }
 
 // --- Milestone 8F, Media Library --------------------------------------
@@ -2042,8 +2532,15 @@ model MediaAsset {
   createdAt                DateTime     @default(now())
   updatedAt                DateTime     @updatedAt
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([isActive, createdAt])
   @@index([uploadedByInternalUserId])
+  @@index([tenantId])
 }
 
 // --- Milestone 8G, Marketing Campaigns ---------------------------------
@@ -2086,9 +2583,16 @@ model Campaign {
 
   featuredProducts CampaignProduct[]
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([status])
   @@index([promotionId])
   @@index([loyaltyBonusPromotionId])
+  @@index([tenantId])
 }
 
 // Ordered Featured Products targeting. onDelete: Cascade from the campaign
@@ -2109,8 +2613,15 @@ model CampaignProduct {
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
 
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@id([campaignId, productId])
   @@index([productId])
+  @@index([tenantId])
 }
 
 // --- Milestone 8J, Approvals ------------------------------------------
@@ -2153,6 +2664,14 @@ model ApprovalRequest {
   // hand to the migration SQL — @@unique here can't express a partial
   // condition, and a plain unique on (targetType, targetId, action) would
   // wrongly forbid ever requesting approval again after a decision.
+
+  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
+  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
+  // existing rows were backfilled to Tenant #1 by the migration.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   @@index([targetType, targetId, action])
   @@index([status])
+  @@index([tenantId])
 }

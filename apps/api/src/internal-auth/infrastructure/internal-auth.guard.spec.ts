@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { InternalAuthGuard } from './internal-auth.guard';
 import { InternalCognitoTokenVerifier } from './internal-cognito-token-verifier';
 import { InternalLocalDevTokenVerifier } from './internal-local-dev-token-verifier';
@@ -58,6 +59,8 @@ describe('InternalAuthGuard', () => {
     lastAuthenticatedAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
+    // Milestone S0D-1 — an existing internal user row, backfilled to Tenant #1.
+    tenantId: TENANT_1_MOCHA_HOUSE_ID,
   };
 
   beforeEach(() => {
