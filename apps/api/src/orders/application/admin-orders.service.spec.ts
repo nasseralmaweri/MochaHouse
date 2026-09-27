@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { tenantContextFor } from '@mocha-house/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -182,14 +183,22 @@ describe('AdminOrdersService (integration)', () => {
   }
 
   async function createPublishedOrder() {
-    const confirmation = await checkoutService.checkout(buildCheckoutRequest());
+    const confirmation = await checkoutService.checkout(
+      buildCheckoutRequest(),
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     createdOrderIds.push(confirmation.orderId);
     await publishOrder(confirmation.orderId);
     return confirmation;
   }
 
   it('does not appear in the store queue until its outbox event is processed', async () => {
-    const confirmation = await checkoutService.checkout(buildCheckoutRequest());
+    const confirmation = await checkoutService.checkout(
+      buildCheckoutRequest(),
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     createdOrderIds.push(confirmation.orderId);
 
     const beforeProcessing = await adminOrdersService.listActive(

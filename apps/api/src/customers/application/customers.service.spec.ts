@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
+import { tenantContextFor } from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { PrismaModule } from '../../prisma/prisma.module';
@@ -48,8 +50,10 @@ describe('CustomersService (integration)', () => {
   it('creates a new Customer on first resolution for an identity', async () => {
     const identity = testIdentity();
 
-    const customer =
-      await customersService.resolveOrCreateFromIdentity(identity);
+    const customer = await customersService.resolveOrCreateFromIdentity(
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     createdIds.push(customer.id);
 
     expect(customer.externalProvider).toBe(identity.provider);
@@ -62,9 +66,15 @@ describe('CustomersService (integration)', () => {
   it('resolves the same Customer record for a repeat sign-in by the same identity', async () => {
     const identity = testIdentity();
 
-    const first = await customersService.resolveOrCreateFromIdentity(identity);
+    const first = await customersService.resolveOrCreateFromIdentity(
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     createdIds.push(first.id);
-    const second = await customersService.resolveOrCreateFromIdentity(identity);
+    const second = await customersService.resolveOrCreateFromIdentity(
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     expect(second.id).toBe(first.id);
   });
@@ -74,34 +84,44 @@ describe('CustomersService (integration)', () => {
       email: 'old@example.com',
       name: 'Old Name',
     });
-    const created =
-      await customersService.resolveOrCreateFromIdentity(identity);
+    const created = await customersService.resolveOrCreateFromIdentity(
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     createdIds.push(created.id);
 
-    const updated = await customersService.resolveOrCreateFromIdentity({
-      ...identity,
-      email: 'new@example.com',
-      name: 'New Name',
-    });
+    const updated = await customersService.resolveOrCreateFromIdentity(
+      {
+        ...identity,
+        email: 'new@example.com',
+        name: 'New Name',
+      },
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(updated.id).toBe(created.id);
     expect(updated.email).toBe('new@example.com');
 
     // A later sign-in with no email claim (e.g. the dev boundary for a
     // non-email identifier) must not blank out what's already known.
     const resyncedWithoutClaims =
-      await customersService.resolveOrCreateFromIdentity({
-        ...identity,
-        email: null,
-        name: null,
-      });
+      await customersService.resolveOrCreateFromIdentity(
+        {
+          ...identity,
+          email: null,
+          name: null,
+        },
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      );
     expect(resyncedWithoutClaims.id).toBe(created.id);
     expect(resyncedWithoutClaims.email).toBe('new@example.com');
   });
 
   it('seeds displayName from the identity at creation, then never overwrites it from later claims (Milestone 4E ownership rule)', async () => {
     const identity = testIdentity({ name: 'Seeded Name' });
-    const created =
-      await customersService.resolveOrCreateFromIdentity(identity);
+    const created = await customersService.resolveOrCreateFromIdentity(
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     createdIds.push(created.id);
     expect(created.displayName).toBe('Seeded Name');
 
@@ -112,10 +132,13 @@ describe('CustomersService (integration)', () => {
 
     // A later sign-in whose token still carries the old provider name must
     // NOT clobber the customer-owned value.
-    const afterResync = await customersService.resolveOrCreateFromIdentity({
-      ...identity,
-      name: 'Seeded Name',
-    });
+    const afterResync = await customersService.resolveOrCreateFromIdentity(
+      {
+        ...identity,
+        name: 'Seeded Name',
+      },
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(afterResync.id).toBe(created.id);
     expect(afterResync.displayName).toBe('Customer Chosen Name');
   });
@@ -123,8 +146,10 @@ describe('CustomersService (integration)', () => {
   it('stamps emailVerifiedAt at creation when the identity asserts emailVerified: true', async () => {
     const identity = testIdentity({ emailVerified: true });
 
-    const customer =
-      await customersService.resolveOrCreateFromIdentity(identity);
+    const customer = await customersService.resolveOrCreateFromIdentity(
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     createdIds.push(customer.id);
 
     expect(customer.emailVerifiedAt).not.toBeNull();
@@ -132,22 +157,28 @@ describe('CustomersService (integration)', () => {
 
   it('leaves emailVerifiedAt null at creation when the identity does not assert verification', async () => {
     const identity = testIdentity({ emailVerified: false });
-    const customerA =
-      await customersService.resolveOrCreateFromIdentity(identity);
+    const customerA = await customersService.resolveOrCreateFromIdentity(
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     createdIds.push(customerA.id);
     expect(customerA.emailVerifiedAt).toBeNull();
 
     const identityB = testIdentity({ emailVerified: null });
-    const customerB =
-      await customersService.resolveOrCreateFromIdentity(identityB);
+    const customerB = await customersService.resolveOrCreateFromIdentity(
+      identityB,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     createdIds.push(customerB.id);
     expect(customerB.emailVerifiedAt).toBeNull();
   });
 
   it('never retroactively sets emailVerifiedAt on an existing row via a later resolve, even if the identity now asserts verification', async () => {
     const identity = testIdentity({ emailVerified: false });
-    const created =
-      await customersService.resolveOrCreateFromIdentity(identity);
+    const created = await customersService.resolveOrCreateFromIdentity(
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     createdIds.push(created.id);
     expect(created.emailVerifiedAt).toBeNull();
 
@@ -155,10 +186,13 @@ describe('CustomersService (integration)', () => {
     // claiming emailVerified: true must not be treated as a fresh
     // verification event by this path — only AuthController.verify's
     // explicit markEmailVerified call may do that.
-    const resolvedAgain = await customersService.resolveOrCreateFromIdentity({
-      ...identity,
-      emailVerified: true,
-    });
+    const resolvedAgain = await customersService.resolveOrCreateFromIdentity(
+      {
+        ...identity,
+        emailVerified: true,
+      },
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(resolvedAgain.id).toBe(created.id);
     expect(resolvedAgain.emailVerifiedAt).toBeNull();
   });
@@ -175,8 +209,10 @@ describe('CustomersService (integration)', () => {
     it('returns the single matching Customer scoped to the given provider', async () => {
       const email = `unique-${randomUUID()}@example.com`;
       const identity = testIdentity({ email });
-      const created =
-        await customersService.resolveOrCreateFromIdentity(identity);
+      const created = await customersService.resolveOrCreateFromIdentity(
+        identity,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      );
       createdIds.push(created.id);
 
       const result = await customersService.findByEmailAndProvider(
@@ -199,9 +235,11 @@ describe('CustomersService (integration)', () => {
       const email = `ambiguous-${randomUUID()}@example.com`;
       const first = await customersService.resolveOrCreateFromIdentity(
         testIdentity({ email }),
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       );
       const second = await customersService.resolveOrCreateFromIdentity(
         testIdentity({ email }),
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       );
       createdIds.push(first.id, second.id);
 
@@ -213,8 +251,10 @@ describe('CustomersService (integration)', () => {
 
   it('maps a Customer row to the shared CustomerProfile contract shape', async () => {
     const identity = testIdentity({ emailVerified: false });
-    const customer =
-      await customersService.resolveOrCreateFromIdentity(identity);
+    const customer = await customersService.resolveOrCreateFromIdentity(
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     createdIds.push(customer.id);
 
     const profile = customersService.toProfile(customer);
@@ -231,8 +271,10 @@ describe('CustomersService (integration)', () => {
 
   it('reports emailVerified: true once emailVerifiedAt is set', async () => {
     const identity = testIdentity({ emailVerified: true });
-    const customer =
-      await customersService.resolveOrCreateFromIdentity(identity);
+    const customer = await customersService.resolveOrCreateFromIdentity(
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     createdIds.push(customer.id);
 
     expect(customersService.toProfile(customer).emailVerified).toBe(true);
@@ -242,6 +284,7 @@ describe('CustomersService (integration)', () => {
     async function freshCustomer() {
       const customer = await customersService.resolveOrCreateFromIdentity(
         testIdentity({ name: 'Original', emailVerified: true }),
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       );
       createdIds.push(customer.id);
       return customer;
@@ -313,13 +356,16 @@ describe('CustomersService (integration)', () => {
       const a = await freshCustomer();
       const b = await freshCustomer();
       await customersService.updateProfile(a.id, { displayName: 'A Only' });
-      const bReloaded = await customersService.resolveOrCreateFromIdentity({
-        provider: b.externalProvider,
-        subject: b.externalSubject,
-        email: b.email,
-        name: null,
-        emailVerified: null,
-      });
+      const bReloaded = await customersService.resolveOrCreateFromIdentity(
+        {
+          provider: b.externalProvider,
+          subject: b.externalSubject,
+          email: b.email,
+          name: null,
+          emailVerified: null,
+        },
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      );
       expect(bReloaded.displayName).toBe('Original');
     });
   });

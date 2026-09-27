@@ -211,6 +211,7 @@ describe('Admin reports — CSV export (integration, Milestone 9E)', () => {
   async function makeCustomer(createdAt: Date): Promise<string> {
     const customer = await prisma.customer.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'dev',
         externalSubject: `export-spec-${randomUUID()}`,
         email: `export-spec-${randomUUID()}@example.com`,

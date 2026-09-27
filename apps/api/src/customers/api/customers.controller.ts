@@ -5,6 +5,8 @@ import type {
 } from '@mocha-house/contracts';
 import { CustomerAuthGuard } from '../../customer-auth/infrastructure/customer-auth.guard';
 import type { CustomerAuthenticatedRequest } from '../../customer-auth/infrastructure/customer-identity';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { CustomersService } from '../application/customers.service';
 
 @Controller('api/v1/customers')
@@ -15,10 +17,12 @@ export class CustomersController {
   @Get('me')
   async me(
     @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ): Promise<CustomerProfile> {
     // CustomerAuthGuard always sets this before a request reaches here.
     const customer = await this.customersService.resolveOrCreateFromIdentity(
       request.customerIdentity!,
+      tenant,
     );
     return this.customersService.toProfile(customer);
   }
@@ -32,10 +36,12 @@ export class CustomersController {
   @Patch('me')
   async updateMe(
     @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Body() body: CustomerUpdateProfileRequest,
   ): Promise<CustomerProfile> {
     const customer = await this.customersService.resolveOrCreateFromIdentity(
       request.customerIdentity!,
+      tenant,
     );
     const updated = await this.customersService.updateProfile(
       customer.id,

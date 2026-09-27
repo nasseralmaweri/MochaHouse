@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -64,6 +65,7 @@ describe('GET /api/v1/customers/me/loyalty (integration)', () => {
   async function seedBalance(subject: string, balance: number): Promise<string> {
     const customer = await prisma.customer.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'dev',
         externalSubject: subject,
         email: `${subject}@x.test`,

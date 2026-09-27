@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
+import { tenantContextFor } from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import {
@@ -159,6 +161,7 @@ describe('CheckoutService (integration)', () => {
     const confirmation = await checkoutService.checkout(
       buildRequest(),
       identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
 
     const order = await prisma.order.findUniqueOrThrow({
@@ -178,7 +181,11 @@ describe('CheckoutService (integration)', () => {
   });
 
   it('guest checkout (no customer identity) still creates an Order with customerId null', async () => {
-    const confirmation = await checkoutService.checkout(buildRequest());
+    const confirmation = await checkoutService.checkout(
+      buildRequest(),
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     const order = await prisma.order.findUniqueOrThrow({
       where: { id: confirmation.orderId },
@@ -189,8 +196,16 @@ describe('CheckoutService (integration)', () => {
   it('resolves the same Customer across repeated authenticated checkouts by the same identity', async () => {
     const identity = testCustomerIdentity(randomUUID());
 
-    const first = await checkoutService.checkout(buildRequest(), identity);
-    const second = await checkoutService.checkout(buildRequest(), identity);
+    const first = await checkoutService.checkout(
+      buildRequest(),
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
+    const second = await checkoutService.checkout(
+      buildRequest(),
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     const orderA = await prisma.order.findUniqueOrThrow({
       where: { id: first.orderId },
@@ -205,7 +220,11 @@ describe('CheckoutService (integration)', () => {
   it('creates a durable order, history row, and outbox event on a successful payment', async () => {
     const request = buildRequest();
 
-    const confirmation = await checkoutService.checkout(request);
+    const confirmation = await checkoutService.checkout(
+      request,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     expect(confirmation.status).toBe('RECEIVED');
     expect(confirmation.subtotal).toBe(400); // 350 base + 50 medium adjustment
@@ -237,7 +256,11 @@ describe('CheckoutService (integration)', () => {
     // TS contract (e.g. a hand-crafted HTTP request), it's never read.
     (request.lines[0] as unknown as Record<string, unknown>).unitPrice = 1;
 
-    const confirmation = await checkoutService.checkout(request);
+    const confirmation = await checkoutService.checkout(
+      request,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(confirmation.subtotal).toBe(400);
   });
 
@@ -249,9 +272,13 @@ describe('CheckoutService (integration)', () => {
       },
     });
 
-    await expect(checkoutService.checkout(request)).rejects.toBeInstanceOf(
-      HttpException,
-    );
+    await expect(
+      checkoutService.checkout(
+        request,
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
+    ).rejects.toBeInstanceOf(HttpException);
 
     const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
       where: { idempotencyKey: request.idempotencyKey },
@@ -269,9 +296,13 @@ describe('CheckoutService (integration)', () => {
       lines: [{ productId: 'not-a-real-product', quantity: 1, selections: [] }],
     });
 
-    await expect(checkoutService.checkout(request)).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      checkoutService.checkout(
+        request,
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
 
     const attempt = await prisma.paymentAttempt.findUnique({
       where: { idempotencyKey: request.idempotencyKey },
@@ -282,8 +313,16 @@ describe('CheckoutService (integration)', () => {
   it('is idempotent: resubmitting the same idempotency key never charges or creates a second order', async () => {
     const request = buildRequest();
 
-    const first = await checkoutService.checkout(request);
-    const second = await checkoutService.checkout(request);
+    const first = await checkoutService.checkout(
+      request,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
+    const second = await checkoutService.checkout(
+      request,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     expect(second.orderId).toBe(first.orderId);
     expect(second.accessToken).toBe(first.accessToken);
@@ -307,10 +346,17 @@ describe('CheckoutService (integration)', () => {
     const request = buildRequest();
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
 
-    const first = await checkoutService.checkout(request);
+    const first = await checkoutService.checkout(
+      request,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     // The "lost response" retry — identical request, identical key.
-    const retryAfterSimulatedLostResponse =
-      await checkoutService.checkout(request);
+    const retryAfterSimulatedLostResponse = await checkoutService.checkout(
+      request,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     expect(retryAfterSimulatedLostResponse.orderId).toBe(first.orderId);
     expect(retryAfterSimulatedLostResponse.accessToken).toBe(first.accessToken);
@@ -335,12 +381,20 @@ describe('CheckoutService (integration)', () => {
       },
     });
 
-    await expect(checkoutService.checkout(request)).rejects.toBeInstanceOf(
-      HttpException,
-    );
-    await expect(checkoutService.checkout(request)).rejects.toBeInstanceOf(
-      HttpException,
-    );
+    await expect(
+      checkoutService.checkout(
+        request,
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
+    ).rejects.toBeInstanceOf(HttpException);
+    await expect(
+      checkoutService.checkout(
+        request,
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
+    ).rejects.toBeInstanceOf(HttpException);
 
     const attempts = await prisma.paymentAttempt.count({
       where: { idempotencyKey: request.idempotencyKey },
@@ -352,8 +406,16 @@ describe('CheckoutService (integration)', () => {
     const request = buildRequest();
 
     const results = await Promise.allSettled([
-      checkoutService.checkout(request),
-      checkoutService.checkout(request),
+      checkoutService.checkout(
+        request,
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
+      checkoutService.checkout(
+        request,
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
     ]);
 
     const fulfilled = results.filter((r) => r.status === 'fulfilled');
@@ -381,9 +443,13 @@ describe('CheckoutService (integration)', () => {
       .spyOn(prisma, '$transaction')
       .mockRejectedValueOnce(new Error('Simulated Order transaction failure'));
 
-    await expect(checkoutService.checkout(request)).rejects.toThrow(
-      'Simulated Order transaction failure',
-    );
+    await expect(
+      checkoutService.checkout(
+        request,
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
+    ).rejects.toThrow('Simulated Order transaction failure');
 
     const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
       where: { idempotencyKey: request.idempotencyKey },
@@ -407,9 +473,13 @@ describe('CheckoutService (integration)', () => {
     // Retrying with the same key must recognize the reconciliation
     // condition — not charge again, not silently succeed, not replay a
     // stale "successful" order that was never actually created.
-    await expect(checkoutService.checkout(request)).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(
+      checkoutService.checkout(
+        request,
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
     expect(chargeSpy).toHaveBeenCalledTimes(1);
 
     const stillNoOrder = await prisma.order.findUnique({
@@ -420,7 +490,11 @@ describe('CheckoutService (integration)', () => {
 
   it('exposes order status only to the holder of the correct access token', async () => {
     const request = buildRequest();
-    const confirmation = await checkoutService.checkout(request);
+    const confirmation = await checkoutService.checkout(
+      request,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     const status = await checkoutService.getStatus(
       confirmation.orderId,

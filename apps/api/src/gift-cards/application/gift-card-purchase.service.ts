@@ -21,7 +21,7 @@ import {
   GIFT_CARD_MAX_VALUE_MINOR_UNITS,
 } from '@mocha-house/contracts';
 import type { PaymentProvider } from '@mocha-house/integrations';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CustomersService } from '../../customers/application/customers.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
@@ -109,9 +109,14 @@ export class GiftCardPurchaseService implements OnModuleInit {
 
   // --- STEP 1: establish the purchase intent (no charge, no issue) -----
 
+  //
+  // `tenant` (Milestone S0D-2B-1) is the request's server-resolved
+  // TenantContext, used ONLY to JIT-resolve a signed-in buyer's Customer —
+  // it changes nothing about the purchase, payment or issuance.
   async createIntent(
     request: CreateGiftCardPurchaseIntentRequest,
-    customerIdentity?: CustomerIdentity,
+    customerIdentity: CustomerIdentity | undefined,
+    tenant: TenantContext,
   ): Promise<GiftCardPurchaseIntentResponse> {
     const idempotencyKey = this.validateIdempotencyKey(request?.idempotencyKey);
 
@@ -133,7 +138,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
     const purchaserName = this.validateName(request?.purchaserName);
     const amountMinorUnits = await this.validateAmount(request?.amountMinorUnits);
     const currency = 'USD';
-    const customerId = await this.resolveCustomerId(customerIdentity);
+    const customerId = await this.resolveCustomerId(customerIdentity, tenant);
 
     // Guest → mint the recovery credential now, BEFORE any charge, and
     // persist only its verifier.
@@ -478,12 +483,15 @@ export class GiftCardPurchaseService implements OnModuleInit {
 
   private async resolveCustomerId(
     customerIdentity: CustomerIdentity | undefined,
+    tenant: TenantContext,
   ): Promise<string | null> {
     if (!customerIdentity) {
       return null;
     }
-    const customer =
-      await this.customersService.resolveOrCreateFromIdentity(customerIdentity);
+    const customer = await this.customersService.resolveOrCreateFromIdentity(
+      customerIdentity,
+      tenant,
+    );
     return customer.id;
   }
 

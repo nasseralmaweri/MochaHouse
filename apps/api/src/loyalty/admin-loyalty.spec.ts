@@ -88,6 +88,7 @@ describe('Admin Mocha Beans surface (integration)', () => {
   async function makeCustomer(balance?: number): Promise<string> {
     const customer = await prisma.customer.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'test',
         externalSubject: `test-adminloyalty-${randomUUID()}`,
         email: `adminloyalty-${randomUUID()}@example.com`,

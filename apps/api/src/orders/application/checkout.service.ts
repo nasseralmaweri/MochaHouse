@@ -20,7 +20,7 @@ import type {
 } from '@mocha-house/contracts';
 import { priceCart } from '@mocha-house/domain';
 import type { PaymentProvider } from '@mocha-house/integrations';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsService } from '../../locations/application/locations.service';
 import { CustomersService } from '../../customers/application/customers.service';
@@ -104,9 +104,14 @@ export class CheckoutService {
   // (see OrdersController's OptionalCustomerAuthGuard). When present, it
   // has already been verified by the customer-auth boundary; this method
   // never verifies a token itself.
+  //
+  // `tenant` (Milestone S0D-2B-1) is the request's server-resolved
+  // TenantContext. It is used ONLY to JIT-resolve the signed-in Customer —
+  // it changes nothing about pricing, payment, idempotency or the Order.
   async checkout(
     request: CheckoutRequest,
-    customerIdentity?: CustomerIdentity,
+    customerIdentity: CustomerIdentity | undefined,
+    tenant: TenantContext,
   ): Promise<OrderConfirmation> {
     this.validateRequestShape(request);
 
@@ -123,7 +128,7 @@ export class CheckoutService {
     // subsequent status/history read of this Order always reflects
     // whichever Customer (if any) was authenticated at the moment payment
     // was attempted, not whatever happens to be true later.
-    const customerId = await this.resolveCustomerId(customerIdentity);
+    const customerId = await this.resolveCustomerId(customerIdentity, tenant);
 
     const menu = await this.locationsService.findMenu(request.locationId);
     if (!menu) {
@@ -318,6 +323,7 @@ export class CheckoutService {
   async quoteRewardEligibility(
     request: CheckoutRewardEligibilityRequest,
     customerIdentity: CustomerIdentity,
+    tenant: TenantContext,
   ): Promise<CheckoutRewardEligibilityResponse> {
     if (
       typeof request?.locationId !== 'string' ||
@@ -329,8 +335,10 @@ export class CheckoutService {
       throw new BadRequestException('Cart is empty.');
     }
 
-    const customer =
-      await this.customersService.resolveOrCreateFromIdentity(customerIdentity);
+    const customer = await this.customersService.resolveOrCreateFromIdentity(
+      customerIdentity,
+      tenant,
+    );
 
     const menu = await this.locationsService.findMenu(request.locationId);
     if (!menu) {
@@ -354,6 +362,7 @@ export class CheckoutService {
   async quoteCheckout(
     request: CheckoutQuoteRequest,
     customerIdentity: CustomerIdentity | undefined,
+    tenant: TenantContext,
   ): Promise<CheckoutQuoteResponse> {
     if (
       typeof request?.locationId !== 'string' ||
@@ -365,7 +374,7 @@ export class CheckoutService {
       throw new BadRequestException('Cart is empty.');
     }
 
-    const customerId = await this.resolveCustomerId(customerIdentity);
+    const customerId = await this.resolveCustomerId(customerIdentity, tenant);
 
     const menu = await this.locationsService.findMenu(request.locationId);
     if (!menu) {
@@ -558,12 +567,15 @@ export class CheckoutService {
   // call ever having happened.
   private async resolveCustomerId(
     customerIdentity: CustomerIdentity | undefined,
+    tenant: TenantContext,
   ): Promise<string | null> {
     if (!customerIdentity) {
       return null;
     }
-    const customer =
-      await this.customersService.resolveOrCreateFromIdentity(customerIdentity);
+    const customer = await this.customersService.resolveOrCreateFromIdentity(
+      customerIdentity,
+      tenant,
+    );
     return customer.id;
   }
 

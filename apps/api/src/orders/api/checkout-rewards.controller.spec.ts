@@ -201,6 +201,7 @@ describe('POST /api/v1/orders/reward-eligibility (integration)', () => {
       },
       update: {},
       create: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'dev',
         externalSubject: `${SUBJECT_PREFIX}${sub}`,
         email: `${sub}@x.test`,

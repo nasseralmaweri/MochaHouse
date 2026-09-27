@@ -6,6 +6,7 @@ export {
   TEST_TENANT_B_SLUG,
   createTestTenantB,
   removeTestTenantB,
+  tenantContextFor,
 } from "./tenants";
 export {
   applyMigrationSql,

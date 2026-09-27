@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
+import { tenantContextFor } from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { ConflictException, HttpException } from '@nestjs/common';
@@ -199,6 +201,7 @@ describe('Mocha Beans earning on checkout (integration)', () => {
         ],
       }),
       id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     expect(confirmation.subtotal).toBe(1200);
 
@@ -224,7 +227,11 @@ describe('Mocha Beans earning on checkout (integration)', () => {
   });
 
   it('a guest checkout earns no Beans and creates no loyalty account', async () => {
-    const confirmation = await checkoutService.checkout(buildRequest());
+    const confirmation = await checkoutService.checkout(
+      buildRequest(),
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     const entries = await prisma.mochaBeanLedgerEntry.findMany({
       where: { orderId: confirmation.orderId },
@@ -236,8 +243,16 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     const id = identity(randomUUID());
     const request = buildRequest();
 
-    const first = await checkoutService.checkout(request, id);
-    const second = await checkoutService.checkout(request, id);
+    const first = await checkoutService.checkout(
+      request,
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
+    const second = await checkoutService.checkout(
+      request,
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(second.orderId).toBe(first.orderId);
 
     const customer = await prisma.customer.findUniqueOrThrow({
@@ -265,7 +280,11 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     });
 
     await expect(
-      checkoutService.checkout(request, id),
+      checkoutService.checkout(
+        request,
+        id,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
     ).rejects.toBeInstanceOf(HttpException);
 
     const customer = await prisma.customer.findUnique({
@@ -291,9 +310,13 @@ describe('Mocha Beans earning on checkout (integration)', () => {
       .spyOn(prisma, '$transaction')
       .mockRejectedValueOnce(new Error('Simulated order transaction failure'));
 
-    await expect(checkoutService.checkout(request, id)).rejects.toThrow(
-      'Simulated order transaction failure',
-    );
+    await expect(
+      checkoutService.checkout(
+        request,
+        id,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
+    ).rejects.toThrow('Simulated order transaction failure');
 
     const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
       where: { idempotencyKey: request.idempotencyKey },
@@ -327,9 +350,13 @@ describe('Mocha Beans earning on checkout (integration)', () => {
         new Error('Simulated loyalty account preparation failure'),
       );
 
-    await expect(checkoutService.checkout(request, id)).rejects.toThrow(
-      'Simulated loyalty account preparation failure',
-    );
+    await expect(
+      checkoutService.checkout(
+        request,
+        id,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
+    ).rejects.toThrow('Simulated loyalty account preparation failure');
     expect(spy).toHaveBeenCalledTimes(1);
 
     const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
@@ -363,14 +390,22 @@ describe('Mocha Beans earning on checkout (integration)', () => {
 
     // A retry with the same key recognises the reconciliation condition —
     // it never charges again, never silently succeeds.
-    await expect(checkoutService.checkout(request, id)).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(
+      checkoutService.checkout(
+        request,
+        id,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('the ledger enforces exactly one EARN per order', async () => {
     const id = identity(randomUUID());
-    const confirmation = await checkoutService.checkout(buildRequest(), id);
+    const confirmation = await checkoutService.checkout(
+      buildRequest(),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     const customer = await prisma.customer.findUniqueOrThrow({
       where: {

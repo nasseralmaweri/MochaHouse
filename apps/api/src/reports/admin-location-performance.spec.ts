@@ -100,6 +100,7 @@ describe('Admin reports — location performance (integration)', () => {
   async function makeCustomer(): Promise<string> {
     const customer = await prisma.customer.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'dev',
         externalSubject: `location-perf-spec-${randomUUID()}`,
         email: `location-perf-spec-${randomUUID()}@example.com`,

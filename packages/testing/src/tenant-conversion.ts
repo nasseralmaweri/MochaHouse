@@ -21,4 +21,6 @@ export const TENANT_ID_REQUIRED_MODELS: readonly string[] = [
   'ChecklistInstance',
   'ChecklistInstanceItem',
   'OperationsTask',
+  // S0D-2B-1 — customer core (JIT-created under the request TenantContext).
+  'Customer',
 ];

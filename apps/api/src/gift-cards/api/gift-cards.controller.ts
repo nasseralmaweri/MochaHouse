@@ -15,6 +15,8 @@ import type {
 } from '@mocha-house/contracts';
 import { OptionalCustomerAuthGuard } from '../../customer-auth/infrastructure/optional-customer-auth.guard';
 import type { CustomerAuthenticatedRequest } from '../../customer-auth/infrastructure/customer-identity';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { GiftCardPublicThrottleGuard } from '../infrastructure/gift-card-public-throttle.guard';
 import { GiftCardBalanceService } from '../application/gift-card-balance.service';
 import { GiftCardPurchaseService } from '../application/gift-card-purchase.service';
@@ -51,8 +53,13 @@ export class GiftCardsController {
   createPurchaseIntent(
     @Body() body: CreateGiftCardPurchaseIntentRequest,
     @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.purchaseService.createIntent(body, request.customerIdentity);
+    return this.purchaseService.createIntent(
+      body,
+      request.customerIdentity,
+      tenant,
+    );
   }
 
   @UseGuards(GiftCardPublicThrottleGuard, OptionalCustomerAuthGuard)

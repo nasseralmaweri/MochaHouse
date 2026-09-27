@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
+import { tenantContextFor } from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -188,12 +190,18 @@ describe('CustomerOrdersController (integration)', () => {
     const orderA = await checkoutService.checkout(
       buildCheckoutRequest(),
       identityFor(identifierA),
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     const orderB = await checkoutService.checkout(
       buildCheckoutRequest(),
       identityFor(identifierB),
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
-    const guestOrder = await checkoutService.checkout(buildCheckoutRequest());
+    const guestOrder = await checkoutService.checkout(
+      buildCheckoutRequest(),
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     const response = await request(app.getHttpServer())
       .get('/api/v1/customers/me/orders')
@@ -213,6 +221,7 @@ describe('CustomerOrdersController (integration)', () => {
     const confirmation = await checkoutService.checkout(
       buildCheckoutRequest(),
       identityFor(identifier),
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
 
     const response = await request(app.getHttpServer())
@@ -235,6 +244,7 @@ describe('CustomerOrdersController (integration)', () => {
     const ownerOrder = await checkoutService.checkout(
       buildCheckoutRequest(),
       identityFor(identifierOwner),
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
 
     await request(app.getHttpServer())
@@ -245,7 +255,11 @@ describe('CustomerOrdersController (integration)', () => {
 
   it('returns 404 for a guest order requested through the authenticated history endpoint', async () => {
     const identifier = `test-${randomUUID()}@example.com`;
-    const guestOrder = await checkoutService.checkout(buildCheckoutRequest());
+    const guestOrder = await checkoutService.checkout(
+      buildCheckoutRequest(),
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     await request(app.getHttpServer())
       .get(`/api/v1/customers/me/orders/${guestOrder.orderId}`)

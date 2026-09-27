@@ -15,6 +15,8 @@ import type {
 } from '@mocha-house/contracts';
 import { CustomerAuthGuard } from '../../customer-auth/infrastructure/customer-auth.guard';
 import type { CustomerAuthenticatedRequest } from '../../customer-auth/infrastructure/customer-identity';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { CustomersService } from '../../customers/application/customers.service';
 import { CustomerOrdersService } from '../application/customer-orders.service';
 import { CustomerReorderService } from '../application/customer-reorder.service';
@@ -35,10 +37,12 @@ export class CustomerOrdersController {
   @Get()
   async list(
     @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ): Promise<CustomerOrderSummary[]> {
     // CustomerAuthGuard always sets this before a request reaches here.
     const customer = await this.customersService.resolveOrCreateFromIdentity(
       request.customerIdentity!,
+      tenant,
     );
     return this.customerOrdersService.listForCustomer(customer.id);
   }
@@ -47,9 +51,11 @@ export class CustomerOrdersController {
   async detail(
     @Param('orderId') orderId: string,
     @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ): Promise<CustomerOrderDetail> {
     const customer = await this.customersService.resolveOrCreateFromIdentity(
       request.customerIdentity!,
+      tenant,
     );
     return this.customerOrdersService.getDetail(customer.id, orderId);
   }
@@ -64,9 +70,11 @@ export class CustomerOrdersController {
   async reorder(
     @Param('orderId') orderId: string,
     @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ): Promise<ReorderPreparation> {
     const customer = await this.customersService.resolveOrCreateFromIdentity(
       request.customerIdentity!,
+      tenant,
     );
     return this.customerReorderService.prepare(customer.id, orderId);
   }

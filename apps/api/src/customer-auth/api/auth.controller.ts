@@ -26,6 +26,8 @@ import { CustomerRegistrationService } from '../application/customer-registratio
 import { CustomerPasswordRecoveryService } from '../application/customer-password-recovery.service';
 import { isDevCustomerAuthEnabled } from '../infrastructure/auth-provider-mode';
 import { CustomersService } from '../../customers/application/customers.service';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 
 // The one message /auth/forgot-password ever returns for a syntactically
 // valid email, whatever the provider outcome — so the response cannot be
@@ -74,6 +76,7 @@ export class AuthController {
   @Post('register')
   async register(
     @Body() body: CustomerRegisterRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ): Promise<CustomerRegisterResponse> {
     const email = typeof body?.email === 'string' ? body.email.trim() : '';
     const displayName =
@@ -114,16 +117,19 @@ export class AuthController {
     // CustomerAuthGuard flow does for GET /customers/me — the same
     // (externalProvider, externalSubject) key means sign-in later resolves
     // this exact row rather than creating a second one.
-    await this.customersService.resolveOrCreateFromIdentity({
-      provider: result.provider,
-      subject: result.subject,
-      email,
-      name: displayName,
-      // Registration always precedes verification in this flow — the
-      // account is definitively not yet confirmed the moment it's
-      // created, never assumed otherwise.
-      emailVerified: false,
-    });
+    await this.customersService.resolveOrCreateFromIdentity(
+      {
+        provider: result.provider,
+        subject: result.subject,
+        email,
+        name: displayName,
+        // Registration always precedes verification in this flow — the
+        // account is definitively not yet confirmed the moment it's
+        // created, never assumed otherwise.
+        emailVerified: false,
+      },
+      tenant,
+    );
 
     return { email };
   }

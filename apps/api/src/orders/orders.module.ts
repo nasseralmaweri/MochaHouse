@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { LocationsModule } from '../locations/locations.module';
 import { CustomersModule } from '../customers/customers.module';
+import { TenancyModule } from '../tenancy/tenancy.module';
 import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 import { GiftCardsModule } from '../gift-cards/gift-cards.module';
@@ -29,6 +30,8 @@ import { CustomerReorderService } from './application/customer-reorder.service';
     PrismaModule,
     LocationsModule,
     CustomersModule,
+    // Milestone S0D-2B-1 — customer JIT resolution needs the request TenantContext.
+    TenancyModule,
     LoyaltyModule,
     PromotionsModule,
     GiftCardsModule,

@@ -10,6 +10,8 @@ import {
 import type { CheckoutRewardEligibilityRequest } from '@mocha-house/contracts';
 import { CustomerAuthGuard } from '../../customer-auth/infrastructure/customer-auth.guard';
 import type { CustomerAuthenticatedRequest } from '../../customer-auth/infrastructure/customer-identity';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { CheckoutService } from '../application/checkout.service';
 
 // Milestone 7C — the checkout reward-eligibility quote. Separate from
@@ -30,11 +32,13 @@ export class CheckoutRewardsController {
   quote(
     @Body() body: CheckoutRewardEligibilityRequest,
     @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     // CustomerAuthGuard always sets this before a request reaches here.
     return this.checkoutService.quoteRewardEligibility(
       body,
       request.customerIdentity!,
+      tenant,
     );
   }
 }

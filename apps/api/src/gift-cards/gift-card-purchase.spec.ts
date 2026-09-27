@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
+import { tenantContextFor } from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test, type TestingModule } from '@nestjs/testing';
 import {
@@ -95,7 +97,11 @@ describe('Customer gift-card purchase (integration)', () => {
     recoveryCredential: string | null;
   }> {
     const req = intentRequest(overrides);
-    const intent = await purchases.createIntent(req, identity);
+    const intent = await purchases.createIntent(
+      req,
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     const response = await purchases.purchase(
       {
         idempotencyKey: req.idempotencyKey,
@@ -252,7 +258,11 @@ describe('Customer gift-card purchase (integration)', () => {
   it('step 1 establishes a PENDING purchase, mints a guest recovery credential, and does NOT charge or issue', async () => {
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
     const req = intentRequest();
-    const intent = await purchases.createIntent(req);
+    const intent = await purchases.createIntent(
+      req,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     expect(chargeSpy).not.toHaveBeenCalled();
     expect(intent.status).toBe('PENDING');
@@ -283,7 +293,11 @@ describe('Customer gift-card purchase (integration)', () => {
 
   it('step 1 for a signed-in buyer links the customer and returns no credential', async () => {
     const identity = signedIn();
-    const intent = await purchases.createIntent(intentRequest(), identity);
+    const intent = await purchases.createIntent(
+      intentRequest(),
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(intent.customerOwned).toBe(true);
     expect(intent.recoveryCredential).toBeNull();
 
@@ -296,8 +310,16 @@ describe('Customer gift-card purchase (integration)', () => {
 
   it('step 1 replayed for an established intent returns it as persisted (no new credential)', async () => {
     const req = intentRequest({ amountMinorUnits: 5000 });
-    const first = await purchases.createIntent(req);
-    const replay = await purchases.createIntent(req);
+    const first = await purchases.createIntent(
+      req,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
+    const replay = await purchases.createIntent(
+      req,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(replay.purchaseId).toBe(first.purchaseId);
     expect(replay.amountMinorUnits).toBe(5000);
     expect(replay.recoveryCredential).toBeNull();
@@ -305,13 +327,25 @@ describe('Customer gift-card purchase (integration)', () => {
 
   it('step 1 replay is NOT re-validated against current configuration (correction E)', async () => {
     const req = intentRequest({ amountMinorUnits: 2500 });
-    await purchases.createIntent(req);
+    await purchases.createIntent(
+      req,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     await setConfig({ presetAmountsMinorUnits: [1000], customAmountEnabled: false });
     // A brand-new intent for 2500 would now fail; the replay must not.
-    const replay = await purchases.createIntent(req);
+    const replay = await purchases.createIntent(
+      req,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(replay.amountMinorUnits).toBe(2500);
     await expect(
-      purchases.createIntent(intentRequest({ amountMinorUnits: 2500 })),
+      purchases.createIntent(
+        intentRequest({ amountMinorUnits: 2500 }),
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -365,7 +399,11 @@ describe('Customer gift-card purchase (integration)', () => {
   it('a signed-in purchase does not require a recovery credential', async () => {
     const identity = signedIn();
     const req = intentRequest();
-    await purchases.createIntent(req, identity);
+    await purchases.createIntent(
+      req,
+      identity,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     const res = await purchases.purchase(
       { idempotencyKey: req.idempotencyKey },
       identity,
@@ -449,6 +487,8 @@ describe('Customer gift-card purchase (integration)', () => {
     idempotencyKeys.add(weakKey);
     const intent = await purchases.createIntent(
       intentRequest({ idempotencyKey: weakKey }),
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     await purchases.purchase({
       idempotencyKey: weakKey,
@@ -473,7 +513,11 @@ describe('Customer gift-card purchase (integration)', () => {
   it('signed-in purchase: owner recovers without a credential; anonymous and other customers cannot', async () => {
     const owner = signedIn();
     const req = intentRequest();
-    await purchases.createIntent(req, owner);
+    await purchases.createIntent(
+      req,
+      owner,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     const first = await purchases.purchase(
       { idempotencyKey: req.idempotencyKey },
       owner,
@@ -510,7 +554,11 @@ describe('Customer gift-card purchase (integration)', () => {
 
   it('an authenticated caller may complete/recover a GUEST purchase with the guest credential (no ownership transfer)', async () => {
     const req = intentRequest();
-    const intent = await purchases.createIntent(req); // guest intent
+    const intent = await purchases.createIntent(
+      req,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    ); // guest intent
     const somebody = signedIn();
     const res = await purchases.purchase(
       {
@@ -535,7 +583,11 @@ describe('Customer gift-card purchase (integration)', () => {
 
   it('step 2 charge is refused when a guest supplies no / wrong credential', async () => {
     const req = intentRequest();
-    await purchases.createIntent(req);
+    await purchases.createIntent(
+      req,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
     await expect(
       purchases.purchase({ idempotencyKey: req.idempotencyKey }),
@@ -561,7 +613,11 @@ describe('Customer gift-card purchase (integration)', () => {
     await setConfig({ presetAmountsMinorUnits: [1000, 2500, 5000, 10000] });
     for (const amt of [499, 50_001, 200_001, 12.5, 0]) {
       await expect(
-        purchases.createIntent(intentRequest({ amountMinorUnits: amt })),
+        purchases.createIntent(
+          intentRequest({ amountMinorUnits: amt }),
+          undefined,
+          tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+        ),
       ).rejects.toBeInstanceOf(BadRequestException);
     }
   });
@@ -573,20 +629,32 @@ describe('Customer gift-card purchase (integration)', () => {
     });
     expect((await buy({ amountMinorUnits: 1000 })).response.status).toBe('ISSUED');
     await expect(
-      purchases.createIntent(intentRequest({ amountMinorUnits: 700 })),
+      purchases.createIntent(
+        intentRequest({ amountMinorUnits: 700 }),
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects a missing email and a non-UUID idempotency key at step 1', async () => {
     await expect(
-      purchases.createIntent(intentRequest({ purchaserEmail: '   ' })),
+      purchases.createIntent(
+        intentRequest({ purchaserEmail: '   ' }),
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
-      purchases.createIntent({
-        idempotencyKey: 'not-a-uuid',
-        amountMinorUnits: 2500,
-        purchaserEmail: 'x@example.com',
-      }),
+      purchases.createIntent(
+        {
+          idempotencyKey: 'not-a-uuid',
+          amountMinorUnits: 2500,
+          purchaserEmail: 'x@example.com',
+        },
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -597,7 +665,11 @@ describe('Customer gift-card purchase (integration)', () => {
       .spyOn(paymentProvider, 'charge')
       .mockResolvedValue({ outcome: 'declined', reason: 'Card declined' });
     const req = intentRequest();
-    const intent = await purchases.createIntent(req);
+    const intent = await purchases.createIntent(
+      req,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     await expect(
       purchases.purchase({
         idempotencyKey: req.idempotencyKey,
@@ -630,7 +702,11 @@ describe('Customer gift-card purchase (integration)', () => {
       .mockRejectedValueOnce(new Error('issuance boom'));
 
     const req = intentRequest();
-    const intent = await purchases.createIntent(req);
+    const intent = await purchases.createIntent(
+      req,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     await expect(
       purchases.purchase({
         idempotencyKey: req.idempotencyKey,
@@ -674,7 +750,11 @@ describe('Customer gift-card purchase (integration)', () => {
 
   it('concurrent step 2 requests charge exactly once and issue exactly one card', async () => {
     const req = intentRequest();
-    const intent = await purchases.createIntent(req);
+    const intent = await purchases.createIntent(
+      req,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
     const body = {
       idempotencyKey: req.idempotencyKey,
@@ -707,9 +787,21 @@ describe('Customer gift-card purchase (integration)', () => {
   it('concurrent step 1 for the same key creates exactly one purchase + attempt', async () => {
     const k = key();
     const results = await Promise.allSettled([
-      purchases.createIntent(intentRequest({ idempotencyKey: k })),
-      purchases.createIntent(intentRequest({ idempotencyKey: k })),
-      purchases.createIntent(intentRequest({ idempotencyKey: k })),
+      purchases.createIntent(
+        intentRequest({ idempotencyKey: k }),
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
+      purchases.createIntent(
+        intentRequest({ idempotencyKey: k }),
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
+      purchases.createIntent(
+        intentRequest({ idempotencyKey: k }),
+        undefined,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
     ]);
     const ok = results.filter(
       (r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof purchases.createIntent>>> =>

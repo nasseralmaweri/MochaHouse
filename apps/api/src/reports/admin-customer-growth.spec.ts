@@ -111,6 +111,7 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
   async function makeCustomer(createdAt: Date): Promise<string> {
     const customer = await prisma.customer.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'dev',
         externalSubject: `customer-growth-spec-${randomUUID()}`,
         email: `customer-growth-spec-${randomUUID()}@example.com`,
@@ -591,6 +592,7 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
 
       const custBefore = await prisma.customer.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: 'dev',
           externalSubject: `customer-growth-dst-${randomUUID()}`,
           email: `customer-growth-dst-${randomUUID()}@example.com`,
@@ -600,6 +602,7 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
       customerIds.push(custBefore.id);
       const custAfter = await prisma.customer.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: 'dev',
           externalSubject: `customer-growth-dst-${randomUUID()}`,
           email: `customer-growth-dst-${randomUUID()}@example.com`,

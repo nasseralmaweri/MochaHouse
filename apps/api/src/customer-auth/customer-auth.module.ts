@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { CustomersModule } from '../customers/customers.module';
+import { TenancyModule } from '../tenancy/tenancy.module';
 import { AuthController } from './api/auth.controller';
 import { CustomerSignInService } from './application/customer-sign-in.service';
 import { CustomerRegistrationService } from './application/customer-registration.service';
@@ -41,7 +42,9 @@ import { LocalDevCustomerDirectory } from './infrastructure/local-dev-customer-d
 // in this app.
 @Global()
 @Module({
-  imports: [CustomersModule],
+  // TenancyModule (Milestone S0D-2B-1): registration JIT-creates the
+  // Customer under the request's TenantContext.
+  imports: [CustomersModule, TenancyModule],
   controllers: [AuthController],
   providers: [
     CustomerSignInService,

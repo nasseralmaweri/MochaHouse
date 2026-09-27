@@ -16,6 +16,8 @@ import type {
 } from '@mocha-house/contracts';
 import { OptionalCustomerAuthGuard } from '../../customer-auth/infrastructure/optional-customer-auth.guard';
 import type { CustomerAuthenticatedRequest } from '../../customer-auth/infrastructure/customer-identity';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { CheckoutService } from '../application/checkout.service';
 
 @Controller('api/v1/orders')
@@ -32,8 +34,13 @@ export class OrdersController {
   checkout(
     @Body() body: CheckoutRequest,
     @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.checkoutService.checkout(body, request.customerIdentity);
+    return this.checkoutService.checkout(
+      body,
+      request.customerIdentity,
+      tenant,
+    );
   }
 
   // Milestone 7E — the unified checkout pricing quote. Guest-friendly
@@ -45,8 +52,13 @@ export class OrdersController {
   quote(
     @Body() body: CheckoutQuoteRequest,
     @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.checkoutService.quoteCheckout(body, request.customerIdentity);
+    return this.checkoutService.quoteCheckout(
+      body,
+      request.customerIdentity,
+      tenant,
+    );
   }
 
   // Guest order access: the id alone is not authorization, accessToken is

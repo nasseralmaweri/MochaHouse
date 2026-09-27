@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { tenantContextFor } from '@mocha-house/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
@@ -254,6 +255,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       },
       update: {},
       create: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: id.provider,
         externalSubject: id.subject,
         email: id.email,
@@ -384,6 +386,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const confirmation = await checkoutService.checkout(
       req([line(matchaId)]), // $6
       id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
 
     const ledger = await ledgerFor(customerId);
@@ -409,9 +412,17 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const id = identity(randomUUID());
     await grantBeans(id, 0);
     const customerId = await customerIdFor(id);
-    await makePromotion({ type: 'EXTRA_BEANS', bonusValue: 10, productIds: [latteId] });
+    await makePromotion({
+      type: 'EXTRA_BEANS',
+      bonusValue: 10,
+      productIds: [latteId],
+    });
 
-    await checkoutService.checkout(req([line(latteId, 3)]), id); // 3 x $5
+    await checkoutService.checkout(
+      req([line(latteId, 3)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    ); // 3 x $5
 
     const ledger = await ledgerFor(customerId);
     expect(ledger.find((e) => e.type === 'EARN')!.amount).toBe(15);
@@ -424,7 +435,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const customerId = await customerIdFor(id);
     await makePromotion({ type: 'EXTRA_BEANS', bonusValue: 20, productIds: [matchaId] });
 
-    const confirmation = await checkoutService.checkout(req([line(latteId)]), id);
+    const confirmation = await checkoutService.checkout(
+      req([line(latteId)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     const ledger = await ledgerFor(customerId);
     expect(ledger.find((e) => e.type === 'BONUS_EARN')).toBeUndefined();
@@ -447,7 +462,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
         productIds: [matchaId],
       });
 
-      await checkoutService.checkout(req([line(matchaId)]), id); // $6
+      await checkoutService.checkout(
+        req([line(matchaId)]),
+        id,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ); // $6
 
       const ledger = await ledgerFor(customerId);
       expect(ledger.find((e) => e.type === 'EARN')!.amount).toBe(12); // 6 * rate 2
@@ -466,9 +485,17 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const id = identity(randomUUID());
     await grantBeans(id, 0);
     const customerId = await customerIdFor(id);
-    await makePromotion({ type: 'MULTIPLIER', bonusValue: 2, productIds: [matchaId] });
+    await makePromotion({
+      type: 'MULTIPLIER',
+      bonusValue: 2,
+      productIds: [matchaId],
+    });
 
-    await checkoutService.checkout(req([line(matchaId)]), id); // $6 -> 6 standard
+    await checkoutService.checkout(
+      req([line(matchaId)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    ); // $6 -> 6 standard
 
     const ledger = await ledgerFor(customerId);
     expect(ledger.find((e) => e.type === 'EARN')!.amount).toBe(6);
@@ -492,7 +519,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
         productIds: [latteId],
       });
 
-      await checkoutService.checkout(req([line(latteId)]), id); // $5 -> 10 standard
+      await checkoutService.checkout(
+        req([line(latteId)]),
+        id,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ); // $5 -> 10 standard
 
       const ledger = await ledgerFor(customerId);
       expect(ledger.find((e) => e.type === 'EARN')!.amount).toBe(10);
@@ -509,9 +540,17 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const id = identity(randomUUID());
     await grantBeans(id, 0);
     const customerId = await customerIdFor(id);
-    await makePromotion({ type: 'MULTIPLIER', bonusValue: 2, productIds: [latteId] });
+    await makePromotion({
+      type: 'MULTIPLIER',
+      bonusValue: 2,
+      productIds: [latteId],
+    });
 
-    await checkoutService.checkout(req([line(latteId, 3)]), id); // 3 x $5 -> 15
+    await checkoutService.checkout(
+      req([line(latteId, 3)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    ); // 3 x $5 -> 15
 
     const ledger = await ledgerFor(customerId);
     expect(ledger.find((e) => e.type === 'BONUS_EARN')!.amount).toBe(15);
@@ -526,6 +565,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const confirmation = await checkoutService.checkout(
       req([line(matchaId), line(pastryId)]), // $6 promoted + $3 plain
       id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
 
     const ledger = await ledgerFor(customerId);
@@ -542,10 +582,22 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const id = identity(randomUUID());
     await grantBeans(id, 0);
     const customerId = await customerIdFor(id);
-    await makePromotion({ type: 'EXTRA_BEANS', bonusValue: 10, productIds: [matchaId] });
-    await makePromotion({ type: 'MULTIPLIER', bonusValue: 2, productIds: [matchaId] });
+    await makePromotion({
+      type: 'EXTRA_BEANS',
+      bonusValue: 10,
+      productIds: [matchaId],
+    });
+    await makePromotion({
+      type: 'MULTIPLIER',
+      bonusValue: 2,
+      productIds: [matchaId],
+    });
 
-    const confirmation = await checkoutService.checkout(req([line(matchaId)]), id); // $6
+    const confirmation = await checkoutService.checkout(
+      req([line(matchaId)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    ); // $6
 
     // +10 EXTRA beats +6 multiplier contribution.
     const ledger = await ledgerFor(customerId);
@@ -571,6 +623,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const confirmation = await checkoutService.checkout(
       req([line(latteId, 2)]), // 2 x $5 -> 10 standard; EXTRA 5*2=10; MULT 10*(2-1)=10
       id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     const snapshot = await bonusFor(confirmation.orderId);
     expect(snapshot?.totalBonusBeans).toBe(10);
@@ -590,7 +643,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       appliesToAllLocations: true,
     });
 
-    await checkoutService.checkout(req([line(matchaId)]), id);
+    await checkoutService.checkout(
+      req([line(matchaId)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     const ledger = await ledgerFor(customerId);
     expect(ledger.find((e) => e.type === 'BONUS_EARN')!.amount).toBe(15);
   });
@@ -607,7 +664,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       locationIds: [locationId],
     });
 
-    await checkoutService.checkout(req([line(matchaId)]), id);
+    await checkoutService.checkout(
+      req([line(matchaId)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(
       (await ledgerFor(customerId)).find((e) => e.type === 'BONUS_EARN')!.amount,
     ).toBe(15);
@@ -625,7 +686,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       locationIds: [otherLocationId],
     });
 
-    const confirmation = await checkoutService.checkout(req([line(matchaId)]), id);
+    const confirmation = await checkoutService.checkout(
+      req([line(matchaId)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(await bonusFor(confirmation.orderId)).toBeNull();
     expect(await balanceOf(customerId)).toBe(6); // standard only
   });
@@ -643,7 +708,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       isActive: false,
     });
 
-    const confirmation = await checkoutService.checkout(req([line(matchaId)]), id);
+    const confirmation = await checkoutService.checkout(
+      req([line(matchaId)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(await bonusFor(confirmation.orderId)).toBeNull();
     expect(await balanceOf(customerId)).toBe(6);
   });
@@ -659,7 +728,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       startsAt: new Date(Date.now() + 60 * 60 * 1000),
     });
 
-    const confirmation = await checkoutService.checkout(req([line(matchaId)]), id);
+    const confirmation = await checkoutService.checkout(
+      req([line(matchaId)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(await bonusFor(confirmation.orderId)).toBeNull();
   });
 
@@ -675,7 +748,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       endsAt: new Date(Date.now() + 60 * 60 * 1000),
     });
 
-    await checkoutService.checkout(req([line(matchaId)]), id);
+    await checkoutService.checkout(
+      req([line(matchaId)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(
       (await ledgerFor(customerId)).find((e) => e.type === 'BONUS_EARN')!.amount,
     ).toBe(20);
@@ -692,7 +769,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       endsAt: new Date(Date.now() - 60 * 60 * 1000),
     });
 
-    const confirmation = await checkoutService.checkout(req([line(matchaId)]), id);
+    const confirmation = await checkoutService.checkout(
+      req([line(matchaId)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(await bonusFor(confirmation.orderId)).toBeNull();
   });
 
@@ -709,6 +790,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const confirmation = await checkoutService.checkout(
       req([line(matchaId, 3)], { loyaltyRewardId: rewardId }),
       id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     expect(confirmation.rewardDiscount).toBe(600);
 
@@ -734,6 +816,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const confirmation = await checkoutService.checkout(
       req([line(matchaId, 1)], { loyaltyRewardId: rewardId }),
       id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     expect(await bonusFor(confirmation.orderId)).toBeNull();
     const ledger = await ledgerFor(customerId);
@@ -755,6 +838,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const confirmation = await checkoutService.checkout(
       req([line(matchaId), line(pastryId)], { loyaltyRewardId: rewardId }),
       id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     expect(confirmation.total).toBe(400);
 
@@ -777,7 +861,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const customerId = await customerIdFor(id);
     await makePromotion({ type: 'EXTRA_BEANS', bonusValue: 12, productIds: [matchaId] });
 
-    await checkoutService.checkout(req([line(matchaId)]), id);
+    await checkoutService.checkout(
+      req([line(matchaId)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     const ledger = await ledgerFor(customerId);
     const sum = ledger.reduce((n, e) => n + e.amount, 0);
@@ -796,7 +884,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       productIds: [matchaId],
     });
 
-    const confirmation = await checkoutService.checkout(req([line(matchaId)]), id);
+    const confirmation = await checkoutService.checkout(
+      req([line(matchaId)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     const before = await bonusFor(confirmation.orderId);
 
     await prisma.loyaltyBonusPromotion.update({
@@ -826,8 +918,16 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     await makePromotion({ type: 'EXTRA_BEANS', bonusValue: 20, productIds: [matchaId] });
     const request = req([line(matchaId)]);
 
-    const first = await checkoutService.checkout(request, id);
-    const second = await checkoutService.checkout(request, id);
+    const first = await checkoutService.checkout(
+      request,
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
+    const second = await checkoutService.checkout(
+      request,
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(second.orderId).toBe(first.orderId);
 
     const ledger = await ledgerFor(customerId);
@@ -853,6 +953,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
           guest: { name: 'Declined', phone: FakePaymentProvider.DECLINE_TEST_PHONE },
         }),
         id,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toBeDefined();
 
@@ -873,9 +974,13 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       .spyOn(prisma, '$transaction')
       .mockRejectedValueOnce(new Error('Simulated order transaction failure'));
 
-    await expect(checkoutService.checkout(request, id)).rejects.toThrow(
-      'Simulated order transaction failure',
-    );
+    await expect(
+      checkoutService.checkout(
+        request,
+        id,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
+    ).rejects.toThrow('Simulated order transaction failure');
 
     const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
       where: { idempotencyKey: request.idempotencyKey },
@@ -895,7 +1000,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     await grantBeans(id, 100);
     const customerId = await customerIdFor(id);
 
-    const confirmation = await checkoutService.checkout(req([line(latteId)]), id);
+    const confirmation = await checkoutService.checkout(
+      req([line(latteId)]),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(await bonusFor(confirmation.orderId)).toBeNull();
 
     const ledger = await ledgerFor(customerId);
@@ -909,6 +1018,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const confirmation = await checkoutService.checkout(
       req([line(matchaId)]),
       undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     expect(await bonusFor(confirmation.orderId)).toBeNull();
   });

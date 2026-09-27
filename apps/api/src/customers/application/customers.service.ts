@@ -1,9 +1,13 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+} from '@nestjs/common';
 import type {
   CustomerProfile,
   CustomerUpdateProfileRequest,
 } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 
@@ -37,34 +41,90 @@ export class CustomersService {
   // provider value. `email` stays authoritative to the provider identity —
   // it is not customer-editable in this milestone — and `emailVerifiedAt`
   // is only ever set by AuthController.verify, never here on update.
+  //
+  // Milestone S0D-2B-1 — tenant ownership. A Customer is tenant-owned
+  // (ADR-1), and its tenant comes ONLY from the explicit, server-resolved
+  // TenantContext passed in by the request boundary — never from the
+  // identity, the email, the request, SINGLE_TENANT_ID or the async context.
+  //
+  // TRANSITIONAL: (externalProvider, externalSubject) is still GLOBALLY
+  // unique (tenant-scoping it is S0D-3 / S0G), so one identity can own at
+  // most one Customer across all tenants for now. The resolver therefore
+  // fails closed: an identity whose Customer belongs to a DIFFERENT tenant
+  // is refused, never adopted, transferred or updated. The former single
+  // upsert is split into look-up → ownership check → update-or-create so the
+  // check always runs BEFORE any write.
   async resolveOrCreateFromIdentity(
     identity: CustomerIdentity,
+    tenant: TenantContext,
   ): Promise<CustomerRow> {
-    return this.prisma.customer.upsert({
-      where: {
-        externalProvider_externalSubject: {
-          externalProvider: identity.provider,
-          externalSubject: identity.subject,
-        },
-      },
-      create: {
+    const identityKey = {
+      externalProvider_externalSubject: {
         externalProvider: identity.provider,
         externalSubject: identity.subject,
-        email: identity.email,
-        displayName: identity.name,
-        // Set once, at creation, straight from the provider's own
-        // authoritative claim on the verified token — this is what
-        // recovers the Milestone 4C registration partial-failure window
-        // (Cognito SignUp succeeded but the Customer row never got
-        // created) without any reconciliation job: the customer's first
-        // successful sign-in after verifying with Cognito JIT-creates this
-        // row here, and its emailVerified claim is already true by then,
-        // so the row is never incorrectly stuck unverified. Never touched
-        // on update (below) — a real verification, once recorded, is
-        // never revisited by a later sign-in's claims.
-        emailVerifiedAt: identity.emailVerified ? new Date() : null,
       },
-      update: {
+    };
+
+    const existing = await this.prisma.customer.findUnique({
+      where: identityKey,
+    });
+    if (existing) {
+      return this.resyncOwnedCustomer(existing, identity, tenant);
+    }
+
+    try {
+      return await this.prisma.customer.create({
+        data: {
+          tenantId: tenant.tenantId,
+          externalProvider: identity.provider,
+          externalSubject: identity.subject,
+          email: identity.email,
+          displayName: identity.name,
+          // Set once, at creation, straight from the provider's own
+          // authoritative claim on the verified token — this is what
+          // recovers the Milestone 4C registration partial-failure window
+          // (Cognito SignUp succeeded but the Customer row never got
+          // created) without any reconciliation job: the customer's first
+          // successful sign-in after verifying with Cognito JIT-creates this
+          // row here, and its emailVerified claim is already true by then,
+          // so the row is never incorrectly stuck unverified. Never touched
+          // on update (below) — a real verification, once recorded, is
+          // never revisited by a later sign-in's claims.
+          emailVerifiedAt: identity.emailVerified ? new Date() : null,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        // Lost the first-authentication race: a concurrent request created
+        // this identity's Customer first. Re-read the winner and apply the
+        // SAME ownership check before returning or touching it.
+        const winner = await this.prisma.customer.findUniqueOrThrow({
+          where: identityKey,
+        });
+        return this.resyncOwnedCustomer(winner, identity, tenant);
+      }
+      throw error;
+    }
+  }
+
+  // The existing-Customer half of resolveOrCreateFromIdentity: refuse a
+  // Customer owned by another tenant (with a generic message that reveals
+  // nothing about it), otherwise apply exactly the resync the former
+  // upsert's `update` branch applied.
+  private async resyncOwnedCustomer(
+    customer: CustomerRow,
+    identity: CustomerIdentity,
+    tenant: TenantContext,
+  ): Promise<CustomerRow> {
+    if (customer.tenantId !== tenant.tenantId) {
+      throw new ForbiddenException('This account cannot be used here.');
+    }
+    return this.prisma.customer.update({
+      where: { id: customer.id },
+      data: {
         ...(identity.email ? { email: identity.email } : {}),
       },
     });

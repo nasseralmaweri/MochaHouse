@@ -1,3 +1,10 @@
+import { randomUUID } from 'node:crypto';
+import {
+  createTenantContext,
+  type TenantContext,
+  type TenantPrincipalType,
+} from '@mocha-house/database';
+
 // TEST-ONLY tenant fixtures (Milestone S0C).
 //
 // Tenant B exists so isolation tests can prove "Tenant A cannot reach
@@ -45,4 +52,19 @@ export async function createTestTenantB(client: TenantFixtureClient): Promise<st
 // in a shared development database.
 export async function removeTestTenantB(client: TenantFixtureClient): Promise<void> {
   await client.tenant.deleteMany({ where: { id: TEST_TENANT_B_ID } });
+}
+
+// A server-side TenantContext for a test that calls a service directly
+// (bypassing the HTTP middleware that normally establishes it). The tenant
+// is always passed EXPLICITLY — there is no default tenant. 'anonymous' is
+// the principal type the S0C HTTP resolver produces for every request.
+export function tenantContextFor(
+  tenantId: string,
+  principalType: TenantPrincipalType = 'anonymous',
+): TenantContext {
+  return createTenantContext({
+    tenantId,
+    principalType,
+    requestId: `test-${randomUUID()}`,
+  });
 }

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { tenantContextFor } from '@mocha-house/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -314,6 +315,7 @@ describe('Customer reorder (integration)', () => {
     return checkoutService.checkout(
       checkoutBody(optionId),
       identityFor(identifier),
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
   }
 

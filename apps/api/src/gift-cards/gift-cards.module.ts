@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AuditModule } from '../audit/audit.module';
 import { CustomersModule } from '../customers/customers.module';
+import { TenancyModule } from '../tenancy/tenancy.module';
 import { PaymentModule } from '../payment/payment.module';
 import { RedisModule } from '../redis/redis.module';
 import { GiftCardsAdminService } from './application/gift-cards-admin.service';
@@ -41,6 +42,8 @@ import { GiftCardsController } from './api/gift-cards.controller';
     PrismaModule,
     AuditModule,
     CustomersModule,
+    // Milestone S0D-2B-1 — customer JIT resolution needs the request TenantContext.
+    TenancyModule,
     PaymentModule,
     RedisModule,
   ],

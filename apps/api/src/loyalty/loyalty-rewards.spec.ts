@@ -253,7 +253,12 @@ describe('Loyalty Rewards Catalog (integration)', () => {
   async function makeCustomerWithBalance(balance: number): Promise<string> {
     const sub = `dev:rewards-cust-${randomUUID()}`;
     const customer = await prisma.customer.create({
-      data: { externalProvider: 'dev', externalSubject: sub, email: `${sub}@x.test` },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        externalProvider: 'dev',
+        externalSubject: sub,
+        email: `${sub}@x.test`,
+      },
     });
     customerIds.push(customer.id);
     await prisma.customerLoyaltyAccount.create({

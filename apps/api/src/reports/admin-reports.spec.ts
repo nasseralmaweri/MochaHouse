@@ -99,6 +99,7 @@ describe('Admin reports — orders overview (integration)', () => {
   async function makeCustomer(): Promise<string> {
     const customer = await prisma.customer.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'dev',
         externalSubject: `reports-spec-${randomUUID()}`,
         email: `reports-spec-${randomUUID()}@example.com`,

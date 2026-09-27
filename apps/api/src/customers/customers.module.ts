@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { TenancyModule } from '../tenancy/tenancy.module';
 import { CustomersController } from './api/customers.controller';
 import { CustomerPreferredLocationsController } from './api/customer-preferred-locations.controller';
 import { CustomerPreferencesController } from './api/customer-preferences.controller';
@@ -13,7 +14,10 @@ import { CustomerPreferencesService } from './application/customer-preferences.s
 // create a cycle now that CustomerAuthModule itself imports this module
 // (AuthController's register/verify need CustomersService). PrismaService
 // comes from the @Global PrismaModule.
+// TenancyModule (Milestone S0D-2B-1): these controllers pass the request's
+// TenantContext to CustomersService.resolveOrCreateFromIdentity.
 @Module({
+  imports: [TenancyModule],
   controllers: [
     CustomersController,
     CustomerPreferredLocationsController,

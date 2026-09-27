@@ -2,6 +2,8 @@ import { Controller, Get, Req, UseGuards } from '@nestjs/common';
 import type { CustomerLoyaltySummary } from '@mocha-house/contracts';
 import { CustomerAuthGuard } from '../../customer-auth/infrastructure/customer-auth.guard';
 import type { CustomerAuthenticatedRequest } from '../../customer-auth/infrastructure/customer-identity';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { CustomersService } from '../../customers/application/customers.service';
 import { LoyaltyService } from '../application/loyalty.service';
 import { LoyaltyRewardsService } from '../application/loyalty-rewards.service';
@@ -28,10 +30,12 @@ export class CustomerLoyaltyController {
   @Get()
   async getSummary(
     @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ): Promise<CustomerLoyaltySummary> {
     // CustomerAuthGuard always sets this before a request reaches here.
     const customer = await this.customersService.resolveOrCreateFromIdentity(
       request.customerIdentity!,
+      tenant,
     );
     const balance = await this.loyaltyService.getBalanceForCustomer(
       customer.id,

@@ -92,6 +92,7 @@ describe('NotificationDispatchService (integration)', () => {
   } = {}): Promise<string> {
     const customer = await prisma.customer.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'dev',
         externalSubject: `notification-spec-${randomUUID()}`,
         email: overrides.email ?? `customer-${randomUUID()}@example.com`,

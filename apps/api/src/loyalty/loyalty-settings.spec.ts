@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { tenantContextFor } from '@mocha-house/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -336,7 +337,11 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
     const id = identity(randomUUID());
 
     // Earn at rate 1: $12.00 -> 12 Beans.
-    const first = await checkoutService.checkout(checkoutRequest(), id);
+    const first = await checkoutService.checkout(
+      checkoutRequest(),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(first.subtotal).toBe(1200);
     const customer = await prisma.customer.findUniqueOrThrow({
       where: {
@@ -352,7 +357,11 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
     await putSettings('hq', { earningRatePerDollar: 3 }).expect(200);
 
     // A NEW order earns at the new rate: $12.00 -> 36 Beans.
-    await checkoutService.checkout(checkoutRequest(), id);
+    await checkoutService.checkout(
+      checkoutRequest(),
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
 
     const entries = await prisma.mochaBeanLedgerEntry.findMany({
       where: { loyaltyAccount: { customerId: customer.id }, type: 'EARN' },
