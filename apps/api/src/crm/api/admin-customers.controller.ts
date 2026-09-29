@@ -9,10 +9,12 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { CreateCustomerNoteRequest } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { CrmCustomersService } from '../application/crm-customers.service';
 import { CustomerNotesService } from '../application/customer-notes.service';
 
@@ -67,12 +69,14 @@ export class AdminCustomersController {
     @Param('customerId') customerId: string,
     @Body() body: CreateCustomerNoteRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.notes.addNote(
       customerId,
       body?.body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 }

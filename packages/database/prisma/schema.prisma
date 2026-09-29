@@ -464,11 +464,11 @@ model CustomerPreferredLocation {
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2B-2 — the owning tenant. REQUIRED since
+  // S0D-2B-2: copied from the tenant-validated parent Customer, and the
+  // Location must belong to that same tenant. No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([customerId, locationId])
   @@index([customerId])
@@ -2391,11 +2391,10 @@ model CustomerNote {
   customer           Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   authorInternalUser InternalUser @relation("CustomerNoteAuthor", fields: [authorInternalUserId], references: [id], onDelete: Restrict)
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2B-2 — the owning tenant. REQUIRED since
+  // S0D-2B-2: copied from the tenant-validated parent Customer. No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([customerId, createdAt])
   @@index([authorInternalUserId])

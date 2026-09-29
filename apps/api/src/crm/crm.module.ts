@@ -5,6 +5,7 @@ import { CustomersModule } from '../customers/customers.module';
 import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { OrdersModule } from '../orders/orders.module';
 import { GiftCardsModule } from '../gift-cards/gift-cards.module';
+import { TenancyModule } from '../tenancy/tenancy.module';
 import { AdminCustomersController } from './api/admin-customers.controller';
 import { CrmCustomersService } from './application/crm-customers.service';
 import { CustomerNotesService } from './application/customer-notes.service';
@@ -20,6 +21,8 @@ import { CustomerNotesService } from './application/customer-notes.service';
 // InternalAuditService from AuditModule (the note + its audit event commit
 // in one transaction). The four domain modules are imported for their
 // exported, customerId-scoped, read-only services only.
+// TenancyModule (Milestone S0D-2B-2): adding a note passes the request's
+// TenantContext to CustomerNotesService.addNote.
 @Module({
   imports: [
     PrismaModule,
@@ -28,6 +31,7 @@ import { CustomerNotesService } from './application/customer-notes.service';
     LoyaltyModule,
     OrdersModule,
     GiftCardsModule,
+    TenancyModule,
   ],
   controllers: [AdminCustomersController],
   providers: [CrmCustomersService, CustomerNotesService],

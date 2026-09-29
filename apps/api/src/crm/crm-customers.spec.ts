@@ -464,7 +464,11 @@ describe('Admin CRM customers (integration)', () => {
     });
 
     await prisma.customerPreferredLocation.create({
-      data: { customerId: c, locationId: location.id },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        customerId: c,
+        locationId: location.id,
+      },
     });
 
     const body = (await detailReq(`viewer-${suffix}`, c).expect(200))

@@ -23,4 +23,7 @@ export const TENANT_ID_REQUIRED_MODELS: readonly string[] = [
   'OperationsTask',
   // S0D-2B-1 — customer core (JIT-created under the request TenantContext).
   'Customer',
+  // S0D-2B-2 — customer children (tenant inherited from the parent Customer).
+  'CustomerPreferredLocation',
+  'CustomerNote',
 ];

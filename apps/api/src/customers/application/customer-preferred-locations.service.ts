@@ -4,8 +4,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { LocationSummary } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 
 type LocationRow = Prisma.LocationGetPayload<Record<string, never>>;
 
@@ -43,10 +44,23 @@ export class CustomerPreferredLocationsService {
     return rows.map((row) => toLocationSummary(row.location));
   }
 
+  // Milestone S0D-2B-2 — tenant ownership. Takes the server-resolved
+  // Customer row (not a bare id) plus the request's explicit TenantContext.
+  // The row's tenant is copied from that Customer after re-asserting it
+  // belongs to the request's tenant, and the Location must belong to the
+  // SAME tenant — so a join row can never span two tenants. The
+  // client-supplied locationId is only a lookup key.
   async addForCustomer(
-    customerId: string,
+    customer: { id: string; tenantId: string },
     locationId: string,
+    tenant: TenantContext,
   ): Promise<LocationSummary[]> {
+    const tenantId = requireTenantOwnership(
+      customer,
+      tenant,
+      'Customer not found.',
+    );
+
     if (typeof locationId !== 'string' || locationId.trim().length === 0) {
       throw new BadRequestException('locationId is required.');
     }
@@ -55,25 +69,29 @@ export class CustomerPreferredLocationsService {
       where: { id: locationId },
     });
 
-    // Eligibility to be *saved* = the location exists and is an active
-    // Mocha House location. Digital ordering being temporarily disabled
-    // does NOT block saving — a customer may still prefer such a location;
-    // orderability is re-checked live when they actually start an order.
-    // A missing id and an inactive location collapse to the same response:
-    // neither can be newly preferred.
-    if (!location || !location.isActive) {
+    // Eligibility to be *saved* = the location exists, is an active Mocha
+    // House location, and belongs to the customer's tenant. Digital
+    // ordering being temporarily disabled does NOT block saving — a
+    // customer may still prefer such a location; orderability is
+    // re-checked live when they actually start an order. A missing id, an
+    // inactive location and another tenant's location all collapse to the
+    // same response, so this can never confirm another tenant's location
+    // exists.
+    if (!location || !location.isActive || location.tenantId !== tenantId) {
       throw new NotFoundException('That location is not available to save.');
     }
 
     // Idempotent: a repeat add is a no-op on the existing row, never a
     // duplicate or a unique-constraint error.
     await this.prisma.customerPreferredLocation.upsert({
-      where: { customerId_locationId: { customerId, locationId } },
-      create: { customerId, locationId },
+      where: {
+        customerId_locationId: { customerId: customer.id, locationId },
+      },
+      create: { tenantId, customerId: customer.id, locationId },
       update: {},
     });
 
-    return this.listForCustomer(customerId);
+    return this.listForCustomer(customer.id);
   }
 
   async removeForCustomer(

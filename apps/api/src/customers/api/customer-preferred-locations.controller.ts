@@ -56,8 +56,9 @@ export class CustomerPreferredLocationsController {
     const locationId =
       typeof body?.locationId === 'string' ? body.locationId.trim() : '';
     return this.preferredLocationsService.addForCustomer(
-      customer.id,
+      customer,
       locationId,
+      tenant,
     );
   }
 
