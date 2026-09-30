@@ -9,11 +9,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { AdvanceOrderStatusRequest } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { AdminOrdersService } from '../application/admin-orders.service';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 
 // Protected by InternalAuthGuard (authentication + ACTIVE lifecycle) then
 // PermissionGuard (Milestone 5B — required permission + valid scope type).
@@ -58,12 +60,14 @@ export class AdminOrdersController {
     @Param('orderId') orderId: string,
     @Body() body: AdvanceOrderStatusRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.adminOrdersService.advance(
       orderId,
       body.locationId,
       body.expectedStatus,
       request.authorization!,
+      tenant,
     );
   }
 }

@@ -11,7 +11,7 @@ import type {
 } from '@mocha-house/contracts';
 import { nextOrderStatus } from '@mocha-house/domain';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import {
   toOrderGiftCardSummary,
   toOrderLineSummary,
@@ -20,6 +20,7 @@ import {
   toOrderPromotionSummary,
 } from '../infrastructure/order-line-mapper';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
+import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 
 type OrderWithLines = Prisma.OrderGetPayload<{ include: { lines: true } }>;
 
@@ -131,11 +132,17 @@ export class AdminOrdersService {
   // shape capable of asking for an invalid transition. `expectedStatus` is
   // optimistic-concurrency (like an If-Match), not a target: it's how a
   // retried/duplicate click is told apart from a genuine conflict.
+  //
+  // Milestone S0D-2C-1 — `tenant` is the request's explicit TenantContext.
+  // The order must belong to it (an order in another tenant is reported
+  // exactly like a missing one), and the status-history row and any
+  // outbox event written here copy the order's own tenant.
   async advance(
     orderId: string,
     locationId: string,
     expectedStatus: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<{ orderId: string; status: OrderStatus; advanced: boolean }> {
     if (typeof locationId !== 'string' || locationId.trim().length === 0) {
       throw new BadRequestException('locationId is required.');
@@ -152,7 +159,7 @@ export class AdminOrdersService {
 
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      select: { id: true, locationId: true, status: true },
+      select: { id: true, locationId: true, status: true, tenantId: true },
     });
 
     // ...then the persisted cross-check: the order must actually belong to
@@ -161,6 +168,12 @@ export class AdminOrdersService {
     if (!order || order.locationId !== locationId) {
       throw new NotFoundException('Order not found for this location.');
     }
+    // ...and to the request's tenant (same response as a missing order).
+    const tenantId = requireTenantOwnership(
+      order,
+      tenant,
+      'Order not found for this location.',
+    );
 
     if (order.status !== expectedStatus) {
       // The caller's view is stale. If the order is sitting exactly where
@@ -196,7 +209,7 @@ export class AdminOrdersService {
       }
 
       await tx.orderStatusHistory.create({
-        data: { orderId, status: target },
+        data: { tenantId, orderId, status: target },
       });
 
       // Milestone 8H — only READY triggers a notification (RECEIVED already
@@ -209,6 +222,7 @@ export class AdminOrdersService {
       if (target === 'READY') {
         await tx.outboxEvent.create({
           data: {
+            tenantId,
             aggregateType: 'Order',
             aggregateId: orderId,
             eventType: 'order.status.ready',

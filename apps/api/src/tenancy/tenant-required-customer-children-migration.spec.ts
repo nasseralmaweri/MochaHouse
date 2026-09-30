@@ -314,10 +314,14 @@ describe('S0D-2B-2 customer children NOT NULL migration (scratch databases)', ()
         nullable: REQUIRED_AFTER.has(table) ? 'NO' : 'YES',
       });
     }
-    // 19 required / 44 still nullable — and the testing package agrees.
+    // 19 required / 44 still nullable at this point in the conversion.
     expect(tenantTables.filter((t) => columns[t] === 'NO')).toHaveLength(19);
     expect(tenantTables.filter((t) => columns[t] === 'YES')).toHaveLength(44);
-    expect(new Set(TENANT_ID_REQUIRED_MODELS)).toEqual(REQUIRED_AFTER);
+    // Every model this slice made required stays in the testing package's
+    // running list (later slices only ever extend it).
+    expect(TENANT_ID_REQUIRED_MODELS).toEqual(
+      expect.arrayContaining([...REQUIRED_AFTER]),
+    );
 
     // No default, and no constraint / index / trigger / enum change.
     expect(await structure(scratch.url)).toEqual(structureBefore);

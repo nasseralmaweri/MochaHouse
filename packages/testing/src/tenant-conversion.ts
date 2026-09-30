@@ -26,4 +26,10 @@ export const TENANT_ID_REQUIRED_MODELS: readonly string[] = [
   // S0D-2B-2 — customer children (tenant inherited from the parent Customer).
   'CustomerPreferredLocation',
   'CustomerNote',
+  // S0D-2C-1 — order & payment core (tenant from the validated Location /
+  // the request TenantContext, inherited by the Order and its children).
+  'PaymentAttempt',
+  'Order',
+  'OrderLine',
+  'OrderStatusHistory',
 ];

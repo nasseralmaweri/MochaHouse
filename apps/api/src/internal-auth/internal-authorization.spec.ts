@@ -281,6 +281,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     // A published, active order in locA.
     const pa = await prisma.paymentAttempt.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         idempotencyKey: `authz-matrix-${suffix}`,
         provider: 'fake',
         status: 'SUCCEEDED',
@@ -292,6 +293,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     paymentAttemptIdA = pa.id;
     const order = await prisma.order.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         orderNumber: `AZ-${suffix.slice(0, 8)}`,
         accessToken: `azt-${suffix}`,
         locationId: locA,
@@ -301,7 +303,9 @@ describe('Internal admin authorization matrix (integration)', () => {
         currency: 'USD',
         subtotal: 500,
         status: 'RECEIVED',
-        statusHistory: { create: { status: 'RECEIVED' } },
+        statusHistory: {
+          create: { tenantId: TENANT_1_MOCHA_HOUSE_ID, status: 'RECEIVED' },
+        },
       },
     });
     orderIdA = order.id;

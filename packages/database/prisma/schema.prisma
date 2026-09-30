@@ -562,11 +562,12 @@ model PaymentAttempt {
   order            Order?
   giftCardPurchase GiftCardPurchase?
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2C-1 — the owning tenant. REQUIRED since
+  // S0D-2C-1: a checkout attempt takes the tenant of its server-validated
+  // Location; a gift-card purchase attempt takes the request's explicit
+  // TenantContext. No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([status])
   @@index([reconciliationRequired])
@@ -654,11 +655,11 @@ model Order {
   giftCardRedemption      OrderGiftCardRedemption?
   giftCardTransactions    GiftCardTransaction[]
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2C-1 — the owning tenant. REQUIRED since
+  // S0D-2C-1: copied from its PaymentAttempt, whose tenant is that of the
+  // server-validated Location. No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([locationId])
   @@index([customerId])
@@ -686,11 +687,10 @@ model OrderLine {
 
   createdAt DateTime @default(now())
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2C-1 — the owning tenant. REQUIRED since
+  // S0D-2C-1: copied from its parent Order. No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([orderId])
   @@index([tenantId])
@@ -708,11 +708,10 @@ model OrderStatusHistory {
   note      String?
   createdAt DateTime    @default(now())
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2C-1 — the owning tenant. REQUIRED since
+  // S0D-2C-1: copied from its parent Order. No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([orderId])
   @@index([tenantId])

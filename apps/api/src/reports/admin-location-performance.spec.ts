@@ -139,6 +139,7 @@ describe('Admin reports — location performance (integration)', () => {
   }): Promise<string> {
     const attempt = await prisma.paymentAttempt.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         idempotencyKey: `location-perf-spec-${randomUUID()}`,
         provider: 'fake',
         locationId: options.locationId,
@@ -151,6 +152,7 @@ describe('Admin reports — location performance (integration)', () => {
 
     const order = await prisma.order.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         orderNumber: `LP-${randomUUID().slice(0, 8)}`,
         accessToken: randomUUID(),
         locationId: options.locationId,

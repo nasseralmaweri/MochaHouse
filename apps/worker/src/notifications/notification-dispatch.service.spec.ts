@@ -110,6 +110,7 @@ describe('NotificationDispatchService (integration)', () => {
   }): Promise<{ orderId: string; orderNumber: string }> {
     const paymentAttempt = await prisma.paymentAttempt.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         idempotencyKey: `notification-spec-${randomUUID()}`,
         provider: 'fake',
         status: 'SUCCEEDED',
@@ -123,6 +124,7 @@ describe('NotificationDispatchService (integration)', () => {
     const orderNumber = `NSPEC-${randomUUID().slice(0, 8)}`;
     const order = await prisma.order.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         orderNumber,
         accessToken: randomUUID(),
         locationId: overrides.locationId,

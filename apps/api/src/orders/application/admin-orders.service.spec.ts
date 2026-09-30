@@ -49,6 +49,8 @@ describe('AdminOrdersService (integration)', () => {
   let prisma: PrismaService;
   let checkoutService: CheckoutService;
   let adminOrdersService: AdminOrdersService;
+  // Milestone S0D-2C-1 — advance() takes the request's explicit TenantContext.
+  const t1 = tenantContextFor(TENANT_1_MOCHA_HOUSE_ID);
   let locationId: string;
   let otherLocationId: string;
   let productId: string;
@@ -283,6 +285,7 @@ describe('AdminOrdersService (integration)', () => {
         locationId,
         'RECEIVED',
         scopedElsewhere,
+        t1,
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
@@ -302,6 +305,7 @@ describe('AdminOrdersService (integration)', () => {
       locationId,
       'RECEIVED',
       scopedHere,
+      t1,
     );
     expect(advanced.advanced).toBe(true);
   });
@@ -322,6 +326,7 @@ describe('AdminOrdersService (integration)', () => {
         locationId,
         expected,
         corporate,
+        t1,
       );
       expect(result.advanced).toBe(true);
       expect(result.status).toBe(expectedNext);
@@ -355,6 +360,7 @@ describe('AdminOrdersService (integration)', () => {
       locationId,
       'RECEIVED',
       corporate,
+      t1,
     );
     expect(
       await prisma.outboxEvent.count({
@@ -371,6 +377,7 @@ describe('AdminOrdersService (integration)', () => {
       locationId,
       'ACCEPTED',
       corporate,
+      t1,
     );
     expect(
       await prisma.outboxEvent.count({
@@ -387,6 +394,7 @@ describe('AdminOrdersService (integration)', () => {
       locationId,
       'PREPARING',
       corporate,
+      t1,
     );
     const event = await prisma.outboxEvent.findFirst({
       where: {
@@ -408,6 +416,7 @@ describe('AdminOrdersService (integration)', () => {
       locationId,
       'READY',
       corporate,
+      t1,
     );
     // COMPLETED must not create a second READY event or any event of its own.
     expect(
@@ -429,6 +438,7 @@ describe('AdminOrdersService (integration)', () => {
         locationId,
         expected,
         corporate,
+        t1,
       );
     }
 
@@ -438,6 +448,7 @@ describe('AdminOrdersService (integration)', () => {
         locationId,
         'COMPLETED',
         corporate,
+        t1,
       ),
     ).rejects.toBeInstanceOf(ConflictException);
   });
@@ -450,6 +461,7 @@ describe('AdminOrdersService (integration)', () => {
       locationId,
       'RECEIVED',
       corporate,
+      t1,
     );
     expect(first.advanced).toBe(true);
 
@@ -460,6 +472,7 @@ describe('AdminOrdersService (integration)', () => {
       locationId,
       'RECEIVED',
       corporate,
+      t1,
     );
     expect(retry.advanced).toBe(false);
     expect(retry.status).toBe('ACCEPTED');
@@ -477,12 +490,14 @@ describe('AdminOrdersService (integration)', () => {
       locationId,
       'RECEIVED',
       corporate,
+      t1,
     );
     await adminOrdersService.advance(
       confirmation.orderId,
       locationId,
       'ACCEPTED',
       corporate,
+      t1,
     );
     // Order is now PREPARING. A caller still expecting RECEIVED (two steps
     // behind) is a real conflict, not a retry of the immediately-prior step.
@@ -492,6 +507,7 @@ describe('AdminOrdersService (integration)', () => {
         locationId,
         'RECEIVED',
         corporate,
+        t1,
       ),
     ).rejects.toBeInstanceOf(ConflictException);
   });
@@ -505,12 +521,14 @@ describe('AdminOrdersService (integration)', () => {
         locationId,
         'RECEIVED',
         corporate,
+        t1,
       ),
       adminOrdersService.advance(
         confirmation.orderId,
         locationId,
         'RECEIVED',
         corporate,
+        t1,
       ),
     ]);
 
@@ -535,6 +553,7 @@ describe('AdminOrdersService (integration)', () => {
         locationId,
         expected,
         corporate,
+        t1,
       );
     }
 
@@ -561,6 +580,7 @@ describe('AdminOrdersService (integration)', () => {
       locationId,
       'RECEIVED',
       corporate,
+      t1,
     );
 
     status = await checkoutService.getStatus(

@@ -22,6 +22,7 @@ import { priceCart } from '@mocha-house/domain';
 import type { PaymentProvider } from '@mocha-house/integrations';
 import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 import { LocationsService } from '../../locations/application/locations.service';
 import { CustomersService } from '../../customers/application/customers.service';
 import { LoyaltyService } from '../../loyalty/application/loyalty.service';
@@ -105,9 +106,14 @@ export class CheckoutService {
   // has already been verified by the customer-auth boundary; this method
   // never verifies a token itself.
   //
-  // `tenant` (Milestone S0D-2B-1) is the request's server-resolved
-  // TenantContext. It is used ONLY to JIT-resolve the signed-in Customer —
-  // it changes nothing about pricing, payment, idempotency or the Order.
+  // `tenant` is the request's server-resolved TenantContext. It
+  // JIT-resolves the signed-in Customer (Milestone S0D-2B-1) and, since
+  // Milestone S0D-2C-1, establishes who owns this checkout: the Location
+  // must belong to it (checked before pricing, before any PaymentAttempt
+  // exists and before any charge), the PaymentAttempt copies that
+  // Location's tenant, and the Order, its lines, its first status-history
+  // row and its outbox event copy the attempt's. An existing attempt for
+  // this idempotency key is only ever replayed for its own tenant.
   async checkout(
     request: CheckoutRequest,
     customerIdentity: CustomerIdentity | undefined,
@@ -120,7 +126,7 @@ export class CheckoutService {
     });
 
     if (existingAttempt) {
-      return this.replay(existingAttempt);
+      return this.replayOwned(existingAttempt, tenant);
     }
 
     // Resolved once, up front, alongside the other pre-payment steps —
@@ -129,6 +135,21 @@ export class CheckoutService {
     // whichever Customer (if any) was authenticated at the moment payment
     // was attempted, not whatever happens to be true later.
     const customerId = await this.resolveCustomerId(customerIdentity, tenant);
+
+    // Milestone S0D-2C-1 — the Location must belong to the request's
+    // tenant. Another tenant's Location is reported exactly like a missing
+    // or unorderable one (the same 404 findMenu gives below), so checkout
+    // can never confirm it exists. This is the tenant the whole checkout
+    // (PaymentAttempt, Order and its children) is written under.
+    const location = await this.prisma.location.findUnique({
+      where: { id: request.locationId },
+      select: { tenantId: true },
+    });
+    const tenantId = requireTenantOwnership(
+      location,
+      tenant,
+      'Location or menu not found.',
+    );
 
     const menu = await this.locationsService.findMenu(request.locationId);
     if (!menu) {
@@ -227,13 +248,16 @@ export class CheckoutService {
       request.locationId,
       chargeAmount,
       priced.currency,
+      tenantId,
     );
 
     if (!created.wasCreatedByThisRequest) {
       // Another concurrent request with the same idempotency key won the
       // race to create the attempt row — never charge twice for one key,
-      // fall back to whatever that request's outcome resolves to.
-      return this.replay(created.attempt);
+      // fall back to whatever that request's outcome resolves to (for this
+      // tenant only — the winner is ownership-checked exactly like an
+      // attempt found up front).
+      return this.replayOwned(created.attempt, tenant);
     }
 
     const attempt = created.attempt;
@@ -646,6 +670,24 @@ export class CheckoutService {
     }
   }
 
+  // Milestone S0D-2C-1 — idempotency keys are still GLOBALLY unique
+  // (tenant-scoping them is S0D-3), so a key can name another tenant's
+  // attempt. That attempt is refused BEFORE anything about it is revealed —
+  // its status, its failure reason, and above all its Order confirmation
+  // (which carries the order's accessToken and guest details) — with one
+  // generic conflict that says nothing about what the key belongs to.
+  private async replayOwned(
+    attempt: PaymentAttemptRow,
+    tenant: TenantContext,
+  ): Promise<OrderConfirmation> {
+    if (attempt.tenantId !== tenant.tenantId) {
+      throw new ConflictException(
+        'This idempotency key cannot be used. Start a new checkout.',
+      );
+    }
+    return this.replay(attempt);
+  }
+
   private async replay(attempt: PaymentAttemptRow): Promise<OrderConfirmation> {
     if (attempt.status === 'PENDING') {
       throw new ConflictException(
@@ -719,6 +761,7 @@ export class CheckoutService {
     locationId: string,
     amount: number,
     currency: string,
+    tenantId: string,
   ): Promise<
     | { wasCreatedByThisRequest: true; attempt: PaymentAttemptRow }
     | { wasCreatedByThisRequest: false; attempt: PaymentAttemptRow }
@@ -726,6 +769,7 @@ export class CheckoutService {
     try {
       const attempt = await this.prisma.paymentAttempt.create({
         data: {
+          tenantId,
           idempotencyKey,
           provider: 'fake',
           locationId,
@@ -760,6 +804,10 @@ export class CheckoutService {
     giftCardPlan: GiftCardTenderPlan | null,
   ): Promise<OrderWithRelations> {
     const paymentAttemptId = attempt.id;
+    // Milestone S0D-2C-1 — the attempt was written under the tenant of the
+    // server-validated Location; the Order and everything created with it
+    // inherit that ownership.
+    const tenantId = attempt.tenantId;
     return this.prisma.$transaction(async (tx) => {
       // Revalidate against the current catalog state — payment succeeding
       // does not itself guarantee nothing changed in the window since the
@@ -857,6 +905,7 @@ export class CheckoutService {
 
       const order = await tx.order.create({
         data: {
+          tenantId,
           orderNumber,
           accessToken: generateOrderAccessToken(),
           locationId: request.locationId,
@@ -873,6 +922,7 @@ export class CheckoutService {
           status: 'RECEIVED',
           lines: {
             create: priced.lines.map((line) => ({
+              tenantId,
               productId: line.productId,
               productName: line.productName,
               unitPrice: line.unitPrice,
@@ -883,7 +933,7 @@ export class CheckoutService {
             })),
           },
           statusHistory: {
-            create: { status: 'RECEIVED' },
+            create: { tenantId, status: 'RECEIVED' },
           },
         },
         include: { location: true },
@@ -891,9 +941,11 @@ export class CheckoutService {
 
       // Genuine transactional outbox: committed atomically with the order
       // above. Nothing reads this table yet — that's the Store Queue
-      // consumer slice.
+      // consumer slice. Milestone S0D-2C-1 — the event carries its Order's
+      // tenant (OutboxEvent.tenantId itself stays nullable until S0D-2C-2).
       await tx.outboxEvent.create({
         data: {
+          tenantId: order.tenantId,
           aggregateType: 'Order',
           aggregateId: order.id,
           eventType: 'order.checkout.completed',

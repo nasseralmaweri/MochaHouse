@@ -408,6 +408,7 @@ describe('Admin CRM customers (integration)', () => {
     // A paid order.
     const attempt = await prisma.paymentAttempt.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         idempotencyKey: `crm-spec-${randomUUID()}`,
         provider: 'fake',
         locationId: location.id,
@@ -419,6 +420,7 @@ describe('Admin CRM customers (integration)', () => {
     paymentAttemptIds.push(attempt.id);
     const order = await prisma.order.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         orderNumber: `CRM-${randomUUID().slice(0, 8)}`,
         accessToken: randomUUID(),
         locationId: location.id,
@@ -435,6 +437,7 @@ describe('Admin CRM customers (integration)', () => {
     // A gift card purchased by this customer.
     const gcAttempt = await prisma.paymentAttempt.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         idempotencyKey: `crm-spec-gc-${randomUUID()}`,
         provider: 'fake',
         amount: 2500,

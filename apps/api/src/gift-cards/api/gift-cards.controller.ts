@@ -67,8 +67,13 @@ export class GiftCardsController {
   purchase(
     @Body() body: PurchaseGiftCardRequest,
     @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.purchaseService.purchase(body, request.customerIdentity);
+    return this.purchaseService.purchase(
+      body,
+      request.customerIdentity,
+      tenant,
+    );
   }
 
   @UseGuards(GiftCardPublicThrottleGuard)

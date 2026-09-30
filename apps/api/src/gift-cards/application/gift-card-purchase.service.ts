@@ -110,9 +110,12 @@ export class GiftCardPurchaseService implements OnModuleInit {
   // --- STEP 1: establish the purchase intent (no charge, no issue) -----
 
   //
-  // `tenant` (Milestone S0D-2B-1) is the request's server-resolved
-  // TenantContext, used ONLY to JIT-resolve a signed-in buyer's Customer —
-  // it changes nothing about the purchase, payment or issuance.
+  // `tenant` is the request's server-resolved TenantContext. It JIT-resolves
+  // a signed-in buyer's Customer (Milestone S0D-2B-1) and, since Milestone
+  // S0D-2C-1, owns the PaymentAttempt created here (a gift-card purchase
+  // has no Location, so the explicit TenantContext is its only source). An
+  // attempt that already exists for this key is only ever returned — or
+  // built upon — for its own tenant.
   async createIntent(
     request: CreateGiftCardPurchaseIntentRequest,
     customerIdentity: CustomerIdentity | undefined,
@@ -129,6 +132,9 @@ export class GiftCardPurchaseService implements OnModuleInit {
       where: { idempotencyKey },
       include: { giftCardPurchase: true },
     });
+    if (existing) {
+      this.assertAttemptOwned(existing, tenant);
+    }
     if (existing?.giftCardPurchase) {
       return this.intentResponse(existing.giftCardPurchase, null);
     }
@@ -149,6 +155,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
     try {
       attempt = await this.prisma.paymentAttempt.create({
         data: {
+          tenantId: tenant.tenantId,
           idempotencyKey,
           provider: 'fake',
           locationId: null,
@@ -165,6 +172,9 @@ export class GiftCardPurchaseService implements OnModuleInit {
         where: { idempotencyKey },
         include: { giftCardPurchase: true },
       });
+      // The race winner gets the same ownership check as an attempt found
+      // up front — never returned, and never built upon, for another tenant.
+      this.assertAttemptOwned(raced, tenant);
       if (raced.giftCardPurchase) {
         return this.intentResponse(raced.giftCardPurchase, null);
       }
@@ -200,6 +210,21 @@ export class GiftCardPurchaseService implements OnModuleInit {
     }
   }
 
+  // Milestone S0D-2C-1 — idempotency keys are still GLOBALLY unique
+  // (tenant-scoping them is S0D-3), so a key can name another tenant's
+  // attempt. It is refused before anything about it is returned, with one
+  // generic conflict that says nothing about what the key belongs to.
+  private assertAttemptOwned(
+    attempt: { tenantId: string },
+    tenant: TenantContext,
+  ): void {
+    if (attempt.tenantId !== tenant.tenantId) {
+      throw new ConflictException(
+        'This idempotency key cannot be used. Start a new purchase.',
+      );
+    }
+  }
+
   private intentResponse(
     purchase: {
       id: string;
@@ -222,9 +247,15 @@ export class GiftCardPurchaseService implements OnModuleInit {
 
   // --- STEP 2: charge + issue, or replay -------------------------------
 
+  //
+  // Milestone S0D-2C-1 — `tenant` is the request's explicit TenantContext.
+  // The attempt found by the client's key must belong to it, checked before
+  // anything is authorised, charged, issued or revealed; another tenant's
+  // attempt is reported exactly like a key with no purchase at all.
   async purchase(
     request: PurchaseGiftCardRequest,
-    customerIdentity?: CustomerIdentity,
+    customerIdentity: CustomerIdentity | undefined,
+    tenant: TenantContext,
   ): Promise<PurchaseGiftCardResponse> {
     const idempotencyKey = this.validateIdempotencyKey(request?.idempotencyKey);
     const suppliedCredential =
@@ -240,7 +271,11 @@ export class GiftCardPurchaseService implements OnModuleInit {
         },
       },
     });
-    if (!attempt || !attempt.giftCardPurchase) {
+    if (
+      !attempt ||
+      !attempt.giftCardPurchase ||
+      attempt.tenantId !== tenant.tenantId
+    ) {
       throw new ConflictException(
         'No gift-card purchase was started for this key. Start a new purchase.',
       );

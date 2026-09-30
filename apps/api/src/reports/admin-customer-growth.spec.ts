@@ -129,6 +129,7 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
   }): Promise<string> {
     const attempt = await prisma.paymentAttempt.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         idempotencyKey: `customer-growth-spec-${randomUUID()}`,
         provider: 'fake',
         locationId: options.locationId,
@@ -141,6 +142,7 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
 
     const order = await prisma.order.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         orderNumber: `CG-${randomUUID().slice(0, 8)}`,
         accessToken: randomUUID(),
         locationId: options.locationId,
