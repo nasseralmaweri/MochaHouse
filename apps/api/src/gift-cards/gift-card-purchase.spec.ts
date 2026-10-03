@@ -1039,6 +1039,7 @@ describe('Customer gift-card purchase (integration)', () => {
     trackedOrderIds.push(order.id);
     const gcPurchase = await prisma.giftCardPurchase.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         paymentAttemptId: gcAttempt.id,
         amountMinorUnits: 100,
         currency: 'USD',
@@ -1050,6 +1051,7 @@ describe('Customer gift-card purchase (integration)', () => {
     await expect(
       prisma.giftCardPurchase.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           paymentAttemptId: orderAttempt.id,
           amountMinorUnits: 100,
           currency: 'USD',

@@ -151,7 +151,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
     const credential =
       customerId === null ? generateRecoveryCredential() : null;
 
-    let attempt: { id: string };
+    let attempt: { id: string; tenantId: string };
     try {
       attempt = await this.prisma.paymentAttempt.create({
         data: {
@@ -162,7 +162,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
           amount: amountMinorUnits,
           currency,
         },
-        select: { id: true },
+        select: { id: true, tenantId: true },
       });
     } catch (error) {
       if (!isUniqueConstraintViolation(error)) {
@@ -178,13 +178,17 @@ export class GiftCardPurchaseService implements OnModuleInit {
       if (raced.giftCardPurchase) {
         return this.intentResponse(raced.giftCardPurchase, null);
       }
-      attempt = { id: raced.id };
+      attempt = { id: raced.id, tenantId: raced.tenantId };
     }
 
     try {
       const purchase = await this.prisma.giftCardPurchase.create({
         data: {
           paymentAttemptId: attempt.id,
+          // Milestone S0D-2C-1B — copied from the validated PaymentAttempt
+          // above, the one authoritative ownership chain. Never a second,
+          // independently-resolved TenantContext, and never client input.
+          tenantId: attempt.tenantId,
           amountMinorUnits,
           currency,
           customerId,

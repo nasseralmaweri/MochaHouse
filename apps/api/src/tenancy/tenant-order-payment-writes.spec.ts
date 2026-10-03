@@ -475,14 +475,37 @@ describe('S0D-2C-1 order & payment tenant ownership (integration)', () => {
       purchaserName: 'S0D2C1 Buyer',
     });
 
-    it('an intent attempt persists the explicit TenantContext', async () => {
+    it('an intent attempt persists the explicit TenantContext, and the GiftCardPurchase copies it from the PaymentAttempt', async () => {
       const k1 = newGiftCardKey();
       await purchases.createIntent(intent(k1), undefined, tenantOne);
-      expect((await attemptByKey(k1))?.tenantId).toBe(TENANT_1_MOCHA_HOUSE_ID);
+      const attempt1 = await attemptByKey(k1);
+      expect(attempt1?.tenantId).toBe(TENANT_1_MOCHA_HOUSE_ID);
+      // Milestone S0D-2C-1B — the one authoritative chain: GiftCardPurchase
+      // always equals its own PaymentAttempt's tenant, not just "Tenant #1".
+      expect(attempt1?.giftCardPurchase?.tenantId).toBe(attempt1?.tenantId);
 
       const kb = newGiftCardKey();
       await purchases.createIntent(intent(kb), undefined, tenantB);
-      expect((await attemptByKey(kb))?.tenantId).toBe(TEST_TENANT_B_ID);
+      const attemptB = await attemptByKey(kb);
+      expect(attemptB?.tenantId).toBe(TEST_TENANT_B_ID);
+      expect(attemptB?.giftCardPurchase?.tenantId).toBe(attemptB?.tenantId);
+    });
+
+    it('a client-supplied tenantId on the intent is ignored — the GiftCardPurchase still inherits the validated PaymentAttempt', async () => {
+      // CreateGiftCardPurchaseIntentRequest has no tenantId field at all —
+      // this proves a client-supplied one is simply ignored (TypeScript
+      // can't even express smuggling it through the real contract type).
+      const k1 = newGiftCardKey();
+      await purchases.createIntent(
+        { ...intent(k1), tenantId: TEST_TENANT_B_ID } as never,
+        undefined,
+        tenantOne,
+      );
+      const attempt = await attemptByKey(k1);
+      expect(attempt?.tenantId).toBe(TENANT_1_MOCHA_HOUSE_ID);
+      expect(attempt?.giftCardPurchase?.tenantId).toBe(
+        TENANT_1_MOCHA_HOUSE_ID,
+      );
     });
 
     it("refuses to replay another tenant's intent (normal and race paths), revealing and creating nothing", async () => {

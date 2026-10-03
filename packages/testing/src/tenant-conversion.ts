@@ -41,4 +41,8 @@ export const TENANT_ID_REQUIRED_MODELS: readonly string[] = [
   'JobApplicationNote',
   'FranchiseInquiry',
   'FranchiseInquiryNote',
+  // S0D-2C-1B — payment core closure: GiftCardPurchase (PaymentAttempt's
+  // other child, copied from its validated PaymentAttempt — the same
+  // authoritative chain Order already uses).
+  'GiftCardPurchase',
 ];

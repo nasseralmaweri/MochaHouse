@@ -456,6 +456,7 @@ describe('Admin CRM customers (integration)', () => {
     });
     await prisma.giftCardPurchase.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         paymentAttemptId: gcAttempt.id,
         giftCardId: giftCard.id,
         customerId: c,
