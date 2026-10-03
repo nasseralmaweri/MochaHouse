@@ -7,9 +7,11 @@ import {
   JOB_APPLICATION_NOTE_MAX_LENGTH,
   type JobApplicationNote,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
+import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 
 // Milestone 8C — internal applicant notes. APPEND-ONLY: list + add, no edit,
 // no delete. `applicants.view` reads; `applicants.manage` adds. Both are
@@ -38,9 +40,12 @@ export class JobApplicationNotesService {
     rawBody: unknown,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<JobApplicationNote[]> {
     authorization.assertCorporate('applicants.manage');
-    await this.assertApplicationExists(applicationId);
+    // Milestone S0D-2D — ownership before validating/writing the note, so a
+    // Tenant B application reports the same 404 a missing one would.
+    const tenantId = await this.assertApplicationOwned(applicationId, tenant);
 
     const body = this.validateBody(rawBody);
 
@@ -50,6 +55,9 @@ export class JobApplicationNotesService {
           jobApplicationId: applicationId,
           authorInternalUserId: actorInternalUserId,
           body,
+          // Milestone S0D-2D — copied from the validated parent
+          // application, never from client input.
+          tenantId,
         },
         select: { id: true },
       });
@@ -85,6 +93,20 @@ export class JobApplicationNotesService {
     if (!found) {
       throw new NotFoundException('Application not found.');
     }
+  }
+
+  // Milestone S0D-2D — the write-path variant of assertApplicationExists:
+  // returns the parent's own tenantId so the note copies ownership from it,
+  // and reports a foreign application exactly like a missing one.
+  private async assertApplicationOwned(
+    applicationId: string,
+    tenant: TenantContext,
+  ): Promise<string> {
+    const found = await this.prisma.jobApplication.findUnique({
+      where: { id: applicationId },
+      select: { id: true, tenantId: true },
+    });
+    return requireTenantOwnership(found, tenant, 'Application not found.');
   }
 
   async load(applicationId: string): Promise<JobApplicationNote[]> {

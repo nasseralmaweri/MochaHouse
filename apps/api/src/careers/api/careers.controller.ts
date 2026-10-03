@@ -7,6 +7,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { SubmitJobApplicationRequest } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { JobOpeningsPublicService } from '../application/job-openings-public.service';
 import { JobApplicationsPublicService } from '../application/job-applications-public.service';
 import { CareersPublicThrottleGuard } from '../infrastructure/careers-public-throttle.guard';
@@ -41,7 +43,8 @@ export class CareersController {
   apply(
     @Param('jobId') jobId: string,
     @Body() body: SubmitJobApplicationRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.applications.submit(jobId, body);
+    return this.applications.submit(jobId, body, tenant);
   }
 }

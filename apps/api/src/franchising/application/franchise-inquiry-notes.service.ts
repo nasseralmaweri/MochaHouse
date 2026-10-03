@@ -7,9 +7,11 @@ import {
   FRANCHISE_INQUIRY_NOTE_MAX_LENGTH,
   type FranchiseInquiryNote,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
+import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 
 // Milestone 8D — internal franchise-inquiry notes. APPEND-ONLY: list + add,
 // no edit, no delete. `franchising.view` reads; `franchising.manage` adds.
@@ -38,9 +40,12 @@ export class FranchiseInquiryNotesService {
     rawBody: unknown,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<FranchiseInquiryNote[]> {
     authorization.assertCorporate('franchising.manage');
-    await this.assertInquiryExists(inquiryId);
+    // Milestone S0D-2D — ownership before validating/writing the note, so a
+    // Tenant B inquiry reports the same 404 a missing one would.
+    const tenantId = await this.assertInquiryOwned(inquiryId, tenant);
 
     const body = this.validateBody(rawBody);
 
@@ -50,6 +55,9 @@ export class FranchiseInquiryNotesService {
           franchiseInquiryId: inquiryId,
           authorInternalUserId: actorInternalUserId,
           body,
+          // Milestone S0D-2D — copied from the validated parent inquiry,
+          // never from client input.
+          tenantId,
         },
         select: { id: true },
       });
@@ -85,6 +93,24 @@ export class FranchiseInquiryNotesService {
     if (!found) {
       throw new NotFoundException('Franchise inquiry not found.');
     }
+  }
+
+  // Milestone S0D-2D — the write-path variant of assertInquiryExists:
+  // returns the parent's own tenantId so the note copies ownership from it,
+  // and reports a foreign inquiry exactly like a missing one.
+  private async assertInquiryOwned(
+    inquiryId: string,
+    tenant: TenantContext,
+  ): Promise<string> {
+    const found = await this.prisma.franchiseInquiry.findUnique({
+      where: { id: inquiryId },
+      select: { id: true, tenantId: true },
+    });
+    return requireTenantOwnership(
+      found,
+      tenant,
+      'Franchise inquiry not found.',
+    );
   }
 
   async load(inquiryId: string): Promise<FranchiseInquiryNote[]> {

@@ -13,10 +13,12 @@ import type {
   CreateJobOpeningRequest,
   UpdateJobOpeningRequest,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { JobOpeningsAdminService } from '../application/job-openings-admin.service';
 
 // Admin → Careers → Jobs (Milestone 8B). InternalAuthGuard (authentication +
@@ -60,11 +62,13 @@ export class AdminCareersController {
   create(
     @Body() body: CreateJobOpeningRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.create(
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -74,12 +78,14 @@ export class AdminCareersController {
     @Param('jobId') jobId: string,
     @Body() body: UpdateJobOpeningRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.update(
       jobId,
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -88,11 +94,13 @@ export class AdminCareersController {
   publish(
     @Param('jobId') jobId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.publish(
       jobId,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -101,11 +109,13 @@ export class AdminCareersController {
   unpublish(
     @Param('jobId') jobId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.unpublish(
       jobId,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -114,11 +124,13 @@ export class AdminCareersController {
   archive(
     @Param('jobId') jobId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.archive(
       jobId,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 }

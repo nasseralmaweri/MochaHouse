@@ -18,10 +18,11 @@ import {
   JOB_OPENING_SUMMARY_MAX_LENGTH,
   JOB_OPENING_TITLE_MAX_LENGTH,
 } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
+import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 import {
   toAdminJobOpening,
   type JobOpeningRow,
@@ -92,6 +93,7 @@ export class JobOpeningsAdminService {
     request: CreateJobOpeningRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminJobOpening> {
     authorization.assertCorporate('careers.manage');
 
@@ -112,7 +114,13 @@ export class JobOpeningsAdminService {
         'qualifications',
       ),
       employmentType: this.validateEmploymentType(request?.employmentType),
-      locationId: await this.validateLocationId(request?.locationId),
+      // Milestone S0D-2D — a client-supplied locationId is only ever a
+      // pointer; it is cross-checked against the request's own tenant
+      // before use, never trusted as proof of ownership.
+      locationId: await this.validateLocationId(request?.locationId, tenant),
+      // Milestone S0D-2D — the owning tenant comes ONLY from the request's
+      // server-resolved TenantContext, never from client input.
+      tenantId: tenant.tenantId,
     };
 
     const created = await this.prisma.$transaction(async (tx) => {
@@ -132,9 +140,13 @@ export class JobOpeningsAdminService {
     request: UpdateJobOpeningRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminJobOpening> {
     authorization.assertCorporate('careers.manage');
-    const current = await this.loadOrThrow(jobId);
+    // Milestone S0D-2D — ownership is checked BEFORE the archived-status
+    // check below, so a Tenant B job reports the same 404 a missing job
+    // would, never a tenant-disclosing 409.
+    const current = await this.loadOwnedOrThrow(jobId, tenant);
     if (current.status === 'ARCHIVED') {
       throw new ConflictException('An archived job opening cannot be edited.');
     }
@@ -184,7 +196,10 @@ export class JobOpeningsAdminService {
       data.employmentType = this.validateEmploymentType(request.employmentType);
     }
     if (request?.locationId !== undefined) {
-      const locationId = await this.validateLocationId(request.locationId);
+      const locationId = await this.validateLocationId(
+        request.locationId,
+        tenant,
+      );
       data.location = locationId
         ? { connect: { id: locationId } }
         : { disconnect: true };
@@ -215,20 +230,29 @@ export class JobOpeningsAdminService {
     jobId: string,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminJobOpening> {
-    return this.transition(jobId, 'published', actorInternalUserId, authorization);
+    return this.transition(
+      jobId,
+      'published',
+      actorInternalUserId,
+      authorization,
+      tenant,
+    );
   }
 
   unpublish(
     jobId: string,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminJobOpening> {
     return this.transition(
       jobId,
       'unpublished',
       actorInternalUserId,
       authorization,
+      tenant,
     );
   }
 
@@ -236,8 +260,15 @@ export class JobOpeningsAdminService {
     jobId: string,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminJobOpening> {
-    return this.transition(jobId, 'archived', actorInternalUserId, authorization);
+    return this.transition(
+      jobId,
+      'archived',
+      actorInternalUserId,
+      authorization,
+      tenant,
+    );
   }
 
   // --- transitions ---------------------------------------------
@@ -247,9 +278,13 @@ export class JobOpeningsAdminService {
     change: 'published' | 'unpublished' | 'archived',
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminJobOpening> {
     authorization.assertCorporate('careers.manage');
-    const current = await this.loadOrThrow(jobId);
+    // Milestone S0D-2D — ownership before the transition-allowed check
+    // below, so a Tenant B job reports the same 404 a missing job would,
+    // never a tenant-disclosing 409 about its current status.
+    const current = await this.loadOwnedOrThrow(jobId, tenant);
 
     const nextStatus = this.assertTransitionAllowed(current.status, change);
     const data: Prisma.JobOpeningUpdateInput = { status: nextStatus };
@@ -322,6 +357,19 @@ export class JobOpeningsAdminService {
     return job;
   }
 
+  // Milestone S0D-2D — the write-path variant of loadOrThrow: a job that
+  // belongs to another tenant is reported exactly like a missing one, so
+  // update / publish / unpublish / archive can never be used to confirm
+  // that another tenant's job opening exists.
+  private async loadOwnedOrThrow(
+    jobId: string,
+    tenant: TenantContext,
+  ): Promise<JobOpeningRow> {
+    const job = await this.loadOrThrow(jobId);
+    requireTenantOwnership(job, tenant, 'Job opening not found.');
+    return job;
+  }
+
   private parseStatusFilter(raw: string): JobOpeningStatus {
     if (raw === 'DRAFT' || raw === 'PUBLISHED' || raw === 'ARCHIVED') {
       return raw;
@@ -369,8 +417,12 @@ export class JobOpeningsAdminService {
     );
   }
 
+  // Milestone S0D-2D — a location outside the active tenant is rejected
+  // with the exact same message as an unknown one, so this validation can
+  // never be used to confirm that another tenant's location exists.
   private async validateLocationId(
     raw: unknown,
+    tenant: TenantContext,
   ): Promise<string | null> {
     if (raw === undefined || raw === null || raw === '') {
       return null; // corporate / HQ
@@ -380,9 +432,9 @@ export class JobOpeningsAdminService {
     }
     const location = await this.prisma.location.findUnique({
       where: { id: raw },
-      select: { id: true },
+      select: { id: true, tenantId: true },
     });
-    if (!location) {
+    if (!location || location.tenantId !== tenant.tenantId) {
       throw new BadRequestException('That location does not exist.');
     }
     return location.id;

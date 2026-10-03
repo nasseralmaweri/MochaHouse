@@ -1,5 +1,7 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import type { SubmitFranchiseInquiryRequest } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { FranchiseInquiriesPublicService } from '../application/franchise-inquiries-public.service';
 import { FranchisingPublicThrottleGuard } from '../infrastructure/franchising-public-throttle.guard';
 
@@ -14,7 +16,10 @@ export class FranchisingController {
 
   @UseGuards(FranchisingPublicThrottleGuard)
   @Post('inquiries')
-  submit(@Body() body: SubmitFranchiseInquiryRequest) {
-    return this.inquiries.submit(body);
+  submit(
+    @Body() body: SubmitFranchiseInquiryRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.inquiries.submit(body, tenant);
   }
 }

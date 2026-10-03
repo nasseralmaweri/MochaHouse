@@ -8,6 +8,7 @@ import {
   FRANCHISE_INQUIRY_NAME_MAX_LENGTH,
   FRANCHISE_INQUIRY_SHORT_MAX_LENGTH,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 
 // Milestone 8D — the PUBLIC franchise-inquiry submission. No auth, no
@@ -21,6 +22,7 @@ export class FranchiseInquiriesPublicService {
 
   async submit(
     request: SubmitFranchiseInquiryRequest,
+    tenant: TenantContext,
   ): Promise<SubmitFranchiseInquiryResponse> {
     const data = {
       firstName: this.text(
@@ -76,6 +78,9 @@ export class FranchiseInquiriesPublicService {
         FRANCHISE_INQUIRY_MESSAGE_MAX_LENGTH,
       ),
       consentAcknowledged: this.consent(request?.consentAcknowledged),
+      // Milestone S0D-2D — root ownership comes ONLY from the request's
+      // server-resolved TenantContext, never from client input.
+      tenantId: tenant.tenantId,
     };
 
     await this.prisma.$transaction(async (tx) => {
@@ -89,8 +94,13 @@ export class FranchiseInquiriesPublicService {
       // this module ever sends a notification itself; apps/worker's
       // NotificationDispatchService is the sole consumer that decides what
       // to do with this eventType.
+      //
+      // Milestone S0D-2D — tenantId comes from the same trusted
+      // TenantContext as the inquiry above, in this same transaction,
+      // never from the public payload.
       await tx.outboxEvent.create({
         data: {
+          tenantId: tenant.tenantId,
           aggregateType: 'FranchiseInquiry',
           aggregateId: inquiry.id,
           eventType: 'franchising.inquiry.submitted',

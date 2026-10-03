@@ -114,6 +114,7 @@ describe('Franchising / Inquiries (integration)', () => {
   ): Promise<string> {
     const row = await prisma.franchiseInquiry.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         firstName: 'Seed',
         lastName: 'Prospect',
         email: `seed-${randomUUID()}@example.com`,

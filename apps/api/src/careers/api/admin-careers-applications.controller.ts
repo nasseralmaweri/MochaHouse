@@ -12,10 +12,12 @@ import type {
   CreateJobApplicationNoteRequest,
   UpdateJobApplicationStatusRequest,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { JobApplicationsAdminService } from '../application/job-applications-admin.service';
 import { JobApplicationNotesService } from '../application/job-application-notes.service';
 
@@ -63,12 +65,14 @@ export class AdminCareersApplicationsController {
     @Param('applicationId') applicationId: string,
     @Body() body: UpdateJobApplicationStatusRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.updateStatus(
       applicationId,
       body?.status,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -90,12 +94,14 @@ export class AdminCareersApplicationsController {
     @Param('applicationId') applicationId: string,
     @Body() body: CreateJobApplicationNoteRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.notes.addNote(
       applicationId,
       body?.body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 }

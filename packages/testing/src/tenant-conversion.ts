@@ -32,4 +32,13 @@ export const TENANT_ID_REQUIRED_MODELS: readonly string[] = [
   'Order',
   'OrderLine',
   'OrderStatusHistory',
+  // S0D-2D — careers & franchising (tenant from the request TenantContext,
+  // cross-checked against the Location when a JobOpening names one;
+  // inherited by JobApplication / JobApplicationNote and
+  // FranchiseInquiryNote from their validated parent).
+  'JobOpening',
+  'JobApplication',
+  'JobApplicationNote',
+  'FranchiseInquiry',
+  'FranchiseInquiryNote',
 ];

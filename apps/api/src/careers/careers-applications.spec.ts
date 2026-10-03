@@ -121,6 +121,7 @@ describe('Careers / Applicants (integration)', () => {
   ): Promise<{ id: string; title: string }> {
     const job = await prisma.jobOpening.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         title: `Barista ${suffix} ${randomUUID().slice(0, 8)}`,
         employmentType: 'FULL_TIME',
         summary: 'Make great coffee.',
@@ -143,6 +144,7 @@ describe('Careers / Applicants (integration)', () => {
   ): Promise<string> {
     const row = await prisma.jobApplication.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         jobOpeningId: jobId,
         jobTitleSnapshot: jobTitle,
         firstName: 'Seed',

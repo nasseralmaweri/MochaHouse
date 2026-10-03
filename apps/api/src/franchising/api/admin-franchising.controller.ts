@@ -12,10 +12,12 @@ import type {
   CreateFranchiseInquiryNoteRequest,
   UpdateFranchiseInquiryStatusRequest,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { FranchiseInquiriesAdminService } from '../application/franchise-inquiries-admin.service';
 import { FranchiseInquiryNotesService } from '../application/franchise-inquiry-notes.service';
 
@@ -59,12 +61,14 @@ export class AdminFranchisingController {
     @Param('inquiryId') inquiryId: string,
     @Body() body: UpdateFranchiseInquiryStatusRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.updateStatus(
       inquiryId,
       body?.status,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -83,12 +87,14 @@ export class AdminFranchisingController {
     @Param('inquiryId') inquiryId: string,
     @Body() body: CreateFranchiseInquiryNoteRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.notes.addNote(
       inquiryId,
       body?.body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 }

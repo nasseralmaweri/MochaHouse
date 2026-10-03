@@ -10,10 +10,11 @@ import type {
   FranchiseInquiryStatus,
 } from '@mocha-house/contracts';
 import { FRANCHISE_INQUIRY_STATUSES } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
+import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 import { FranchiseInquiryNotesService } from './franchise-inquiry-notes.service';
 import { toFranchiseInquiryActivityItem } from './franchise-inquiry-activity';
 
@@ -117,9 +118,13 @@ export class FranchiseInquiriesAdminService {
     rawStatus: unknown,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminFranchiseInquiryDetail> {
     authorization.assertCorporate('franchising.manage');
-    const current = await this.loadOrThrow(inquiryId);
+    // Milestone S0D-2D — ownership before parsing/applying the status
+    // change, so a Tenant B inquiry reports the same 404 a missing one
+    // would.
+    const current = await this.loadOwnedOrThrow(inquiryId, tenant);
     const next = this.parseStatus(rawStatus);
 
     if (next === current.status) {
@@ -149,6 +154,17 @@ export class FranchiseInquiriesAdminService {
     if (!inquiry) {
       throw new NotFoundException('Franchise inquiry not found.');
     }
+    return inquiry;
+  }
+
+  // Milestone S0D-2D — the write-path variant of loadOrThrow: an inquiry
+  // belonging to another tenant is reported exactly like a missing one.
+  private async loadOwnedOrThrow(
+    inquiryId: string,
+    tenant: TenantContext,
+  ): Promise<InquiryRow> {
+    const inquiry = await this.loadOrThrow(inquiryId);
+    requireTenantOwnership(inquiry, tenant, 'Franchise inquiry not found.');
     return inquiry;
   }
 

@@ -13,8 +13,9 @@ import {
   JOB_APPLICATION_SHORT_MAX_LENGTH,
   JOB_APPLICATION_URL_MAX_LENGTH,
 } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 import { isPubliclyVisible } from './job-opening-mapper';
 
 const JOB_INCLUDE = {
@@ -35,6 +36,7 @@ export class JobApplicationsPublicService {
   async submit(
     jobId: string,
     request: SubmitJobApplicationRequest,
+    tenant: TenantContext,
   ): Promise<SubmitJobApplicationResponse> {
     const job =
       typeof jobId === 'string'
@@ -43,6 +45,15 @@ export class JobApplicationsPublicService {
             include: JOB_INCLUDE,
           })
         : null;
+    // Milestone S0D-2D — ownership is checked BEFORE visibility, so a
+    // Tenant B job (however it is published/located) is reported exactly
+    // like a missing one: a foreign job's existence, status and location
+    // are never distinguishable from "doesn't exist" through this endpoint.
+    const tenantId = requireTenantOwnership(
+      job,
+      tenant,
+      'Job opening not found.',
+    );
     if (!job || !isPubliclyVisible(job)) {
       throw new NotFoundException('Job opening not found.');
     }
@@ -83,6 +94,9 @@ export class JobApplicationsPublicService {
         JOB_APPLICATION_MESSAGE_MAX_LENGTH,
       ),
       resumeUrl: this.optionalUrl(request?.resumeUrl),
+      // Milestone S0D-2D — copied from the validated JobOpening, never from
+      // request input.
+      tenantId,
     };
 
     await this.prisma.$transaction(async (tx) => {
@@ -96,8 +110,13 @@ export class JobApplicationsPublicService {
       // this module ever sends a notification itself; apps/worker's
       // NotificationDispatchService is the sole consumer that decides what
       // to do with this eventType.
+      //
+      // Milestone S0D-2D — tenantId comes from the same validated
+      // JobOpening ownership as the application above, in this same
+      // transaction, never from the public payload.
       await tx.outboxEvent.create({
         data: {
+          tenantId,
           aggregateType: 'JobApplication',
           aggregateId: application.id,
           eventType: 'careers.application.submitted',

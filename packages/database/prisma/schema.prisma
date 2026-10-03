@@ -2289,11 +2289,11 @@ model JobOpening {
   // hard-deleted and orphan candidate history (jobs use status anyway).
   applications   JobApplication[]
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2D — the owning tenant. REQUIRED since S0D-2D:
+  // from the request's server-side TenantContext, cross-checked against the
+  // Location when one is supplied. No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([status])
   @@index([locationId])
@@ -2335,11 +2335,10 @@ model JobApplication {
 
   notes JobApplicationNote[]
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2D — the owning tenant. REQUIRED since S0D-2D:
+  // copied from its validated JobOpening. No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([jobOpeningId])
   @@index([status])
@@ -2360,11 +2359,10 @@ model JobApplicationNote {
   body                 String
   createdAt            DateTime @default(now())
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2D — the owning tenant. REQUIRED since S0D-2D:
+  // copied from its validated JobApplication. No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([jobApplicationId, createdAt])
   @@index([authorInternalUserId])
@@ -2436,11 +2434,10 @@ model FranchiseInquiry {
 
   notes FranchiseInquiryNote[]
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2D — the owning tenant. REQUIRED since S0D-2D:
+  // from the request's server-side TenantContext. No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([status])
   @@index([createdAt])
@@ -2461,11 +2458,10 @@ model FranchiseInquiryNote {
   body                 String
   createdAt            DateTime         @default(now())
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2D — the owning tenant. REQUIRED since S0D-2D:
+  // copied from its validated FranchiseInquiry. No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([franchiseInquiryId, createdAt])
   @@index([authorInternalUserId])
