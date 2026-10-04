@@ -61,6 +61,7 @@ describe('Admin internal user access assignment (integration)', () => {
   async function makeUser(key: string, status: Status): Promise<string> {
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email: `${key}@example.com`,
@@ -79,10 +80,11 @@ describe('Admin internal user access assignment (integration)', () => {
   ): Promise<string> {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `access-spec-${suffix}-${randomUUID()}`,
         displayName,
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
@@ -96,7 +98,7 @@ describe('Admin internal user access assignment (integration)', () => {
     scope: { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null },
   ) {
     await prisma.internalUserRoleAssignment.create({
-      data: { internalUserId: userId, roleId, ...scope },
+      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: userId, roleId, ...scope },
     });
   }
 
@@ -170,7 +172,7 @@ describe('Admin internal user access assignment (integration)', () => {
     prisma = moduleFixture.get(PrismaService);
 
     const seeded = await prisma.internalUser.findUnique({
-      where: { email: 'admin@mochahouse.test' },
+      where: { tenantId_email: { tenantId: TENANT_1_MOCHA_HOUSE_ID, email: 'admin@mochahouse.test' } },
       select: { id: true, status: true },
     });
     if (seeded) {
@@ -186,12 +188,12 @@ describe('Admin internal user access assignment (integration)', () => {
     // uses; the assign endpoint accepts any role id.
     platformAdminRoleId = (
       await prisma.internalRole.findUniqueOrThrow({
-        where: { key: 'platform-administrator' },
+        where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'platform-administrator' } },
       })
     ).id;
     storeManagerRoleId = (
       await prisma.internalRole.findUniqueOrThrow({
-        where: { key: 'store-manager' },
+        where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
       })
     ).id;
 
@@ -384,7 +386,7 @@ describe('Admin internal user access assignment (integration)', () => {
 
   it('the seed creates store-manager with exactly the approved permission set', async () => {
     const role = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'store-manager' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
       include: { permissions: true },
     });
     expect(role.displayName).toBe('Store Manager');
@@ -422,7 +424,7 @@ describe('Admin internal user access assignment (integration)', () => {
 
   it('platform-administrator still holds every permission including users.manage_roles', async () => {
     const role = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'platform-administrator' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'platform-administrator' } },
       include: { permissions: true },
     });
     const keys = role.permissions.map((p) => p.permissionKey);
@@ -597,7 +599,7 @@ describe('Admin internal user access assignment (integration)', () => {
 
   it('an actor cannot change their own access (403)', async () => {
     const actorRow = await prisma.internalUser.findUniqueOrThrow({
-      where: { email: `fullActor-${suffix}@example.com` },
+      where: { tenantId_email: { tenantId: TENANT_1_MOCHA_HOUSE_ID, email: `fullActor-${suffix}@example.com` } },
     });
     await assignRole(`fullActor-${suffix}`, actorRow.id, {
       roleId: storeManagerRoleId,
@@ -784,7 +786,7 @@ describe('Admin internal user access assignment (integration)', () => {
 
   it('an actor cannot remove their own access (403)', async () => {
     const actorRow = await prisma.internalUser.findUniqueOrThrow({
-      where: { email: `fullActor-${suffix}@example.com` },
+      where: { tenantId_email: { tenantId: TENANT_1_MOCHA_HOUSE_ID, email: `fullActor-${suffix}@example.com` } },
     });
     const d = await detail(actorRow.id);
     await removeAssignment(
@@ -813,7 +815,7 @@ describe('Admin internal user access assignment (integration)', () => {
   it('a grant writes exactly one user.role_assigned event per created row, with location + role snapshots', async () => {
     const t = await makeUser(`audit-assign-${suffix}`, 'ACTIVE');
     const actorRow = await prisma.internalUser.findUniqueOrThrow({
-      where: { email: `fullActor-${suffix}@example.com` },
+      where: { tenantId_email: { tenantId: TENANT_1_MOCHA_HOUSE_ID, email: `fullActor-${suffix}@example.com` } },
     });
     await assignRole(`fullActor-${suffix}`, t, {
       roleId: storeManagerRoleId,

@@ -49,6 +49,7 @@ describe('Opening Checklist (integration)', () => {
   async function makeUser(key: string, status: Status = 'ACTIVE'): Promise<string> {
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email: `${key}@example.com`,
@@ -67,10 +68,11 @@ describe('Opening Checklist (integration)', () => {
   ): Promise<string> {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `opening-spec-${suffix}-${randomUUID()}`,
         displayName,
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
@@ -84,7 +86,7 @@ describe('Opening Checklist (integration)', () => {
     scope: { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null },
   ) {
     await prisma.internalUserRoleAssignment.create({
-      data: { internalUserId: userId, roleId, ...scope },
+      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: userId, roleId, ...scope },
     });
   }
 
@@ -196,7 +198,7 @@ describe('Opening Checklist (integration)', () => {
     // A Store Manager (the seeded built-in role) at locA — proves the seed
     // grants operations.tasks.complete location-scoped.
     const storeManager = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'store-manager' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
     });
     await makeUser(`storeMgr-${suffix}`);
     await assign(userIds.at(-1)!, storeManager.id, {
@@ -737,7 +739,7 @@ describe('Opening Checklist (integration)', () => {
 
   it('operations.tasks.complete exists, allows CORPORATE and LOCATION, and Store Manager has it', async () => {
     const sm = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'store-manager' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
       include: { permissions: true },
     });
     expect(sm.permissions.map((p) => p.permissionKey)).toContain(
@@ -745,7 +747,7 @@ describe('Opening Checklist (integration)', () => {
     );
 
     const pa = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'platform-administrator' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'platform-administrator' } },
       include: { permissions: true },
     });
     expect(pa.permissions.map((p) => p.permissionKey)).toContain(

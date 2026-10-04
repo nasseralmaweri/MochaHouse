@@ -17,6 +17,7 @@ import type {
   AdminUserLocationAccess,
   InternalUserStatus,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorizationService } from '../../internal-auth/authorization/authorization.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
@@ -25,6 +26,7 @@ import {
   type InternalPermissionKey,
 } from '../../internal-auth/authorization/permission-catalog';
 import { InternalAuditService } from '../../audit/internal-audit.service';
+import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 import {
   describeAccessLevelCapabilities,
   describeEffectiveCapabilities,
@@ -71,10 +73,12 @@ export class AdminInternalUsersService {
 
   async listUsers(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminInternalUserSummary[]> {
     authorization.assertCorporate('users.view');
 
     const users = await this.prisma.internalUser.findMany({
+      where: { tenantId: tenant.tenantId },
       select: {
         id: true,
         displayName: true,
@@ -104,9 +108,10 @@ export class AdminInternalUsersService {
   async getUserDetail(
     internalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminInternalUserDetail> {
     authorization.assertCorporate('users.view');
-    return this.buildUserDetail(internalUserId);
+    return this.buildUserDetail(internalUserId, tenant);
   }
 
   // --- Status management (Milestone 5E-3) -------------------------
@@ -125,6 +130,7 @@ export class AdminInternalUsersService {
     request: AdminUpdateInternalUserStatusRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminInternalUserDetail> {
     authorization.assertCorporate('users.manage_status');
 
@@ -141,8 +147,12 @@ export class AdminInternalUsersService {
       async (tx) => {
         const target = await tx.internalUser.findUnique({
           where: { id: internalUserId },
-          select: { id: true, status: true },
+          select: { id: true, status: true, tenantId: true },
         });
+        requireTenantOwnership(target, tenant, 'Internal user not found.');
+        // requireTenantOwnership throws above if target is missing/foreign
+        // — narrow it for TypeScript the same way every S0D-2 write path
+        // does.
         if (!target) {
           throw new NotFoundException('Internal user not found.');
         }
@@ -167,7 +177,7 @@ export class AdminInternalUsersService {
           // CORPORATE. Milestone 5E-3 originally checked only
           // users.manage_status; unifying the two paths tightened this, but
           // the only shipped role granting either key grants both.
-          const protectedAdmin = protectedAdminWhere();
+          const protectedAdmin = protectedAdminWhere(tenant.tenantId);
           const targetIsProtectedAdmin =
             (await tx.internalUser.count({
               where: { id: target.id, ...protectedAdmin },
@@ -213,7 +223,7 @@ export class AdminInternalUsersService {
       { isolationLevel: 'Serializable' },
     );
 
-    return this.buildUserDetail(internalUserId);
+    return this.buildUserDetail(internalUserId, tenant);
   }
 
   // --- Access assignment (Milestone 5E-4) ------------------------
@@ -225,12 +235,16 @@ export class AdminInternalUsersService {
   // built-in keys — never from a role name as an authorization input.
   async getAccessOptions(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminAccessAssignmentOptions> {
     authorization.assertCorporate('users.manage_roles');
 
     const [roles, locations] = await Promise.all([
       this.prisma.internalRole.findMany({
-        where: { key: { in: ASSIGNABLE_BUILT_IN_ROLE_KEYS } },
+        where: {
+          tenantId: tenant.tenantId,
+          key: { in: ASSIGNABLE_BUILT_IN_ROLE_KEYS },
+        },
         select: {
           id: true,
           key: true,
@@ -240,8 +254,11 @@ export class AdminInternalUsersService {
           permissions: { select: { permissionKey: true } },
         },
       }),
+      // Milestone S0D-2E — a Tenant A admin must never be offered a Tenant
+      // B location to scope an assignment to (this is the picker that feeds
+      // assignRole's location choices below).
       this.prisma.location.findMany({
-        where: { isActive: true },
+        where: { isActive: true, tenantId: tenant.tenantId },
         select: { id: true, name: true },
         orderBy: { name: 'asc' },
       }),
@@ -289,6 +306,7 @@ export class AdminInternalUsersService {
     request: AdminAssignInternalUserRoleRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminInternalUserDetail> {
     authorization.assertCorporate('users.manage_roles');
 
@@ -308,21 +326,27 @@ export class AdminInternalUsersService {
       async (tx) => {
         const target = await tx.internalUser.findUnique({
           where: { id: internalUserId },
-          select: { id: true },
+          select: { id: true, tenantId: true },
         });
+        requireTenantOwnership(target, tenant, 'Internal user not found.');
         if (!target) {
           throw new NotFoundException('Internal user not found.');
         }
 
+        // Milestone S0D-2E — a Tenant A user can never be assigned a
+        // Tenant B role: the same 404 as "role not found" (never
+        // disclosing that a foreign-tenant role exists at all).
         const role = await tx.internalRole.findUnique({
           where: { id: roleId },
           select: {
             id: true,
+            tenantId: true,
             key: true,
             displayName: true,
             permissions: { select: { permissionKey: true } },
           },
         });
+        requireTenantOwnership(role, tenant, 'Access level not found.');
         if (!role) {
           throw new NotFoundException('Access level not found.');
         }
@@ -367,8 +391,11 @@ export class AdminInternalUsersService {
           if (ids.length === 0) {
             throw new BadRequestException('Choose at least one location.');
           }
+          // Milestone S0D-2E — a chosen location must belong to the
+          // caller's own tenant; a Tenant B id is reported identically to
+          // an unknown one below.
           const rows = await tx.location.findMany({
-            where: { id: { in: ids } },
+            where: { id: { in: ids }, tenantId: tenant.tenantId },
             select: { id: true, name: true, isActive: true },
           });
           if (rows.length !== ids.length) {
@@ -444,6 +471,11 @@ export class AdminInternalUsersService {
               roleId: role.id,
               scopeType: row.scopeType,
               scopeId: row.scopeId,
+              // Milestone S0D-2E — copied from the request's own
+              // TenantContext, the same authoritative chain as every other
+              // tenant-owned child write; target and role are both already
+              // proven to belong to this same tenant above.
+              tenantId: tenant.tenantId,
             },
           });
           await this.audit.recordRoleAssigned(tx, {
@@ -461,7 +493,7 @@ export class AdminInternalUsersService {
       { isolationLevel: 'Serializable' },
     );
 
-    return this.buildUserDetail(internalUserId);
+    return this.buildUserDetail(internalUserId, tenant);
   }
 
   // Remove ONE concrete access grant. Never removes more than the single
@@ -473,6 +505,7 @@ export class AdminInternalUsersService {
     request: AdminRemoveInternalUserRoleAssignmentRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminInternalUserDetail> {
     authorization.assertCorporate('users.manage_roles');
 
@@ -489,6 +522,7 @@ export class AdminInternalUsersService {
           select: {
             id: true,
             internalUserId: true,
+            tenantId: true,
             scopeType: true,
             scopeId: true,
             role: {
@@ -500,7 +534,14 @@ export class AdminInternalUsersService {
             },
           },
         });
-        if (!assignment || assignment.internalUserId !== internalUserId) {
+        // Milestone S0D-2E — tenantId added to the check: a Tenant B
+        // assignment id is reported identically to a missing one, even if
+        // it happens to name a real Tenant A internalUserId.
+        if (
+          !assignment ||
+          assignment.internalUserId !== internalUserId ||
+          assignment.tenantId !== tenant.tenantId
+        ) {
           throw new NotFoundException('Access assignment not found.');
         }
 
@@ -513,7 +554,7 @@ export class AdminInternalUsersService {
           locationName = location?.name ?? null;
         }
 
-        const protectedAdmin = protectedAdminWhere();
+        const protectedAdmin = protectedAdminWhere(tenant.tenantId);
         const removalStripsProtectedCapability =
           assignmentCarriesProtectedAdminCapability(assignment);
         const targetWasProtectedAdmin =
@@ -564,7 +605,7 @@ export class AdminInternalUsersService {
       { isolationLevel: 'Serializable' },
     );
 
-    return this.buildUserDetail(internalUserId);
+    return this.buildUserDetail(internalUserId, tenant);
   }
 
   private validateReason(raw: unknown): string {
@@ -580,13 +621,19 @@ export class AdminInternalUsersService {
     return reason;
   }
 
+  // Milestone S0D-2E — re-validates tenant ownership itself rather than
+  // trusting every caller to have already checked: getUserDetail calls
+  // this directly from a bare id, so a cross-tenant GET must 404 exactly
+  // like a missing user, not read the row.
   private async buildUserDetail(
     internalUserId: string,
+    tenant: TenantContext,
   ): Promise<AdminInternalUserDetail> {
     const user = await this.prisma.internalUser.findUnique({
       where: { id: internalUserId },
       select: {
         id: true,
+        tenantId: true,
         displayName: true,
         email: true,
         status: true,
@@ -603,6 +650,7 @@ export class AdminInternalUsersService {
       },
     });
 
+    requireTenantOwnership(user, tenant, 'Internal user not found.');
     if (!user) {
       throw new NotFoundException('Internal user not found.');
     }
@@ -617,7 +665,10 @@ export class AdminInternalUsersService {
     // Effective authorization, exactly as the guards resolve it. Unknown
     // stored permission keys are already dropped by AuthorizationService, so
     // they can never reach the presentation layer or the UI.
-    const context = await this.authorizationService.loadContext(internalUserId);
+    const context = await this.authorizationService.loadContext(
+      internalUserId,
+      tenant,
+    );
     const capabilities = describeEffectiveCapabilities(
       context.summarize().capabilities,
     );

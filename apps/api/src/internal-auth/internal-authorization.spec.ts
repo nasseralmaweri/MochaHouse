@@ -69,6 +69,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     const email = `${key}@example.com`;
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email,
@@ -87,10 +88,11 @@ describe('Internal admin authorization matrix (integration)', () => {
   ) {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `authz-matrix-${suffix}-${randomUUID()}`,
         displayName: 'authz matrix spec role',
         permissions: {
-          create: permissions.map((permissionKey) => ({ permissionKey })),
+          create: permissions.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
@@ -98,6 +100,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     await prisma.internalUserRoleAssignment.create({
       data: {
         internalUserId: userId,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         roleId: role.id,
         scopeType: scope.scopeType,
         scopeId: scope.scopeId,
@@ -1455,7 +1458,7 @@ describe('Internal admin authorization matrix (integration)', () => {
   describe('seeded bootstrap', () => {
     it('the platform-administrator role holds every current permission', async () => {
       const role = await prisma.internalRole.findUniqueOrThrow({
-        where: { key: 'platform-administrator' },
+        where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'platform-administrator' } },
         include: { permissions: true },
       });
       expect(role.isSystem).toBe(true);
@@ -1466,7 +1469,7 @@ describe('Internal admin authorization matrix (integration)', () => {
 
     it('the seeded dev admin has a CORPORATE platform-administrator assignment', async () => {
       const admin = await prisma.internalUser.findUniqueOrThrow({
-        where: { email: 'admin@mochahouse.test' },
+        where: { tenantId_email: { tenantId: TENANT_1_MOCHA_HOUSE_ID, email: 'admin@mochahouse.test' } },
         include: { roleAssignments: { include: { role: true } } },
       });
       const corp = admin.roleAssignments.find(

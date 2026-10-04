@@ -50,16 +50,18 @@ describe('Approvals admin (integration)', () => {
   ): Promise<string> {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `approvals-admin-${suffix}-${randomUUID()}`,
         displayName: 'Approvals Admin Spec Role',
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
     roleIds.push(role.id);
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}-${suffix}`,
         email: `${key}-${suffix}@example.com`,
@@ -70,7 +72,7 @@ describe('Approvals admin (integration)', () => {
     });
     userIds.push(user.id);
     await prisma.internalUserRoleAssignment.create({
-      data: { internalUserId: user.id, roleId: role.id, ...scope },
+      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: user.id, roleId: role.id, ...scope },
     });
     return user.id;
   }

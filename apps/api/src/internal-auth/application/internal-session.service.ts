@@ -5,6 +5,7 @@ import type {
   InternalPermissionKey,
   LocationSummary,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorizationService } from '../authorization/authorization.service';
 import { InternalUsersService } from './internal-users.service';
@@ -22,8 +23,14 @@ export class InternalSessionService {
     private readonly internalUsers: InternalUsersService,
   ) {}
 
-  async buildMeResponse(user: InternalUserRow): Promise<InternalMeResponse> {
-    const context = await this.authorizationService.loadContext(user.id);
+  async buildMeResponse(
+    user: InternalUserRow,
+    tenant: TenantContext,
+  ): Promise<InternalMeResponse> {
+    const context = await this.authorizationService.loadContext(
+      user.id,
+      tenant,
+    );
     const summary = context.summarize();
 
     // A CORPORATE user operates on every active location; a LOCATION-scoped

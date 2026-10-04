@@ -55,6 +55,7 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
   async function makeUser(key: string, status: Status): Promise<string> {
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email: `${key}@example.com`,
@@ -73,10 +74,11 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
   ): Promise<string> {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `customer-growth-spec-${suffix}-${randomUUID()}`,
         displayName,
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
@@ -90,7 +92,7 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
     scope: { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null },
   ) {
     await prisma.internalUserRoleAssignment.create({
-      data: { internalUserId: userId, roleId, ...scope },
+      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: userId, roleId, ...scope },
     });
   }
 
@@ -646,11 +648,11 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
 
   it('Platform Administrator has reports.view; Store Manager does not (shared with 9A/9B/9C)', async () => {
     const pa = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'platform-administrator' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'platform-administrator' } },
       include: { permissions: true },
     });
     const sm = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'store-manager' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
       include: { permissions: true },
     });
     expect(pa.permissions.map((p) => p.permissionKey)).toContain(

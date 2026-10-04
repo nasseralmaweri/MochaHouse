@@ -27,8 +27,19 @@ export const PROTECTED_ADMIN_PERMISSION_KEYS = [
 // exact permission key counts. A LOCATION grant, a malformed
 // CORPORATE-with-scopeId row, an unknown permission key, and a non-ACTIVE
 // user all fail this filter — never a role display name.
-export function protectedAdminWhere(): Prisma.InternalUserWhereInput {
+//
+// Milestone S0D-2E — scoped to ONE tenant. "At least one other
+// administrator remains" must be evaluated within the caller's own tenant:
+// without this, Tenant B's administrators would count as Tenant A's spare
+// admin (and vice versa), which would both wrongly block a legitimate
+// last-admin-in-tenant demotion from ever completing (if the OTHER tenant
+// also happens to have zero) and, conversely, wrongly allow Tenant A to be
+// left with zero admins because Tenant B's count made the total look safe.
+export function protectedAdminWhere(
+  tenantId: string,
+): Prisma.InternalUserWhereInput {
   return {
+    tenantId,
     status: 'ACTIVE',
     AND: PROTECTED_ADMIN_PERMISSION_KEYS.map(
       (permissionKey): Prisma.InternalUserWhereInput => ({

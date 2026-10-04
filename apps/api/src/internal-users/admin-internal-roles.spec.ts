@@ -47,6 +47,7 @@ describe('Admin access levels read (integration)', () => {
   ): Promise<string> {
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email: `${key}@example.com`,
@@ -66,12 +67,13 @@ describe('Admin access levels read (integration)', () => {
   ): Promise<string> {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `admin-roles-${suffix}-${randomUUID()}`,
         displayName,
         description: options.description ?? null,
         isSystem: options.isSystem ?? false,
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
@@ -85,7 +87,7 @@ describe('Admin access levels read (integration)', () => {
     scope: { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null },
   ) {
     await prisma.internalUserRoleAssignment.create({
-      data: { internalUserId: userId, roleId, ...scope },
+      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: userId, roleId, ...scope },
     });
   }
 

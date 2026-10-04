@@ -213,6 +213,7 @@ describe('S0D-2A explicit tenant writes — catalog & store operations (integrat
     // what refuses Tenant B's location.
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `s0d2a-role-${suffix}`,
         displayName: 'S0D-2A spec role',
         permissions: {
@@ -220,7 +221,7 @@ describe('S0D-2A explicit tenant writes — catalog & store operations (integrat
             'operations.view',
             'operations.tasks.complete',
             'catalog.overrides.manage',
-          ].map((permissionKey) => ({ permissionKey })),
+          ].map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
@@ -228,6 +229,7 @@ describe('S0D-2A explicit tenant writes — catalog & store operations (integrat
     await prisma.internalUserRoleAssignment.create({
       data: {
         internalUserId: t1.actorId,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         roleId: role.id,
         scopeType: 'CORPORATE',
         scopeId: null,

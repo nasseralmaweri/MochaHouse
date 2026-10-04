@@ -57,16 +57,18 @@ describe('Loyalty Rewards Catalog (integration)', () => {
   ): Promise<void> {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `rewards-spec-${suffix}-${randomUUID()}`,
         displayName: 'Rewards Spec Role',
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
     roleIds.push(role.id);
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}-${suffix}`,
         email: `${key}-${suffix}@example.com`,
@@ -77,7 +79,7 @@ describe('Loyalty Rewards Catalog (integration)', () => {
     });
     userIds.push(user.id);
     await prisma.internalUserRoleAssignment.create({
-      data: { internalUserId: user.id, roleId: role.id, ...scope },
+      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: user.id, roleId: role.id, ...scope },
     });
   }
 
@@ -182,10 +184,11 @@ describe('Loyalty Rewards Catalog (integration)', () => {
       scopeId: locId,
     });
     const storeManager = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'store-manager' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
     });
     const mgr = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:storeMgr-${suffix}`,
         email: `storeMgr-${suffix}@example.com`,
@@ -197,6 +200,7 @@ describe('Loyalty Rewards Catalog (integration)', () => {
     await prisma.internalUserRoleAssignment.create({
       data: {
         internalUserId: mgr.id,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         roleId: storeManager.id,
         scopeType: 'LOCATION',
         scopeId: locId,
@@ -293,7 +297,7 @@ describe('Loyalty Rewards Catalog (integration)', () => {
 
   it('a seeded Store Manager holds neither loyalty.configure', async () => {
     const role = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'store-manager' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
       include: { permissions: true },
     });
     const keys = role.permissions.map((p) => p.permissionKey);

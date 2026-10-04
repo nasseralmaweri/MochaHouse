@@ -3,6 +3,7 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthorizationService } from './authorization.service';
@@ -12,6 +13,7 @@ import {
 } from './permission-catalog';
 import { REQUIRE_PERMISSION_METADATA } from './require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../infrastructure/internal-identity';
+import type { TenantContextRequest } from '../../tenancy/tenant-context-request';
 
 // The authorization layer, applied AFTER InternalAuthGuard:
 //   @UseGuards(InternalAuthGuard, PermissionGuard)
@@ -41,10 +43,22 @@ export class PermissionGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context
       .switchToHttp()
-      .getRequest<InternalAuthenticatedRequest>();
+      .getRequest<InternalAuthenticatedRequest & TenantContextRequest>();
 
     if (!request.internalUser) {
       throw new ForbiddenException('Internal authentication is required.');
+    }
+
+    // Milestone S0D-2E — the same trusted, server-resolved TenantContext
+    // every other tenant-scoped write path reads via
+    // @CurrentTenantContext(); here read directly since a guard runs
+    // outside the param-decorator pipeline. TenantContextMiddleware runs
+    // before every guard, so its absence is a server misconfiguration, not
+    // a client input to validate.
+    if (!request.tenantContext) {
+      throw new InternalServerErrorException(
+        'Tenant context is not established for this request.',
+      );
     }
 
     const required = this.reflector.getAllAndOverride<
@@ -59,6 +73,7 @@ export class PermissionGuard implements CanActivate {
 
     const authorization = await this.authorizationService.loadContext(
       request.internalUser.id,
+      request.tenantContext,
     );
 
     if (!authorization.has(required)) {

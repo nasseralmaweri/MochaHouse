@@ -863,7 +863,18 @@ model InternalUser {
   id               String             @id @default(uuid(7))
   externalProvider String
   externalSubject  String?
-  email            String             @unique
+  // Milestone S0D-2E — was globally @unique. An InternalUser row belongs to
+  // exactly ONE tenant (there is no membership table; a human who
+  // administers two tenants needs two separate rows — that is the existing
+  // model, not something this milestone invents). A global email constraint
+  // made that existing model internally inconsistent: it would forbid the
+  // same person from ever administering a second tenant, for no reason tied
+  // to any actual business rule. Scoped to (tenantId, email) instead — see
+  // the matching unique index below. externalProvider/externalSubject
+  // uniqueness is deliberately LEFT GLOBAL: whether one external identity
+  // can be bound to more than one tenant's InternalUser row is a federated-
+  // identity / membership question for S0F, not decided here.
+  email            String
   displayName      String?
   status           InternalUserStatus @default(INVITED)
 
@@ -922,13 +933,17 @@ model InternalUser {
   approvalRequestsMade    ApprovalRequest[] @relation("ApprovalRequester")
   approvalRequestsDecided ApprovalRequest[] @relation("ApprovalDecider")
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-2E — the owning tenant. REQUIRED: this is the internal
+  // identity/authorization chain's root, converted together with
+  // InternalRole / InternalRolePermission / InternalUserRoleAssignment so
+  // AuthorizationService can evaluate every grant within one trusted tenant
+  // boundary. No default: every existing row was already Tenant #1 (the
+  // single-tenant era's only tenant).
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([externalProvider, externalSubject])
+  @@unique([tenantId, email])
   @@index([tenantId])
 }
 
@@ -1004,7 +1019,13 @@ enum InternalScopeType {
 // authorization by itself.
 model InternalRole {
   id          String   @id @default(uuid(7))
-  key         String   @unique
+  // Milestone S0D-2E — was globally @unique. The same inconsistency as
+  // InternalUser.email: a role "key" (e.g. "platform-administrator",
+  // "store-manager") is tenant configuration, and a global constraint would
+  // mean only ONE tenant across the whole platform could ever use a given
+  // key — an accidental cross-tenant coupling left over from the
+  // single-tenant era, not a real business rule. Scoped to (tenantId, key).
+  key         String
   displayName String
   description String?
   isSystem    Boolean  @default(false)
@@ -1014,12 +1035,11 @@ model InternalRole {
   permissions InternalRolePermission[]
   assignments InternalUserRoleAssignment[]
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-2E — the owning tenant. REQUIRED (see InternalUser).
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  @@unique([tenantId, key])
   @@index([tenantId])
 }
 
@@ -1034,11 +1054,11 @@ model InternalRolePermission {
 
   role InternalRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-2E — the owning tenant. REQUIRED, copied from the owning
+  // InternalRole (the same authoritative-parent pattern as every other
+  // tenant-owned child in S0D-2).
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@id([roleId, permissionKey])
   @@index([permissionKey])
@@ -1063,11 +1083,14 @@ model InternalUserRoleAssignment {
   internalUser InternalUser @relation(fields: [internalUserId], references: [id], onDelete: Cascade)
   role         InternalRole @relation(fields: [roleId], references: [id], onDelete: Restrict)
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-2E — the owning tenant. REQUIRED, copied from the
+  // assigned InternalUser — the same authoritative-parent pattern as every
+  // other tenant-owned child. The application layer (not a composite FK —
+  // that is S0D-4) additionally verifies the assigned InternalRole belongs
+  // to this SAME tenant before an assignment is ever created, so these two
+  // parents can never legitimately disagree.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([internalUserId, roleId, scopeType, scopeId])
   @@index([internalUserId])

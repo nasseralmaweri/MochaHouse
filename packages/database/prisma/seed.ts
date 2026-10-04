@@ -291,7 +291,7 @@ async function seedMochaHouseBusinessData(tenantId: string) {
   // pool and an administrative invitation flow (Milestone 5B) apply.
   const internalAdminEmail = 'admin@mochahouse.test';
   const internalAdmin = await prisma.internalUser.upsert({
-    where: { email: internalAdminEmail },
+    where: { tenantId_email: { tenantId, email: internalAdminEmail } },
     update: { status: 'ACTIVE' },
     create: {
       tenantId,
@@ -312,7 +312,7 @@ async function seedMochaHouseBusinessData(tenantId: string) {
   // same AuthorizationService and PermissionGuard as any other role, with
   // no special-casing anywhere (no email check, no wildcard, no bypass).
   const platformAdminRole = await prisma.internalRole.upsert({
-    where: { key: 'platform-administrator' },
+    where: { tenantId_key: { tenantId, key: 'platform-administrator' } },
     update: { displayName: 'Platform Administrator', isSystem: true },
     create: {
       tenantId,
@@ -396,7 +396,7 @@ async function seedMochaHouseBusinessData(tenantId: string) {
   ] as const;
 
   const storeManagerRole = await prisma.internalRole.upsert({
-    where: { key: 'store-manager' },
+    where: { tenantId_key: { tenantId, key: 'store-manager' } },
     update: {
       displayName: 'Store Manager',
       description:

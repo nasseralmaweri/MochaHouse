@@ -54,6 +54,7 @@ describe('Admin internal user status management (integration)', () => {
   async function makeUser(key: string, status: Status): Promise<string> {
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email: `${key}@example.com`,
@@ -72,10 +73,11 @@ describe('Admin internal user status management (integration)', () => {
   ): Promise<string> {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `status-spec-${suffix}-${randomUUID()}`,
         displayName,
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
@@ -89,7 +91,7 @@ describe('Admin internal user status management (integration)', () => {
     scope: { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null },
   ) {
     await prisma.internalUserRoleAssignment.create({
-      data: { internalUserId: userId, roleId, ...scope },
+      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: userId, roleId, ...scope },
     });
   }
 
@@ -138,7 +140,7 @@ describe('Admin internal user status management (integration)', () => {
 
     // Take control of the administrator population.
     const seeded = await prisma.internalUser.findUnique({
-      where: { email: 'admin@mochahouse.test' },
+      where: { tenantId_email: { tenantId: TENANT_1_MOCHA_HOUSE_ID, email: 'admin@mochahouse.test' } },
       select: { id: true, status: true },
     });
     if (seeded) {
@@ -295,7 +297,7 @@ describe('Admin internal user status management (integration)', () => {
 
   it('an actor cannot suspend / disable / otherwise change their own status (7,8,9)', async () => {
     const actorRow = await prisma.internalUser.findUniqueOrThrow({
-      where: { email: `actor-${suffix}@example.com` },
+      where: { tenantId_email: { tenantId: TENANT_1_MOCHA_HOUSE_ID, email: `actor-${suffix}@example.com` } },
     });
     for (const status of ['SUSPENDED', 'DISABLED', 'ACTIVE'] as const) {
       await setStatus(`actor-${suffix}`, actorRow.id, {
@@ -552,7 +554,7 @@ describe('Admin internal user status management (integration)', () => {
   it('a successful status change writes exactly one audit event with the right shape (36-42)', async () => {
     const t = await makeUser(`t-audit-${suffix}`, 'ACTIVE');
     const actorRow = await prisma.internalUser.findUniqueOrThrow({
-      where: { email: `actor-${suffix}@example.com` },
+      where: { tenantId_email: { tenantId: TENANT_1_MOCHA_HOUSE_ID, email: `actor-${suffix}@example.com` } },
     });
     await setStatus(`actor-${suffix}`, t, {
       status: 'DISABLED',

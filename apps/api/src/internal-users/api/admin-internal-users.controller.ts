@@ -13,11 +13,13 @@ import type {
   AdminRemoveInternalUserRoleAssignmentRequest,
   AdminUpdateInternalUserStatusRequest,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { AdminInternalUsersService } from '../application/admin-internal-users.service';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 
 // Administration → Users: read (Milestone 5E-1) and status management
 // (Milestone 5E-3).
@@ -33,8 +35,11 @@ export class AdminInternalUsersController {
 
   @RequirePermission('users.view')
   @Get()
-  listUsers(@Req() request: InternalAuthenticatedRequest) {
-    return this.service.listUsers(request.authorization!);
+  listUsers(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.service.listUsers(request.authorization!, tenant);
   }
 
   // The access-assignment picker data (Milestone 5E-4). Declared BEFORE the
@@ -42,8 +47,11 @@ export class AdminInternalUsersController {
   // Gated by `users.manage_roles` — `roles.view` is NOT also required.
   @RequirePermission('users.manage_roles')
   @Get('access-options')
-  getAccessOptions(@Req() request: InternalAuthenticatedRequest) {
-    return this.service.getAccessOptions(request.authorization!);
+  getAccessOptions(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.service.getAccessOptions(request.authorization!, tenant);
   }
 
   @RequirePermission('users.view')
@@ -51,8 +59,13 @@ export class AdminInternalUsersController {
   getUser(
     @Param('internalUserId') internalUserId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.service.getUserDetail(internalUserId, request.authorization!);
+    return this.service.getUserDetail(
+      internalUserId,
+      request.authorization!,
+      tenant,
+    );
   }
 
   // Suspend / reactivate / disable another internal user. `reason` is
@@ -65,12 +78,14 @@ export class AdminInternalUsersController {
     @Param('internalUserId') internalUserId: string,
     @Body() body: AdminUpdateInternalUserStatusRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.updateStatus(
       internalUserId,
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -84,12 +99,14 @@ export class AdminInternalUsersController {
     @Param('internalUserId') internalUserId: string,
     @Body() body: AdminAssignInternalUserRoleRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.assignRole(
       internalUserId,
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -103,6 +120,7 @@ export class AdminInternalUsersController {
     @Param('assignmentId') assignmentId: string,
     @Body() body: AdminRemoveInternalUserRoleAssignmentRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.removeRoleAssignment(
       internalUserId,
@@ -110,6 +128,7 @@ export class AdminInternalUsersController {
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 }

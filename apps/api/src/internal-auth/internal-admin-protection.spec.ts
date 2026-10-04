@@ -8,6 +8,7 @@ import {
   INTERNAL_PERMISSION_KEYS,
   type InternalMeResponse,
 } from '@mocha-house/contracts';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { CustomerAuthModule } from '../customer-auth/customer-auth.module';
@@ -63,6 +64,7 @@ describe('Internal admin authentication + baseline authorization (integration)',
 
     const activeNoRoles = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${activeNoRolesEmail}`,
         email: activeNoRolesEmail,
@@ -74,6 +76,7 @@ describe('Internal admin authentication + baseline authorization (integration)',
 
     const granted = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${grantedEmail}`,
         email: grantedEmail,
@@ -83,6 +86,7 @@ describe('Internal admin authentication + baseline authorization (integration)',
     });
     await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${invitedEmail}`,
         email: invitedEmail,
@@ -92,11 +96,13 @@ describe('Internal admin authentication + baseline authorization (integration)',
 
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: roleKey,
         displayName: 'Admin Protection Spec — all permissions',
         permissions: {
           create: INTERNAL_PERMISSION_KEYS.map((permissionKey) => ({
             permissionKey,
+            tenantId: TENANT_1_MOCHA_HOUSE_ID,
           })),
         },
       },
@@ -104,6 +110,7 @@ describe('Internal admin authentication + baseline authorization (integration)',
     roleId = role.id;
     await prisma.internalUserRoleAssignment.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         internalUserId: granted.id,
         roleId: role.id,
         scopeType: 'CORPORATE',
@@ -215,6 +222,7 @@ describe('Internal admin authentication + baseline authorization (integration)',
       createdEmails.push(email);
       await prisma.internalUser.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: 'internal-dev',
           externalSubject: `internal-dev:${email}`,
           email,
@@ -230,7 +238,9 @@ describe('Internal admin authentication + baseline authorization (integration)',
         .expect(200);
 
       await prisma.internalUser.update({
-        where: { email },
+        where: {
+          tenantId_email: { tenantId: TENANT_1_MOCHA_HOUSE_ID, email },
+        },
         data: { status: 'SUSPENDED' },
       });
 

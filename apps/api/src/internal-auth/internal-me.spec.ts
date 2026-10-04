@@ -44,6 +44,7 @@ describe('GET /api/v1/internal/me — authorization summary (integration)', () =
   async function createUser(key: string, status: 'ACTIVE' | 'SUSPENDED') {
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email: `${key}@example.com`,
@@ -62,10 +63,11 @@ describe('GET /api/v1/internal/me — authorization summary (integration)', () =
   ) {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `internal-me-${suffix}-${randomUUID()}`,
         displayName: 'internal-me spec role',
         permissions: {
-          create: permissions.map((permissionKey) => ({ permissionKey })),
+          create: permissions.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
@@ -73,6 +75,7 @@ describe('GET /api/v1/internal/me — authorization summary (integration)', () =
     await prisma.internalUserRoleAssignment.create({
       data: {
         internalUserId: userId,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         roleId: role.id,
         scopeType: scope.scopeType,
         scopeId: scope.scopeId,

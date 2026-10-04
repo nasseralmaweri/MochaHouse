@@ -1,6 +1,7 @@
 import {
   ExecutionContext,
   ForbiddenException,
+  InternalServerErrorException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
@@ -12,13 +13,30 @@ import { signDevJwt } from '../../customer-auth/infrastructure/dev-jwt';
 import type { InternalUserResolution } from '../application/internal-users.service';
 import type { InternalIdentity } from './internal-identity';
 
-function contextWithHeader(authorization?: string): ExecutionContext {
+// Milestone S0D-2E — every request reaching this guard already has a
+// trusted TenantContext (TenantContextMiddleware runs before any guard);
+// `tenantContext` defaults to Tenant #1 here so the pre-existing tests
+// below don't need to know about it. The one test that sets it to
+// `undefined` proves the guard's own fail-closed check.
+// `tenantContext: null` (never `undefined`, which would trigger the
+// default below) deliberately omits it, for the one test proving the
+// guard's own fail-closed check.
+function contextWithHeader(
+  authorization?: string,
+  tenantContext: { tenantId: string } | null = {
+    tenantId: TENANT_1_MOCHA_HOUSE_ID,
+  },
+): ExecutionContext {
   const request: {
     headers: Record<string, string | undefined>;
     internalIdentity?: unknown;
     internalUser?: unknown;
     customerIdentity?: unknown;
+    tenantContext?: { tenantId: string };
   } = { headers: { authorization } };
+  if (tenantContext) {
+    request.tenantContext = tenantContext;
+  }
   return {
     switchToHttp: () => ({ getRequest: () => request }),
   } as unknown as ExecutionContext;
@@ -33,10 +51,12 @@ describe('InternalAuthGuard', () => {
   // test set up — the guard's lifecycle behaviour is exercised through this.
   let resolution: InternalUserResolution;
   let seenIdentity: InternalIdentity | null;
+  let seenTenantId: string | null;
 
   const internalUsersStub = {
-    resolveForAuthentication: (identity: InternalIdentity) => {
+    resolveForAuthentication: (identity: InternalIdentity, tenantId: string) => {
       seenIdentity = identity;
+      seenTenantId = tenantId;
       return Promise.resolve(resolution);
     },
   };
@@ -70,6 +90,7 @@ describe('InternalAuthGuard', () => {
     process.env.AUTH_DEV_JWT_SECRET = customerSecret;
     resolution = { outcome: 'not-found' };
     seenIdentity = null;
+    seenTenantId = null;
   });
 
   afterEach(() => {
@@ -181,6 +202,28 @@ describe('InternalAuthGuard', () => {
       email: 'other@example.com',
       name: null,
     });
+  });
+
+  // --- Milestone S0D-2E -----------------------------------------------
+
+  it("passes the request's own TenantContext.tenantId to resolution — never a default", async () => {
+    resolution = { outcome: 'active', user: activeUser };
+    const otherTenantId = '01a0db02-f800-7000-8000-7e570000000b';
+    await guard.canActivate(
+      contextWithHeader(`Bearer ${internalToken()}`, {
+        tenantId: otherTenantId,
+      }),
+    );
+    expect(seenTenantId).toBe(otherTenantId);
+  });
+
+  it('fails closed with a 500 if TenantContextMiddleware never ran (no request.tenantContext)', async () => {
+    resolution = { outcome: 'active', user: activeUser };
+    await expect(
+      guard.canActivate(contextWithHeader(`Bearer ${internalToken()}`, null)),
+    ).rejects.toThrow(InternalServerErrorException);
+    // Never even reaches token verification / identity resolution.
+    expect(seenIdentity).toBeNull();
   });
 
   it('never selects the dev verifier in production, even with INTERNAL_AUTH_PROVIDER=dev', async () => {

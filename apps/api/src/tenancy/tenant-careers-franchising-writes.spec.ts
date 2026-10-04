@@ -192,6 +192,7 @@ describe('S0D-2D careers & franchising tenant ownership (integration)', () => {
 
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:s0d2d-${suffix}`,
         email: `s0d2d-${suffix}@example.com`,

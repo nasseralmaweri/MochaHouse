@@ -11,6 +11,7 @@ import { CustomerAuthModule } from '../customer-auth/customer-auth.module';
 import { InternalAuthModule } from '../internal-auth/internal-auth.module';
 import { OperationsModule } from './operations.module';
 import { signInternalDevJwt } from '../internal-auth/infrastructure/internal-dev-jwt';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 
 type Scope = { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null };
 
@@ -49,6 +50,7 @@ describe('Closing Checklist configuration (integration)', () => {
   async function makeUser(key: string): Promise<string> {
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email: `${key}@example.com`,
@@ -68,17 +70,18 @@ describe('Closing Checklist configuration (integration)', () => {
   ): Promise<void> {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `closing-cfg-${suffix}-${randomUUID()}`,
         displayName: 'Closing Cfg Role',
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
     roleIds.push(role.id);
     const userId = await makeUser(`${key}-${suffix}`);
     await prisma.internalUserRoleAssignment.create({
-      data: { internalUserId: userId, roleId: role.id, ...scope },
+      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: userId, roleId: role.id, ...scope },
     });
   }
 
@@ -181,12 +184,13 @@ describe('Closing Checklist configuration (integration)', () => {
     await makeUser(`noPerm-${suffix}`);
 
     const storeManager = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'store-manager' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
     });
     const sm = await makeUser(`storeMgr-${suffix}`);
     await prisma.internalUserRoleAssignment.create({
       data: {
         internalUserId: sm,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         roleId: storeManager.id,
         scopeType: 'CORPORATE',
         scopeId: null,

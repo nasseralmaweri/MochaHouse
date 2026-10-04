@@ -1,9 +1,11 @@
 import { Controller, Get, Param, Req, UseGuards } from '@nestjs/common';
+import type { TenantContext } from '@mocha-house/database';
 import { AdminInternalRolesService } from '../application/admin-internal-roles.service';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 
 // Administration → Access Levels (Milestone 5E-2). Read-only.
 //
@@ -19,8 +21,11 @@ export class AdminInternalRolesController {
 
   @RequirePermission('roles.view')
   @Get()
-  listRoles(@Req() request: InternalAuthenticatedRequest) {
-    return this.service.listRoles(request.authorization!);
+  listRoles(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.service.listRoles(request.authorization!, tenant);
   }
 
   @RequirePermission('roles.view')
@@ -28,7 +33,12 @@ export class AdminInternalRolesController {
   getRole(
     @Param('internalRoleId') internalRoleId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.service.getRoleDetail(internalRoleId, request.authorization!);
+    return this.service.getRoleDetail(
+      internalRoleId,
+      request.authorization!,
+      tenant,
+    );
   }
 }

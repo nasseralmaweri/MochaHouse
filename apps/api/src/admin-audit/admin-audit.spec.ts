@@ -55,6 +55,7 @@ describe('Admin activity log (integration)', () => {
   ): Promise<string> {
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email: `${key}@example.com`,
@@ -74,10 +75,11 @@ describe('Admin activity log (integration)', () => {
   ): Promise<string> {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `audit-spec-${suffix}-${randomUUID()}`,
         displayName,
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
@@ -91,7 +93,7 @@ describe('Admin activity log (integration)', () => {
     scope: { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null },
   ) {
     await prisma.internalUserRoleAssignment.create({
-      data: { internalUserId: userId, roleId, ...scope },
+      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: userId, roleId, ...scope },
     });
   }
 
@@ -159,7 +161,7 @@ describe('Admin activity log (integration)', () => {
     roles.noAudit = await makeRole('Orders Only', ['orders.view']);
     roles.platformAdmin = (
       await prisma.internalRole.findUniqueOrThrow({
-        where: { key: 'platform-administrator' },
+        where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'platform-administrator' } },
       })
     ).id;
 
@@ -917,7 +919,7 @@ describe('Admin activity log (integration)', () => {
     const target = await makeUser(`regassign-${suffix}`, 'ACTIVE', 'Reg Assignee');
     const storeManagerRoleId = (
       await prisma.internalRole.findUniqueOrThrow({
-        where: { key: 'store-manager' },
+        where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
       })
     ).id;
 
@@ -965,11 +967,11 @@ describe('Admin activity log (integration)', () => {
 
   it('Store Manager does not gain audit.view; Platform Administrator does (59,60)', async () => {
     const sm = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'store-manager' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
       include: { permissions: true },
     });
     const pa = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'platform-administrator' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'platform-administrator' } },
       include: { permissions: true },
     });
     expect(sm.permissions.map((p) => p.permissionKey)).not.toContain('audit.view');

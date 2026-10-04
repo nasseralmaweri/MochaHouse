@@ -123,6 +123,7 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
   ): Promise<string> {
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email: `${key}@example.com`,
@@ -134,10 +135,11 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
     userIds.push(user.id);
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `s0d2b2-${key}`,
         displayName: key,
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
@@ -145,6 +147,7 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
     await prisma.internalUserRoleAssignment.create({
       data: {
         internalUserId: user.id,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         roleId: role.id,
         scopeType: 'CORPORATE',
         scopeId: null,

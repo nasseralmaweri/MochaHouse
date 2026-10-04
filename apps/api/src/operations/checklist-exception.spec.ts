@@ -49,6 +49,7 @@ describe('Opening Checklist management exception (integration)', () => {
   ): Promise<string> {
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email: `${key}@example.com`,
@@ -64,10 +65,11 @@ describe('Opening Checklist management exception (integration)', () => {
   async function makeRole(permissionKeys: string[]): Promise<string> {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `exc-spec-${suffix}-${randomUUID()}`,
         displayName: 'Exception Spec Role',
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
@@ -77,7 +79,7 @@ describe('Opening Checklist management exception (integration)', () => {
 
   async function assign(userId: string, roleId: string, scope: Scope) {
     await prisma.internalUserRoleAssignment.create({
-      data: { internalUserId: userId, roleId, ...scope },
+      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: userId, roleId, ...scope },
     });
   }
 
@@ -223,7 +225,7 @@ describe('Opening Checklist management exception (integration)', () => {
     // The seeded built-in Store Manager role — proves the seed grants the
     // exception capability.
     const storeManager = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'store-manager' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
     });
     const storeMgr = await makeUser(`storeMgr-${suffix}`);
     await assign(storeMgr, storeManager.id, {

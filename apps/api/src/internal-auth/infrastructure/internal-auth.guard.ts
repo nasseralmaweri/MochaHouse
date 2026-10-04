@@ -3,6 +3,7 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { isDevInternalAuthEnabled } from './internal-auth-provider-mode';
@@ -14,6 +15,7 @@ import type {
   InternalIdentity,
 } from './internal-identity';
 import { InternalUsersService } from '../application/internal-users.service';
+import type { TenantContextRequest } from '../../tenancy/tenant-context-request';
 
 // The internal-authentication + lifecycle boundary for every internal/Admin
 // route. Completely separate from the customer boundary (CustomerAuthGuard):
@@ -44,7 +46,17 @@ export class InternalAuthGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context
       .switchToHttp()
-      .getRequest<InternalAuthenticatedRequest>();
+      .getRequest<InternalAuthenticatedRequest & TenantContextRequest>();
+
+    // Milestone S0D-2E — the request's trusted, server-resolved
+    // TenantContext (TenantContextMiddleware runs before every guard). An
+    // internal identity only ever resolves to an InternalUser of THIS
+    // tenant — see resolveForAuthentication.
+    if (!request.tenantContext) {
+      throw new InternalServerErrorException(
+        'Tenant context is not established for this request.',
+      );
+    }
 
     const token = extractInternalBearerToken(request.headers.authorization);
     if (!token) {
@@ -62,8 +74,10 @@ export class InternalAuthGuard implements CanActivate {
       throw new UnauthorizedException('Invalid or expired authentication.');
     }
 
-    const resolution =
-      await this.internalUsers.resolveForAuthentication(identity);
+    const resolution = await this.internalUsers.resolveForAuthentication(
+      identity,
+      request.tenantContext.tenantId,
+    );
 
     if (resolution.outcome !== 'active') {
       // Unknown identity / INVITED / SUSPENDED / DISABLED — one generic

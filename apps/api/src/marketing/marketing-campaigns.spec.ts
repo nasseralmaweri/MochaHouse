@@ -59,16 +59,18 @@ describe('Marketing Campaigns admin (integration)', () => {
   ): Promise<string> {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `marketing-admin-${suffix}-${randomUUID()}`,
         displayName: 'Marketing Admin Spec Role',
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
     roleIds.push(role.id);
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}-${suffix}`,
         email: `${key}-${suffix}@example.com`,
@@ -79,7 +81,7 @@ describe('Marketing Campaigns admin (integration)', () => {
     });
     userIds.push(user.id);
     await prisma.internalUserRoleAssignment.create({
-      data: { internalUserId: user.id, roleId: role.id, ...scope },
+      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: user.id, roleId: role.id, ...scope },
     });
     return user.id;
   }
@@ -288,10 +290,11 @@ describe('Marketing Campaigns admin (integration)', () => {
       { scopeType: 'CORPORATE', scopeId: null },
     );
     const storeManager = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'store-manager' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
     });
     const mgr = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:storeMgr-${suffix}`,
         email: `storeMgr-${suffix}@example.com`,
@@ -303,6 +306,7 @@ describe('Marketing Campaigns admin (integration)', () => {
     await prisma.internalUserRoleAssignment.create({
       data: {
         internalUserId: mgr.id,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         roleId: storeManager.id,
         scopeType: 'LOCATION',
         scopeId: locId,

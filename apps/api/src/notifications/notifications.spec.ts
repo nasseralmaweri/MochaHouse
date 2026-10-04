@@ -65,6 +65,7 @@ describe('S0D-2C-3 notification recipient routing (integration)', () => {
 
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:s0d2c3-${suffix}`,
         email: `s0d2c3-${suffix}@example.com`,

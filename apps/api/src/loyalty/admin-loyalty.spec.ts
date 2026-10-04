@@ -45,6 +45,7 @@ describe('Admin Mocha Beans surface (integration)', () => {
   async function makeUser(key: string): Promise<string> {
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email: `${key}@example.com`,
@@ -60,9 +61,10 @@ describe('Admin Mocha Beans surface (integration)', () => {
   async function makeRole(permissionKeys: string[]): Promise<string> {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `loyalty-spec-${suffix}-${randomUUID()}`,
         displayName: 'Loyalty Spec Role',
-        permissions: { create: permissionKeys.map((permissionKey) => ({ permissionKey })) },
+        permissions: { create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })) },
       },
     });
     roleIds.push(role.id);
@@ -71,7 +73,7 @@ describe('Admin Mocha Beans surface (integration)', () => {
 
   async function assign(userId: string, roleId: string, scope: Scope) {
     await prisma.internalUserRoleAssignment.create({
-      data: { internalUserId: userId, roleId, ...scope },
+      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: userId, roleId, ...scope },
     });
   }
 
@@ -177,7 +179,7 @@ describe('Admin Mocha Beans surface (integration)', () => {
     );
     // A seeded Store Manager — must have neither key.
     const storeManager = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'store-manager' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
     });
     const storeMgr = await makeUser(`storeMgr-${suffix}`);
     await assign(storeMgr, storeManager.id, {
@@ -240,7 +242,7 @@ describe('Admin Mocha Beans surface (integration)', () => {
 
   it('a seeded Store Manager holds neither loyalty key', async () => {
     const role = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'store-manager' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
       include: { permissions: true },
     });
     const keys = role.permissions.map((p) => p.permissionKey);

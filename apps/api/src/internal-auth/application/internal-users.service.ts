@@ -28,14 +28,26 @@ export class InternalUsersService {
   //
   // Resolution key:
   //   1. (externalProvider, externalSubject) — the authoritative identity
-  //      mapping once the subject is known.
-  //   2. Fallback: (externalProvider, email) for a row whose externalSubject
-  //      is still null — i.e. a user provisioned by email who has not
-  //      authenticated before. The subject is bound only once the row is
-  //      confirmed ACTIVE (below), so a non-ACTIVE user is never mutated by
-  //      an authentication attempt.
+  //      mapping once the subject is known. Deliberately GLOBAL (not
+  //      tenant-scoped) — see InternalUser.externalSubject's schema comment;
+  //      that is an S0F question, not this one.
+  //   2. Fallback: (externalProvider, email, tenantId) for a row whose
+  //      externalSubject is still null — i.e. a user provisioned by email
+  //      who has not authenticated before. The subject is bound only once
+  //      the row is confirmed ACTIVE (below), so a non-ACTIVE user is never
+  //      mutated by an authentication attempt.
+  //
+  // Milestone S0D-2E — `tenantId` is the request's trusted, server-resolved
+  // tenant. Whichever path finds a candidate, it must belong to THIS
+  // tenant or resolution fails exactly like "no such internal user" (the
+  // same generic outcome InternalAuthGuard turns into one 403 — this can
+  // never distinguish "wrong tenant" from "unknown identity" in the
+  // response). This is what makes InternalUser.email's new (tenantId,
+  // email) uniqueness safe: two tenants' same-email, not-yet-bound users
+  // can never resolve to each other's row.
   async resolveForAuthentication(
     identity: InternalIdentity,
+    tenantId: string,
   ): Promise<InternalUserResolution> {
     const bySubject = identity.subject
       ? await this.prisma.internalUser.findUnique({
@@ -48,9 +60,10 @@ export class InternalUsersService {
         })
       : null;
 
-    const candidate = bySubject ?? (await this.findUnboundByEmail(identity));
+    const candidate =
+      bySubject ?? (await this.findUnboundByEmail(identity, tenantId));
 
-    if (!candidate) {
+    if (!candidate || candidate.tenantId !== tenantId) {
       return { outcome: 'not-found' };
     }
 
@@ -76,6 +89,7 @@ export class InternalUsersService {
 
   private async findUnboundByEmail(
     identity: InternalIdentity,
+    tenantId: string,
   ): Promise<InternalUserRow | null> {
     if (!identity.email) {
       return null;
@@ -85,6 +99,7 @@ export class InternalUsersService {
         externalProvider: identity.provider,
         email: identity.email,
         externalSubject: null,
+        tenantId,
       },
     });
   }

@@ -4,9 +4,11 @@ import type {
   AdminRoleSummary,
   InternalPermissionKey,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isKnownPermissionKey } from '../../internal-auth/authorization/permission-catalog';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
+import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 import { describeAccessLevelCapabilities } from './capability-presentation';
 
 // Read-only Admin view of access levels — InternalRole records — for
@@ -25,10 +27,12 @@ export class AdminInternalRolesService {
 
   async listRoles(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminRoleSummary[]> {
     authorization.assertCorporate('roles.view');
 
     const roles = await this.prisma.internalRole.findMany({
+      where: { tenantId: tenant.tenantId },
       select: {
         id: true,
         displayName: true,
@@ -39,8 +43,10 @@ export class AdminInternalRolesService {
 
     // One query for every assignment, grouped in memory into a distinct
     // people-per-role count (a person holding a role at several locations
-    // counts once).
+    // counts once). Tenant-scoped — assignments are transitively tenant-safe
+    // via roleId, but filtering explicitly keeps this query self-contained.
     const assignments = await this.prisma.internalUserRoleAssignment.findMany({
+      where: { tenantId: tenant.tenantId },
       select: { roleId: true, internalUserId: true },
     });
     const peopleByRole = new Map<string, Set<string>>();
@@ -68,6 +74,7 @@ export class AdminInternalRolesService {
   async getRoleDetail(
     internalRoleId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminRoleDetail> {
     authorization.assertCorporate('roles.view');
 
@@ -75,6 +82,7 @@ export class AdminInternalRolesService {
       where: { id: internalRoleId },
       select: {
         id: true,
+        tenantId: true,
         displayName: true,
         description: true,
         isSystem: true,
@@ -83,13 +91,14 @@ export class AdminInternalRolesService {
       },
     });
 
+    requireTenantOwnership(role, tenant, 'Access level not found.');
     if (!role) {
       throw new NotFoundException('Access level not found.');
     }
 
     const peopleWithRole =
       await this.prisma.internalUserRoleAssignment.findMany({
-        where: { roleId: internalRoleId },
+        where: { roleId: internalRoleId, tenantId: tenant.tenantId },
         select: { internalUserId: true },
       });
     const userCount = new Set(peopleWithRole.map((row) => row.internalUserId))

@@ -48,6 +48,7 @@ describe('Franchising / Inquiries (integration)', () => {
   async function makeUser(key: string): Promise<void> {
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email: `${key}@example.com`,
@@ -63,10 +64,11 @@ describe('Franchising / Inquiries (integration)', () => {
   async function makeRole(name: string, keys: string[]): Promise<string> {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `franchising-spec-${suffix}-${randomUUID()}`,
         displayName: name,
         permissions: {
-          create: keys.map((permissionKey) => ({ permissionKey })),
+          create: keys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
@@ -80,7 +82,7 @@ describe('Franchising / Inquiries (integration)', () => {
     scope: { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null },
   ): Promise<void> {
     await prisma.internalUserRoleAssignment.create({
-      data: { internalUserId: users[key]!, roleId, ...scope },
+      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: users[key]!, roleId, ...scope },
     });
   }
 

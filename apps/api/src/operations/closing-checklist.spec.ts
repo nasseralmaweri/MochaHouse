@@ -50,6 +50,7 @@ describe('Closing Checklist (integration)', () => {
   ): Promise<string> {
     const user = await prisma.internalUser.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email: `${key}@example.com`,
@@ -65,10 +66,11 @@ describe('Closing Checklist (integration)', () => {
   async function makeRole(permissionKeys: string[]): Promise<string> {
     const role = await prisma.internalRole.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `closing-spec-${suffix}-${randomUUID()}`,
         displayName: 'Closing Spec Role',
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
         },
       },
     });
@@ -78,7 +80,7 @@ describe('Closing Checklist (integration)', () => {
 
   async function assign(userId: string, roleId: string, scope: Scope) {
     await prisma.internalUserRoleAssignment.create({
-      data: { internalUserId: userId, roleId, ...scope },
+      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: userId, roleId, ...scope },
     });
   }
 
@@ -219,7 +221,7 @@ describe('Closing Checklist (integration)', () => {
     // A Store Manager (the seeded built-in role) at locA — proves the seed
     // grants both execution and exception capability for Closing too.
     const storeManager = await prisma.internalRole.findUniqueOrThrow({
-      where: { key: 'store-manager' },
+      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
     });
     const storeMgr = await makeUser(`storeMgr-${suffix}`);
     await assign(storeMgr, storeManager.id, {
