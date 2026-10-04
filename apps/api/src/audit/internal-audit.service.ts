@@ -479,6 +479,33 @@ export class InternalAuditService {
     });
   }
 
+  // Milestone S0D-2C-3 — a tenant's notification-recipient routing changed
+  // (created or updated). `targetId` is the purpose being configured, not a
+  // row id: there is one row per (tenant, purpose), and the tenant itself is
+  // implicit in `tx`'s own TenantContext-scoped write, never recorded here
+  // as a second, independently-trusted source.
+  async recordNotificationRecipientUpdated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      purpose: string;
+      before: { email: string } | null;
+      after: { email: string };
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'notifications.recipient_updated',
+        targetType: 'notification_recipient',
+        targetId: input.purpose,
+        beforeData: input.before ?? Prisma.JsonNull,
+        afterData: input.after,
+        reason: 'Notification recipient configuration updated.',
+      },
+    });
+  }
+
   // --- Milestone 8A, HQ CRM foundation --------------------------
   // Adding an internal CRM note to a customer is a significant CRM
   // administrative action, so it is durable history in addition to the

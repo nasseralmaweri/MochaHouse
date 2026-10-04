@@ -63,6 +63,9 @@ describe('internal permission catalog', () => {
         // Milestone 8D
         'franchising.view',
         'franchising.manage',
+        // Milestone S0D-2C-3
+        'notifications.routing.view',
+        'notifications.routing.manage',
         // Milestone 8E
         'cms.view',
         'cms.manage',
@@ -153,6 +156,14 @@ describe('internal permission catalog', () => {
     // franchising surface is CORPORATE-only (Milestone 8D).
     expect(allowedScopeTypesFor('franchising.view')).toEqual(['CORPORATE']);
     expect(allowedScopeTypesFor('franchising.manage')).toEqual(['CORPORATE']);
+    // notifications.routing.* — tenant-owned notification recipient routing
+    // is HQ configuration, not a per-location concern (Milestone S0D-2C-3).
+    expect(allowedScopeTypesFor('notifications.routing.view')).toEqual([
+      'CORPORATE',
+    ]);
+    expect(allowedScopeTypesFor('notifications.routing.manage')).toEqual([
+      'CORPORATE',
+    ]);
     // cms.* — public site content is company-wide; the CMS surface is
     // CORPORATE-only (Milestone 8E).
     expect(allowedScopeTypesFor('cms.view')).toEqual(['CORPORATE']);

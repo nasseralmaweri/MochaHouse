@@ -35,6 +35,10 @@ const s0d1 = migrations[s0d1Index];
 const tenantTables = Object.entries(MODEL_TENANCY)
   .filter(([, tenancy]) => tenancy === 'tenant')
   .map(([model]) => model)
+  // Milestone S0D-2C-3 added NotificationRecipient as a brand-new table,
+  // long after this migration; this test is pinned to the schema exactly
+  // as it existed at `s0d1`, which never has that table.
+  .filter((model) => model !== 'NotificationRecipient')
   .sort();
 
 const baseUrl = process.env.DATABASE_URL!;

@@ -73,7 +73,12 @@ const REQUIRED_AFTER = new Set([
 ]);
 const tenantTables = Object.entries(MODEL_TENANCY)
   .filter(([, tenancy]) => tenancy === 'tenant')
-  .map(([model]) => model);
+  .map(([model]) => model)
+  // Milestone S0D-2C-3 added NotificationRecipient AFTER this migration;
+  // this test is pinned to the schema exactly as it existed at `target`,
+  // which never has that table. Excluded here rather than letting this
+  // file's expected set silently grow with every later milestone.
+  .filter((model) => model !== 'NotificationRecipient');
 
 const baseUrl = process.env.DATABASE_URL!;
 const T1 = TENANT_1_MOCHA_HOUSE_ID;

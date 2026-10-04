@@ -122,6 +122,7 @@ model Tenant {
   campaigns Campaign[]
   campaignProducts CampaignProduct[]
   approvalRequests ApprovalRequest[]
+  notificationRecipients NotificationRecipient[]
 }
 
 model Location {
@@ -789,6 +790,47 @@ model NotificationDelivery {
 
   @@unique([outboxEventId, channel])
   @@index([aggregateType, aggregateId])
+  @@index([tenantId])
+}
+
+// Milestone S0D-2C-3 — tenant-owned notification recipient routing. WHERE a
+// business notification (as opposed to a customer's own order notification
+// — see NotificationDispatchService's Order case, which resolves the
+// Order's own customer/guest email and never touches this table) gets sent
+// is tenant-specific configuration, never a global process-wide value.
+//
+// `purpose` is a plain string, deliberately NOT a Prisma enum — the same
+// convention as OutboxEvent.eventType / NotificationDelivery.templateKey.
+// Today's two valid values (careers.application.received,
+// franchising.inquiry.received — see NotificationRecipientPurpose in
+// @mocha-house/contracts) are enforced at the application layer, so a
+// future purpose never needs a migration. tenantId is REQUIRED FROM
+// INCEPTION: this is a brand-new model, so there is no nullable window to
+// convert and no backfill migration — unlike every tenantId column
+// converted earlier in S0D-2.
+//
+// @@unique([tenantId, purpose]) deliberately allows exactly one recipient
+// per tenant per purpose today. Supporting multiple recipients later is a
+// constraint relaxation, not a redesign — NOT implemented now because
+// nothing requires it yet.
+//
+// Missing configuration is a legitimate, intentional state, not an error
+// to be defaulted away: unlike GiftCardConfiguration/LoyaltyConfiguration,
+// nothing ever lazily upserts a default row here. A tenant with no row for
+// a purpose means the worker fails that notification closed (ends up
+// FAILED, no email sent) — it must NEVER fall back to another tenant's
+// row, a global env var, or any other tenant's/default recipient.
+model NotificationRecipient {
+  id        String   @id @default(uuid(7))
+  purpose   String
+  email     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenantId String
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, purpose])
   @@index([tenantId])
 }
 

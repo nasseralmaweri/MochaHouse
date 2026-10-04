@@ -248,6 +248,21 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: "Change an inquiry's status and add internal notes",
     definition: "Change an inquiry's status and add internal notes",
   },
+  // Milestone S0D-2C-3 — tenant-owned notification recipient routing. Both
+  // CORPORATE-only (HQ configuration, not a per-location concern), so the
+  // two phrasings are the same.
+  'notifications.routing.view': {
+    group: 'Notifications',
+    effectiveAll: 'View configured notification recipients',
+    effectiveScoped: 'View configured notification recipients',
+    definition: 'View configured notification recipients',
+  },
+  'notifications.routing.manage': {
+    group: 'Notifications',
+    effectiveAll: 'Configure notification recipients',
+    effectiveScoped: 'Configure notification recipients',
+    definition: 'Configure notification recipients',
+  },
   // Milestone 8E — CMS foundation. Both CORPORATE-only (public site
   // content is company-wide), so the two phrasings are the same.
   'cms.view': {
@@ -327,6 +342,7 @@ const GROUP_ORDER = [
   'Customers',
   'Careers',
   'Franchising',
+  'Notifications',
   'Content',
   'Marketing',
   'Approvals',
@@ -366,6 +382,8 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'applicants.manage',
   'franchising.view',
   'franchising.manage',
+  'notifications.routing.view',
+  'notifications.routing.manage',
   'cms.view',
   'cms.manage',
   'media.view',

@@ -50,4 +50,8 @@ export const TENANT_ID_REQUIRED_MODELS: readonly string[] = [
   // NotificationDelivery (copied from its triggering OutboxEvent).
   'OutboxEvent',
   'NotificationDelivery',
+  // S0D-2C-3 — NotificationRecipient: a brand-new model, so tenantId is
+  // required from inception (no nullable window, no backfill migration —
+  // unlike every other entry above).
+  'NotificationRecipient',
 ];

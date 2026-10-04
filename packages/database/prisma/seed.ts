@@ -563,6 +563,40 @@ async function seedMochaHouseBusinessData(tenantId: string) {
       customAmountEnabled: true,
     },
   });
+
+  // Milestone S0D-2C-3 — tenant-owned notification recipient routing.
+  // CAREERS_NOTIFICATION_EMAIL / FRANCHISING_NOTIFICATION_EMAIL are read
+  // HERE ONLY, as one-time bootstrap input for Tenant #1 (Mocha House): if
+  // set, and no NotificationRecipient row exists yet for that
+  // (tenantId, purpose), seed it once. Re-seeding never overwrites an
+  // HQ-chosen value — the same create-once pattern as every configuration
+  // above. The worker's runtime dispatch never reads these env vars
+  // itself; see NotificationRecipientResolver, which only ever reads this
+  // table. A tenant with nothing seeded or configured here simply has no
+  // row — the worker fails that notification closed, exactly as intended.
+  const notificationRecipientBootstrap: {
+    purpose: string;
+    email: string | undefined;
+  }[] = [
+    {
+      purpose: 'careers.application.received',
+      email: process.env.CAREERS_NOTIFICATION_EMAIL,
+    },
+    {
+      purpose: 'franchising.inquiry.received',
+      email: process.env.FRANCHISING_NOTIFICATION_EMAIL,
+    },
+  ];
+  for (const { purpose, email } of notificationRecipientBootstrap) {
+    if (!email) {
+      continue;
+    }
+    await prisma.notificationRecipient.upsert({
+      where: { tenantId_purpose: { tenantId, purpose } },
+      update: {},
+      create: { tenantId, purpose, email },
+    });
+  }
 }
 
 main()

@@ -1667,6 +1667,16 @@ export const INTERNAL_PERMISSION_KEYS = [
   //                         note.
   "franchising.view",
   "franchising.manage",
+  // Milestone S0D-2C-3 — tenant-owned notification recipient routing (which
+  // address receives a Careers/Franchising business notification). Both
+  // keys are CORPORATE-only: this is HQ configuration, not a per-location
+  // concern, and a Store Manager never holds them.
+  //   notifications.routing.view    — read the current tenant's configured
+  //                                   notification recipients.
+  //   notifications.routing.manage  — create/update a notification
+  //                                   recipient for the current tenant.
+  "notifications.routing.view",
+  "notifications.routing.manage",
   // Milestone 8E — CMS foundation. Public site content is a company-wide
   // concern, so both keys are CORPORATE-only.
   //   cms.view    — read managed content pages (draft + published).
@@ -1963,6 +1973,18 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "franchising.manage",
     description:
       "Change a franchise inquiry's status and add an internal note. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "notifications.routing.view": {
+    key: "notifications.routing.view",
+    description:
+      "View the current tenant's configured notification recipients (which address receives a Careers/Franchising business notification). A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "notifications.routing.manage": {
+    key: "notifications.routing.manage",
+    description:
+      "Create or update a notification recipient for the current tenant. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
   "cms.view": {
@@ -3014,6 +3036,42 @@ export interface AdminFranchiseInquiryActivityItem {
   summary: string;
   actorLabel: string | null;
   createdAt: string;
+}
+
+// --- Milestone S0D-2C-3, tenant-owned notification recipient routing ----
+// Which address receives a Careers/Franchising business notification is
+// per-tenant configuration (NotificationRecipient), resolved by the worker
+// from the triggering OutboxEvent's own tenantId — never from a global env
+// var, never from another tenant's row. This is the closed set of purposes
+// that configuration can exist for today; a new purpose is an application
+// change (add a union member + a worker case), never a migration.
+export const NOTIFICATION_RECIPIENT_PURPOSES = [
+  "careers.application.received",
+  "franchising.inquiry.received",
+] as const;
+
+export type NotificationRecipientPurpose =
+  (typeof NOTIFICATION_RECIPIENT_PURPOSES)[number];
+
+export interface NotificationRecipient {
+  purpose: NotificationRecipientPurpose;
+  email: string;
+  updatedAt: string;
+}
+
+// GET /api/v1/admin/notifications/recipients (notifications.routing.view,
+// CORPORATE-only). Returns every purpose, including ones with no
+// configured recipient yet (email: null) — missing configuration is a
+// legitimate state the admin UI/caller must be able to see, not an error.
+export interface AdminNotificationRecipientsResponse {
+  recipients: { purpose: NotificationRecipientPurpose; email: string | null; updatedAt: string | null }[];
+}
+
+// PUT /api/v1/admin/notifications/recipients/:purpose
+// (notifications.routing.manage, CORPORATE-only). Upserts the current
+// tenant's recipient for that purpose.
+export interface UpdateNotificationRecipientRequest {
+  email: string;
 }
 
 // --- Milestone 8E, CMS foundation --------------------------------------

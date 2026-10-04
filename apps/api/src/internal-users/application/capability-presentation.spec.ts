@@ -78,6 +78,7 @@ describe('capability presentation (Milestone 5E)', () => {
         'Customers',
         'Careers',
         'Franchising',
+        'Notifications',
         'Content',
         'Marketing',
         'Approvals',
@@ -97,6 +98,10 @@ describe('capability presentation (Milestone 5E)', () => {
       expect(groups.find((g) => g.group === 'Franchising')?.items).toEqual([
         'View franchise inquiries and internal notes',
         "Change an inquiry's status and add internal notes",
+      ]);
+      expect(groups.find((g) => g.group === 'Notifications')?.items).toEqual([
+        'View configured notification recipients',
+        'Configure notification recipients',
       ]);
       expect(groups.find((g) => g.group === 'Content')?.items).toEqual([
         'View managed content pages, including draft content',

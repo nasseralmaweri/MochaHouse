@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EMAIL_SENDER } from '../notifications/email/email-sender';
 import { LoggingEmailSender } from '../notifications/email/logging-email-sender';
 import { NotificationDispatchService } from '../notifications/notification-dispatch.service';
+import { NotificationRecipientResolver } from '../notifications/notification-recipient-resolver.service';
 import { OutboxProcessorService } from '../outbox/outbox-processor.service';
 import { WorkerTenancyModule } from './worker-tenancy.module';
 
@@ -38,6 +39,7 @@ describe('S0D-2C-2 two-tenant outbox -> worker -> notification pipeline (integra
       providers: [
         OutboxProcessorService,
         NotificationDispatchService,
+        NotificationRecipientResolver,
         LoggingEmailSender,
         { provide: EMAIL_SENDER, useExisting: LoggingEmailSender },
       ],

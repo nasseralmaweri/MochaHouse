@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
+import type { NotificationRecipientPurpose } from '@mocha-house/contracts';
 import {
   TEST_TENANT_B_ID,
   createTestTenantB,
@@ -12,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EMAIL_SENDER } from './email/email-sender';
 import { LoggingEmailSender } from './email/logging-email-sender';
 import { NotificationDispatchService } from './notification-dispatch.service';
+import { NotificationRecipientResolver } from './notification-recipient-resolver.service';
 
 // Milestone 8H — integration test against the real local Postgres instance,
 // exercising NotificationDispatchService exactly as OutboxProcessorService
@@ -33,12 +35,24 @@ describe('NotificationDispatchService (integration)', () => {
   const jobApplicationIds: string[] = [];
   const franchiseInquiryIds: string[] = [];
   const outboxEventIds: string[] = [];
+  // Milestone S0D-2C-3 — Tenant #1 is the real local-dev tenant (it may
+  // already carry a seeded NotificationRecipient row from the
+  // CAREERS_NOTIFICATION_EMAIL / FRANCHISING_NOTIFICATION_EMAIL bootstrap).
+  // Every test that touches a Tenant #1 recipient snapshots whatever was
+  // there FIRST, so afterAll can restore it exactly rather than deleting
+  // real seeded configuration. Tenant B is an ephemeral test tenant removed
+  // entirely in afterAll, so its recipient rows need no such care.
+  const tenant1RecipientSnapshots = new Map<
+    NotificationRecipientPurpose,
+    { email: string } | null
+  >();
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({
       imports: [PrismaModule],
       providers: [
         NotificationDispatchService,
+        NotificationRecipientResolver,
         LoggingEmailSender,
         { provide: EMAIL_SENDER, useExisting: LoggingEmailSender },
       ],
@@ -58,8 +72,76 @@ describe('NotificationDispatchService (integration)', () => {
     sender.clear();
   });
 
+  async function snapshotTenant1RecipientOnce(
+    purpose: NotificationRecipientPurpose,
+  ): Promise<void> {
+    if (tenant1RecipientSnapshots.has(purpose)) {
+      return;
+    }
+    const existing = await prisma.notificationRecipient.findUnique({
+      where: {
+        tenantId_purpose: { tenantId: TENANT_1_MOCHA_HOUSE_ID, purpose },
+      },
+      select: { email: true },
+    });
+    tenant1RecipientSnapshots.set(purpose, existing);
+  }
+
+  async function setNotificationRecipient(
+    tenantId: string,
+    purpose: NotificationRecipientPurpose,
+    email: string,
+  ): Promise<void> {
+    if (tenantId === TENANT_1_MOCHA_HOUSE_ID) {
+      await snapshotTenant1RecipientOnce(purpose);
+    }
+    await prisma.notificationRecipient.upsert({
+      where: { tenantId_purpose: { tenantId, purpose } },
+      update: { email },
+      create: { tenantId, purpose, email },
+    });
+  }
+
+  async function clearNotificationRecipient(
+    tenantId: string,
+    purpose: NotificationRecipientPurpose,
+  ): Promise<void> {
+    if (tenantId === TENANT_1_MOCHA_HOUSE_ID) {
+      await snapshotTenant1RecipientOnce(purpose);
+    }
+    await prisma.notificationRecipient.deleteMany({
+      where: { tenantId, purpose },
+    });
+  }
+
   afterAll(async () => {
     process.env = { ...originalEnv };
+    // Restore Tenant #1's recipients to exactly what they were before this
+    // file ran (seeded value, some other value, or nothing at all).
+    for (const [purpose, snapshot] of tenant1RecipientSnapshots) {
+      if (snapshot) {
+        await prisma.notificationRecipient.upsert({
+          where: {
+            tenantId_purpose: { tenantId: TENANT_1_MOCHA_HOUSE_ID, purpose },
+          },
+          update: { email: snapshot.email },
+          create: {
+            tenantId: TENANT_1_MOCHA_HOUSE_ID,
+            purpose,
+            email: snapshot.email,
+          },
+        });
+      } else {
+        await prisma.notificationRecipient.deleteMany({
+          where: { tenantId: TENANT_1_MOCHA_HOUSE_ID, purpose },
+        });
+      }
+    }
+    // Tenant B is removed entirely below; its recipient rows just need to
+    // be gone first so the Tenant FK does not block that deletion.
+    await prisma.notificationRecipient.deleteMany({
+      where: { tenantId: TEST_TENANT_B_ID },
+    });
     await prisma.notificationDelivery.deleteMany({
       where: { outboxEventId: { in: outboxEventIds } },
     });
@@ -385,10 +467,14 @@ describe('NotificationDispatchService (integration)', () => {
     expect(delivery.status).toBe('SENT');
   });
 
-  // --- Careers -------------------------------------------------------
+  // --- Careers (Milestone S0D-2C-3: tenant-owned recipient routing) -----
 
-  it('sends the internal new-applicant email to CAREERS_NOTIFICATION_EMAIL', async () => {
-    process.env.CAREERS_NOTIFICATION_EMAIL = 'careers-inbox@example.com';
+  it('sends the internal new-applicant email to the tenant-configured Careers recipient', async () => {
+    await setNotificationRecipient(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'careers.application.received',
+      'careers-inbox@example.com',
+    );
     const { applicationId, jobTitleSnapshot } = await makeJobApplication();
     const eventId = await makeOutboxEvent({
       aggregateType: 'JobApplication',
@@ -415,8 +501,11 @@ describe('NotificationDispatchService (integration)', () => {
     expect(delivery.templateKey).toBe('careers.application.received');
   });
 
-  it('records FAILED without throwing when CAREERS_NOTIFICATION_EMAIL is not configured', async () => {
-    delete process.env.CAREERS_NOTIFICATION_EMAIL;
+  it('records FAILED without throwing when no Careers recipient is configured for the tenant', async () => {
+    await clearNotificationRecipient(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'careers.application.received',
+    );
     const { applicationId } = await makeJobApplication();
     const eventId = await makeOutboxEvent({
       aggregateType: 'JobApplication',
@@ -439,13 +528,19 @@ describe('NotificationDispatchService (integration)', () => {
       where: { outboxEventId_channel: { outboxEventId: eventId, channel: 'EMAIL' } },
     });
     expect(delivery.status).toBe('FAILED');
-    expect(delivery.failureReason).toContain('CAREERS_NOTIFICATION_EMAIL');
+    expect(delivery.failureReason).toContain(
+      'No Careers notification recipient is configured',
+    );
   });
 
-  // --- Franchising -----------------------------------------------------
+  // --- Franchising (Milestone S0D-2C-3: tenant-owned recipient routing) -
 
-  it('sends the internal new-inquiry email to FRANCHISING_NOTIFICATION_EMAIL', async () => {
-    process.env.FRANCHISING_NOTIFICATION_EMAIL = 'franchising-inbox@example.com';
+  it('sends the internal new-inquiry email to the tenant-configured Franchising recipient', async () => {
+    await setNotificationRecipient(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'franchising.inquiry.received',
+      'franchising-inbox@example.com',
+    );
     const { inquiryId, preferredMarket } = await makeFranchiseInquiry();
     const eventId = await makeOutboxEvent({
       aggregateType: 'FranchiseInquiry',
@@ -470,6 +565,254 @@ describe('NotificationDispatchService (integration)', () => {
     });
     expect(delivery.status).toBe('SENT');
     expect(delivery.templateKey).toBe('franchising.inquiry.received');
+  });
+
+  it('records FAILED without throwing when no Franchising recipient is configured for the tenant', async () => {
+    await clearNotificationRecipient(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'franchising.inquiry.received',
+    );
+    const { inquiryId } = await makeFranchiseInquiry();
+    const eventId = await makeOutboxEvent({
+      aggregateType: 'FranchiseInquiry',
+      aggregateId: inquiryId,
+      eventType: 'franchising.inquiry.submitted',
+    });
+
+    await expect(
+      dispatch.dispatch({
+        id: eventId,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        aggregateType: 'FranchiseInquiry',
+        aggregateId: inquiryId,
+        eventType: 'franchising.inquiry.submitted',
+      }),
+    ).resolves.not.toThrow();
+
+    expect(sender.getSent()).toHaveLength(0);
+    const delivery = await prisma.notificationDelivery.findUniqueOrThrow({
+      where: { outboxEventId_channel: { outboxEventId: eventId, channel: 'EMAIL' } },
+    });
+    expect(delivery.status).toBe('FAILED');
+    expect(delivery.failureReason).toContain(
+      'No Franchising notification recipient is configured',
+    );
+  });
+
+  // --- Milestone S0D-2C-3: tenant-owned recipient routing isolation -----
+  //
+  // Both tenants configured, DIFFERENTLY: each tenant's own event must
+  // resolve its OWN recipient, never the other tenant's, in either
+  // direction. This is the direct fix for the old global
+  // CAREERS_NOTIFICATION_EMAIL / FRANCHISING_NOTIFICATION_EMAIL behaviour.
+
+  it('routes Tenant A and Tenant B Careers applications to their own, different, configured recipients', async () => {
+    await setNotificationRecipient(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'careers.application.received',
+      'tenant-a-careers@example.com',
+    );
+    await setNotificationRecipient(
+      TEST_TENANT_B_ID,
+      'careers.application.received',
+      'tenant-b-careers@example.com',
+    );
+
+    const tenantAApp = await makeJobApplication(TENANT_1_MOCHA_HOUSE_ID);
+    const tenantAEventId = await makeOutboxEvent({
+      aggregateType: 'JobApplication',
+      aggregateId: tenantAApp.applicationId,
+      eventType: 'careers.application.submitted',
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
+    });
+    await dispatch.dispatch({
+      id: tenantAEventId,
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
+      aggregateType: 'JobApplication',
+      aggregateId: tenantAApp.applicationId,
+      eventType: 'careers.application.submitted',
+    });
+
+    const tenantBApp = await makeJobApplication(TEST_TENANT_B_ID);
+    const tenantBEventId = await makeOutboxEvent({
+      aggregateType: 'JobApplication',
+      aggregateId: tenantBApp.applicationId,
+      eventType: 'careers.application.submitted',
+      tenantId: TEST_TENANT_B_ID,
+    });
+    await dispatch.dispatch({
+      id: tenantBEventId,
+      tenantId: TEST_TENANT_B_ID,
+      aggregateType: 'JobApplication',
+      aggregateId: tenantBApp.applicationId,
+      eventType: 'careers.application.submitted',
+    });
+
+    expect(sender.getSent()).toHaveLength(2);
+    expect(sender.getSent()[0]!.to).toBe('tenant-a-careers@example.com');
+    expect(sender.getSent()[1]!.to).toBe('tenant-b-careers@example.com');
+  });
+
+  it('routes Tenant A and Tenant B Franchising inquiries to their own, different, configured recipients', async () => {
+    await setNotificationRecipient(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'franchising.inquiry.received',
+      'tenant-a-franchising@example.com',
+    );
+    await setNotificationRecipient(
+      TEST_TENANT_B_ID,
+      'franchising.inquiry.received',
+      'tenant-b-franchising@example.com',
+    );
+
+    const tenantAInquiry = await makeFranchiseInquiry(TENANT_1_MOCHA_HOUSE_ID);
+    const tenantAEventId = await makeOutboxEvent({
+      aggregateType: 'FranchiseInquiry',
+      aggregateId: tenantAInquiry.inquiryId,
+      eventType: 'franchising.inquiry.submitted',
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
+    });
+    await dispatch.dispatch({
+      id: tenantAEventId,
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
+      aggregateType: 'FranchiseInquiry',
+      aggregateId: tenantAInquiry.inquiryId,
+      eventType: 'franchising.inquiry.submitted',
+    });
+
+    const tenantBInquiry = await makeFranchiseInquiry(TEST_TENANT_B_ID);
+    const tenantBEventId = await makeOutboxEvent({
+      aggregateType: 'FranchiseInquiry',
+      aggregateId: tenantBInquiry.inquiryId,
+      eventType: 'franchising.inquiry.submitted',
+      tenantId: TEST_TENANT_B_ID,
+    });
+    await dispatch.dispatch({
+      id: tenantBEventId,
+      tenantId: TEST_TENANT_B_ID,
+      aggregateType: 'FranchiseInquiry',
+      aggregateId: tenantBInquiry.inquiryId,
+      eventType: 'franchising.inquiry.submitted',
+    });
+
+    expect(sender.getSent()).toHaveLength(2);
+    expect(sender.getSent()[0]!.to).toBe('tenant-a-franchising@example.com');
+    expect(sender.getSent()[1]!.to).toBe('tenant-b-franchising@example.com');
+  });
+
+  it("a tenant with nothing configured never falls back to the OTHER tenant's configured recipient (Careers)", async () => {
+    await setNotificationRecipient(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'careers.application.received',
+      'tenant-a-careers@example.com',
+    );
+    await clearNotificationRecipient(
+      TEST_TENANT_B_ID,
+      'careers.application.received',
+    );
+
+    const tenantBApp = await makeJobApplication(TEST_TENANT_B_ID);
+    const eventId = await makeOutboxEvent({
+      aggregateType: 'JobApplication',
+      aggregateId: tenantBApp.applicationId,
+      eventType: 'careers.application.submitted',
+      tenantId: TEST_TENANT_B_ID,
+    });
+
+    await expect(
+      dispatch.dispatch({
+        id: eventId,
+        tenantId: TEST_TENANT_B_ID,
+        aggregateType: 'JobApplication',
+        aggregateId: tenantBApp.applicationId,
+        eventType: 'careers.application.submitted',
+      }),
+    ).resolves.not.toThrow();
+
+    expect(sender.getSent()).toHaveLength(0);
+    const delivery = await prisma.notificationDelivery.findUniqueOrThrow({
+      where: { outboxEventId_channel: { outboxEventId: eventId, channel: 'EMAIL' } },
+    });
+    expect(delivery.status).toBe('FAILED');
+    expect(delivery.recipient).not.toBe('tenant-a-careers@example.com');
+  });
+
+  it("a tenant with nothing configured never falls back to the OTHER tenant's configured recipient (Franchising)", async () => {
+    await setNotificationRecipient(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'franchising.inquiry.received',
+      'tenant-a-franchising@example.com',
+    );
+    await clearNotificationRecipient(
+      TEST_TENANT_B_ID,
+      'franchising.inquiry.received',
+    );
+
+    const tenantBInquiry = await makeFranchiseInquiry(TEST_TENANT_B_ID);
+    const eventId = await makeOutboxEvent({
+      aggregateType: 'FranchiseInquiry',
+      aggregateId: tenantBInquiry.inquiryId,
+      eventType: 'franchising.inquiry.submitted',
+      tenantId: TEST_TENANT_B_ID,
+    });
+
+    await expect(
+      dispatch.dispatch({
+        id: eventId,
+        tenantId: TEST_TENANT_B_ID,
+        aggregateType: 'FranchiseInquiry',
+        aggregateId: tenantBInquiry.inquiryId,
+        eventType: 'franchising.inquiry.submitted',
+      }),
+    ).resolves.not.toThrow();
+
+    expect(sender.getSent()).toHaveLength(0);
+    const delivery = await prisma.notificationDelivery.findUniqueOrThrow({
+      where: { outboxEventId_channel: { outboxEventId: eventId, channel: 'EMAIL' } },
+    });
+    expect(delivery.status).toBe('FAILED');
+    expect(delivery.recipient).not.toBe('tenant-a-franchising@example.com');
+  });
+
+  it('a spoofed tenantId inside the OutboxEvent payload cannot influence recipient routing', async () => {
+    await setNotificationRecipient(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'careers.application.received',
+      'tenant-a-careers@example.com',
+    );
+    await setNotificationRecipient(
+      TEST_TENANT_B_ID,
+      'careers.application.received',
+      'tenant-b-careers@example.com',
+    );
+
+    const tenantAApp = await makeJobApplication(TENANT_1_MOCHA_HOUSE_ID);
+    // The event genuinely belongs to Tenant A (tenantId column), but its
+    // payload JSON claims Tenant B — exactly what a compromised or buggy
+    // producer might write. ClaimedOutboxEvent never carries `payload` at
+    // all (see its interface), so there is no code path through which this
+    // could ever reach the resolver; this proves it at the data level too.
+    const event = await prisma.outboxEvent.create({
+      data: {
+        aggregateType: 'JobApplication',
+        aggregateId: tenantAApp.applicationId,
+        eventType: 'careers.application.submitted',
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        payload: { tenantId: TEST_TENANT_B_ID, spoofed: true },
+      },
+    });
+    outboxEventIds.push(event.id);
+
+    await dispatch.dispatch({
+      id: event.id,
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
+      aggregateType: 'JobApplication',
+      aggregateId: tenantAApp.applicationId,
+      eventType: 'careers.application.submitted',
+    });
+
+    expect(sender.getSent()).toHaveLength(1);
+    expect(sender.getSent()[0]!.to).toBe('tenant-a-careers@example.com');
   });
 
   // --- Idempotency / duplicate protection -------------------------------
@@ -606,7 +949,11 @@ describe('NotificationDispatchService (integration)', () => {
   });
 
   it('a Tenant A event cannot resolve a Tenant B JobApplication', async () => {
-    process.env.CAREERS_NOTIFICATION_EMAIL = 'careers-inbox@example.com';
+    await setNotificationRecipient(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'careers.application.received',
+      'careers-inbox@example.com',
+    );
     const { applicationId } = await makeJobApplication(TEST_TENANT_B_ID);
     const eventId = await makeOutboxEvent({
       aggregateType: 'JobApplication',
@@ -634,7 +981,11 @@ describe('NotificationDispatchService (integration)', () => {
   });
 
   it('a Tenant A event cannot resolve a Tenant B FranchiseInquiry', async () => {
-    process.env.FRANCHISING_NOTIFICATION_EMAIL = 'franchising-inbox@example.com';
+    await setNotificationRecipient(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'franchising.inquiry.received',
+      'franchising-inbox@example.com',
+    );
     const { inquiryId } = await makeFranchiseInquiry(TEST_TENANT_B_ID);
     const eventId = await makeOutboxEvent({
       aggregateType: 'FranchiseInquiry',
@@ -710,6 +1061,7 @@ describe('NotificationDispatchService (integration)', () => {
       imports: [PrismaModule],
       providers: [
         NotificationDispatchService,
+        NotificationRecipientResolver,
         {
           provide: EMAIL_SENDER,
           useValue: {

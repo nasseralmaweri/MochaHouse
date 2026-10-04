@@ -46,6 +46,7 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     OrderStatusHistory: 'tenant',
     OutboxEvent: 'tenant',
     NotificationDelivery: 'tenant',
+    NotificationRecipient: 'tenant',
 
     // Internal users, authorization & audit (tenant-scoped per ADR-4)
     InternalUser: 'tenant',

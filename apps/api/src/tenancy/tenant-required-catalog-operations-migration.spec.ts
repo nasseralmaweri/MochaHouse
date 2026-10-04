@@ -49,7 +49,11 @@ const SLICE = [
 ];
 const tenantTables = Object.entries(MODEL_TENANCY)
   .filter(([, tenancy]) => tenancy === 'tenant')
-  .map(([model]) => model);
+  .map(([model]) => model)
+  // Milestone S0D-2C-3 added NotificationRecipient AFTER this migration;
+  // this test is pinned to the schema exactly as it existed at `target`,
+  // which never has that table.
+  .filter((model) => model !== 'NotificationRecipient');
 
 const baseUrl = process.env.DATABASE_URL!;
 

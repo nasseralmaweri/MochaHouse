@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EMAIL_SENDER } from './email/email-sender';
 import type { EmailSender } from './email/email-sender';
+import { NotificationRecipientResolver } from './notification-recipient-resolver.service';
 import {
   renderCareersApplicationReceived,
   renderFranchiseInquiryReceived,
@@ -68,6 +69,7 @@ export class NotificationDispatchService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(EMAIL_SENDER) private readonly emailSender: EmailSender,
+    private readonly recipients: NotificationRecipientResolver,
   ) {}
 
   async dispatch(event: ClaimedOutboxEvent): Promise<void> {
@@ -197,9 +199,18 @@ export class NotificationDispatchService {
         return { recipient, rendered };
       }
       case 'careers.application.received': {
-        const recipient = process.env.CAREERS_NOTIFICATION_EMAIL;
+        // Milestone S0D-2C-3 — tenant-owned routing, resolved from the
+        // event's own tenantId. No fallback to a global env var or to any
+        // other tenant's configuration: a tenant with nothing configured
+        // fails this notification closed.
+        const recipient = await this.recipients.resolve(
+          event.tenantId,
+          'careers.application.received',
+        );
         if (!recipient) {
-          throw new Error('CAREERS_NOTIFICATION_EMAIL is not configured.');
+          throw new Error(
+            'No Careers notification recipient is configured for this tenant.',
+          );
         }
         // Milestone S0D-2C-2 — tenant-scoped: a Tenant A event must never
         // resolve a Tenant B JobApplication.
@@ -217,9 +228,18 @@ export class NotificationDispatchService {
         return { recipient, rendered };
       }
       case 'franchising.inquiry.received': {
-        const recipient = process.env.FRANCHISING_NOTIFICATION_EMAIL;
+        // Milestone S0D-2C-3 — tenant-owned routing, resolved from the
+        // event's own tenantId. No fallback to a global env var or to any
+        // other tenant's configuration: a tenant with nothing configured
+        // fails this notification closed.
+        const recipient = await this.recipients.resolve(
+          event.tenantId,
+          'franchising.inquiry.received',
+        );
         if (!recipient) {
-          throw new Error('FRANCHISING_NOTIFICATION_EMAIL is not configured.');
+          throw new Error(
+            'No Franchising notification recipient is configured for this tenant.',
+          );
         }
         // Milestone S0D-2C-2 — tenant-scoped: a Tenant A event must never
         // resolve a Tenant B FranchiseInquiry.

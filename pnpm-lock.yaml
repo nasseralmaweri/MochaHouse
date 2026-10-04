@@ -403,6 +403,9 @@ importers:
       '@aws-sdk/client-ses':
         specifier: ^3.1130.0
         version: 3.1131.0
+      '@mocha-house/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@mocha-house/database':
         specifier: workspace:*
         version: link:../../packages/database

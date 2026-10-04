@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.1130.0",
+    "@mocha-house/contracts": "workspace:*",
     "@mocha-house/database": "workspace:*",
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
