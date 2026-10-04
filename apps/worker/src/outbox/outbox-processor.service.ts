@@ -67,7 +67,17 @@ export class OutboxProcessorService implements OnModuleInit, OnModuleDestroy {
       where: { status: 'PENDING' },
       orderBy: { createdAt: 'asc' },
       take: batchSize,
-      select: { id: true, aggregateType: true, aggregateId: true, eventType: true },
+      // Milestone S0D-2C-2 — tenantId is selected here so every downstream
+      // step (the worker TenantContext, and the notification lookups it
+      // guards) uses the event's OWN persisted ownership, never a payload
+      // field and never the worker's SINGLE_TENANT_ID.
+      select: {
+        id: true,
+        aggregateType: true,
+        aggregateId: true,
+        eventType: true,
+        tenantId: true,
+      },
     });
 
     let processedCount = 0;
@@ -97,11 +107,14 @@ export class OutboxProcessorService implements OnModuleInit, OnModuleDestroy {
       // an expected failure (a bad recipient, a send error); this try/catch
       // is only a backstop against a genuinely unexpected bug in it.
       try {
-        // Milestone S0C — the claimed event's side effects run inside an
-        // explicit worker TenantContext obtained for THIS event. (The
-        // pending-row poll and claim above deliberately run outside any
-        // tenant: they span every event, and the query audit reports them
-        // as such.)
+        // Milestone S0C / S0D-2C-2 — the claimed event's side effects run
+        // inside an explicit worker TenantContext obtained for THIS event,
+        // from the event's OWN persisted tenantId (never SINGLE_TENANT_ID,
+        // never the event's JSON payload). Fails closed: forOutboxEvent
+        // throws rather than processing an event with no valid ownership.
+        // (The pending-row poll and claim above deliberately run outside
+        // any tenant: they span every event, and the query audit reports
+        // them as such.)
         const tenantContext = this.tenantContexts.forOutboxEvent(event);
         await runWithTenantContext(tenantContext, () =>
           this.notifications.dispatch(event),

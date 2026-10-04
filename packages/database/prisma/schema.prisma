@@ -739,11 +739,16 @@ model OutboxEvent {
   // just the FK side of that, not a second outbox.
   notificationDeliveries NotificationDelivery[]
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2C-2 — the owning tenant. REQUIRED since
+  // S0D-2C-2: every current producer (checkout, admin order advancement,
+  // careers application submission, franchise inquiry submission) already
+  // writes this from already-validated ownership — never from payload. No
+  // default: aggregateType is polymorphic, so the migration backfill
+  // resolves each row's parent by its own aggregateType rather than a
+  // single JOIN. A genuinely platform-wide event (none exist today) would
+  // need an explicit scope discriminator, not a nullable tenantId.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([status])
   @@index([aggregateType, aggregateId])
@@ -775,11 +780,12 @@ model NotificationDelivery {
   createdAt         DateTime                @default(now())
   sentAt            DateTime?
 
-  // Milestone S0D-1 — the owning tenant. Nullable ONLY until this
-  // domain's S0D-2 slice converts its writes and sets NOT NULL. No default:
-  // existing rows were backfilled to Tenant #1 by the migration.
-  tenantId String?
-  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Milestone S0D-1 / S0D-2C-2 — the owning tenant. REQUIRED since
+  // S0D-2C-2: copied from the triggering OutboxEvent's own tenantId (the
+  // one authoritative chain — never a second, independently-resolved
+  // source, never the worker's SINGLE_TENANT_ID). No default.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([outboxEventId, channel])
   @@index([aggregateType, aggregateId])

@@ -311,6 +311,7 @@ describe('Internal admin authorization matrix (integration)', () => {
     orderIdA = order.id;
     await prisma.outboxEvent.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         aggregateType: 'Order',
         aggregateId: order.id,
         eventType: 'order.created',

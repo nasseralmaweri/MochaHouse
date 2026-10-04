@@ -2,6 +2,11 @@ import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
+import {
+  TEST_TENANT_B_ID,
+  createTestTenantB,
+  removeTestTenantB,
+} from '@mocha-house/testing';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { EMAIL_SENDER } from './email/email-sender';
@@ -43,6 +48,10 @@ describe('NotificationDispatchService (integration)', () => {
     dispatch = moduleRef.get(NotificationDispatchService);
     sender = moduleRef.get(LoggingEmailSender);
     await prisma.$connect();
+    // Milestone S0D-2C-2 — Tenant B exists only for the cross-tenant
+    // resolution-isolation tests below; every other test in this file
+    // stays Tenant #1 only, as before.
+    await createTestTenantB(prisma);
   });
 
   afterEach(() => {
@@ -68,14 +77,17 @@ describe('NotificationDispatchService (integration)', () => {
       where: { id: { in: franchiseInquiryIds } },
     });
     await prisma.location.deleteMany({ where: { id: { in: locationIds } } });
+    await removeTestTenantB(prisma);
     await moduleRef.close();
     await prisma.$disconnect();
   });
 
-  async function makeLocation(): Promise<string> {
+  async function makeLocation(
+    tenantId: string = TENANT_1_MOCHA_HOUSE_ID,
+  ): Promise<string> {
     const location = await prisma.location.create({
       data: {
-        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        tenantId,
         name: `Notification Spec ${suffix} ${randomUUID().slice(0, 8)}`,
         slug: `notification-spec-${suffix}-${randomUUID().slice(0, 8)}`,
         isActive: true,
@@ -89,10 +101,11 @@ describe('NotificationDispatchService (integration)', () => {
   async function makeCustomer(overrides: {
     email?: string | null;
     marketingEmailOptIn?: boolean;
+    tenantId?: string;
   } = {}): Promise<string> {
     const customer = await prisma.customer.create({
       data: {
-        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        tenantId: overrides.tenantId ?? TENANT_1_MOCHA_HOUSE_ID,
         externalProvider: 'dev',
         externalSubject: `notification-spec-${randomUUID()}`,
         email: overrides.email ?? `customer-${randomUUID()}@example.com`,
@@ -107,10 +120,12 @@ describe('NotificationDispatchService (integration)', () => {
     locationId: string;
     customerId?: string | null;
     guestEmail?: string | null;
+    tenantId?: string;
   }): Promise<{ orderId: string; orderNumber: string }> {
+    const tenantId = overrides.tenantId ?? TENANT_1_MOCHA_HOUSE_ID;
     const paymentAttempt = await prisma.paymentAttempt.create({
       data: {
-        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        tenantId,
         idempotencyKey: `notification-spec-${randomUUID()}`,
         provider: 'fake',
         status: 'SUCCEEDED',
@@ -124,7 +139,7 @@ describe('NotificationDispatchService (integration)', () => {
     const orderNumber = `NSPEC-${randomUUID().slice(0, 8)}`;
     const order = await prisma.order.create({
       data: {
-        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        tenantId,
         orderNumber,
         accessToken: randomUUID(),
         locationId: overrides.locationId,
@@ -142,7 +157,9 @@ describe('NotificationDispatchService (integration)', () => {
     return { orderId: order.id, orderNumber: order.orderNumber };
   }
 
-  async function makeJobApplication(): Promise<{
+  async function makeJobApplication(
+    tenantId: string = TENANT_1_MOCHA_HOUSE_ID,
+  ): Promise<{
     applicationId: string;
     firstName: string;
     lastName: string;
@@ -150,6 +167,7 @@ describe('NotificationDispatchService (integration)', () => {
   }> {
     const job = await prisma.jobOpening.create({
       data: {
+        tenantId,
         title: `Barista ${suffix} ${randomUUID().slice(0, 8)}`,
         employmentType: 'FULL_TIME',
         summary: 'Make great coffee.',
@@ -164,6 +182,7 @@ describe('NotificationDispatchService (integration)', () => {
 
     const application = await prisma.jobApplication.create({
       data: {
+        tenantId,
         jobOpeningId: job.id,
         jobTitleSnapshot: job.title,
         firstName: 'Dana',
@@ -185,13 +204,16 @@ describe('NotificationDispatchService (integration)', () => {
     };
   }
 
-  async function makeFranchiseInquiry(): Promise<{
+  async function makeFranchiseInquiry(
+    tenantId: string = TENANT_1_MOCHA_HOUSE_ID,
+  ): Promise<{
     inquiryId: string;
     preferredMarket: string;
   }> {
     const preferredMarket = `Central Texas ${suffix} ${randomUUID().slice(0, 8)}`;
     const inquiry = await prisma.franchiseInquiry.create({
       data: {
+        tenantId,
         firstName: 'Jordan',
         lastName: 'Lee',
         email: `jordan-${randomUUID()}@example.com`,
@@ -211,9 +233,11 @@ describe('NotificationDispatchService (integration)', () => {
     aggregateType: string;
     aggregateId: string;
     eventType: string;
+    tenantId?: string;
   }): Promise<string> {
+    const { tenantId = TENANT_1_MOCHA_HOUSE_ID, ...rest } = input;
     const event = await prisma.outboxEvent.create({
-      data: { ...input, payload: {} },
+      data: { ...rest, tenantId, payload: {} },
     });
     outboxEventIds.push(event.id);
     return event.id;
@@ -236,6 +260,7 @@ describe('NotificationDispatchService (integration)', () => {
 
     await dispatch.dispatch({
       id: eventId,
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
       aggregateType: 'Order',
       aggregateId: orderId,
       eventType: 'order.checkout.completed',
@@ -291,6 +316,7 @@ describe('NotificationDispatchService (integration)', () => {
 
     await dispatch.dispatch({
       id: eventId,
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
       aggregateType: 'Order',
       aggregateId: orderId,
       eventType: 'order.checkout.completed',
@@ -312,6 +338,7 @@ describe('NotificationDispatchService (integration)', () => {
     await expect(
       dispatch.dispatch({
         id: eventId,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         aggregateType: 'Order',
         aggregateId: orderId,
         eventType: 'order.checkout.completed',
@@ -340,6 +367,7 @@ describe('NotificationDispatchService (integration)', () => {
 
     await dispatch.dispatch({
       id: eventId,
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
       aggregateType: 'Order',
       aggregateId: orderId,
       eventType: 'order.status.ready',
@@ -370,6 +398,7 @@ describe('NotificationDispatchService (integration)', () => {
 
     await dispatch.dispatch({
       id: eventId,
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
       aggregateType: 'JobApplication',
       aggregateId: applicationId,
       eventType: 'careers.application.submitted',
@@ -398,6 +427,7 @@ describe('NotificationDispatchService (integration)', () => {
     await expect(
       dispatch.dispatch({
         id: eventId,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         aggregateType: 'JobApplication',
         aggregateId: applicationId,
         eventType: 'careers.application.submitted',
@@ -425,6 +455,7 @@ describe('NotificationDispatchService (integration)', () => {
 
     await dispatch.dispatch({
       id: eventId,
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
       aggregateType: 'FranchiseInquiry',
       aggregateId: inquiryId,
       eventType: 'franchising.inquiry.submitted',
@@ -454,6 +485,7 @@ describe('NotificationDispatchService (integration)', () => {
     });
     const claimed = {
       id: eventId,
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
       aggregateType: 'Order',
       aggregateId: orderId,
       eventType: 'order.checkout.completed',
@@ -482,6 +514,7 @@ describe('NotificationDispatchService (integration)', () => {
 
     await dispatch.dispatch({
       id: eventId,
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
       aggregateType: 'Order',
       aggregateId: randomUUID(),
       eventType: 'order.some.future.event',
@@ -491,6 +524,174 @@ describe('NotificationDispatchService (integration)', () => {
     expect(
       await prisma.notificationDelivery.count({ where: { outboxEventId: eventId } }),
     ).toBe(0);
+  });
+
+  // --- Milestone S0D-2C-2: tenant-scoped aggregate resolution -----------
+  //
+  // Every lookup in resolve() now requires BOTH the aggregate id AND the
+  // tenantId carried by the claimed event. A mismatched combination must
+  // behave exactly like "aggregate not found" — same error, same FAILED
+  // delivery, no email ever sent — never a cross-tenant disclosure.
+
+  it("a Tenant A event cannot resolve a Tenant B Order — fails closed, FAILED delivery, no email sent", async () => {
+    const locationId = await makeLocation(TEST_TENANT_B_ID);
+    const guestEmail = `guest-${randomUUID()}@example.com`;
+    const { orderId } = await makeOrder({
+      locationId,
+      guestEmail,
+      tenantId: TEST_TENANT_B_ID,
+    });
+    // The OutboxEvent claims Tenant #1 even though the Order it names
+    // actually belongs to Tenant B — exactly the mismatch a corrupted or
+    // mis-produced event would create.
+    const eventId = await makeOutboxEvent({
+      aggregateType: 'Order',
+      aggregateId: orderId,
+      eventType: 'order.checkout.completed',
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
+    });
+
+    await expect(
+      dispatch.dispatch({
+        id: eventId,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        aggregateType: 'Order',
+        aggregateId: orderId,
+        eventType: 'order.checkout.completed',
+      }),
+    ).resolves.not.toThrow();
+
+    expect(sender.getSent()).toHaveLength(0);
+    const delivery = await prisma.notificationDelivery.findUniqueOrThrow({
+      where: { outboxEventId_channel: { outboxEventId: eventId, channel: 'EMAIL' } },
+    });
+    expect(delivery.status).toBe('FAILED');
+    expect(delivery.failureReason).toContain('Order not found');
+    // The delivery itself still carries the EVENT's tenant (Tenant #1) —
+    // never silently reassigned to the aggregate's actual tenant.
+    expect(delivery.tenantId).toBe(TENANT_1_MOCHA_HOUSE_ID);
+  });
+
+  it('a Tenant B event cannot resolve a Tenant A Order — same failure, reversed', async () => {
+    const locationId = await makeLocation(TENANT_1_MOCHA_HOUSE_ID);
+    const guestEmail = `guest-${randomUUID()}@example.com`;
+    const { orderId } = await makeOrder({
+      locationId,
+      guestEmail,
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
+    });
+    const eventId = await makeOutboxEvent({
+      aggregateType: 'Order',
+      aggregateId: orderId,
+      eventType: 'order.checkout.completed',
+      tenantId: TEST_TENANT_B_ID,
+    });
+
+    await expect(
+      dispatch.dispatch({
+        id: eventId,
+        tenantId: TEST_TENANT_B_ID,
+        aggregateType: 'Order',
+        aggregateId: orderId,
+        eventType: 'order.checkout.completed',
+      }),
+    ).resolves.not.toThrow();
+
+    expect(sender.getSent()).toHaveLength(0);
+    const delivery = await prisma.notificationDelivery.findUniqueOrThrow({
+      where: { outboxEventId_channel: { outboxEventId: eventId, channel: 'EMAIL' } },
+    });
+    expect(delivery.status).toBe('FAILED');
+    expect(delivery.failureReason).toContain('Order not found');
+  });
+
+  it('a Tenant A event cannot resolve a Tenant B JobApplication', async () => {
+    process.env.CAREERS_NOTIFICATION_EMAIL = 'careers-inbox@example.com';
+    const { applicationId } = await makeJobApplication(TEST_TENANT_B_ID);
+    const eventId = await makeOutboxEvent({
+      aggregateType: 'JobApplication',
+      aggregateId: applicationId,
+      eventType: 'careers.application.submitted',
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
+    });
+
+    await expect(
+      dispatch.dispatch({
+        id: eventId,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        aggregateType: 'JobApplication',
+        aggregateId: applicationId,
+        eventType: 'careers.application.submitted',
+      }),
+    ).resolves.not.toThrow();
+
+    expect(sender.getSent()).toHaveLength(0);
+    const delivery = await prisma.notificationDelivery.findUniqueOrThrow({
+      where: { outboxEventId_channel: { outboxEventId: eventId, channel: 'EMAIL' } },
+    });
+    expect(delivery.status).toBe('FAILED');
+    expect(delivery.failureReason).toContain('Job application not found');
+  });
+
+  it('a Tenant A event cannot resolve a Tenant B FranchiseInquiry', async () => {
+    process.env.FRANCHISING_NOTIFICATION_EMAIL = 'franchising-inbox@example.com';
+    const { inquiryId } = await makeFranchiseInquiry(TEST_TENANT_B_ID);
+    const eventId = await makeOutboxEvent({
+      aggregateType: 'FranchiseInquiry',
+      aggregateId: inquiryId,
+      eventType: 'franchising.inquiry.submitted',
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
+    });
+
+    await expect(
+      dispatch.dispatch({
+        id: eventId,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        aggregateType: 'FranchiseInquiry',
+        aggregateId: inquiryId,
+        eventType: 'franchising.inquiry.submitted',
+      }),
+    ).resolves.not.toThrow();
+
+    expect(sender.getSent()).toHaveLength(0);
+    const delivery = await prisma.notificationDelivery.findUniqueOrThrow({
+      where: { outboxEventId_channel: { outboxEventId: eventId, channel: 'EMAIL' } },
+    });
+    expect(delivery.status).toBe('FAILED');
+    expect(delivery.failureReason).toContain('Franchise inquiry not found');
+  });
+
+  it('a correctly-scoped Order lookup still succeeds for its own tenant (no over-correction)', async () => {
+    const locationId = await makeLocation(TEST_TENANT_B_ID);
+    const guestEmail = `guest-${randomUUID()}@example.com`;
+    const { orderId, orderNumber } = await makeOrder({
+      locationId,
+      guestEmail,
+      tenantId: TEST_TENANT_B_ID,
+    });
+    const eventId = await makeOutboxEvent({
+      aggregateType: 'Order',
+      aggregateId: orderId,
+      eventType: 'order.checkout.completed',
+      tenantId: TEST_TENANT_B_ID,
+    });
+
+    await dispatch.dispatch({
+      id: eventId,
+      tenantId: TEST_TENANT_B_ID,
+      aggregateType: 'Order',
+      aggregateId: orderId,
+      eventType: 'order.checkout.completed',
+    });
+
+    expect(sender.getSent()).toHaveLength(1);
+    expect(sender.getSent()[0]!.to).toBe(guestEmail);
+    expect(sender.getSent()[0]!.subject).toContain(orderNumber);
+    const delivery = await prisma.notificationDelivery.findUniqueOrThrow({
+      where: { outboxEventId_channel: { outboxEventId: eventId, channel: 'EMAIL' } },
+    });
+    expect(delivery.status).toBe('SENT');
+    expect(delivery.tenantId).toBe(TEST_TENANT_B_ID);
   });
 
   // --- Failure sanitization ----------------------------------------------
@@ -524,6 +725,7 @@ describe('NotificationDispatchService (integration)', () => {
     await expect(
       failingDispatch.dispatch({
         id: eventId,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         aggregateType: 'Order',
         aggregateId: orderId,
         eventType: 'order.checkout.completed',

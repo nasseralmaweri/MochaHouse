@@ -39,6 +39,10 @@ export interface ClaimedOutboxEvent {
   aggregateType: string;
   aggregateId: string;
   eventType: string;
+  // Milestone S0D-2C-2 — the event's OWN persisted tenant ownership. The
+  // sole trusted source for every tenant-scoped lookup below; never read
+  // from `payload`, never defaulted.
+  tenantId: string;
 }
 
 // Milestone 8H — the worker's sole owner of notification delivery. Called
@@ -95,6 +99,9 @@ export class NotificationDispatchService {
           status: 'PENDING',
           aggregateType: event.aggregateType,
           aggregateId: event.aggregateId,
+          // Milestone S0D-2C-2 — copied from the triggering OutboxEvent,
+          // the one authoritative chain. Never independently resolved.
+          tenantId: event.tenantId,
         },
         select: { id: true },
       });
@@ -153,8 +160,12 @@ export class NotificationDispatchService {
     switch (templateKey) {
       case 'order.received':
       case 'order.ready': {
+        // Milestone S0D-2C-2 — the tenant predicate is the event's own
+        // persisted ownership, never AsyncLocalStorage, never payload: a
+        // Tenant A event must never resolve a Tenant B Order even if the
+        // id happened to be guessable.
         const order = await this.prisma.order.findUnique({
-          where: { id: event.aggregateId },
+          where: { id: event.aggregateId, tenantId: event.tenantId },
           select: {
             orderNumber: true,
             guestEmail: true,
@@ -190,8 +201,10 @@ export class NotificationDispatchService {
         if (!recipient) {
           throw new Error('CAREERS_NOTIFICATION_EMAIL is not configured.');
         }
+        // Milestone S0D-2C-2 — tenant-scoped: a Tenant A event must never
+        // resolve a Tenant B JobApplication.
         const application = await this.prisma.jobApplication.findUnique({
-          where: { id: event.aggregateId },
+          where: { id: event.aggregateId, tenantId: event.tenantId },
           select: { firstName: true, lastName: true, jobTitleSnapshot: true },
         });
         if (!application) {
@@ -208,8 +221,10 @@ export class NotificationDispatchService {
         if (!recipient) {
           throw new Error('FRANCHISING_NOTIFICATION_EMAIL is not configured.');
         }
+        // Milestone S0D-2C-2 — tenant-scoped: a Tenant A event must never
+        // resolve a Tenant B FranchiseInquiry.
         const inquiry = await this.prisma.franchiseInquiry.findUnique({
-          where: { id: event.aggregateId },
+          where: { id: event.aggregateId, tenantId: event.tenantId },
           select: { firstName: true, lastName: true, preferredMarket: true },
         });
         if (!inquiry) {

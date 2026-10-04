@@ -45,4 +45,9 @@ export const TENANT_ID_REQUIRED_MODELS: readonly string[] = [
   // other child, copied from its validated PaymentAttempt — the same
   // authoritative chain Order already uses).
   'GiftCardPurchase',
+  // S0D-2C-2 — the async outbox/notification pipeline: OutboxEvent
+  // (resolved per aggregateType against its own producing aggregate) and
+  // NotificationDelivery (copied from its triggering OutboxEvent).
+  'OutboxEvent',
+  'NotificationDelivery',
 ];

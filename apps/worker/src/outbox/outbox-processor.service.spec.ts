@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -48,6 +49,7 @@ describe('OutboxProcessorService (integration)', () => {
   async function createPendingEvent(aggregateId: string) {
     const event = await prisma.outboxEvent.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         aggregateType: 'Order',
         aggregateId,
         eventType: 'order.checkout.completed',
@@ -121,5 +123,22 @@ describe('OutboxProcessorService (integration)', () => {
       where: { id: event.id },
     });
     expect(reloaded.status).toBe('PROCESSED');
+  });
+
+  // Milestone S0D-2C-2 — the claim query must select tenantId, since it is
+  // the only trusted source the worker's per-event TenantContext and the
+  // notification aggregate lookups are allowed to use.
+  it('selects tenantId when claiming, so the dispatched event carries its own ownership', async () => {
+    const event = await createPendingEvent(randomUUID());
+    await waitUntilProcessed(event.id);
+
+    const delivery = await prisma.notificationDelivery.findFirstOrThrow({
+      where: { outboxEventId: event.id },
+    });
+    // NotificationDispatchService only ever receives tenantId from the
+    // claimed event object (see notification-dispatch.service.ts) — this
+    // delivery row carrying the same tenant as the source OutboxEvent is
+    // proof the claim query actually fetched it.
+    expect(delivery.tenantId).toBe(TENANT_1_MOCHA_HOUSE_ID);
   });
 });

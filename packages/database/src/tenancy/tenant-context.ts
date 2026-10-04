@@ -27,9 +27,10 @@ export type TenantPrincipalType = (typeof TENANT_PRINCIPAL_TYPES)[number];
 
 // The server-controlled statement "this execution is operating inside
 // exactly this one tenant". It is established ONLY by a server-side resolver
-// (S0C: the validated SINGLE_TENANT_ID; later: TenantSession, host/domain
-// resolution, a worker event's own tenantId, a support session) — never
-// from a client-supplied tenant id. Consumers must not know or care which
+// (S0C: the validated SINGLE_TENANT_ID for HTTP requests; S0D-2C-2: a
+// worker event's own persisted tenantId for background processing; later:
+// TenantSession, host/domain resolution, a support session) — never from a
+// client-supplied tenant id. Consumers must not know or care which
 // resolver produced it.
 //
 // Deliberately minimal. Identity fields (internalUserId, staffIdentityId)
