@@ -10,7 +10,7 @@ import type {
   LocationSummary,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
-import type { Prisma } from '@mocha-house/database';
+import type { Prisma, TenantContext } from '@mocha-house/database';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 
 // Same shape PrismaService and a $transaction callback both satisfy, for
@@ -207,12 +207,18 @@ export class LocationsService {
   // PermissionGuard has already proven the permission is held through some
   // valid scope, so `authorizedLocations` is never `none` here; it is still
   // handled defensively.
+  //
+  // Milestone S0F — every admin location read/write below is confined to
+  // the request's ACTIVE business (`tenant`): "every location" for a
+  // CORPORATE grant means every location of THIS business, and a location
+  // id from another business is refused exactly like an unknown one.
   async listAdminLocations(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLocationSummary[]> {
     const authorized = authorization.authorizedLocations('locations.view');
 
-    const where =
+    const scope =
       authorized.kind === 'all'
         ? {}
         : authorized.kind === 'locations'
@@ -220,7 +226,7 @@ export class LocationsService {
           : { id: { in: [] as string[] } };
 
     const locations = await this.prisma.location.findMany({
-      where,
+      where: { tenantId: tenant.tenantId, ...scope },
       orderBy: [{ name: 'asc' }, { id: 'asc' }],
     });
 
@@ -230,13 +236,14 @@ export class LocationsService {
   async getAdminLocationDetail(
     locationId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLocationDetail> {
     // Resource-level authorization BEFORE the row is read — a caller not
     // authorized for this location gets 403, never a 404 that would leak
     // whether the id exists.
     authorization.assertCanActOnLocation('locations.view', locationId);
 
-    const detail = await this.loadAdminLocationDetail(locationId);
+    const detail = await this.loadAdminLocationDetail(locationId, tenant);
     if (!detail) {
       throw new NotFoundException('Location not found.');
     }
@@ -248,9 +255,10 @@ export class LocationsService {
   // not exist so callers choose their own 404 message.
   private async loadAdminLocationDetail(
     locationId: string,
+    tenant: TenantContext,
   ): Promise<AdminLocationDetail | null> {
-    const location = await this.prisma.location.findUnique({
-      where: { id: locationId },
+    const location = await this.prisma.location.findFirst({
+      where: { id: locationId, tenantId: tenant.tenantId },
       include: {
         menus: {
           where: { isActive: true, menu: { isActive: true } },
@@ -297,6 +305,7 @@ export class LocationsService {
     locationId: string,
     input: { name?: string; isActive?: boolean },
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLocationDetail> {
     // Matching service-layer defense: PermissionGuard already rejects a
     // caller who does not hold `locations.edit` at corporate scope (the
@@ -324,8 +333,10 @@ export class LocationsService {
       data.isActive = input.isActive;
     }
 
-    const existing = await this.prisma.location.findUnique({
-      where: { id: locationId },
+    // A location of another business is "not found": CORPORATE scope in
+    // the active business never reaches another business's row.
+    const existing = await this.prisma.location.findFirst({
+      where: { id: locationId, tenantId: tenant.tenantId },
       select: { id: true },
     });
     if (!existing) {
@@ -338,13 +349,14 @@ export class LocationsService {
     });
 
     // Never null here — we just confirmed the row exists and updated it.
-    return (await this.loadAdminLocationDetail(locationId))!;
+    return (await this.loadAdminLocationDetail(locationId, tenant))!;
   }
 
   async updateDigitalOrdering(
     locationId: string,
     isDigitalOrderingEnabled: boolean,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<LocationSummary> {
     if (typeof isDigitalOrderingEnabled !== 'boolean') {
       throw new BadRequestException(
@@ -358,9 +370,10 @@ export class LocationsService {
       locationId,
     );
 
-    const existingLocation = await this.prisma.location.findUnique({
+    const existingLocation = await this.prisma.location.findFirst({
       where: {
         id: locationId,
+        tenantId: tenant.tenantId,
       },
       select: {
         id: true,

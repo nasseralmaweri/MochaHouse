@@ -6,8 +6,13 @@ import { isValidTenantId } from './tenant-id';
 // as. It is explicit configuration, never inferred: there is no default,
 // no "fall back to Mocha House", and no silent recovery. A missing,
 // malformed or unknown value is a startup failure. Later milestones replace
-// this resolver with TenantSession / host / event resolution; nothing
-// outside the resolvers should ever read SINGLE_TENANT_ID.
+// this resolver with host / event resolution; nothing outside the resolvers
+// should ever read SINGLE_TENANT_ID.
+//
+// Milestone S0F — it is no longer the tenant of authenticated internal
+// (Admin) requests: those resolve the administrator's validated active
+// business instead. It remains the tenant of public / customer API
+// requests (until S0G) and is still validated at API and worker startup.
 export const SINGLE_TENANT_ID_ENV = 'SINGLE_TENANT_ID';
 
 export class TenantConfigurationError extends Error {

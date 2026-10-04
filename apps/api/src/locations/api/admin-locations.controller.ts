@@ -8,11 +8,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { AdminUpdateLocationRequest } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { LocationsService } from '../application/locations.service';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 
 interface UpdateDigitalOrderingBody {
   isDigitalOrderingEnabled: boolean;
@@ -34,8 +36,14 @@ export class AdminLocationsController {
   // cross-location request is a 403 and never leaks through a 404.
   @RequirePermission('locations.view')
   @Get()
-  listLocations(@Req() request: InternalAuthenticatedRequest) {
-    return this.locationsService.listAdminLocations(request.authorization!);
+  listLocations(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.locationsService.listAdminLocations(
+      request.authorization!,
+      tenant,
+    );
   }
 
   @RequirePermission('locations.view')
@@ -43,10 +51,12 @@ export class AdminLocationsController {
   getLocation(
     @Param('locationId') locationId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.locationsService.getAdminLocationDetail(
       locationId,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -61,11 +71,13 @@ export class AdminLocationsController {
     @Param('locationId') locationId: string,
     @Body() body: AdminUpdateLocationRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.locationsService.updateLocation(
       locationId,
       { name: body.name, isActive: body.isActive },
       request.authorization!,
+      tenant,
     );
   }
 
@@ -75,11 +87,13 @@ export class AdminLocationsController {
     @Param('locationId') locationId: string,
     @Body() body: UpdateDigitalOrderingBody,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.locationsService.updateDigitalOrdering(
       locationId,
       body.isDigitalOrderingEnabled,
       request.authorization!,
+      tenant,
     );
   }
 }

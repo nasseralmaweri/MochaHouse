@@ -1,9 +1,12 @@
 import { Global, Module } from '@nestjs/common';
 import { InternalAuthController } from './api/internal-auth.controller';
 import { InternalMeController } from './api/internal-me.controller';
+import { InternalBusinessesController } from './api/internal-businesses.controller';
 import { InternalSignInService } from './application/internal-sign-in.service';
 import { InternalUsersService } from './application/internal-users.service';
 import { InternalAuthGuard } from './infrastructure/internal-auth.guard';
+import { InternalIdentityGuard } from './infrastructure/internal-identity.guard';
+import { InternalTenantMembershipService } from './application/internal-tenant-membership.service';
 import { InternalCognitoTokenVerifier } from './infrastructure/internal-cognito-token-verifier';
 import { InternalLocalDevTokenVerifier } from './infrastructure/internal-local-dev-token-verifier';
 import { InternalCognitoAuthProvider } from './infrastructure/internal-cognito-auth.provider';
@@ -32,10 +35,19 @@ import { InternalSessionService } from './application/internal-session.service';
 // cross-cutting boundary, not a feature module.
 @Global()
 @Module({
-  controllers: [InternalAuthController, InternalMeController],
+  controllers: [
+    InternalAuthController,
+    InternalMeController,
+    // Milestone S0F — GET /api/v1/internal/businesses (Business switcher).
+    InternalBusinessesController,
+  ],
   providers: [
     InternalSignInService,
     InternalUsersService,
+    // Milestone S0F — identity -> business memberships, and the
+    // identity-only guard for the business list.
+    InternalTenantMembershipService,
+    InternalIdentityGuard,
     InternalAuthGuard,
     InternalCognitoTokenVerifier,
     InternalLocalDevTokenVerifier,
@@ -47,8 +59,9 @@ import { InternalSessionService } from './application/internal-session.service';
     // Milestone 5C — composes GET /internal/me's authorization summary.
     InternalSessionService,
   ],
-  // The guard's own constructor dependencies (the two verifiers and
-  // InternalUsersService) must be exported too — an importing module
+  // The guard's own constructor dependencies (the two verifiers,
+  // InternalUsersService and InternalTenantMembershipService) must be
+  // exported too — an importing module
   // resolving InternalAuthGuard via @UseGuards() still needs to resolve
   // its dependencies in that scope. Mirrors CustomerAuthModule's exports.
   exports: [
@@ -56,6 +69,7 @@ import { InternalSessionService } from './application/internal-session.service';
     InternalCognitoTokenVerifier,
     InternalLocalDevTokenVerifier,
     InternalUsersService,
+    InternalTenantMembershipService,
     AuthorizationService,
     PermissionGuard,
   ],

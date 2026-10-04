@@ -26,19 +26,21 @@ export class InternalUsersService {
   // identity only — moving INVITED -> ACTIVE is an administrative action
   // (Milestone 5B), never a side effect of signing in.
   //
-  // Resolution key:
-  //   1. (externalProvider, externalSubject) — the authoritative identity
-  //      mapping once the subject is known. Deliberately GLOBAL (not
-  //      tenant-scoped) — see InternalUser.externalSubject's schema comment;
-  //      that is an S0F question, not this one.
+  // Resolution key (both inside `tenantId` only):
+  //   1. (tenantId, externalProvider, externalSubject) — the authoritative
+  //      identity mapping once the subject is known. Unique PER TENANT since
+  //      Milestone S0F: the same verified human may hold one row in each
+  //      business they belong to, and this picks the row for THIS tenant.
   //   2. Fallback: (externalProvider, email, tenantId) for a row whose
   //      externalSubject is still null — i.e. a user provisioned by email
   //      who has not authenticated before. The subject is bound only once
   //      the row is confirmed ACTIVE (below), so a non-ACTIVE user is never
   //      mutated by an authentication attempt.
   //
-  // Milestone S0D-2E — `tenantId` is the request's trusted, server-resolved
-  // tenant. Whichever path finds a candidate, it must belong to THIS
+  // Milestone S0D-2E / S0F — `tenantId` is the request's trusted active
+  // business, chosen by InternalAuthGuard only after membership validation
+  // (InternalTenantMembershipService). Whichever path finds a candidate, it
+  // must belong to THIS
   // tenant or resolution fails exactly like "no such internal user" (the
   // same generic outcome InternalAuthGuard turns into one 403 — this can
   // never distinguish "wrong tenant" from "unknown identity" in the
@@ -52,7 +54,8 @@ export class InternalUsersService {
     const bySubject = identity.subject
       ? await this.prisma.internalUser.findUnique({
           where: {
-            externalProvider_externalSubject: {
+            tenantId_externalProvider_externalSubject: {
+              tenantId,
               externalProvider: identity.provider,
               externalSubject: identity.subject,
             },

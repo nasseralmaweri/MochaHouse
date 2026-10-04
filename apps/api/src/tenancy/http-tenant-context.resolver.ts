@@ -19,11 +19,13 @@ export abstract class HttpTenantContextResolver {
   abstract resolve(requestId: string): TenantContext;
 }
 
-// S0C: every request operates as the single tenant validated at startup.
-// principalType is 'anonymous' because no authenticated principal is bound
-// to the tenant yet — the existing auth guards still authenticate
-// separately, and binding arrives with TenantSession (S0F) and tenant-bound
-// customer auth (S0G).
+// S0C: every NON-member request (public / customer routes) operates as the
+// single tenant validated at startup. principalType is 'anonymous' because
+// no authenticated principal is bound to the tenant — binding for customers
+// arrives with tenant-bound customer auth (S0G). Since S0F this resolver is
+// never consulted for the authenticated internal routes (/api/v1/admin/*,
+// /api/v1/internal/*): their TenantContext is the administrator's validated
+// active business, established by InternalAuthGuard.
 @Injectable()
 export class SingleTenantHttpContextResolver extends HttpTenantContextResolver {
   constructor(

@@ -399,12 +399,20 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
     it('a note on a Tenant #1 Customer persists Tenant #1, whatever tenant the client claims', async () => {
       const customer = await makeCustomer(TENANT_1_MOCHA_HOUSE_ID, 'note-t1');
 
+      // Milestone S0F — on this Admin route X-Tenant-Id is the validated
+      // business selection: a Tenant #1-only admin naming Tenant B is
+      // refused and nothing is written.
+      await addNoteReq(`notes-${suffix}`, customer.id, {
+        body: 'Header spoof note',
+      })
+        .set('x-tenant-id', TEST_TENANT_B_ID)
+        .expect(403);
+
       await addNoteReq(`notes-${suffix}`, customer.id, {
         body: 'Tenant one note',
         tenantId: TEST_TENANT_B_ID,
       })
         .query({ tenantId: TEST_TENANT_B_ID })
-        .set('x-tenant-id', TEST_TENANT_B_ID)
         .expect(201);
 
       const note = await prisma.customerNote.findFirstOrThrow({

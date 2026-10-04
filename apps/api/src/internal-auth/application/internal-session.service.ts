@@ -37,14 +37,23 @@ export class InternalSessionService {
     // user only on the active locations their grants reference. A user with
     // no grants gets no locations. The public /locations endpoint is never
     // consulted — this is the Admin shell's authoritative location source.
+    //
+    // Milestone S0F — both reads are confined to the request's ACTIVE
+    // business: a corporate administrator of Tenant B is offered Tenant B's
+    // locations only, so after a business switch the shell can never be
+    // handed (or keep) a location from the previous business.
     const locationRows = summary.isCorporate
       ? await this.prisma.location.findMany({
-          where: { isActive: true },
+          where: { tenantId: tenant.tenantId, isActive: true },
           orderBy: { name: 'asc' },
         })
       : summary.locationIds.length > 0
         ? await this.prisma.location.findMany({
-            where: { id: { in: summary.locationIds }, isActive: true },
+            where: {
+              tenantId: tenant.tenantId,
+              id: { in: summary.locationIds },
+              isActive: true,
+            },
             orderBy: { name: 'asc' },
           })
         : [];
@@ -71,7 +80,15 @@ export class InternalSessionService {
       };
     }
 
+    // The active business itself (S0F). InternalAuthGuard only builds a
+    // member TenantContext for an existing ACTIVE tenant, so it is present.
+    const business = await this.prisma.tenant.findUniqueOrThrow({
+      where: { id: tenant.tenantId },
+      select: { id: true, name: true, slug: true },
+    });
+
     return {
+      business,
       user: this.internalUsers.toProfile(user),
       authorization: {
         permissions: summary.permissions,

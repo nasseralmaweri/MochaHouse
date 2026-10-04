@@ -8,8 +8,8 @@ import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { PermissionGuard } from './permission.guard';
 import { AuthorizationContext } from './authorization-context';
 
-// Milestone S0D-2E — every request reaching this guard already has a
-// trusted TenantContext (TenantContextMiddleware runs before any guard);
+// Milestone S0D-2E / S0F — every request reaching this guard already has a
+// trusted TenantContext (InternalAuthGuard establishes it first);
 // defaults to Tenant #1 here so every pre-existing test below keeps
 // working without knowing about it. Pass `withTenantContext: false` for
 // the one test proving the guard's own fail-closed check.
@@ -31,7 +31,11 @@ function executionContext(
 }
 
 describe('PermissionGuard', () => {
-  const internalUser = { id: 'iu-1' } as never;
+  // Milestone S0F — the membership row belongs to the active tenant.
+  const internalUser = {
+    id: 'iu-1',
+    tenantId: TENANT_1_MOCHA_HOUSE_ID,
+  } as never;
 
   function makeGuard(opts: {
     metadata?: string;
@@ -146,7 +150,7 @@ describe('PermissionGuard', () => {
 
   // --- Milestone S0D-2E -----------------------------------------------
 
-  it("fails closed with a 500 if TenantContextMiddleware never ran (no request.tenantContext)", async () => {
+  it('fails closed with a 500 if TenantContextMiddleware never ran (no request.tenantContext)', async () => {
     const { guard, loadContext } = makeGuard({ metadata: 'orders.view' });
     const { context } = executionContext(
       'orders.view',
@@ -168,12 +172,34 @@ describe('PermissionGuard', () => {
     });
     const otherTenantId = '01a0db02-f800-7000-8000-7e570000000b';
     const { context, request } = executionContext('orders.view', {
-      internalUser,
+      internalUser: { id: 'iu-1', tenantId: otherTenantId },
     });
     request.tenantContext = { tenantId: otherTenantId };
 
     await guard.canActivate(context);
 
     expect(loadContext).toHaveBeenCalledWith('iu-1', request.tenantContext);
+  });
+
+  // --- Milestone S0F --------------------------------------------------
+
+  it('refuses (403) to evaluate grants for an InternalUser that does not belong to the active tenant', async () => {
+    const { guard, loadContext } = makeGuard({
+      metadata: 'orders.view',
+      context: AuthorizationContext.of({
+        'orders.view': [{ scopeType: 'CORPORATE', scopeId: null }],
+      }),
+    });
+    const { context, request } = executionContext('orders.view', {
+      internalUser,
+    });
+    request.tenantContext = {
+      tenantId: '01a0db02-f800-7000-8000-7e570000000b',
+    };
+
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(loadContext).not.toHaveBeenCalled();
   });
 });

@@ -52,13 +52,20 @@ export class PermissionGuard implements CanActivate {
     // Milestone S0D-2E — the same trusted, server-resolved TenantContext
     // every other tenant-scoped write path reads via
     // @CurrentTenantContext(); here read directly since a guard runs
-    // outside the param-decorator pipeline. TenantContextMiddleware runs
-    // before every guard, so its absence is a server misconfiguration, not
-    // a client input to validate.
+    // outside the param-decorator pipeline. Since S0F it is established by
+    // InternalAuthGuard (the administrator's validated active business),
+    // which always runs first, so its absence is a server misconfiguration,
+    // not a client input to validate.
     if (!request.tenantContext) {
       throw new InternalServerErrorException(
         'Tenant context is not established for this request.',
       );
+    }
+
+    // Milestone S0F — defense in depth: grants are only ever evaluated for
+    // the InternalUser row (membership) that belongs to the active tenant.
+    if (request.internalUser.tenantId !== request.tenantContext.tenantId) {
+      throw new ForbiddenException('Internal authentication is required.');
     }
 
     const required = this.reflector.getAllAndOverride<

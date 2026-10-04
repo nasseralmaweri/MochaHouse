@@ -250,18 +250,21 @@ describe('S0D-2A explicit tenant writes — catalog & store operations (integrat
     process.env = { ...originalEnv };
   });
 
-  describe('HTTP: clients cannot choose the tenant (app operates as Tenant #1)', () => {
+  // Milestone S0F — on Admin routes X-Tenant-Id is no longer an ignored
+  // spoof: it is the validated business-selection header. A Tenant #1-only
+  // administrator naming Tenant B there is refused outright (403) and
+  // nothing is written; body / query tenant ids are still simply ignored.
+  describe('HTTP: clients cannot choose the tenant (the admin operates in their own business, Tenant #1)', () => {
     const spoof = {
       query: { tenantId: TEST_TENANT_B_ID },
       header: TEST_TENANT_B_ID,
     };
 
-    it('an operations task is persisted for Tenant #1 despite Tenant B in body, query and header', async () => {
+    it('an operations task is persisted for Tenant #1 despite Tenant B in body and query; a Tenant B header is refused', async () => {
       await request(app.getHttpServer())
         .post('/api/v1/admin/operations/tasks')
         .query(spoof.query)
         .set('Authorization', `Bearer ${token()}`)
-        .set('x-tenant-id', spoof.header)
         .send({
           locationId: t1.locationId,
           title: 'Spoof check',
@@ -273,21 +276,38 @@ describe('S0D-2A explicit tenant writes — catalog & store operations (integrat
         where: { locationId: t1.locationId, title: 'Spoof check' },
       });
       expect(task.tenantId).toBe(TENANT_1_MOCHA_HOUSE_ID);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/admin/operations/tasks')
+        .set('Authorization', `Bearer ${token()}`)
+        .set('x-tenant-id', spoof.header)
+        .send({ locationId: t1.locationId, title: 'Header spoof check' })
+        .expect(403);
+      expect(
+        await prisma.operationsTask.count({
+          where: { title: 'Header spoof check' },
+        }),
+      ).toBe(0);
     });
 
     it('price and availability overrides are persisted for Tenant #1 despite Tenant B in the body', async () => {
       const base = `/api/v1/admin/catalog/locations/${t1.locationId}/menus/${t1.menuId}/products/${t1.productId}`;
+      // A Tenant B business selection is refused before anything is written.
+      await request(app.getHttpServer())
+        .put(`${base}/price-override`)
+        .set('Authorization', `Bearer ${token()}`)
+        .set('x-tenant-id', spoof.header)
+        .send({ price: 1 })
+        .expect(403);
       await request(app.getHttpServer())
         .put(`${base}/price-override`)
         .query(spoof.query)
         .set('Authorization', `Bearer ${token()}`)
-        .set('x-tenant-id', spoof.header)
         .send({ price: 425, tenantId: TEST_TENANT_B_ID })
         .expect(200);
       await request(app.getHttpServer())
         .put(`${base}/availability-override`)
         .set('Authorization', `Bearer ${token()}`)
-        .set('x-tenant-id', spoof.header)
         .send({ isAvailable: false, tenantId: TEST_TENANT_B_ID })
         .expect(200);
 
@@ -309,12 +329,23 @@ describe('S0D-2A explicit tenant writes — catalog & store operations (integrat
       ).toBe(TENANT_1_MOCHA_HOUSE_ID);
     });
 
-    it("today's checklist instance and its item snapshots are created for Tenant #1 despite Tenant B in query and header", async () => {
+    it("today's checklist instance and its item snapshots are created for Tenant #1 despite Tenant B in the query; a Tenant B header is refused", async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/admin/operations/opening-checklist')
+        .query({ locationId: t1.locationId })
+        .set('Authorization', `Bearer ${token()}`)
+        .set('x-tenant-id', spoof.header)
+        .expect(403);
+      expect(
+        await prisma.checklistInstance.count({
+          where: { locationId: t1.locationId },
+        }),
+      ).toBe(0);
+
       await request(app.getHttpServer())
         .get('/api/v1/admin/operations/opening-checklist')
         .query({ locationId: t1.locationId, ...spoof.query })
         .set('Authorization', `Bearer ${token()}`)
-        .set('x-tenant-id', spoof.header)
         .expect(200);
 
       const instance = await prisma.checklistInstance.findFirstOrThrow({
@@ -330,24 +361,28 @@ describe('S0D-2A explicit tenant writes — catalog & store operations (integrat
       ).toBe(true);
     });
 
+    // Milestone S0F — was 404 from each service's tenant-scoped lookup. A
+    // location the active business does not own is now refused one layer
+    // earlier, by the tenant-bounded AuthorizationContext (403), before the
+    // service reads anything; nothing is created either way.
     it("refuses writes against another tenant's location even for a CORPORATE caller, creating nothing", async () => {
       await request(app.getHttpServer())
         .post('/api/v1/admin/operations/tasks')
         .set('Authorization', `Bearer ${token()}`)
         .send({ locationId: tb.locationId, title: 'Cross-tenant task' })
-        .expect(404);
+        .expect(403);
       await request(app.getHttpServer())
         .put(
           `/api/v1/admin/catalog/locations/${tb.locationId}/menus/${tb.menuId}/products/${tb.productId}/price-override`,
         )
         .set('Authorization', `Bearer ${token()}`)
         .send({ price: 1 })
-        .expect(404);
+        .expect(403);
       await request(app.getHttpServer())
         .get('/api/v1/admin/operations/opening-checklist')
         .query({ locationId: tb.locationId })
         .set('Authorization', `Bearer ${token()}`)
-        .expect(404);
+        .expect(403);
 
       expect(
         await prisma.operationsTask.count({

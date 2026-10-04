@@ -657,11 +657,16 @@ describe('Internal admin authorization matrix (integration)', () => {
       expect(body.assignedMenu).toBeNull();
     });
 
-    it('corporate locations.view gets 404 for a well-formed but unknown location id', async () => {
+    // Milestone S0F — was 404. A location id the active business does not
+    // own (unknown, or another business's) is now refused by the
+    // authorization context before any read, even under a CORPORATE grant:
+    // CORPORATE means every location of THIS business. The same 403 for
+    // "unknown" and "another business's" means nothing leaks either way.
+    it('corporate locations.view gets 403 for a well-formed but unknown location id', async () => {
       await http()
         .get(`/api/v1/admin/locations/${randomUUID()}`)
         .set('Authorization', `Bearer ${token(`corp-${suffix}`)}`)
-        .expect(404);
+        .expect(403);
     });
 
     it('a customer token is rejected (401) on the Admin locations read', async () => {

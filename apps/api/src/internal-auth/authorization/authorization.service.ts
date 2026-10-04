@@ -36,16 +36,38 @@ export class AuthorizationService {
     internalUserId: string,
     tenant: TenantContext,
   ): Promise<AuthorizationContext> {
-    const assignments = await this.prisma.internalUserRoleAssignment.findMany({
-      where: { internalUserId, tenantId: tenant.tenantId },
-      include: { role: { include: { permissions: true } } },
-    });
+    //
+    // Milestone S0F — the context is also bounded to the tenant's own
+    // locations: every Location id of the active tenant is loaded, a
+    // LOCATION grant whose scopeId is not one of them contributes nothing,
+    // and AuthorizationContext refuses any location outside the set (so a
+    // CORPORATE grant in Tenant B never authorizes a Tenant A location id).
+    const [assignments, tenantLocations] = await Promise.all([
+      this.prisma.internalUserRoleAssignment.findMany({
+        where: { internalUserId, tenantId: tenant.tenantId },
+        include: { role: { include: { permissions: true } } },
+      }),
+      this.prisma.location.findMany({
+        where: { tenantId: tenant.tenantId },
+        select: { id: true },
+      }),
+    ]);
+    const tenantLocationIds = new Set(tenantLocations.map((l) => l.id));
 
     const grants = new Map<InternalPermissionKey, ScopeGrant[]>();
 
     for (const assignment of assignments) {
       const grant = this.toValidScopeGrant(assignment);
       if (!grant) {
+        continue;
+      }
+      if (
+        grant.scopeType === 'LOCATION' &&
+        !tenantLocationIds.has(grant.scopeId!)
+      ) {
+        this.logger.warn(
+          `Ignoring LOCATION assignment for a location outside the active tenant (role "${assignment.role.key}").`,
+        );
         continue;
       }
       for (const rolePermission of assignment.role.permissions) {
@@ -69,7 +91,7 @@ export class AuthorizationService {
       }
     }
 
-    return AuthorizationContext.create(grants);
+    return AuthorizationContext.create(grants, tenantLocationIds);
   }
 
   private toValidScopeGrant(assignment: {

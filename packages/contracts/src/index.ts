@@ -1318,10 +1318,32 @@ export interface InternalAuthorizationSummary {
   >;
 }
 
+// Milestone S0F — a business (tenant) an internal user may operate in.
+// Safe display fields only: no status internals, no configuration, nothing
+// about any other tenant.
+export interface InternalBusinessSummary {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+// GET /api/v1/internal/businesses (Milestone S0F) — the businesses the
+// authenticated internal human may enter (ACTIVE membership in an ACTIVE
+// business), for the Business switcher. Requires only a valid internal
+// token; no business needs to be active yet. The chosen id is then sent as
+// the X-Tenant-Id header on Admin API calls, where the server re-validates
+// membership on every request.
+export interface InternalBusinessesResponse {
+  businesses: InternalBusinessSummary[];
+}
+
 // GET /api/v1/internal/me — the authenticated internal user plus the
 // authorization summary above. Guarded by InternalAuthGuard only (any
 // ACTIVE internal user may read their own summary — no PermissionGuard).
+// Since S0F, `user`, `authorization` and its `locations` are all for the
+// request's ACTIVE business, named in `business`.
 export interface InternalMeResponse {
+  business: InternalBusinessSummary;
   user: InternalUserProfile;
   authorization: InternalAuthorizationSummary;
 }

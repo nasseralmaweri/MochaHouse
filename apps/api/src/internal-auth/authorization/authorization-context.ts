@@ -38,17 +38,31 @@ export class AuthorizationContext {
       InternalPermissionKey,
       readonly ScopeGrant[]
     >,
+    // Milestone S0F — every Location id owned by the context's ACTIVE
+    // tenant. A location outside this set is never actionable, whatever the
+    // grants say: CORPORATE means "every location OF THIS BUSINESS", so a
+    // location id carried over from another business (e.g. a stale selection
+    // after a business switch) is refused before any resource is read.
+    // `null` only for the test convenience constructors below.
+    private readonly tenantLocationIds: ReadonlySet<string> | null,
   ) {}
 
+  // The production constructor (AuthorizationService). The tenant's
+  // location set is mandatory, so a request-path context is always bounded
+  // to its tenant.
   static create(
     grants: ReadonlyMap<InternalPermissionKey, readonly ScopeGrant[]>,
+    tenantLocationIds: ReadonlySet<string>,
   ): AuthorizationContext {
-    return new AuthorizationContext(grants);
+    return new AuthorizationContext(grants, tenantLocationIds);
   }
 
   // Test/bootstrap convenience: build a context from a plain description.
+  // Not tenant-bounded unless `tenantLocationIds` is given — never used on a
+  // request path (AuthorizationService always uses create()).
   static of(
     entries: Partial<Record<InternalPermissionKey, ScopeGrant[]>>,
+    tenantLocationIds: ReadonlySet<string> | null = null,
   ): AuthorizationContext {
     const map = new Map<InternalPermissionKey, readonly ScopeGrant[]>();
     for (const [key, value] of Object.entries(entries)) {
@@ -56,11 +70,11 @@ export class AuthorizationContext {
         map.set(key as InternalPermissionKey, value);
       }
     }
-    return new AuthorizationContext(map);
+    return new AuthorizationContext(map, tenantLocationIds);
   }
 
   static empty(): AuthorizationContext {
-    return new AuthorizationContext(new Map());
+    return new AuthorizationContext(new Map(), null);
   }
 
   // The grants for a key that are through a scope type the permission
@@ -103,6 +117,9 @@ export class AuthorizationContext {
   }
 
   canActOnLocation(key: InternalPermissionKey, locationId: string): boolean {
+    if (this.tenantLocationIds && !this.tenantLocationIds.has(locationId)) {
+      return false;
+    }
     const authorized = this.authorizedLocations(key);
     if (authorized.kind === 'all') {
       return true;

@@ -10,9 +10,10 @@ import {
 // Tenant B exists so isolation tests can prove "Tenant A cannot reach
 // Tenant B" (S0B security requirement). It is NOT an operational tenant:
 //   - it is created only by a test and removed by that test's cleanup;
-//   - nothing resolves it — the API and worker operate solely as the tenant
-//     named by SINGLE_TENANT_ID (Tenant #1), and no request input can select
-//     another tenant;
+//   - public / customer API requests and the worker never resolve it (they
+//     operate as SINGLE_TENANT_ID, Tenant #1). Since S0F an internal Admin
+//     request resolves it only for an identity a test has explicitly made
+//     an ACTIVE member of it — never from request input alone;
 //   - this package is a devDependency only, and a guard test fails if
 //     application source imports it.
 //

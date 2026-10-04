@@ -870,10 +870,17 @@ model InternalUser {
   // made that existing model internally inconsistent: it would forbid the
   // same person from ever administering a second tenant, for no reason tied
   // to any actual business rule. Scoped to (tenantId, email) instead — see
-  // the matching unique index below. externalProvider/externalSubject
-  // uniqueness is deliberately LEFT GLOBAL: whether one external identity
-  // can be bound to more than one tenant's InternalUser row is a federated-
-  // identity / membership question for S0F, not decided here.
+  // the matching unique index below.
+  //
+  // Milestone S0F — externalProvider/externalSubject is now unique PER
+  // TENANT too: (tenantId, externalProvider, externalSubject). The verified
+  // external identity is the human; each InternalUser row is that human's
+  // membership of ONE business (ADR-4 amendment — no separate membership
+  // table). One human may therefore hold at most one row per tenant, and a
+  // multi-business administrator is simply the same verified identity bound
+  // to a row in each business. Which row applies to a request is decided by
+  // InternalAuthGuard from a validated active-business selection — never
+  // by the identity alone.
   email            String
   displayName      String?
   status           InternalUserStatus @default(INVITED)
@@ -942,9 +949,12 @@ model InternalUser {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
-  @@unique([externalProvider, externalSubject])
+  @@unique([tenantId, externalProvider, externalSubject])
   @@unique([tenantId, email])
   @@index([tenantId])
+  // Milestone S0F — the identity -> memberships lookup runs BEFORE any
+  // tenant is known, so it needs an index that does not lead with tenantId.
+  @@index([externalProvider, externalSubject])
 }
 
 // --- Milestone 5E-3, access-control audit foundation ------------------

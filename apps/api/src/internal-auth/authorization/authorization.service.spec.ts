@@ -34,6 +34,11 @@ describe('AuthorizationService (integration)', () => {
   ];
   let userId: string;
   const roleIds: Record<string, string> = {};
+  // Milestone S0F — LOCATION grants only count for locations the active
+  // tenant actually owns, so these are real Location rows.
+  let loc1: string;
+  let loc2: string;
+  let locInB: string;
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({
@@ -44,6 +49,20 @@ describe('AuthorizationService (integration)', () => {
     service = moduleRef.get(AuthorizationService);
     await prisma.$connect();
     await createTestTenantB(prisma);
+
+    const makeLocation = async (tenantId: string, label: string) =>
+      (
+        await prisma.location.create({
+          data: {
+            tenantId,
+            name: `Authz Svc ${label} ${suffix}`,
+            slug: `authz-svc-${label}-${suffix}`,
+          },
+        })
+      ).id;
+    loc1 = await makeLocation(TENANT_1_MOCHA_HOUSE_ID, 'one');
+    loc2 = await makeLocation(TENANT_1_MOCHA_HOUSE_ID, 'two');
+    locInB = await makeLocation(TEST_TENANT_B_ID, 'in-b');
 
     const user = await prisma.internalUser.create({
       data: {
@@ -118,6 +137,9 @@ describe('AuthorizationService (integration)', () => {
       await prisma.internalRole.deleteMany({ where: { id } });
     }
     await prisma.internalUser.deleteMany({ where: { id: userId } });
+    await prisma.location.deleteMany({
+      where: { id: { in: [loc1, loc2, locInB] } },
+    });
     await removeTestTenantB(prisma);
     await moduleRef.close();
     await prisma.$disconnect();
@@ -142,14 +164,14 @@ describe('AuthorizationService (integration)', () => {
           internalUserId: userId,
           roleId: roleIds[roleKeys[0]],
           scopeType: 'LOCATION',
-          scopeId: 'loc-1',
+          scopeId: loc1,
         },
         {
           tenantId: TENANT_1_MOCHA_HOUSE_ID,
           internalUserId: userId,
           roleId: roleIds[roleKeys[0]],
           scopeType: 'LOCATION',
-          scopeId: 'loc-2',
+          scopeId: loc2,
         },
       ],
     });
@@ -158,11 +180,9 @@ describe('AuthorizationService (integration)', () => {
     const authorized = ctx.authorizedLocations('orders.view');
     expect(authorized.kind).toBe('locations');
     if (authorized.kind === 'locations') {
-      expect([...authorized.locationIds].sort()).toEqual(['loc-1', 'loc-2']);
+      expect([...authorized.locationIds].sort()).toEqual([loc1, loc2].sort());
     }
-    expect(ctx.canActOnLocation('catalog.overrides.manage', 'loc-1')).toBe(
-      true,
-    );
+    expect(ctx.canActOnLocation('catalog.overrides.manage', loc1)).toBe(true);
     expect(ctx.canActOnLocation('catalog.overrides.manage', 'loc-9')).toBe(
       false,
     );
@@ -176,7 +196,7 @@ describe('AuthorizationService (integration)', () => {
           internalUserId: userId,
           roleId: roleIds[roleKeys[0]],
           scopeType: 'LOCATION',
-          scopeId: 'loc-1',
+          scopeId: loc1,
         },
         {
           tenantId: TENANT_1_MOCHA_HOUSE_ID,
@@ -189,10 +209,10 @@ describe('AuthorizationService (integration)', () => {
     });
 
     const ctx = await service.loadContext(userId, tenantOne);
-    // orders.view only at loc-1
+    // orders.view only at loc1
     expect(ctx.authorizedLocations('orders.view')).toEqual({
       kind: 'locations',
-      locationIds: new Set(['loc-1']),
+      locationIds: new Set([loc1]),
     });
     // catalog.products.edit corporate-wide
     expect(ctx.has('catalog.products.edit')).toBe(true);
@@ -310,5 +330,44 @@ describe('AuthorizationService (integration)', () => {
     expect(new Set(rows.map((r) => r.tenantId))).toEqual(
       new Set([TENANT_1_MOCHA_HOUSE_ID, TEST_TENANT_B_ID]),
     );
+  });
+
+  // --- Milestone S0F: location scope is bounded to the active tenant ---
+
+  it("a CORPORATE grant covers every location of ITS tenant, never another tenant's location", async () => {
+    await prisma.internalUserRoleAssignment.create({
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        internalUserId: userId,
+        roleId: roleIds[roleKeys[0]],
+        scopeType: 'CORPORATE',
+        scopeId: null,
+      },
+    });
+
+    const ctx = await service.loadContext(userId, tenantOne);
+    expect(ctx.canActOnLocation('orders.view', loc1)).toBe(true);
+    expect(ctx.canActOnLocation('orders.view', loc2)).toBe(true);
+    // A Tenant B location id (e.g. a stale selection) is refused even under
+    // a corporate grant, before any resource is read.
+    expect(ctx.canActOnLocation('orders.view', locInB)).toBe(false);
+    expect(() => ctx.assertCanActOnLocation('orders.view', locInB)).toThrow();
+  });
+
+  it("a LOCATION grant pointing at another tenant's location contributes nothing", async () => {
+    await prisma.internalUserRoleAssignment.create({
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        internalUserId: userId,
+        roleId: roleIds[roleKeys[0]],
+        scopeType: 'LOCATION',
+        scopeId: locInB,
+      },
+    });
+
+    const ctx = await service.loadContext(userId, tenantOne);
+    expect(ctx.has('orders.view')).toBe(false);
+    expect(ctx.canActOnLocation('orders.view', locInB)).toBe(false);
+    expect(ctx.summarize().locationIds).toEqual([]);
   });
 });

@@ -38,6 +38,13 @@ describe('Internal admin authentication + baseline authorization (integration)',
   const createdEmails = [activeNoRolesEmail, grantedEmail, invitedEmail];
   const roleKey = `admin-protection-all-${randomUUID()}`;
   let roleId: string;
+  // Milestone S0F — a REAL Tenant #1 location for the location-scoped
+  // probes below: a location id the active business does not own (bogus or
+  // another business's) is now refused with 403 by the authorization
+  // context itself, even under a CORPORATE grant, so "passes both guards"
+  // needs a location the business actually has. Fixed at module load so the
+  // describe.each table can reference it.
+  const SPEC_LOCATION = randomUUID();
 
   beforeAll(async () => {
     process.env.NODE_ENV = 'development';
@@ -119,6 +126,17 @@ describe('Internal admin authentication + baseline authorization (integration)',
     });
   });
 
+  beforeAll(async () => {
+    await prisma.location.create({
+      data: {
+        id: SPEC_LOCATION,
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        name: `Admin Protection Spec ${SPEC_LOCATION}`,
+        slug: `admin-protection-${SPEC_LOCATION}`,
+      },
+    });
+  });
+
   afterAll(async () => {
     await prisma.internalUserRoleAssignment.deleteMany({ where: { roleId } });
     await prisma.internalRolePermission.deleteMany({ where: { roleId } });
@@ -126,6 +144,7 @@ describe('Internal admin authentication + baseline authorization (integration)',
     await prisma.internalUser.deleteMany({
       where: { email: { in: createdEmails } },
     });
+    await prisma.location.deleteMany({ where: { id: SPEC_LOCATION } });
     await app.close();
     process.env = { ...originalEnv };
   });
@@ -255,16 +274,16 @@ describe('Internal admin authentication + baseline authorization (integration)',
 
   // Every entry is a REAL route on one of the three admin controllers.
   describe.each([
-    ['GET', `/api/v1/admin/orders?locationId=${BOGUS_LOCATION}`, undefined],
+    ['GET', `/api/v1/admin/orders?locationId=${SPEC_LOCATION}`, undefined],
     [
       'GET',
-      `/api/v1/admin/orders/${BOGUS_LOCATION}?locationId=${BOGUS_LOCATION}`,
+      `/api/v1/admin/orders/${BOGUS_LOCATION}?locationId=${SPEC_LOCATION}`,
       undefined,
     ],
     [
       'POST',
       `/api/v1/admin/orders/${BOGUS_LOCATION}/advance`,
-      { locationId: BOGUS_LOCATION, expectedStatus: 'RECEIVED' },
+      { locationId: SPEC_LOCATION, expectedStatus: 'RECEIVED' },
     ],
     ['PATCH', '/api/v1/admin/catalog/products/nonexistent', { isActive: true }],
     ['GET', '/api/v1/admin/catalog/products', undefined],
@@ -275,7 +294,7 @@ describe('Internal admin authentication + baseline authorization (integration)',
     ],
     [
       'PATCH',
-      '/api/v1/admin/locations/nonexistent/digital-ordering',
+      `/api/v1/admin/locations/${SPEC_LOCATION}/digital-ordering`,
       { isDigitalOrderingEnabled: true },
     ],
   ] as const)('%s %s', (method, path, body) => {
@@ -311,7 +330,7 @@ describe('Internal admin authentication + baseline authorization (integration)',
 
   it('GET /api/v1/admin/orders returns 200 for a corporate-granted internal user', async () => {
     const res = await request(app.getHttpServer())
-      .get(`/api/v1/admin/orders?locationId=${BOGUS_LOCATION}`)
+      .get(`/api/v1/admin/orders?locationId=${SPEC_LOCATION}`)
       .set('Authorization', `Bearer ${internalToken(grantedEmail)}`)
       .expect(200);
     expect(Array.isArray(res.body)).toBe(true);

@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  ConflictException,
   ExecutionContext,
   ForbiddenException,
   InternalServerErrorException,
@@ -11,31 +13,28 @@ import { InternalLocalDevTokenVerifier } from './internal-local-dev-token-verifi
 import { signInternalDevJwt } from './internal-dev-jwt';
 import { signDevJwt } from '../../customer-auth/infrastructure/dev-jwt';
 import type { InternalUserResolution } from '../application/internal-users.service';
+import type { ActiveTenantSelection } from '../application/internal-tenant-membership.service';
 import type { InternalIdentity } from './internal-identity';
 
-// Milestone S0D-2E — every request reaching this guard already has a
-// trusted TenantContext (TenantContextMiddleware runs before any guard);
-// `tenantContext` defaults to Tenant #1 here so the pre-existing tests
-// below don't need to know about it. The one test that sets it to
-// `undefined` proves the guard's own fail-closed check.
-// `tenantContext: null` (never `undefined`, which would trigger the
-// default below) deliberately omits it, for the one test proving the
-// guard's own fail-closed check.
+// Milestone S0F — the guard itself establishes the TenantContext (from the
+// validated active business), so a request reaching it carries only the
+// server-side request id (RequestIdMiddleware) and, optionally, the
+// client's X-Tenant-Id intent. `requestId: null` omits the id, for the one
+// test proving the guard's own fail-closed check.
 function contextWithHeader(
   authorization?: string,
-  tenantContext: { tenantId: string } | null = {
-    tenantId: TENANT_1_MOCHA_HOUSE_ID,
-  },
+  opts: { tenantHeader?: string | string[]; requestId?: string | null } = {},
 ): ExecutionContext {
   const request: {
-    headers: Record<string, string | undefined>;
+    headers: Record<string, string | string[] | undefined>;
+    requestId?: string;
     internalIdentity?: unknown;
     internalUser?: unknown;
     customerIdentity?: unknown;
-    tenantContext?: { tenantId: string };
-  } = { headers: { authorization } };
-  if (tenantContext) {
-    request.tenantContext = tenantContext;
+    tenantContext?: unknown;
+  } = { headers: { authorization, 'x-tenant-id': opts.tenantHeader } };
+  if (opts.requestId !== null) {
+    request.requestId = opts.requestId ?? 'req-guard-spec';
   }
   return {
     switchToHttp: () => ({ getRequest: () => request }),
@@ -50,14 +49,30 @@ describe('InternalAuthGuard', () => {
   // Records what resolveForAuthentication is asked, and returns whatever the
   // test set up — the guard's lifecycle behaviour is exercised through this.
   let resolution: InternalUserResolution;
+  let selection: ActiveTenantSelection;
   let seenIdentity: InternalIdentity | null;
   let seenTenantId: string | null;
+  let seenRequestedTenantId: string | null | undefined;
 
   const internalUsersStub = {
-    resolveForAuthentication: (identity: InternalIdentity, tenantId: string) => {
+    resolveForAuthentication: (
+      identity: InternalIdentity,
+      tenantId: string,
+    ) => {
       seenIdentity = identity;
       seenTenantId = tenantId;
       return Promise.resolve(resolution);
+    },
+  };
+
+  // Milestone S0F — what selectActiveTenant is asked, and what it returns.
+  const membershipsStub = {
+    selectActiveTenant: (
+      _identity: InternalIdentity,
+      requestedTenantId: string | null,
+    ) => {
+      seenRequestedTenantId = requestedTenantId;
+      return Promise.resolve(selection);
     },
   };
 
@@ -65,6 +80,7 @@ describe('InternalAuthGuard', () => {
     new InternalCognitoTokenVerifier(),
     new InternalLocalDevTokenVerifier(),
     internalUsersStub as never,
+    membershipsStub as never,
   );
 
   const activeUser = {
@@ -89,8 +105,10 @@ describe('InternalAuthGuard', () => {
     process.env.INTERNAL_AUTH_DEV_JWT_SECRET = internalSecret;
     process.env.AUTH_DEV_JWT_SECRET = customerSecret;
     resolution = { outcome: 'not-found' };
+    selection = { outcome: 'selected', tenantId: TENANT_1_MOCHA_HOUSE_ID };
     seenIdentity = null;
     seenTenantId = null;
+    seenRequestedTenantId = undefined;
   });
 
   afterEach(() => {
@@ -204,25 +222,103 @@ describe('InternalAuthGuard', () => {
     });
   });
 
-  // --- Milestone S0D-2E -----------------------------------------------
+  // --- Milestone S0F: active business resolution ----------------------
 
-  it("passes the request's own TenantContext.tenantId to resolution — never a default", async () => {
-    resolution = { outcome: 'active', user: activeUser };
-    const otherTenantId = '01a0db02-f800-7000-8000-7e570000000b';
-    await guard.canActivate(
-      contextWithHeader(`Bearer ${internalToken()}`, {
-        tenantId: otherTenantId,
-      }),
-    );
-    expect(seenTenantId).toBe(otherTenantId);
+  const TENANT_B = '01a0db02-f800-7000-8000-7e570000000b';
+
+  it('builds a member TenantContext for the SELECTED tenant (never a default) and resolves the user inside it', async () => {
+    selection = { outcome: 'selected', tenantId: TENANT_B };
+    resolution = {
+      outcome: 'active',
+      user: { ...activeUser, tenantId: TENANT_B },
+    };
+    const context = contextWithHeader(`Bearer ${internalToken()}`, {
+      tenantHeader: TENANT_B,
+      requestId: 'req-123',
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+
+    expect(seenRequestedTenantId).toBe(TENANT_B);
+    expect(seenTenantId).toBe(TENANT_B);
+    const request = context
+      .switchToHttp()
+      .getRequest<{ tenantContext?: unknown }>();
+    expect(request.tenantContext).toEqual({
+      tenantId: TENANT_B,
+      principalType: 'member',
+      requestId: 'req-123',
+    });
+    expect(Object.isFrozen(request.tenantContext)).toBe(true);
   });
 
-  it('fails closed with a 500 if TenantContextMiddleware never ran (no request.tenantContext)', async () => {
+  it('passes no requested tenant when X-Tenant-Id is absent', async () => {
+    resolution = { outcome: 'active', user: activeUser };
+    await guard.canActivate(contextWithHeader(`Bearer ${internalToken()}`));
+    expect(seenRequestedTenantId).toBeNull();
+  });
+
+  it('rejects a business the identity may not enter with the generic 403 — before resolving any InternalUser', async () => {
+    selection = { outcome: 'denied' };
+    resolution = { outcome: 'active', user: activeUser };
+    const context = contextWithHeader(`Bearer ${internalToken()}`, {
+      tenantHeader: TENANT_B,
+    });
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(seenTenantId).toBeNull();
+    expect(
+      context.switchToHttp().getRequest<{ tenantContext?: unknown }>()
+        .tenantContext,
+    ).toBeUndefined();
+  });
+
+  it('asks a multi-business identity to choose (409 BUSINESS_SELECTION_REQUIRED)', async () => {
+    selection = { outcome: 'selection-required' };
+    const error = await guard
+      .canActivate(contextWithHeader(`Bearer ${internalToken()}`))
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'BUSINESS_SELECTION_REQUIRED',
+    });
+  });
+
+  it.each([
+    ['not a uuid', 'tenant-b'],
+    ['upper-case uuid', TENANT_B.toUpperCase()],
+    ['repeated header', [TENANT_B, TENANT_B]],
+  ])(
+    'rejects a malformed X-Tenant-Id (%s) with 400',
+    async (_label, header) => {
+      await expect(
+        guard.canActivate(
+          contextWithHeader(`Bearer ${internalToken()}`, {
+            tenantHeader: header,
+          }),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(seenRequestedTenantId).toBeUndefined();
+    },
+  );
+
+  it('authenticates BEFORE reading the business: no token is 401 even with a tenant header', async () => {
+    await expect(
+      guard.canActivate(
+        contextWithHeader(undefined, { tenantHeader: TENANT_B }),
+      ),
+    ).rejects.toThrow(UnauthorizedException);
+    expect(seenRequestedTenantId).toBeUndefined();
+  });
+
+  it('fails closed with a 500 if RequestIdMiddleware never ran', async () => {
     resolution = { outcome: 'active', user: activeUser };
     await expect(
-      guard.canActivate(contextWithHeader(`Bearer ${internalToken()}`, null)),
+      guard.canActivate(
+        contextWithHeader(`Bearer ${internalToken()}`, { requestId: null }),
+      ),
     ).rejects.toThrow(InternalServerErrorException);
-    // Never even reaches token verification / identity resolution.
     expect(seenIdentity).toBeNull();
   });
 

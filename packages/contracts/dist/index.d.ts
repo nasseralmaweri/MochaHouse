@@ -673,7 +673,16 @@ export interface InternalAuthorizationSummary {
     locations: LocationSummary[];
     capabilities: Partial<Record<InternalPermissionKey, InternalPermissionCapability>>;
 }
+export interface InternalBusinessSummary {
+    id: string;
+    name: string;
+    slug: string;
+}
+export interface InternalBusinessesResponse {
+    businesses: InternalBusinessSummary[];
+}
 export interface InternalMeResponse {
+    business: InternalBusinessSummary;
     user: InternalUserProfile;
     authorization: InternalAuthorizationSummary;
 }
