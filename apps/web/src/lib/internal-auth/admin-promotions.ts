@@ -4,6 +4,7 @@ import type {
   AdminPromotionsResponse,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only reads of the HQ Promotions & Coupons API (Milestone 7E). The
 // API (`/api/v1/admin/promotions*`, InternalAuthGuard + PermissionGuard +
@@ -34,7 +35,7 @@ async function get<T>(path: string): Promise<ReadResult<T>> {
   let response: Response;
   try {
     response = await fetch(`${getApiUrl()}/admin/promotions${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: await internalAuthHeaders(token),
       cache: "no-store",
     });
   } catch {

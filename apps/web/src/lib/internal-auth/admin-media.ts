@@ -4,6 +4,7 @@ import type {
   AdminMediaAssetsResponse,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only reads of the HQ Media Library API (Milestone 8F; get-one
 // added in 8I). The API (`/api/v1/admin/media*`, InternalAuthGuard +
@@ -36,7 +37,7 @@ async function read<T>(path: string): Promise<ReadResult<T>> {
   let response: Response;
   try {
     response = await fetch(`${getApiUrl()}/admin/media${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: await internalAuthHeaders(token),
       cache: "no-store",
     });
   } catch {

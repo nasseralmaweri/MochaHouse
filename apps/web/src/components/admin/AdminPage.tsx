@@ -2,9 +2,21 @@
 // Owns the max-width, horizontal centering and padding so pages stop
 // hand-rolling their own <main> layout. The shell provides the <main>
 // landmark and id="admin-content"; this is a plain <div> inside it.
-export function AdminPage({ children }: { children: React.ReactNode }) {
+export function AdminPage({
+  children,
+  width = "default",
+}: {
+  children: React.ReactNode;
+  // "wide" is for overview-style pages whose primary content is a table or
+  // a figure row and benefits from large monitors.
+  width?: "default" | "wide";
+}) {
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+    <div
+      className={`mx-auto flex w-full ${
+        width === "wide" ? "max-w-[88rem]" : "max-w-6xl"
+      } flex-col gap-8 px-5 py-8 sm:px-8 lg:px-10 2xl:px-14`}
+    >
       {children}
     </div>
   );
@@ -20,7 +32,7 @@ export function AdminSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="flex flex-col gap-3">
+    <section className="flex flex-col gap-4">
       <div className="flex flex-col gap-0.5">
         <h2 className="text-lg font-semibold tracking-tight text-text-primary">
           {title}

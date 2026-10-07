@@ -9,6 +9,7 @@ import type {
   LoyaltySettings,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only reads of the HQ Mocha Beans API (Milestone 7A). The API
 // (`/api/v1/admin/loyalty/*`, InternalAuthGuard + PermissionGuard +
@@ -44,7 +45,7 @@ export async function searchLoyaltyCustomers(
   try {
     response = await fetch(
       `${getApiUrl()}/admin/loyalty/customers?query=${encodeURIComponent(query)}`,
-      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+      { headers: await internalAuthHeaders(token), cache: "no-store" },
     );
   } catch {
     return { outcome: "error" };
@@ -88,7 +89,7 @@ export async function getLoyaltyCustomerDetail(
   try {
     response = await fetch(
       `${getApiUrl()}/admin/loyalty/customers/${encodeURIComponent(customerId)}`,
-      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+      { headers: await internalAuthHeaders(token), cache: "no-store" },
     );
   } catch {
     return { outcome: "error" };
@@ -129,7 +130,7 @@ async function configureGet<T>(path: string): Promise<ConfigureReadResult<T>> {
   let response: Response;
   try {
     response = await fetch(`${getApiUrl()}/admin/loyalty/${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: await internalAuthHeaders(token),
       cache: "no-store",
     });
   } catch {

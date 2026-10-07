@@ -28,10 +28,10 @@ export function AdminPageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <header className="flex flex-col gap-3">
+    <header className="flex flex-col gap-4">
       {breadcrumbs && breadcrumbs.length > 0 ? (
         <nav aria-label="Breadcrumb">
-          <ol className="flex flex-wrap items-center gap-1 text-xs text-text-muted">
+          <ol className="flex flex-wrap items-center gap-1 text-sm text-text-muted">
             {breadcrumbs.map((crumb, index) => (
               <li key={index} className="flex items-center gap-1">
                 {crumb.href ? (
@@ -58,11 +58,11 @@ export function AdminPageHeader({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
+            <h1 className="text-[1.75rem] font-semibold leading-tight tracking-tight text-text-primary">
               {title}
             </h1>
             {context ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-border-default bg-surface-subtle px-2.5 py-0.5 text-xs font-medium text-text-secondary">
+              <span className="inline-flex items-center gap-1.5 text-sm text-text-muted">
                 <span aria-hidden="true">
                   {context.kind === "corporate" ? "◆" : "◉"}
                 </span>
@@ -74,7 +74,7 @@ export function AdminPageHeader({
             ) : null}
           </div>
           {description ? (
-            <p className="max-w-2xl text-sm text-text-secondary">
+            <p className="max-w-2xl text-[0.9375rem] leading-relaxed text-text-secondary">
               {description}
             </p>
           ) : null}

@@ -3,10 +3,12 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type {
+  InternalBusinessesResponse,
   InternalSignInRequest,
   InternalSignInResponse,
 } from "@mocha-house/contracts";
 import { INTERNAL_SESSION_COOKIE } from "./session";
+import { ACTIVE_TENANT_HEADER, ADMIN_BUSINESS_COOKIE } from "./active-business";
 
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;
@@ -67,9 +69,13 @@ export async function internalSignInAction(
 
   const result = (await signInResponse.json()) as InternalSignInResponse;
 
-  let meResponse: Response;
+  // Milestone S0F: which businesses may this person enter? An account that
+  // can enter none gets no session. With exactly one, confirm it is usable
+  // (an ACTIVE internal user) before establishing the session; with several
+  // the person chooses after sign-in (/internal/choose-business).
+  let businessesResponse: Response;
   try {
-    meResponse = await fetch(`${getApiUrl()}/internal/me`, {
+    businessesResponse = await fetch(`${getApiUrl()}/internal/businesses`, {
       headers: { Authorization: `Bearer ${result.idToken}` },
       cache: "no-store",
     });
@@ -79,7 +85,32 @@ export async function internalSignInAction(
     };
   }
 
-  if (!meResponse.ok) {
+  let permitted = false;
+  if (businessesResponse.ok) {
+    const { businesses } =
+      (await businessesResponse.json()) as InternalBusinessesResponse;
+    if (businesses.length === 1) {
+      try {
+        const meResponse = await fetch(`${getApiUrl()}/internal/me`, {
+          headers: {
+            Authorization: `Bearer ${result.idToken}`,
+            [ACTIVE_TENANT_HEADER]: businesses[0].id,
+          },
+          cache: "no-store",
+        });
+        permitted = meResponse.ok;
+      } catch {
+        return {
+          error:
+            "Could not reach the server. Check your connection and try again.",
+        };
+      }
+    } else {
+      permitted = businesses.length > 1;
+    }
+  }
+
+  if (!permitted) {
     // Authenticated, but not an ACTIVE internal user — no session is
     // established.
     return {
@@ -107,5 +138,6 @@ export async function internalSignInAction(
 export async function internalSignOutAction(): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.delete(INTERNAL_SESSION_COOKIE);
+  cookieStore.delete(ADMIN_BUSINESS_COOKIE);
   redirect("/internal/sign-in");
 }

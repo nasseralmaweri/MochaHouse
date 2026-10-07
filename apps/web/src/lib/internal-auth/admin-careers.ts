@@ -5,6 +5,7 @@ import type {
   AdminJobOpeningsResponse,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only reads of the HQ Careers API (Milestone 8B). The API
 // (`/api/v1/admin/careers/jobs*`, `careers.view` / `careers.manage`,
@@ -36,7 +37,7 @@ async function read<T>(path: string): Promise<ReadResult<T>> {
   let response: Response;
   try {
     response = await fetch(`${getApiUrl()}/admin/careers/jobs${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: await internalAuthHeaders(token),
       cache: "no-store",
     });
   } catch {

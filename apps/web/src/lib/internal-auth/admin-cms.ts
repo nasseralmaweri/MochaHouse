@@ -4,6 +4,7 @@ import type {
   AdminCmsPagesResponse,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only reads of the HQ Content (CMS) API (Milestone 8E). The API
 // (`/api/v1/admin/content*`, InternalAuthGuard + PermissionGuard +
@@ -36,7 +37,7 @@ async function read<T>(path: string): Promise<ReadResult<T>> {
   let response: Response;
   try {
     response = await fetch(`${getApiUrl()}/admin/content${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: await internalAuthHeaders(token),
       cache: "no-store",
     });
   } catch {

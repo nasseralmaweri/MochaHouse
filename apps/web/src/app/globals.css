@@ -38,6 +38,11 @@
 
   --color-focus: var(--focus);
 
+  --color-surface-sidebar: var(--surface-sidebar);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-contrast: var(--accent-contrast);
+
   --color-status-success: var(--status-success);
   --color-status-warning: var(--status-warning);
   --color-status-error: var(--status-error);
@@ -47,8 +52,99 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/*
+ * CENTERIVO platform foundation. Scoped to .centerivo (the Admin shell root)
+ * so the customer-facing Mocha House ordering site keeps its own warm
+ * palette. Overriding the SAME semantic variables means every existing Admin
+ * page that uses bg-surface-card / text-text-secondary / border-border-default
+ * adopts the platform look without being rewritten.
+ *
+ * Direction: quiet, light, mineral neutrals; one restrained deep-green
+ * accent used only for selection, focus and primary emphasis.
+ */
+.centerivo {
+  --surface-page: #fafaf8;
+  --surface-card: #ffffff;
+  --surface-subtle: #f0f0ec;
+  --surface-sidebar: #efefea;
+
+  --text-primary: #17201d;
+  --text-secondary: #46504b;
+  --text-muted: #69726d;
+
+  --border-default: #e5e5df;
+
+  --accent: #1f5c4f;
+  --accent-soft: #e5f0ec;
+  --accent-contrast: #ffffff;
+  --focus: #2a7a68;
+
+  --status-success: #1f6b45;
+  --status-warning: #8a5a12;
+  --status-error: #a3271f;
+  --status-info: #2f5d8a;
+
+  --cx-radius-control: 0.625rem;
+  --cx-shadow-pop: 0 12px 32px -8px rgb(23 32 29 / 0.18),
+    0 2px 6px rgb(23 32 29 / 0.06);
+  --cx-shadow-raised: 0 1px 2px rgb(23 32 29 / 0.06);
+  --cx-sidebar-width: 16rem;
+  --cx-sidebar-width-collapsed: 4.5rem;
+
+  background: var(--surface-page);
+  color: var(--text-primary);
+}
+
+/* The Admin shell sits on the sidebar tone; the workspace is an inset panel. */
+.centerivo.cx-shell {
+  background: var(--surface-sidebar);
+}
+
+/* A restrained, consistent keyboard focus ring across the shell. */
+.centerivo :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@keyframes cx-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes cx-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.cx-pop-in {
+  animation: cx-fade-in 140ms ease-out;
+}
+.cx-spin {
+  animation: cx-spin 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cx-pop-in,
+  .cx-spin {
+    animation: none;
+  }
+}
+
 body {
   background: var(--surface-page);
   color: var(--text-primary);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Quiet scrollbars: invisible until the region is hovered. */
+.centerivo .cx-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.centerivo .cx-scroll:hover {
+  scrollbar-color: rgb(23 32 29 / 0.18) transparent;
 }

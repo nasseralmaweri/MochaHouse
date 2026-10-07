@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { INTERNAL_SESSION_COOKIE } from "@/lib/internal-auth/session";
+import { internalAuthHeaders } from "@/lib/internal-auth/active-business";
 
 // Server-side proxy for the internal Admin API, mirroring the pattern of
 // app/api/checkout/route.ts. It exists purely to bridge one gap: the Admin
@@ -53,9 +54,7 @@ async function proxy(
   const search = request.nextUrl.search;
   const target = `${getApiUrl()}/admin/${path}${search}`;
 
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-  };
+  const headers = await internalAuthHeaders(token);
   const hasBody = request.method !== "GET" && request.method !== "DELETE";
   const body = hasBody ? await request.text() : undefined;
   if (hasBody) {

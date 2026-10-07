@@ -7,6 +7,7 @@ import type {
   AdminProductSummary,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only reads of the authorized Admin catalog API (Milestone 5D-3).
 // Attaches the internal bearer token server-side; distinguishes the failure
@@ -39,7 +40,7 @@ export async function getAdminProducts(): Promise<AdminProductsListResult> {
   let response: Response;
   try {
     response = await fetch(`${getApiUrl()}/admin/catalog/products`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: await internalAuthHeaders(token),
       cache: "no-store",
     });
   } catch {
@@ -82,7 +83,7 @@ export async function getAdminProduct(
     response = await fetch(
       `${getApiUrl()}/admin/catalog/products/${encodeURIComponent(productId)}`,
       {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: await internalAuthHeaders(token),
         cache: "no-store",
       },
     );
@@ -130,7 +131,7 @@ async function adminCatalogGet<T>(
   let response: Response;
   try {
     response = await fetch(`${getApiUrl()}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: await internalAuthHeaders(token),
       cache: "no-store",
     });
   } catch {

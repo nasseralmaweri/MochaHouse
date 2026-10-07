@@ -1,4 +1,4 @@
-import { adminNavItems, isNavItemActive } from "./nav";
+import { adminNavItems, groupAdminNavItems, isNavItemActive } from "./nav";
 import type { AdminCapabilities } from "./capabilities";
 
 describe("adminNavItems (permission-aware navigation)", () => {
@@ -567,5 +567,59 @@ describe("isNavItemActive", () => {
       true,
     );
     expect(isNavItemActive(admin, "/admin")).toBe(false);
+  });
+});
+
+describe("groupAdminNavItems (navigation grouping)", () => {
+  const corporateAll: AdminCapabilities = {
+    "orders.view": { corporate: true, locationIds: [] },
+    "customers.view": { corporate: true, locationIds: [] },
+    "reports.view": { corporate: true, locationIds: [] },
+    "users.view": { corporate: true, locationIds: [] },
+  };
+
+  it("never adds, drops or reorders-away an item the permission model produced", () => {
+    const items = adminNavItems(corporateAll);
+    const grouped = groupAdminNavItems(items).flatMap((g) => g.items);
+    expect(grouped.map((i) => i.key).sort()).toEqual(
+      items.map((i) => i.key).sort(),
+    );
+  });
+
+  it("keeps Dashboard alone and unlabelled for a user with no capabilities", () => {
+    const groups = groupAdminNavItems(adminNavItems({}));
+    expect(groups).toHaveLength(1);
+    expect(groups[0].label).toBeNull();
+    expect(groups[0].tier).toBe("primary");
+    expect(groups[0].items.map((i) => i.key)).toEqual(["dashboard"]);
+  });
+
+  it("omits groups that have no permitted items", () => {
+    const groups = groupAdminNavItems(adminNavItems(corporateAll));
+    expect(groups.map((g) => g.key)).toEqual(["primary", "admin"]);
+    expect(groups.map((g) => g.tier)).toEqual(["primary", "footer"]);
+  });
+
+  it("keeps lower-frequency modules in collapsible groups", () => {
+    const groups = groupAdminNavItems(
+      adminNavItems({
+        "loyalty.view": { corporate: true, locationIds: [] },
+        "media.view": { corporate: true, locationIds: [] },
+      }),
+    );
+    expect(groups.map((g) => [g.key, g.tier])).toEqual([
+      ["primary", "primary"],
+      ["growth", "collapsible"],
+      ["content", "collapsible"],
+    ]);
+  });
+
+  it("places an unknown future item under More instead of dropping it", () => {
+    const groups = groupAdminNavItems([
+      { key: "dashboard", label: "Dashboard", href: "/admin" },
+      { key: "mystery", label: "Mystery", href: "/admin/mystery" },
+    ]);
+    expect(groups[groups.length - 1]).toMatchObject({ key: "more" });
+    expect(groups[groups.length - 1].items[0].key).toBe("mystery");
   });
 });

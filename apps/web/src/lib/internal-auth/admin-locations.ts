@@ -4,6 +4,7 @@ import type {
   AdminLocationSummary,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only reads of the authorized Admin Locations API (Milestone 5D-1).
 // Attaches the internal bearer token server-side (never exposed to the
@@ -38,7 +39,7 @@ export async function getAdminLocations(): Promise<AdminLocationsListResult> {
   let response: Response;
   try {
     response = await fetch(`${getApiUrl()}/admin/locations`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: await internalAuthHeaders(token),
       cache: "no-store",
     });
   } catch {
@@ -81,7 +82,7 @@ export async function getAdminLocation(
     response = await fetch(
       `${getApiUrl()}/admin/locations/${encodeURIComponent(locationId)}`,
       {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: await internalAuthHeaders(token),
         cache: "no-store",
       },
     );
