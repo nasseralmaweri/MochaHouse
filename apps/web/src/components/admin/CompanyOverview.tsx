@@ -81,8 +81,11 @@ export function ReportingPeriodBar({
           {periodLabel}
         </p>
         <p className="text-xs text-text-muted">
-          Business dates, inclusive · {OVERVIEW_TIME_ZONE} · Applies to every
-          section below
+          Business dates, inclusive · {OVERVIEW_TIME_ZONE}
+        </p>
+        <p className="text-xs leading-snug text-text-muted">
+          Used for digital performance, customer activity and location
+          orders and sales. Opening and closing checklists always show today.
         </p>
       </div>
       <div className="shrink-0">
@@ -186,7 +189,9 @@ export function DigitalPerformance({
                   <span className="font-semibold tabular-nums">{inProgress}</span>{" "}
                   in progress
                 </p>
-                <p className="text-xs text-text-muted">Current status</p>
+                <p className="text-xs text-text-muted">
+                  Current status of orders placed in this period
+                </p>
               </div>
               <div
                 role="img"
@@ -256,7 +261,7 @@ export function CustomerActivity({
             size="md"
             label="Ordering accounts"
             value={String(growth.registeredCustomersWithOrders)}
-            definition="Registered customers who ordered"
+            definition="Registered customers with at least one order in this period"
           />
           <Metric
             size="md"
@@ -324,8 +329,7 @@ export function CustomerActivity({
             <span className="font-semibold text-text-primary tabular-nums">
               {growth.registeredCustomersAsOfEndDate}
             </span>{" "}
-            registered accounts
-            <span className="hidden sm:inline"> as of the period end</span>
+            registered accounts as of period end
           </p>
           {customersHref ? (
             <Link

@@ -378,7 +378,7 @@ export function LocationComparison({
               Orders
             </th>
             <th scope="col" className={`${th} px-4 text-right`}>
-              Sales
+              Digital sales
             </th>
             <th scope="col" className={`${th} px-4 text-right`}>
               Avg order
@@ -470,10 +470,14 @@ export function LocationComparison({
           <li key={row.locationId} style={flaggedRule(row)}>
             <Link
               href={hrefFor(row.locationId)}
+              aria-label={
+                row.flags.length > 0 ? `${row.name}, needs attention` : row.name
+              }
+              aria-describedby={`location-card-${row.locationId}-details`}
               className="flex flex-col gap-2.5 px-4 py-3.5 transition-colors active:bg-surface-subtle/60"
             >
-              <span className="flex items-center justify-between gap-3">
-                <span className="min-w-0 truncate text-[0.9375rem] font-semibold text-text-primary">
+              <span className="flex items-start justify-between gap-3">
+                <span className="min-w-0 break-words text-[0.9375rem] font-semibold leading-snug text-text-primary">
                   {row.name}
                 </span>
                 <span className="flex shrink-0 items-center gap-2 text-sm">
@@ -482,11 +486,15 @@ export function LocationComparison({
                   <IconArrowRight className="h-4 w-4 text-text-muted" />
                 </span>
               </span>
+              <span
+                id={`location-card-${row.locationId}-details`}
+                className="flex flex-col gap-2.5"
+              >
               <Flags flags={row.flags} />
               <span className="grid grid-cols-3 gap-3">
                 <MobileFigure label="Orders" value={String(row.orders)} />
                 <MobileFigure
-                  label="Sales"
+                  label="Digital sales"
                   value={formatPrice(row.salesMinorUnits, CURRENCY)}
                 />
                 <MobileFigure label="Avg order" value={avg(row)} />
@@ -503,6 +511,7 @@ export function LocationComparison({
                   </span>
                 </span>
               ) : null}
+              </span>
             </Link>
           </li>
         ))}
