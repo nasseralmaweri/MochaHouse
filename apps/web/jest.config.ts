@@ -10,6 +10,8 @@ const config: Config = {
   testMatch: ["<rootDir>/src/**/*.spec.ts"],
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
+    "^@mocha-house/contracts$": "<rootDir>/../../packages/contracts/src/index.ts",
+    "^@mocha-house/domain$": "<rootDir>/../../packages/domain/src/index.ts",
   },
   transform: {
     "^.+\\.ts$": [
