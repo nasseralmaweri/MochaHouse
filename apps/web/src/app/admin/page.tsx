@@ -72,6 +72,14 @@ import {
   type ContinueLink,
   type OperatingFact,
 } from "@/components/admin/OverviewSections";
+import {
+  CustomerActivity,
+  DigitalPerformance,
+  LocationsSummaryLine,
+  ReportingPeriodBar,
+  ScopeContext,
+  SectionUnavailable,
+} from "@/components/admin/CompanyOverview";
 import { AttentionList } from "@/components/centerivo/Attention";
 import { DataCoverage } from "@/components/centerivo/DataCoverage";
 
@@ -206,7 +214,9 @@ export default async function AdminOverviewPage({
       description={
         scope.kind === "location"
           ? `${scopeLabel} · ${formatBusinessDate(today)}`
-          : `${businessName} · ${scopeLabel} · ${formatBusinessDate(today)}`
+          : scope.kind === "company"
+            ? formatBusinessDate(today)
+            : `${businessName} · ${scopeLabel} · ${formatBusinessDate(today)}`
       }
       actions={
         scope.kind === "none" ? undefined : (
@@ -241,6 +251,7 @@ export default async function AdminOverviewPage({
       ? await companyOverview({
           capabilities,
           locations,
+          businessName,
           range,
           rangeLabel,
           startDate,
@@ -275,6 +286,7 @@ type Capabilities = AdminCapabilities;
 async function companyOverview({
   capabilities,
   locations,
+  businessName,
   range,
   rangeLabel,
   startDate,
@@ -284,6 +296,7 @@ async function companyOverview({
 }: {
   capabilities: Capabilities;
   locations: LocationSummary[];
+  businessName: string;
   range: OverviewRange;
   rangeLabel: string;
   startDate: string;
@@ -413,15 +426,21 @@ async function companyOverview({
     },
   ].filter((link): link is ContinueLink => Boolean(link));
 
+  const periodLabel =
+    range === "today" ? `Today · ${formatBusinessDate(today)}` : rangeLabel;
+  const shortPeriod = range === "today" ? "Today" : rangeLabel.split(" · ")[0];
+
   return (
     <>
+      <ScopeContext businessName={businessName} locationCount={locations.length} />
       <ContinueWorking links={continueLinks} />
-      <div className="flex min-w-0 flex-col gap-10">
+      <div className="flex min-w-0 flex-col gap-12">
+        {/* 1. Needs attention */}
         <section aria-labelledby="ov-attention" className="flex flex-col gap-4">
           <SectionHeading
             id="ov-attention"
             title="Needs attention"
-            description="Across every location you can see."
+            description="Operational exceptions across every location you can see, most urgent first."
             primary
             aside={<AttentionCount count={attention.length} />}
           />
@@ -429,79 +448,113 @@ async function companyOverview({
             items={attention}
             checkedLabel={checked.join(", ")}
             unavailable={unavailable}
+            grouped
           />
         </section>
 
         {canReports ? (
-          <section
-            aria-labelledby="ov-performance"
-            className="flex flex-col gap-4"
-          >
-            <SectionHeading
-              id="ov-performance"
-              title="Digital performance"
-              description={rangeLabel}
-              aside={
-                <RangeTabs
-                  current={range}
-                  hrefFor={(r) => overviewHref(urlLocationId, r)}
+          <div className="flex flex-col gap-8">
+            <ReportingPeriodBar
+              range={range}
+              periodLabel={periodLabel}
+              hrefFor={(r) => overviewHref(urlLocationId, r)}
+            />
+
+            {/* 2. Digital performance */}
+            <section
+              aria-labelledby="ov-performance"
+              className="flex flex-col gap-4"
+            >
+              <SectionHeading
+                id="ov-performance"
+                title="Digital performance"
+                description={`Online ordering across all locations · ${shortPeriod}`}
+              />
+              {overviewR.state === "ok" ? (
+                <DigitalPerformance
+                  report={overviewR.data}
+                  periodLabel={periodLabel}
                 />
-              }
-            />
-            {overviewR.state === "ok" ? (
-              <PerformanceSummary
-                report={overviewR.data}
-                growth={growthR.state === "ok" ? growthR.data : null}
-                headingId="ov-performance"
-                coverageExtra={[
-                  `${overviewR.data.availableLocations.length} ${
-                    overviewR.data.availableLocations.length === 1
-                      ? "location"
-                      : "locations"
-                  } included`,
-                ]}
+              ) : (
+                <SectionUnavailable title="Digital performance couldn't be loaded" />
+              )}
+            </section>
+
+            {/* 3. Customer activity */}
+            <section
+              aria-labelledby="ov-customers"
+              className="flex flex-col gap-4"
+            >
+              <SectionHeading
+                id="ov-customers"
+                title="Customer activity"
+                description={`Accounts and repeat ordering · ${shortPeriod}`}
               />
-            ) : (
-              <AdminEmptyState
-                title="Couldn't load digital performance"
-                description="Refresh to try again."
+              {growthR.state === "ok" ? (
+                <CustomerActivity
+                  growth={growthR.data}
+                  customersHref={
+                    can(capabilities, "customers.view") ? "/admin/customers" : null
+                  }
+                  loyaltyHref={
+                    can(capabilities, "loyalty.view") ? "/admin/loyalty" : null
+                  }
+                />
+              ) : (
+                <SectionUnavailable title="Customer activity couldn't be loaded" />
+              )}
+            </section>
+
+            {/* 4. Locations */}
+            <section
+              aria-labelledby="ov-locations"
+              className="flex flex-col gap-4"
+            >
+              <SectionHeading
+                id="ov-locations"
+                title="Locations"
+                description="Status and digital performance by location. Locations that need a look are listed first."
+                aside={
+                  performanceR.state === "ok" ? (
+                    <LocationsSummaryLine
+                      total={rows.length}
+                      needingLook={rows.filter((r) => r.flags.length > 0).length}
+                    />
+                  ) : undefined
+                }
               />
-            )}
-          </section>
+              {performanceR.state === "ok" ? (
+                <>
+                  <LocationComparison
+                    rows={rows}
+                    rangeLabel={shortPeriod}
+                    showChecklists={checklistR.state === "ok"}
+                    hrefFor={(id) => overviewHref(id, range)}
+                  />
+                  <DataCoverage
+                    items={[
+                      "Digital platform orders only",
+                      `Orders: ${periodLabel}`,
+                      checklistR.state === "ok"
+                        ? "Checklists: today's recorded activity"
+                        : checklistR.state === "error"
+                          ? "Checklist status couldn't be loaded"
+                          : "",
+                    ]}
+                  />
+                </>
+              ) : (
+                <SectionUnavailable title="The location summary couldn't be loaded" />
+              )}
+            </section>
+          </div>
         ) : (
-          <p className="text-sm text-text-secondary">
-            Digital performance appears here for people whose role includes
-            Reports.
-          </p>
+          <SectionUnavailable
+            title="Performance, customer and location figures aren't part of your role"
+            description="Digital performance, customer activity and the location summary appear here for people whose role includes Reports. Ask an administrator if you need them."
+          />
         )}
-
-        {canReports && performanceR.state === "ok" ? (
-          <section
-            aria-labelledby="ov-locations"
-            className="flex flex-col gap-4"
-          >
-            <SectionHeading
-              id="ov-locations"
-              title="Locations"
-              description="Locations that need a look are listed first."
-            />
-            <DataCoverage
-              items={[
-                "Digital platform orders only",
-                `Orders: ${rangeLabel}`,
-                checklistR.state === "ok" ? "Checklists: today's recorded activity" : "",
-              ]}
-            />
-            <LocationComparison
-              rows={rows}
-              rangeLabel={range === "today" ? "Today" : rangeLabel.split(" · ")[0]}
-              showChecklists={checklistR.state === "ok"}
-              hrefFor={(id) => overviewHref(id, range)}
-            />
-          </section>
-        ) : null}
       </div>
-
     </>
   );
 }

@@ -76,9 +76,13 @@ export function AttentionList({
   max = 5,
   checkedLabel,
   unavailable = [],
+  grouped = false,
 }: {
   items: AttentionItem[];
   max?: number;
+  // Label the "Needs action" / "For review" groups visibly. Expects items
+  // already ordered by prioritizeAttention (warnings first).
+  grouped?: boolean;
   // Signals that could not be loaded. They are never reported as "clear".
   unavailable?: string[];
   // What was actually checked, shown in the all-clear state so "nothing
@@ -125,14 +129,32 @@ export function AttentionList({
 
   const visible = items.slice(0, max);
   const rest = items.slice(max);
+  const countFor = (severity: AttentionItem["severity"]) =>
+    items.filter((item) => item.severity === severity).length;
   return (
     <div className="overflow-hidden rounded-2xl border border-border-default bg-surface-card">
       <ul className="divide-y divide-border-default">
-        {visible.map((item) => (
-          <li key={item.id}>
-            <AttentionRow item={item} />
-          </li>
-        ))}
+        {visible.map((item, index) => {
+          const startsGroup =
+            grouped && (index === 0 || visible[index - 1].severity !== item.severity);
+          return (
+            <li key={item.id}>
+              {startsGroup ? (
+                <p
+                  className={`flex items-center gap-2 px-5 pb-0 pt-3.5 text-xs font-medium uppercase tracking-wide sm:px-6 ${
+                    item.severity === "warning"
+                      ? "text-status-warning"
+                      : "text-text-muted"
+                  } ${SEVERITY[item.severity].row}`}
+                >
+                  {SEVERITY[item.severity].label}
+                  <span className="tabular-nums">{countFor(item.severity)}</span>
+                </p>
+              ) : null}
+              <AttentionRow item={item} />
+            </li>
+          );
+        })}
       </ul>
       {unavailable.length > 0 ? (
         <p className="border-t border-border-default px-5 py-3 text-[0.8125rem] text-text-secondary sm:px-6">
