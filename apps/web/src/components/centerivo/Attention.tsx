@@ -77,9 +77,12 @@ export function AttentionList({
   checkedLabel,
   unavailable = [],
   grouped = false,
+  quiet = false,
 }: {
   items: AttentionItem[];
   max?: number;
+  // Render the all-clear state as a single quiet line instead of a card.
+  quiet?: boolean;
   // Label the "Needs action" / "For review" groups visibly. Expects items
   // already ordered by prioritizeAttention (warnings first).
   grouped?: boolean;
@@ -104,6 +107,21 @@ export function AttentionList({
           </p>
         </div>
       </div>
+    );
+  }
+
+  if (items.length === 0 && quiet) {
+    return (
+      <p
+        role="status"
+        className="flex items-start gap-2.5 rounded-xl border border-border-default bg-surface-card px-4 py-3 text-sm sm:items-center sm:px-5"
+      >
+        <IconCheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-status-success sm:mt-0" />
+        <span className="text-text-secondary">
+          <span className="font-medium text-text-primary">All clear.</span>
+          {checkedLabel ? ` Checked ${checkedLabel}.` : " Nothing needs attention."}
+        </span>
+      </p>
     );
   }
 

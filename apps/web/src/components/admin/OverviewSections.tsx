@@ -268,45 +268,38 @@ export function PerformanceSummary({
   );
 }
 
-function ChecklistText({
-  label,
-  state,
-}: {
-  label: string;
-  state: ChecklistState;
-}) {
-  const text =
-    state === "completed"
-      ? "Done"
-      : state === "in-progress"
-        ? "In progress"
-        : "Not recorded";
-  return (
-    <span className="flex items-center gap-2 whitespace-nowrap">
-      <span className="w-14 text-text-muted">{label}</span>
-      <span
-        className={`flex items-center gap-1 ${
-          state === "not-recorded" ? "text-text-muted" : "text-text-primary"
-        }`}
-      >
-        {state === "completed" ? (
-          <IconCheck className="h-3.5 w-3.5 text-accent" />
-        ) : null}
-        {text}
+function ChecklistText({ state }: { state: ChecklistState }) {
+  if (state === "completed") {
+    return (
+      <span className="flex items-center gap-1.5 whitespace-nowrap text-text-primary">
+        <IconCheck className="h-3.5 w-3.5 text-accent" />
+        Done
       </span>
-    </span>
-  );
+    );
+  }
+  if (state === "in-progress") {
+    return (
+      <span className="flex items-center gap-1.5 whitespace-nowrap text-text-primary">
+        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-text-secondary" />
+        In progress
+      </span>
+    );
+  }
+  return <span className="whitespace-nowrap text-text-muted">Not recorded</span>;
 }
 
 function OrderingState({ row }: { row: OverviewLocationRow }) {
   if (!row.isActive) {
-    return <span className="text-text-muted">Location inactive</span>;
+    return <span className="whitespace-nowrap text-text-muted">Inactive</span>;
   }
   return row.isDigitalOrderingEnabled ? (
-    <span className="text-text-secondary">On</span>
+    <span className="flex items-center gap-1.5 whitespace-nowrap text-text-primary">
+      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-accent" />
+      On
+    </span>
   ) : (
-    <span className="flex items-center gap-1.5 font-medium text-status-warning">
-      <IconAlert className="h-4 w-4" />
+    <span className="flex items-center gap-1.5 whitespace-nowrap font-medium text-status-warning">
+      <IconAlert className="h-3.5 w-3.5" />
       Off
     </span>
   );
@@ -317,9 +310,20 @@ function OrderingState({ row }: { row: OverviewLocationRow }) {
 function Flags({ flags }: { flags: string[] }) {
   if (flags.length === 0) return null;
   return (
-    <span className="mt-1 flex items-start gap-1.5 text-sm text-status-warning">
+    <span className="flex items-start gap-1.5 text-[0.8125rem] leading-snug text-status-warning">
       <IconAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <span>{flags.join(" · ")}</span>
+    </span>
+  );
+}
+
+function MobileFigure({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="flex min-w-0 flex-col gap-0.5">
+      <span className="text-xs text-text-muted">{label}</span>
+      <span className="text-sm font-semibold text-text-primary tabular-nums">
+        {value}
+      </span>
     </span>
   );
 }
@@ -349,133 +353,166 @@ export function LocationComparison({
       ? { boxShadow: "inset 3px 0 0 var(--status-warning)" }
       : undefined;
 
+  const avg = (row: OverviewLocationRow) =>
+    row.orders > 0 ? formatPrice(row.averageOrderMinorUnits, CURRENCY) : "—";
+
+  const th = "py-3 text-xs font-medium uppercase tracking-wide text-text-muted";
+
   return (
     <div className="overflow-hidden rounded-2xl border border-border-default bg-surface-card">
       {/* Tablet and up: a real table. */}
-      <table className="hidden w-full text-left text-[0.9375rem] md:table">
+      <table className="hidden w-full text-left text-sm md:table">
         <caption className="sr-only">
-          Digital performance and today&rsquo;s operating state by location
+          Online ordering, digital performance ({rangeLabel}) and today&rsquo;s
+          checklists by location
         </caption>
-        <thead>
-          <tr className="border-b border-border-default text-sm text-text-secondary">
-            <th scope="col" className="px-6 py-3.5 font-medium">
+        <thead className="bg-surface-subtle/40">
+          <tr className="border-b border-border-default">
+            <th scope="col" className={`${th} pl-6 pr-4`}>
               Location
             </th>
-            <th scope="col" className="px-4 py-3.5 font-medium">
+            <th scope="col" className={`${th} px-4`}>
               Online ordering
             </th>
-            <th scope="col" className="px-4 py-3.5 text-right font-medium">
+            <th scope="col" className={`${th} px-4 text-right`}>
               Orders
-              <span className="block text-xs font-normal text-text-muted">
-                {rangeLabel}
-              </span>
             </th>
-            <th scope="col" className="px-4 py-3.5 text-right font-medium">
-              Digital sales
+            <th scope="col" className={`${th} px-4 text-right`}>
+              Sales
             </th>
-            <th scope="col" className="px-4 py-3.5 text-right font-medium">
+            <th scope="col" className={`${th} px-4 text-right`}>
               Avg order
             </th>
             {showChecklists ? (
-              <th scope="col" className="px-6 py-3.5 font-medium">
-                Checklists today
-              </th>
+              <>
+                <th scope="col" className={`${th} pl-8 pr-4`}>
+                  Opening
+                </th>
+                <th scope="col" className={`${th} px-4`}>
+                  Closing
+                </th>
+              </>
             ) : null}
+            <th scope="col" className="w-12 pr-4">
+              <span className="sr-only">Open</span>
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border-default">
           {rows.map((row) => (
-            <tr key={row.locationId} className="align-top">
+            <tr
+              key={row.locationId}
+              className="align-middle transition-colors hover:bg-surface-subtle/40"
+            >
               <th
                 scope="row"
-                className="px-6 py-4 font-normal"
+                className="py-3.5 pl-6 pr-4 font-normal"
                 style={flaggedRule(row)}
               >
-                <Link
-                  href={hrefFor(row.locationId)}
-                  className="text-base font-semibold text-text-primary underline-offset-4 hover:underline"
-                >
-                  {row.name}
-                </Link>
-                <Flags flags={row.flags} />
+                <span className="flex flex-col gap-1">
+                  <Link
+                    href={hrefFor(row.locationId)}
+                    className="w-fit text-[0.9375rem] font-semibold text-text-primary underline-offset-4 hover:underline"
+                  >
+                    {row.name}
+                  </Link>
+                  <Flags flags={row.flags} />
+                </span>
               </th>
-              <td className="px-4 py-4">
+              <td className="px-4 py-3.5">
                 <OrderingState row={row} />
               </td>
-              <td className="px-4 py-4 text-right tabular-nums">
+              <td className="px-4 py-3.5 text-right font-medium text-text-primary tabular-nums">
                 {row.orders}
               </td>
-              <td className="px-4 py-4 text-right tabular-nums">
+              <td className="px-4 py-3.5 text-right text-text-primary tabular-nums">
                 {formatPrice(row.salesMinorUnits, CURRENCY)}
               </td>
-              <td className="px-4 py-4 text-right tabular-nums">
-                {row.orders > 0
-                  ? formatPrice(row.averageOrderMinorUnits, CURRENCY)
-                  : "—"}
+              <td className="px-4 py-3.5 text-right text-text-secondary tabular-nums">
+                {avg(row)}
               </td>
               {showChecklists ? (
-                <td className="px-6 py-4">
-                  {row.checklist ? (
-                    <span className="flex flex-col gap-1">
-                      <ChecklistText
-                        label="Opening"
-                        state={row.checklist.opening}
-                      />
-                      <ChecklistText
-                        label="Closing"
-                        state={row.checklist.closing}
-                      />
-                    </span>
-                  ) : null}
-                </td>
+                <>
+                  <td className="py-3.5 pl-8 pr-4">
+                    {row.checklist ? (
+                      <ChecklistText state={row.checklist.opening} />
+                    ) : (
+                      <span className="text-text-muted">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3.5">
+                    {row.checklist ? (
+                      <ChecklistText state={row.checklist.closing} />
+                    ) : (
+                      <span className="text-text-muted">—</span>
+                    )}
+                  </td>
+                </>
               ) : null}
+              <td className="py-3.5 pr-4 text-right">
+                <Link
+                  href={hrefFor(row.locationId)}
+                  aria-hidden="true"
+                  tabIndex={-1}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-accent"
+                >
+                  <IconArrowRight className="h-4 w-4" />
+                </Link>
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
 
-      {/* Phones: a stacked list, not a squeezed table. */}
+      {/* Phones: one tappable summary per location, not a squeezed table. */}
       <ul className="divide-y divide-border-default md:hidden">
         {rows.map((row) => (
-          <li
-            key={row.locationId}
-            className="flex flex-col gap-2 px-5 py-4"
-            style={flaggedRule(row)}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <Link
-                href={hrefFor(row.locationId)}
-                className="text-base font-semibold text-text-primary underline-offset-4 hover:underline"
-              >
-                {row.name}
-              </Link>
-              <span className="text-sm">
-                <OrderingState row={row} />
+          <li key={row.locationId} style={flaggedRule(row)}>
+            <Link
+              href={hrefFor(row.locationId)}
+              className="flex flex-col gap-2.5 px-4 py-3.5 transition-colors active:bg-surface-subtle/60"
+            >
+              <span className="flex items-center justify-between gap-3">
+                <span className="min-w-0 truncate text-[0.9375rem] font-semibold text-text-primary">
+                  {row.name}
+                </span>
+                <span className="flex shrink-0 items-center gap-2 text-sm">
+                  <span className="sr-only">Online ordering:</span>
+                  <OrderingState row={row} />
+                  <IconArrowRight className="h-4 w-4 text-text-muted" />
+                </span>
               </span>
-            </div>
-            <Flags flags={row.flags} />
-            <p className="text-sm text-text-secondary tabular-nums">
-              {row.orders} {row.orders === 1 ? "order" : "orders"} ·{" "}
-              {formatPrice(row.salesMinorUnits, CURRENCY)}
-              {row.orders > 0
-                ? ` · ${formatPrice(row.averageOrderMinorUnits, CURRENCY)} avg`
-                : ""}
-            </p>
-            {showChecklists && row.checklist ? (
-              <p className="flex flex-col gap-1 text-sm">
-                <ChecklistText label="Opening" state={row.checklist.opening} />
-                <ChecklistText label="Closing" state={row.checklist.closing} />
-              </p>
-            ) : null}
+              <Flags flags={row.flags} />
+              <span className="grid grid-cols-3 gap-3">
+                <MobileFigure label="Orders" value={String(row.orders)} />
+                <MobileFigure
+                  label="Sales"
+                  value={formatPrice(row.salesMinorUnits, CURRENCY)}
+                />
+                <MobileFigure label="Avg order" value={avg(row)} />
+              </span>
+              {showChecklists && row.checklist ? (
+                <span className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.8125rem]">
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-text-muted">Opening</span>
+                    <ChecklistText state={row.checklist.opening} />
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-text-muted">Closing</span>
+                    <ChecklistText state={row.checklist.closing} />
+                  </span>
+                </span>
+              ) : null}
+            </Link>
           </li>
         ))}
       </ul>
 
       {showChecklists ? (
-        <p className="border-t border-border-default px-5 py-3.5 text-sm leading-snug text-text-secondary sm:px-6">
-          Checklist status is today&rsquo;s recorded activity. &ldquo;Not
-          recorded&rdquo; means nobody has opened that checklist yet &mdash; not
-          that it was missed.
+        <p className="border-t border-border-default px-4 py-3 text-xs leading-snug text-text-muted sm:px-5 md:px-6">
+          Checklists show today&rsquo;s recorded activity. &ldquo;Not
+          recorded&rdquo; means the checklist hasn&rsquo;t been opened yet
+          &mdash; not that it was missed.
         </p>
       ) : null}
     </div>

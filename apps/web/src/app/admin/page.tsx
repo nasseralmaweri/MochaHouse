@@ -430,30 +430,37 @@ async function companyOverview({
     range === "today" ? `Today · ${formatBusinessDate(today)}` : rangeLabel;
   const shortPeriod = range === "today" ? "Today" : rangeLabel.split(" · ")[0];
 
+  const needsAction = attention.length > 0;
+  const flaggedLocations = rows.filter((r) => r.flags.length > 0).length;
+
   return (
     <>
       <ScopeContext businessName={businessName} locationCount={locations.length} />
       <ContinueWorking links={continueLinks} />
-      <div className="flex min-w-0 flex-col gap-12">
+      <div className="flex min-w-0 flex-col gap-10 md:gap-12">
         {/* 1. Needs attention */}
-        <section aria-labelledby="ov-attention" className="flex flex-col gap-4">
+        <section
+          aria-labelledby="ov-attention"
+          className={`flex flex-col ${needsAction ? "gap-3.5" : "gap-2.5"}`}
+        >
           <SectionHeading
             id="ov-attention"
             title="Needs attention"
-            description="Operational exceptions across every location you can see, most urgent first."
-            primary
-            aside={<AttentionCount count={attention.length} />}
+            description={needsAction ? "Most urgent first, across your locations" : undefined}
+            primary={needsAction}
+            aside={needsAction ? <AttentionCount count={attention.length} /> : undefined}
           />
           <AttentionList
             items={attention}
             checkedLabel={checked.join(", ")}
             unavailable={unavailable}
             grouped
+            quiet
           />
         </section>
 
         {canReports ? (
-          <div className="flex flex-col gap-8">
+          <div className="flex flex-col gap-8 md:gap-10">
             <ReportingPeriodBar
               range={range}
               periodLabel={periodLabel}
@@ -463,12 +470,12 @@ async function companyOverview({
             {/* 2. Digital performance */}
             <section
               aria-labelledby="ov-performance"
-              className="flex flex-col gap-4"
+              className="flex flex-col gap-3"
             >
               <SectionHeading
                 id="ov-performance"
                 title="Digital performance"
-                description={`Online ordering across all locations · ${shortPeriod}`}
+                aside={<p className="text-sm text-text-muted">{shortPeriod}</p>}
               />
               {overviewR.state === "ok" ? (
                 <DigitalPerformance
@@ -483,12 +490,12 @@ async function companyOverview({
             {/* 3. Customer activity */}
             <section
               aria-labelledby="ov-customers"
-              className="flex flex-col gap-4"
+              className="flex flex-col gap-3"
             >
               <SectionHeading
                 id="ov-customers"
                 title="Customer activity"
-                description={`Accounts and repeat ordering · ${shortPeriod}`}
+                aside={<p className="text-sm text-text-muted">{shortPeriod}</p>}
               />
               {growthR.state === "ok" ? (
                 <CustomerActivity
@@ -508,23 +515,25 @@ async function companyOverview({
             {/* 4. Locations */}
             <section
               aria-labelledby="ov-locations"
-              className="flex flex-col gap-4"
+              className="flex flex-col gap-3"
             >
               <SectionHeading
                 id="ov-locations"
                 title="Locations"
-                description="Status and digital performance by location. Locations that need a look are listed first."
+                description={
+                  flaggedLocations > 0 ? "Locations that need a look are listed first" : undefined
+                }
                 aside={
                   performanceR.state === "ok" ? (
                     <LocationsSummaryLine
                       total={rows.length}
-                      needingLook={rows.filter((r) => r.flags.length > 0).length}
+                      needingLook={flaggedLocations}
                     />
                   ) : undefined
                 }
               />
               {performanceR.state === "ok" ? (
-                <>
+                <div className="flex flex-col gap-2.5">
                   <LocationComparison
                     rows={rows}
                     rangeLabel={shortPeriod}
@@ -542,7 +551,7 @@ async function companyOverview({
                           : "",
                     ]}
                   />
-                </>
+                </div>
               ) : (
                 <SectionUnavailable title="The location summary couldn't be loaded" />
               )}
