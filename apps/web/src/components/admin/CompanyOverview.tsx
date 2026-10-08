@@ -129,17 +129,17 @@ export function DigitalPerformance({
       <div className="overflow-hidden rounded-2xl border border-border-default bg-surface-card">
         <dl className="grid divide-y divide-border-default md:grid-cols-3 md:divide-x md:divide-y-0">
           <Metric
-            label="Online orders"
+            label="Digital orders"
             value={String(total)}
             definition="Every digital order placed, any status"
           />
           <Metric
-            label="Digital revenue"
+            label="Digital sales"
             value={formatPrice(report.digitalSalesMinorUnits, CURRENCY)}
             definition="Subtotal after discounts. Excludes tax, tips and refunds"
           />
           <Metric
-            label="Average order value"
+            label="Average order"
             value={
               total > 0
                 ? formatPrice(report.averageOrderValueMinorUnits, CURRENCY)
@@ -147,7 +147,7 @@ export function DigitalPerformance({
             }
             definition={
               total > 0
-                ? "Digital revenue ÷ online orders"
+                ? "Digital sales ÷ digital orders"
                 : "Shown once there are orders in this period"
             }
           />
@@ -260,7 +260,7 @@ export function CustomerActivity({
           <ActivityFigure
             label="Ordering accounts"
             value={growth.registeredCustomersWithOrders}
-            note="Registered customers with at least one order"
+            note="Registered customers with at least one order in this period"
           />
           <ActivityFigure
             label="Repeat customers"
