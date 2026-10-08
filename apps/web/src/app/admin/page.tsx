@@ -64,7 +64,6 @@ import { OverviewScopeSwitcher } from "@/components/admin/OverviewScopeSwitcher"
 import {
   ContinueWorking,
   LiveQueue,
-  LocationComparison,
   OperatingState,
   PerformanceSummary,
   RangeTabs,
@@ -73,11 +72,13 @@ import {
   type OperatingFact,
 } from "@/components/admin/OverviewSections";
 import {
+  AllClearPanel,
   CustomerActivity,
   DigitalPerformance,
-  LocationsSummaryLine,
-  ReportingPeriodBar,
-  ScopeContext,
+  LocationBoard,
+  LocationsSummary,
+  OverviewHero,
+  PanelSection,
   SectionUnavailable,
 } from "@/components/admin/CompanyOverview";
 import { AttentionList } from "@/components/centerivo/Attention";
@@ -430,141 +431,125 @@ async function companyOverview({
     range === "today" ? `Today · ${formatBusinessDate(today)}` : rangeLabel;
   const shortPeriod = range === "today" ? "Today" : rangeLabel.split(" · ")[0];
 
-  const needsAction = attention.length > 0;
+  const warningCount = attention.filter((i) => i.severity === "warning").length;
   const flaggedLocations = rows.filter((r) => r.flags.length > 0).length;
 
-  return (
-    <>
-      <ScopeContext businessName={businessName} locationCount={locations.length} />
-      <ContinueWorking links={continueLinks} />
-      <div className="flex min-w-0 flex-col gap-10 md:gap-12">
-        {/* 1. Needs attention */}
-        <section
-          aria-labelledby="ov-attention"
-          className={`flex flex-col ${needsAction ? "gap-3.5" : "gap-2.5"}`}
-        >
-          <SectionHeading
-            id="ov-attention"
-            title="Needs attention"
-            description={needsAction ? "Most urgent first, across your locations" : undefined}
-            primary={needsAction}
-            aside={needsAction ? <AttentionCount count={attention.length} /> : undefined}
-          />
-          <AttentionList
-            items={attention}
-            checkedLabel={checked.join(", ")}
-            unavailable={unavailable}
-            grouped
-            quiet
-          />
-        </section>
+  // 1. Needs attention — a list when there is work, a checklist of what was
+  // looked at when there isn't, and an honest notice when checks failed.
+  const attentionSection = (
+    <PanelSection
+      id="ov-attention"
+      title="Needs attention"
+      aside={attention.length > 0 ? "Most urgent first" : undefined}
+      step={1}
+      className={canReports ? "lg:col-span-5" : ""}
+    >
+      {attention.length === 0 && unavailable.length === 0 ? (
+        <AllClearPanel checked={checked} />
+      ) : (
+        <AttentionList
+          items={attention}
+          checkedLabel={checked.join(", ")}
+          unavailable={unavailable}
+          grouped
+        />
+      )}
+    </PanelSection>
+  );
 
-        {canReports ? (
-          <div className="flex flex-col gap-8 md:gap-10">
-            <ReportingPeriodBar
-              range={range}
-              periodLabel={periodLabel}
-              hrefFor={(r) => overviewHref(urlLocationId, r)}
-            />
+  return (
+    <div className="flex min-w-0 flex-col gap-8 md:gap-10">
+      <OverviewHero
+        businessName={businessName}
+        locationCount={locations.length}
+        attentionCount={attention.length}
+        warningCount={warningCount}
+        unavailable={unavailable}
+        range={range}
+        periodLabel={periodLabel}
+        hrefFor={(r) => overviewHref(urlLocationId, r)}
+        showPeriod={canReports}
+        links={continueLinks}
+      />
+
+      {canReports ? (
+        <>
+          <div className="grid gap-8 lg:grid-cols-12 lg:items-start lg:gap-6">
+            {attentionSection}
 
             {/* 2. Digital performance */}
-            <section
-              aria-labelledby="ov-performance"
-              className="flex flex-col gap-3"
+            <PanelSection
+              id="ov-performance"
+              title="Digital performance"
+              aside={shortPeriod}
+              step={2}
+              className="lg:col-span-7"
             >
-              <SectionHeading
-                id="ov-performance"
-                title="Digital performance"
-                aside={<p className="text-sm text-text-muted">{shortPeriod}</p>}
-              />
               {overviewR.state === "ok" ? (
-                <DigitalPerformance
-                  report={overviewR.data}
-                  periodLabel={periodLabel}
-                />
+                <DigitalPerformance report={overviewR.data} range={range} />
               ) : (
                 <SectionUnavailable title="Digital performance couldn't be loaded" />
               )}
-            </section>
-
-            {/* 3. Customer activity */}
-            <section
-              aria-labelledby="ov-customers"
-              className="flex flex-col gap-3"
-            >
-              <SectionHeading
-                id="ov-customers"
-                title="Customer activity"
-                aside={<p className="text-sm text-text-muted">{shortPeriod}</p>}
-              />
-              {growthR.state === "ok" ? (
-                <CustomerActivity
-                  growth={growthR.data}
-                  customersHref={
-                    can(capabilities, "customers.view") ? "/admin/customers" : null
-                  }
-                  loyaltyHref={
-                    can(capabilities, "loyalty.view") ? "/admin/loyalty" : null
-                  }
-                />
-              ) : (
-                <SectionUnavailable title="Customer activity couldn't be loaded" />
-              )}
-            </section>
-
-            {/* 4. Locations */}
-            <section
-              aria-labelledby="ov-locations"
-              className="flex flex-col gap-3"
-            >
-              <SectionHeading
-                id="ov-locations"
-                title="Locations"
-                description={
-                  flaggedLocations > 0 ? "Locations that need a look are listed first" : undefined
-                }
-                aside={
-                  performanceR.state === "ok" ? (
-                    <LocationsSummaryLine
-                      total={rows.length}
-                      needingLook={flaggedLocations}
-                    />
-                  ) : undefined
-                }
-              />
-              {performanceR.state === "ok" ? (
-                <div className="flex flex-col gap-2.5">
-                  <LocationComparison
-                    rows={rows}
-                    rangeLabel={shortPeriod}
-                    showChecklists={checklistR.state === "ok"}
-                    hrefFor={(id) => overviewHref(id, range)}
-                  />
-                  <DataCoverage
-                    items={[
-                      "Digital platform orders only",
-                      `Orders: ${periodLabel}`,
-                      checklistR.state === "ok"
-                        ? "Checklists: today's recorded activity"
-                        : checklistR.state === "error"
-                          ? "Checklist status couldn't be loaded"
-                          : "",
-                    ]}
-                  />
-                </div>
-              ) : (
-                <SectionUnavailable title="The location summary couldn't be loaded" />
-              )}
-            </section>
+            </PanelSection>
           </div>
-        ) : (
+
+          {/* 3. Customer activity */}
+          <PanelSection
+            id="ov-customers"
+            title="Customer activity"
+            aside={shortPeriod}
+            step={3}
+          >
+            {growthR.state === "ok" ? (
+              <CustomerActivity
+                growth={growthR.data}
+                range={range}
+                customersHref={
+                  can(capabilities, "customers.view") ? "/admin/customers" : null
+                }
+                loyaltyHref={
+                  can(capabilities, "loyalty.view") ? "/admin/loyalty" : null
+                }
+              />
+            ) : (
+              <SectionUnavailable title="Customer activity couldn't be loaded" />
+            )}
+          </PanelSection>
+
+          {/* 4. Locations */}
+          <PanelSection
+            id="ov-locations"
+            title="Locations"
+            step={4}
+            aside={
+              performanceR.state === "ok" ? (
+                <LocationsSummary total={rows.length} needingLook={flaggedLocations} />
+              ) : undefined
+            }
+          >
+            {performanceR.state === "ok" ? (
+              <LocationBoard
+                rows={rows}
+                periodName={shortPeriod}
+                showChecklists={checklistR.state === "ok"}
+                checklistsUnavailable={checklistR.state === "error"}
+                hrefFor={(id) => overviewHref(id, range)}
+              />
+            ) : (
+              <SectionUnavailable title="The location summary couldn't be loaded" />
+            )}
+          </PanelSection>
+        </>
+      ) : (
+        <>
+          {attentionSection}
           <SectionUnavailable
             title="Performance, customer and location figures aren't part of your role"
             description="Digital performance, customer activity and the location summary appear here for people whose role includes Reports. Ask an administrator if you need them."
           />
-        )}
-      </div>
-    </>
+        </>
+      )}
+    </div>
   );
 }
 
