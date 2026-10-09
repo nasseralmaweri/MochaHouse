@@ -787,4 +787,4 @@ Multi-tenant data isolation (S0C–S0F) · business selection · company/locatio
 | **Mocha Beans** (Mocha House) | The loyalty currency | Points (unless the tenant chooses) |
 | **Sample data** | Prototype figures | Any wording implying live data |
 
-*End of reference v1.0.*
+*End of reference v1.1.*
