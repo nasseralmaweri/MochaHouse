@@ -19,7 +19,9 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@mocha-house/contracts": ["../../packages/contracts/src/index.ts"],
+      "@mocha-house/domain": ["../../packages/domain/src/index.ts"]
     }
   },
   "include": [
