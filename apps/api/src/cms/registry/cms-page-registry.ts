@@ -44,9 +44,11 @@ export interface CmsPageRegistryEntry {
   // products, …), run AFTER `validate()` on both save-draft and publish.
   // Throws BadRequestException — invalid Admin references are never
   // silently persisted.
+  // References may only point at the page's own business's records.
   validateReferences?: (
     content: CmsPageContent,
     prisma: PrismaService,
+    tenantId: string,
   ) => Promise<void>;
 }
 
@@ -294,12 +296,14 @@ function validateHomeContent(raw: unknown): HomePageContent {
 async function validateHomeReferences(
   rawContent: CmsPageContent,
   prisma: PrismaService,
+  tenantId: string,
 ): Promise<void> {
   const content = rawContent as HomePageContent;
 
+  // Another business's image or product reads exactly like a missing one.
   if (content.hero.backgroundImageId) {
-    const asset = await prisma.mediaAsset.findUnique({
-      where: { id: content.hero.backgroundImageId },
+    const asset = await prisma.mediaAsset.findFirst({
+      where: { id: content.hero.backgroundImageId, tenantId },
       select: { isActive: true },
     });
     if (!asset || !asset.isActive) {
@@ -311,7 +315,11 @@ async function validateHomeReferences(
 
   if (content.featuredProducts.productIds.length > 0) {
     const products = await prisma.product.findMany({
-      where: { id: { in: content.featuredProducts.productIds }, isActive: true },
+      where: {
+        id: { in: content.featuredProducts.productIds },
+        tenantId,
+        isActive: true,
+      },
       select: { id: true },
     });
     const foundIds = new Set(products.map((product) => product.id));

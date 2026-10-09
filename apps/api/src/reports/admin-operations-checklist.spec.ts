@@ -183,11 +183,15 @@ describe('Admin reports — operations checklist visibility (integration)', () =
     prisma = moduleFixture.get(PrismaService);
 
     const opening = await prisma.checklistTemplate.findUniqueOrThrow({
-      where: { key: 'opening' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'opening' },
+      },
       select: { id: true },
     });
     const closing = await prisma.checklistTemplate.findUniqueOrThrow({
-      where: { key: 'closing' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'closing' },
+      },
       select: { id: true },
     });
     openingTemplateId = opening.id;

@@ -60,10 +60,20 @@ describe('CheckoutService (integration)', () => {
     await prisma.$connect();
 
     const location = await prisma.location.findUniqueOrThrow({
-      where: { slug: 'dearborn-heights' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'dearborn-heights',
+        },
+      },
     });
     const product = await prisma.product.findUniqueOrThrow({
-      where: { slug: 'drip-coffee' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'drip-coffee',
+        },
+      },
       include: {
         modifierGroups: {
           include: { modifierGroup: { include: { options: true } } },

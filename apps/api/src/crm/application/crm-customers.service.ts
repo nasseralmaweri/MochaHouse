@@ -123,7 +123,11 @@ export class CrmCustomersService {
       this.giftCards.getForCustomer(customerId),
       this.notes.listForCustomer(customerId, authorization, tenant),
       this.prisma.internalAuditEvent.findMany({
-        where: { targetType: 'customer', targetId: customerId },
+        where: {
+          tenantId: tenant.tenantId,
+          targetType: 'customer',
+          targetId: customerId,
+        },
         orderBy: { createdAt: 'desc' },
         take: ACTIVITY_LIMIT,
         select: {
@@ -139,6 +143,7 @@ export class CrmCustomersService {
 
     const affordableRewards = await this.rewards.listActiveRewardsForCustomer(
       mochaBeans.balance,
+      customer.tenantId,
     );
 
     return {

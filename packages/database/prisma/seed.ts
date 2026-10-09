@@ -45,7 +45,7 @@ async function main() {
 async function seedMochaHouseBusinessData(tenantId: string) {
   const location = await prisma.location.upsert({
     where: {
-      slug: 'dearborn-heights',
+      tenantId_slug: { tenantId, slug: 'dearborn-heights' },
     },
     update: {
       isActive: true,
@@ -68,7 +68,7 @@ async function seedMochaHouseBusinessData(tenantId: string) {
   // also exercisable locally. It is not wired into any customer flow.
   await prisma.location.upsert({
     where: {
-      slug: 'ann-arbor',
+      tenantId_slug: { tenantId, slug: 'ann-arbor' },
     },
     update: {
       isActive: true,
@@ -85,7 +85,7 @@ async function seedMochaHouseBusinessData(tenantId: string) {
 
   const category = await prisma.category.upsert({
     where: {
-      slug: 'coffee',
+      tenantId_slug: { tenantId, slug: 'coffee' },
     },
     update: {},
     create: {
@@ -99,7 +99,7 @@ async function seedMochaHouseBusinessData(tenantId: string) {
 
   const product = await prisma.product.upsert({
     where: {
-      slug: 'drip-coffee',
+      tenantId_slug: { tenantId, slug: 'drip-coffee' },
     },
     update: {},
     create: {
@@ -116,7 +116,7 @@ async function seedMochaHouseBusinessData(tenantId: string) {
 
   const menu = await prisma.menu.upsert({
     where: {
-      slug: 'main-menu',
+      tenantId_slug: { tenantId, slug: 'main-menu' },
     },
     update: {},
     create: {
@@ -511,7 +511,7 @@ async function seedMochaHouseBusinessData(tenantId: string) {
     items: { section: string; label: string }[],
   ): Promise<void> {
     const template = await prisma.checklistTemplate.upsert({
-      where: { key },
+      where: { tenantId_key: { tenantId, key } },
       update: { name, isActive: true },
       create: { tenantId, key, name, isActive: true },
     });
@@ -541,7 +541,7 @@ async function seedMochaHouseBusinessData(tenantId: string) {
   // never overwrites an HQ-chosen rate. The Rewards Catalog is NOT seeded —
   // HQ creates rewards through the Admin UI.
   await prisma.loyaltyConfiguration.upsert({
-    where: { key: 'company' },
+    where: { tenantId_key: { tenantId, key: 'company' } },
     update: {},
     create: { tenantId, key: 'company', earningRatePerDollar: 1 },
   });
@@ -554,7 +554,7 @@ async function seedMochaHouseBusinessData(tenantId: string) {
   // never overwrites HQ-chosen values. Gift cards themselves are NOT
   // seeded — HQ issues them through the Admin UI.
   await prisma.giftCardConfiguration.upsert({
-    where: { key: 'company' },
+    where: { tenantId_key: { tenantId, key: 'company' } },
     update: {},
     create: {
       tenantId,

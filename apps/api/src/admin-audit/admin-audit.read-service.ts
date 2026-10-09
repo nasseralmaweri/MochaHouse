@@ -128,6 +128,7 @@ export class AdminAuditReadService {
     // through the actor does not depend on the event's own nullable
     // tenantId column, which audit writes do not populate yet.
     const where: Prisma.InternalAuditEventWhereInput = {
+      tenantId: tenant.tenantId,
       targetType: 'internal_user',
       actorInternalUser: { tenantId: tenant.tenantId },
     };

@@ -61,10 +61,20 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     await prisma.$connect();
 
     const location = await prisma.location.findUniqueOrThrow({
-      where: { slug: 'dearborn-heights' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'dearborn-heights',
+        },
+      },
     });
     const product = await prisma.product.findUniqueOrThrow({
-      where: { slug: 'drip-coffee' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'drip-coffee',
+        },
+      },
       include: {
         modifierGroups: {
           include: { modifierGroup: { include: { options: true } } },
@@ -80,9 +90,15 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     // Pin the shared LoyaltyConfiguration singleton so this suite is
     // independent of test-file order (the settings suite mutates it).
     await prisma.loyaltyConfiguration.upsert({
-      where: { key: 'company' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+      },
       update: { earningRatePerDollar: 1 },
-      create: { key: 'company', earningRatePerDollar: 1 },
+      create: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        key: 'company',
+        earningRatePerDollar: 1,
+      },
     });
     mediumOptionId = sizeGroup.options.find((o) => o.name === 'Medium')!.id;
   });
@@ -422,6 +438,7 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     await expect(
       prisma.mochaBeanLedgerEntry.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           loyaltyAccountId: account.id,
           type: 'EARN',
           amount: 4,

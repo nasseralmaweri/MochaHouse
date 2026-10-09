@@ -32,8 +32,11 @@ export class AdminPromotionsController {
 
   @RequirePermission('promotions.configure')
   @Get()
-  list(@Req() request: InternalAuthenticatedRequest) {
-    return this.service.listPromotions(request.authorization!);
+  list(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.service.listPromotions(request.authorization!, tenant);
   }
 
   @RequirePermission('promotions.configure')
@@ -50,11 +53,13 @@ export class AdminPromotionsController {
   create(
     @Body() body: CreatePromotionRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.createPromotion(
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -64,12 +69,14 @@ export class AdminPromotionsController {
     @Param('promotionId') promotionId: string,
     @Body() body: UpdatePromotionRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.updatePromotion(
       promotionId,
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 }

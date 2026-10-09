@@ -7,6 +7,22 @@ import type { InternalUserStatus } from '@mocha-house/contracts';
 // every write MUST run inside the same transaction as the change it records
 // — the `tx` parameter is mandatory. Audit is durable application history,
 // written synchronously; it is deliberately NOT an OutboxEvent.
+// Every audit event belongs to the business it was recorded in. Since S0F
+// an actor is the InternalUser row of the business the action was taken in
+// (InternalUser.tenantId is required), so the event copies its tenant from
+// that validated parent — read inside the same transaction — rather than
+// from any caller-supplied value.
+async function actorTenantId(
+  tx: Prisma.TransactionClient,
+  actorInternalUserId: string,
+): Promise<string> {
+  const actor = await tx.internalUser.findUniqueOrThrow({
+    where: { id: actorInternalUserId },
+    select: { tenantId: true },
+  });
+  return actor.tenantId;
+}
+
 @Injectable()
 export class InternalAuditService {
   // Records a completed internal-user status change. Call this with the
@@ -24,6 +40,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'user.status_changed',
         targetType: 'internal_user',
@@ -47,6 +64,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'user.role_assigned',
         targetType: 'internal_user',
@@ -67,6 +85,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'user.role_removed',
         targetType: 'internal_user',
@@ -93,6 +112,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'operations.checklist_exception_logged',
         targetType: 'checklist_instance_item',
@@ -131,6 +151,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'loyalty.beans_adjusted',
         targetType: 'customer',
@@ -166,6 +187,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'loyalty.earning_rate_changed',
         targetType: 'loyalty_configuration',
@@ -187,6 +209,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'loyalty.reward_created',
         targetType: 'loyalty_reward',
@@ -216,6 +239,7 @@ export class InternalAuditService {
           : 'loyalty.reward_updated';
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action,
         targetType: 'loyalty_reward',
@@ -252,6 +276,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'loyalty.bonus_promotion_created',
         targetType: 'loyalty_bonus_promotion',
@@ -280,6 +305,7 @@ export class InternalAuditService {
           : 'loyalty.bonus_promotion_updated';
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action,
         targetType: 'loyalty_bonus_promotion',
@@ -315,6 +341,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'promotions.promotion_created',
         targetType: 'promotion',
@@ -343,6 +370,7 @@ export class InternalAuditService {
           : 'promotions.promotion_updated';
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action,
         targetType: 'promotion',
@@ -384,6 +412,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'giftcards.card_issued',
         targetType: 'gift_card',
@@ -411,6 +440,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action:
           input.after === 'INACTIVE'
@@ -438,6 +468,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'giftcards.balance_corrected',
         targetType: 'gift_card',
@@ -468,6 +499,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'giftcards.configuration_updated',
         targetType: 'giftcard_configuration',
@@ -495,6 +527,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'notifications.recipient_updated',
         targetType: 'notification_recipient',
@@ -526,6 +559,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'crm.note_added',
         targetType: 'customer',
@@ -555,6 +589,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'careers.job_created',
         targetType: 'job_opening',
@@ -576,6 +611,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'careers.job_updated',
         targetType: 'job_opening',
@@ -605,6 +641,7 @@ export class InternalAuditService {
           : 'careers.job_archived';
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action,
         targetType: 'job_opening',
@@ -640,6 +677,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'applicants.application_status_changed',
         targetType: 'job_application',
@@ -662,6 +700,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'applicants.note_added',
         targetType: 'job_application',
@@ -692,6 +731,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'franchising.inquiry_status_changed',
         targetType: 'franchise_inquiry',
@@ -714,6 +754,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'franchising.note_added',
         targetType: 'franchise_inquiry',
@@ -743,6 +784,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'cms.content_updated',
         targetType: 'cms_page',
@@ -767,6 +809,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'cms.content_published',
         targetType: 'cms_page',
@@ -799,6 +842,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'media.asset_uploaded',
         targetType: 'media_asset',
@@ -820,6 +864,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'media.asset_deactivated',
         targetType: 'media_asset',
@@ -850,6 +895,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'approvals.request_created',
         targetType: 'approval_request',
@@ -877,6 +923,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'approvals.request_approved',
         targetType: 'approval_request',
@@ -906,6 +953,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'approvals.request_rejected',
         targetType: 'approval_request',
@@ -936,6 +984,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'media.asset_metadata_updated',
         targetType: 'media_asset',
@@ -966,6 +1015,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'marketing.campaign_created',
         targetType: 'campaign',
@@ -987,6 +1037,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'marketing.campaign_updated',
         targetType: 'campaign',
@@ -1009,6 +1060,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'marketing.campaign_status_changed',
         targetType: 'campaign',
@@ -1026,6 +1078,7 @@ export class InternalAuditService {
   ): Promise<void> {
     await tx.internalAuditEvent.create({
       data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
         actorInternalUserId: input.actorInternalUserId,
         action: 'operations.checklist_exception_cleared',
         targetType: 'checklist_instance_item',

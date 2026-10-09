@@ -141,14 +141,9 @@ export class CheckoutService {
     // or unorderable one (the same 404 findMenu gives below), so checkout
     // can never confirm it exists. This is the tenant the whole checkout
     // (PaymentAttempt, Order and its children) is written under.
-    const location = await this.prisma.location.findUnique({
-      where: { id: request.locationId },
-      select: { tenantId: true },
-    });
-    const tenantId = requireTenantOwnership(
-      location,
+    const tenantId = await this.requireLocationTenant(
+      request.locationId,
       tenant,
-      'Location or menu not found.',
     );
 
     const menu = await this.locationsService.findMenu(request.locationId);
@@ -169,6 +164,7 @@ export class CheckoutService {
     const couponCode = normalizeRequestCoupon(request.couponCode);
     const regularResolution =
       await this.promotionService.resolveRegularDiscount({
+        tenantId,
         priced,
         menu,
         locationId: request.locationId,
@@ -202,6 +198,7 @@ export class CheckoutService {
         rewardId,
         priced,
         menu,
+        tenantId,
         regularRewardContext(regularPlan, merchandiseAfterRegular),
       );
       const balance =
@@ -234,6 +231,7 @@ export class CheckoutService {
         giftCardCode,
         amountOwed,
         priced.currency,
+        tenantId,
       );
     }
     const giftCardTender = giftCardPlan?.plannedTenderMinorUnits ?? 0;
@@ -364,6 +362,12 @@ export class CheckoutService {
       tenant,
     );
 
+    // The quote is priced only against the storefront business's own
+    // Location, promotions, rewards and gift cards — exactly as checkout.
+    const tenantId = await this.requireLocationTenant(
+      request.locationId,
+      tenant,
+    );
     const menu = await this.locationsService.findMenu(request.locationId);
     if (!menu) {
       throw new NotFoundException('Location or menu not found.');
@@ -373,7 +377,12 @@ export class CheckoutService {
       throw new BadRequestException(priced.error.message);
     }
 
-    return this.redemptionService.previewForCart(customer.id, priced, menu);
+    return this.redemptionService.previewForCart(
+      customer.id,
+      priced,
+      menu,
+      tenantId,
+    );
   }
 
   // Milestone 7E — the unified, server-authoritative checkout pricing quote.
@@ -400,6 +409,12 @@ export class CheckoutService {
 
     const customerId = await this.resolveCustomerId(customerIdentity, tenant);
 
+    // The quote is priced only against the storefront business's own
+    // Location, promotions, rewards and gift cards — exactly as checkout.
+    const tenantId = await this.requireLocationTenant(
+      request.locationId,
+      tenant,
+    );
     const menu = await this.locationsService.findMenu(request.locationId);
     if (!menu) {
       throw new NotFoundException('Location or menu not found.');
@@ -411,6 +426,7 @@ export class CheckoutService {
 
     const couponCode = normalizeRequestCoupon(request.couponCode);
     const resolution = await this.promotionService.resolveRegularDiscount({
+      tenantId,
       priced,
       menu,
       locationId: request.locationId,
@@ -450,6 +466,7 @@ export class CheckoutService {
         customerId,
         priced,
         menu,
+        tenantId,
         regularRewardContext(regularPlan, merchandiseAfterRegular),
       );
       balance = preview.balance;
@@ -469,6 +486,7 @@ export class CheckoutService {
           selectedRewardId,
           priced,
           menu,
+          tenantId,
           regularRewardContext(regularPlan, merchandiseAfterRegular),
         );
         rewardDiscountMinorUnits = plan.discountMinorUnits;
@@ -494,6 +512,7 @@ export class CheckoutService {
       const gc = await this.giftCardRedemptionService.resolveUsableCard(
         giftCardCode,
         priced.currency,
+        tenantId,
       );
       if (gc.outcome === 'usable') {
         const applied = Math.max(
@@ -589,6 +608,26 @@ export class CheckoutService {
   // exactly like GET /customers/me does, so a customer's very first
   // checkout can associate to their account without a prior /customers/me
   // call ever having happened.
+  // The tenant of the ordering Location, which must belong to the request's
+  // server-resolved tenant. Another tenant's Location is reported exactly
+  // like a missing or unorderable one (the same 404 findMenu gives), so
+  // checkout and its quotes can never confirm it exists. This is the tenant
+  // every price, discount, reward and gift card is resolved under.
+  private async requireLocationTenant(
+    locationId: string,
+    tenant: TenantContext,
+  ): Promise<string> {
+    const location = await this.prisma.location.findUnique({
+      where: { id: locationId },
+      select: { tenantId: true },
+    });
+    return requireTenantOwnership(
+      location,
+      tenant,
+      'Location or menu not found.',
+    );
+  }
+
   private async resolveCustomerId(
     customerIdentity: CustomerIdentity | undefined,
     tenant: TenantContext,
@@ -834,6 +873,7 @@ export class CheckoutService {
       // redemption-count enforcement happens in applyRedemption below.
       const regularResolution =
         await this.promotionService.resolveRegularDiscount({
+          tenantId,
           db: tx,
           priced,
           menu,
@@ -865,6 +905,7 @@ export class CheckoutService {
           rewardId,
           priced,
           menu,
+          tenantId,
           regularRewardContext(regularPlan, merchandiseAfterRegular),
         );
         rewardDiscount = plan.discountMinorUnits;
@@ -977,6 +1018,7 @@ export class CheckoutService {
       // this throw -> reconciliationRequired.
       if (regularPlan !== null) {
         await this.promotionService.applyRedemption(tx, {
+          tenantId,
           orderId: order.id,
           customerId,
           plan: regularPlan,
@@ -1019,6 +1061,7 @@ export class CheckoutService {
       if (customerId !== null) {
         if (plan !== null) {
           await this.redemptionService.applyRedemption(tx, {
+            tenantId,
             orderId: order.id,
             customerId,
             plan,
@@ -1028,6 +1071,7 @@ export class CheckoutService {
         // qualifying merchandise (gross - regular discount - reward discount).
         await this.loyaltyService.earnForOrder({
           tx,
+          tenantId,
           customerId,
           orderId: order.id,
           qualifyingSubtotalMinorUnits:
@@ -1044,6 +1088,7 @@ export class CheckoutService {
         // bonus promotion applies.
         await this.bonusService.applyBonusForOrder({
           tx,
+          tenantId,
           customerId,
           orderId: order.id,
           locationId: request.locationId,

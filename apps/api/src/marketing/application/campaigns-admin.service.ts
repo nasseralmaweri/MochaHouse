@@ -83,10 +83,11 @@ export class CampaignsAdminService {
   async list(
     query: { status?: string; cursor?: string },
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCampaignsResponse> {
     authorization.assertCorporate('marketing.view');
 
-    const where: Prisma.CampaignWhereInput = {};
+    const where: Prisma.CampaignWhereInput = { tenantId: tenant.tenantId };
     if (query.status !== undefined) {
       where.status = this.parseStatus(query.status);
     }
@@ -128,10 +129,12 @@ export class CampaignsAdminService {
         orderBy: { name: 'asc' },
       }),
       this.prisma.promotion.findMany({
+        where: { tenantId: tenant.tenantId },
         select: { id: true, name: true, isActive: true },
         orderBy: { name: 'asc' },
       }),
       this.prisma.loyaltyBonusPromotion.findMany({
+        where: { tenantId: tenant.tenantId },
         select: { id: true, name: true, isActive: true },
         orderBy: { name: 'asc' },
       }),
@@ -142,15 +145,17 @@ export class CampaignsAdminService {
   async getDetail(
     campaignId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCampaign> {
     authorization.assertCorporate('marketing.view');
-    return this.toAdminCampaign(await this.loadOrThrow(campaignId));
+    return this.toAdminCampaign(await this.loadOrThrow(campaignId, tenant));
   }
 
   async create(
     request: CreateCampaignRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCampaign> {
     authorization.assertCorporate('marketing.manage');
 
@@ -160,21 +165,29 @@ export class CampaignsAdminService {
       request?.startsAt,
       request?.endsAt,
     );
-    const mediaAssetId = await this.validateMediaAssetId(request?.mediaAssetId);
-    const promotionId = await this.validatePromotionId(request?.promotionId);
+    const mediaAssetId = await this.validateMediaAssetId(
+      request?.mediaAssetId,
+      tenant,
+    );
+    const promotionId = await this.validatePromotionId(
+      request?.promotionId,
+      tenant,
+    );
     const loyaltyBonusPromotionId = await this.validateLoyaltyBonusPromotionId(
       request?.loyaltyBonusPromotionId,
+      tenant,
     );
     const featuredProductIds = this.normalizeFeaturedProductIds(
       request?.featuredProductIds,
     );
     if (featuredProductIds.length > 0) {
-      await this.assertProductsExistAndActive(featuredProductIds);
+      await this.assertProductsExistAndActive(featuredProductIds, tenant);
     }
 
     const created = await this.prisma.$transaction(async (tx) => {
       const campaign = await tx.campaign.create({
         data: {
+          tenantId: tenant.tenantId,
           name,
           description,
           startsAt,
@@ -186,6 +199,7 @@ export class CampaignsAdminService {
             featuredProductIds.length > 0
               ? {
                   create: featuredProductIds.map((productId, index) => ({
+                    tenantId: tenant.tenantId,
                     productId,
                     displayOrder: index,
                   })),
@@ -212,10 +226,11 @@ export class CampaignsAdminService {
     request: UpdateCampaignRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCampaign> {
     authorization.assertCorporate('marketing.manage');
 
-    const current = await this.loadOrThrow(campaignId);
+    const current = await this.loadOrThrow(campaignId, tenant);
     if (current.status === 'ENDED') {
       throw new ConflictException('An ended campaign cannot be edited.');
     }
@@ -225,6 +240,7 @@ export class CampaignsAdminService {
     // must wait for a decision; once REJECTED, editing is allowed again.
     const pendingApproval = await latestApprovalRequest(
       this.prisma,
+      current.tenantId,
       APPROVAL_TARGET_TYPE_CAMPAIGN,
       campaignId,
       APPROVAL_ACTION_CAMPAIGN_ACTIVATE,
@@ -267,18 +283,26 @@ export class CampaignsAdminService {
       data.endsAt = window.endsAt;
     }
     if (request?.mediaAssetId !== undefined) {
-      data.mediaAssetId = await this.validateMediaAssetId(request.mediaAssetId);
+      data.mediaAssetId = await this.validateMediaAssetId(
+        request.mediaAssetId,
+        tenant,
+      );
     }
     if (request?.promotionId !== undefined) {
-      const promotionId = await this.validatePromotionId(request.promotionId);
+      const promotionId = await this.validatePromotionId(
+        request.promotionId,
+        tenant,
+      );
       data.promotion = promotionId
         ? { connect: { id: promotionId } }
         : { disconnect: true };
     }
     if (request?.loyaltyBonusPromotionId !== undefined) {
-      const loyaltyBonusPromotionId = await this.validateLoyaltyBonusPromotionId(
-        request.loyaltyBonusPromotionId,
-      );
+      const loyaltyBonusPromotionId =
+        await this.validateLoyaltyBonusPromotionId(
+          request.loyaltyBonusPromotionId,
+          tenant,
+        );
       data.loyaltyBonusPromotion = loyaltyBonusPromotionId
         ? { connect: { id: loyaltyBonusPromotionId } }
         : { disconnect: true };
@@ -290,7 +314,7 @@ export class CampaignsAdminService {
         request.featuredProductIds,
       );
       if (nextFeaturedProductIds.length > 0) {
-        await this.assertProductsExistAndActive(nextFeaturedProductIds);
+        await this.assertProductsExistAndActive(nextFeaturedProductIds, tenant);
       }
     }
 
@@ -302,6 +326,7 @@ export class CampaignsAdminService {
         if (nextFeaturedProductIds.length > 0) {
           await tx.campaignProduct.createMany({
             data: nextFeaturedProductIds.map((productId, index) => ({
+              tenantId: tenant.tenantId,
               campaignId,
               productId,
               displayOrder: index,
@@ -332,9 +357,10 @@ export class CampaignsAdminService {
     campaignId: string,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCampaign> {
     authorization.assertCorporate('marketing.manage');
-    const current = await this.loadOrThrow(campaignId);
+    const current = await this.loadOrThrow(campaignId, tenant);
     if (current.status !== 'DRAFT') {
       throw new ConflictException('Only a draft campaign can be activated.');
     }
@@ -356,9 +382,10 @@ export class CampaignsAdminService {
     campaignId: string,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCampaign> {
     authorization.assertCorporate('marketing.manage');
-    const current = await this.loadOrThrow(campaignId);
+    const current = await this.loadOrThrow(campaignId, tenant);
     if (current.status !== 'DRAFT') {
       throw new ConflictException(
         'Only a draft campaign can be submitted for approval.',
@@ -366,12 +393,16 @@ export class CampaignsAdminService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      const { request, created } = await createOrReusePendingApprovalRequest(tx, {
-        targetType: APPROVAL_TARGET_TYPE_CAMPAIGN,
-        targetId: campaignId,
-        action: APPROVAL_ACTION_CAMPAIGN_ACTIVATE,
-        requestedByInternalUserId: actorInternalUserId,
-      });
+      const { request, created } = await createOrReusePendingApprovalRequest(
+        tx,
+        {
+          tenantId: current.tenantId,
+          targetType: APPROVAL_TARGET_TYPE_CAMPAIGN,
+          targetId: campaignId,
+          action: APPROVAL_ACTION_CAMPAIGN_ACTIVATE,
+          requestedByInternalUserId: actorInternalUserId,
+        },
+      );
       if (created) {
         await this.audit.recordApprovalRequested(tx, {
           actorInternalUserId,
@@ -383,7 +414,7 @@ export class CampaignsAdminService {
       }
     });
 
-    const fresh = await this.loadOrThrow(campaignId);
+    const fresh = await this.loadOrThrow(campaignId, tenant);
     return this.toAdminCampaign(fresh);
   }
 
@@ -405,9 +436,10 @@ export class CampaignsAdminService {
     campaignId: string,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCampaign> {
     authorization.assertCorporate('marketing.manage');
-    const current = await this.loadOrThrow(campaignId);
+    const current = await this.loadOrThrow(campaignId, tenant);
     if (current.status !== 'ACTIVE') {
       throw new ConflictException('Only an active campaign can be ended.');
     }
@@ -419,12 +451,18 @@ export class CampaignsAdminService {
     status: unknown,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCampaign> {
     if (status === 'ACTIVE') {
-      return this.activate(campaignId, actorInternalUserId, authorization);
+      return this.activate(
+        campaignId,
+        actorInternalUserId,
+        authorization,
+        tenant,
+      );
     }
     if (status === 'ENDED') {
-      return this.end(campaignId, actorInternalUserId, authorization);
+      return this.end(campaignId, actorInternalUserId, authorization, tenant);
     }
     throw new BadRequestException(
       "status must be 'ACTIVE' (from DRAFT) or 'ENDED' (from ACTIVE).",
@@ -463,8 +501,8 @@ export class CampaignsAdminService {
     campaign: CampaignRow,
   ): Promise<void> {
     if (campaign.mediaAssetId) {
-      const media = await this.prisma.mediaAsset.findUnique({
-        where: { id: campaign.mediaAssetId },
+      const media = await this.prisma.mediaAsset.findFirst({
+        where: { id: campaign.mediaAssetId, tenantId: campaign.tenantId },
         select: { isActive: true },
       });
       if (!media || !media.isActive) {
@@ -540,13 +578,14 @@ export class CampaignsAdminService {
   // reported as "NONE": nothing is mutated on the stale row itself, this
   // is purely how it's presented and how activate() gates on it.
   private async computeApprovalState(
-    campaign: Pick<CampaignRow, 'id' | 'updatedAt'>,
+    campaign: Pick<CampaignRow, 'id' | 'tenantId' | 'updatedAt'>,
   ): Promise<{
     approvalStatus: CampaignApprovalStatus;
     latestApprovalRequestId: string | null;
   }> {
     const request = await latestApprovalRequest(
       this.prisma,
+      campaign.tenantId,
       APPROVAL_TARGET_TYPE_CAMPAIGN,
       campaign.id,
       APPROVAL_ACTION_CAMPAIGN_ACTIVATE,
@@ -580,9 +619,13 @@ export class CampaignsAdminService {
     };
   }
 
-  private async loadOrThrow(campaignId: string): Promise<CampaignRow> {
-    const campaign = await this.prisma.campaign.findUnique({
-      where: { id: campaignId },
+  // Another business's campaign is reported exactly like a missing one.
+  private async loadOrThrow(
+    campaignId: string,
+    tenant: TenantContext,
+  ): Promise<CampaignRow> {
+    const campaign = await this.prisma.campaign.findFirst({
+      where: { id: campaignId, tenantId: tenant.tenantId },
       include: CAMPAIGN_INCLUDE,
     });
     if (!campaign) {
@@ -658,15 +701,20 @@ export class CampaignsAdminService {
     return date;
   }
 
-  private async validateMediaAssetId(raw: unknown): Promise<string | null> {
+  // Every reference a campaign holds must belong to the campaign's own
+  // business; another business's id reads exactly like a missing one.
+  private async validateMediaAssetId(
+    raw: unknown,
+    tenant: TenantContext,
+  ): Promise<string | null> {
     if (raw === undefined || raw === null || raw === '') {
       return null;
     }
     if (typeof raw !== 'string') {
       throw new BadRequestException('mediaAssetId must be a string or null.');
     }
-    const media = await this.prisma.mediaAsset.findUnique({
-      where: { id: raw },
+    const media = await this.prisma.mediaAsset.findFirst({
+      where: { id: raw, tenantId: tenant.tenantId },
       select: { isActive: true },
     });
     if (!media) {
@@ -678,15 +726,18 @@ export class CampaignsAdminService {
     return raw;
   }
 
-  private async validatePromotionId(raw: unknown): Promise<string | null> {
+  private async validatePromotionId(
+    raw: unknown,
+    tenant: TenantContext,
+  ): Promise<string | null> {
     if (raw === undefined || raw === null || raw === '') {
       return null;
     }
     if (typeof raw !== 'string') {
       throw new BadRequestException('promotionId must be a string or null.');
     }
-    const promotion = await this.prisma.promotion.findUnique({
-      where: { id: raw },
+    const promotion = await this.prisma.promotion.findFirst({
+      where: { id: raw, tenantId: tenant.tenantId },
       select: { id: true },
     });
     if (!promotion) {
@@ -697,6 +748,7 @@ export class CampaignsAdminService {
 
   private async validateLoyaltyBonusPromotionId(
     raw: unknown,
+    tenant: TenantContext,
   ): Promise<string | null> {
     if (raw === undefined || raw === null || raw === '') {
       return null;
@@ -706,8 +758,8 @@ export class CampaignsAdminService {
         'loyaltyBonusPromotionId must be a string or null.',
       );
     }
-    const promotion = await this.prisma.loyaltyBonusPromotion.findUnique({
-      where: { id: raw },
+    const promotion = await this.prisma.loyaltyBonusPromotion.findFirst({
+      where: { id: raw, tenantId: tenant.tenantId },
       select: { id: true },
     });
     if (!promotion) {
@@ -740,9 +792,12 @@ export class CampaignsAdminService {
     return ids;
   }
 
-  private async assertProductsExistAndActive(productIds: string[]): Promise<void> {
+  private async assertProductsExistAndActive(
+    productIds: string[],
+    tenant: TenantContext,
+  ): Promise<void> {
     const found = await this.prisma.product.findMany({
-      where: { id: { in: productIds } },
+      where: { id: { in: productIds }, tenantId: tenant.tenantId },
       select: { id: true, isActive: true },
     });
     if (found.length !== productIds.length) {

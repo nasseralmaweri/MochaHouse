@@ -177,7 +177,10 @@ export class LoyaltyAdminService {
     // exact operationKey already applied. The authoritative re-check is
     // done again INSIDE the account lock below — this one only saves a
     // transaction when the key is plainly already there.
-    const preexisting = await this.findAdjustmentByOperationKey(operationKey);
+    const preexisting = await this.findAdjustmentByOperationKey(
+      operationKey,
+      tenant,
+    );
     if (preexisting) {
       this.assertOperationKeyOwnedBy(preexisting, customerId);
       return this.buildCustomerDetail(customerId, tenant);
@@ -202,7 +205,11 @@ export class LoyaltyAdminService {
         // check reject it against the already-updated balance.
         const applied = await tx.mochaBeanLedgerEntry.findUnique({
           where: {
-            type_operationKey: { type: 'MANUAL_ADJUSTMENT', operationKey },
+            tenantId_type_operationKey: {
+              tenantId: tenant.tenantId,
+              type: 'MANUAL_ADJUSTMENT',
+              operationKey,
+            },
           },
           select: { loyaltyAccountId: true },
         });
@@ -230,6 +237,7 @@ export class LoyaltyAdminService {
 
         await tx.mochaBeanLedgerEntry.create({
           data: {
+            tenantId: tenant.tenantId,
             loyaltyAccountId: account.id,
             type: 'MANUAL_ADJUSTMENT',
             amount: deltaBeans,
@@ -265,12 +273,20 @@ export class LoyaltyAdminService {
     return this.buildCustomerDetail(customerId, tenant);
   }
 
+  // Operation keys are unique per business (tenantId, type, operationKey):
+  // another business's key can neither collide with nor be observed from
+  // this one.
   private async findAdjustmentByOperationKey(
     operationKey: string,
+    tenant: TenantContext,
   ): Promise<{ loyaltyAccount: { customerId: string } } | null> {
     return this.prisma.mochaBeanLedgerEntry.findUnique({
       where: {
-        type_operationKey: { type: 'MANUAL_ADJUSTMENT', operationKey },
+        tenantId_type_operationKey: {
+          tenantId: tenant.tenantId,
+          type: 'MANUAL_ADJUSTMENT',
+          operationKey,
+        },
       },
       select: { loyaltyAccount: { select: { customerId: true } } },
     });

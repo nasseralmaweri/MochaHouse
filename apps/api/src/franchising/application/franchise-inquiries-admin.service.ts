@@ -80,7 +80,11 @@ export class FranchiseInquiriesAdminService {
     const [notes, activityRows] = await Promise.all([
       this.notes.load(inquiryId),
       this.prisma.internalAuditEvent.findMany({
-        where: { targetType: 'franchise_inquiry', targetId: inquiryId },
+        where: {
+          tenantId: tenant.tenantId,
+          targetType: 'franchise_inquiry',
+          targetId: inquiryId,
+        },
         orderBy: { createdAt: 'desc' },
         take: ACTIVITY_LIMIT,
         select: {

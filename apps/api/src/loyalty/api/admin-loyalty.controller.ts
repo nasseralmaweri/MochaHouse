@@ -99,8 +99,11 @@ export class AdminLoyaltyController {
 
   @RequirePermission('loyalty.configure')
   @Get('settings')
-  getSettings(@Req() request: InternalAuthenticatedRequest) {
-    return this.settings.getSettings(request.authorization!);
+  getSettings(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.settings.getSettings(request.authorization!, tenant);
   }
 
   @RequirePermission('loyalty.configure')
@@ -108,11 +111,13 @@ export class AdminLoyaltyController {
   updateSettings(
     @Body() body: UpdateLoyaltySettingsRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.settings.updateEarningRate(
       body?.earningRatePerDollar,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -120,8 +125,11 @@ export class AdminLoyaltyController {
 
   @RequirePermission('loyalty.configure')
   @Get('rewards')
-  listRewards(@Req() request: InternalAuthenticatedRequest) {
-    return this.rewards.listAdminRewards(request.authorization!);
+  listRewards(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.rewards.listAdminRewards(request.authorization!, tenant);
   }
 
   @RequirePermission('loyalty.configure')
@@ -138,11 +146,13 @@ export class AdminLoyaltyController {
   createReward(
     @Body() body: CreateLoyaltyRewardRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.rewards.createReward(
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -152,12 +162,14 @@ export class AdminLoyaltyController {
     @Param('rewardId') rewardId: string,
     @Body() body: UpdateLoyaltyRewardRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.rewards.updateReward(
       rewardId,
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -165,8 +177,11 @@ export class AdminLoyaltyController {
 
   @RequirePermission('loyalty.configure')
   @Get('bonus-promotions')
-  listBonusPromotions(@Req() request: InternalAuthenticatedRequest) {
-    return this.bonusPromotions.listPromotions(request.authorization!);
+  listBonusPromotions(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.bonusPromotions.listPromotions(request.authorization!, tenant);
   }
 
   @RequirePermission('loyalty.configure')
@@ -183,11 +198,13 @@ export class AdminLoyaltyController {
   createBonusPromotion(
     @Body() body: CreateLoyaltyBonusPromotionRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.bonusPromotions.createPromotion(
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -197,12 +214,14 @@ export class AdminLoyaltyController {
     @Param('promotionId') promotionId: string,
     @Body() body: UpdateLoyaltyBonusPromotionRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.bonusPromotions.updatePromotion(
       promotionId,
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 }

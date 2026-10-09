@@ -142,7 +142,10 @@ export class GiftCardPurchaseService implements OnModuleInit {
     // A brand-new intent — validate everything against CURRENT config.
     const purchaserEmail = this.validateEmail(request?.purchaserEmail);
     const purchaserName = this.validateName(request?.purchaserName);
-    const amountMinorUnits = await this.validateAmount(request?.amountMinorUnits);
+    const amountMinorUnits = await this.validateAmount(
+      request?.amountMinorUnits,
+      tenant,
+    );
     const currency = 'USD';
     const customerId = await this.resolveCustomerId(customerIdentity, tenant);
 
@@ -380,6 +383,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
     try {
       const issued = await this.issuance.issue(
         {
+          tenantId: purchase.tenantId,
           originalValueMinorUnits: purchase.amountMinorUnits,
           currency: purchase.currency,
           giftCardPurchaseId: purchase.id,
@@ -569,7 +573,10 @@ export class GiftCardPurchaseService implements OnModuleInit {
   // A purchase amount is valid when it matches an HQ-configured preset, OR
   // custom amounts are enabled and it is within [MIN, MAX]. The absolute
   // ceiling always applies. Governs NEW intents only (correction E).
-  private async validateAmount(raw: unknown): Promise<number> {
+  private async validateAmount(
+    raw: unknown,
+    tenant: TenantContext,
+  ): Promise<number> {
     if (
       typeof raw !== 'number' ||
       !Number.isInteger(raw) ||
@@ -579,7 +586,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
       throw new BadRequestException('Choose a valid gift-card amount.');
     }
 
-    const config = await this.configuration.getPublicOptions();
+    const config = await this.configuration.getPublicOptions(tenant);
     if (config.presetAmountsMinorUnits.includes(raw)) {
       return raw;
     }

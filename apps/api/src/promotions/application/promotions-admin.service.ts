@@ -79,9 +79,11 @@ export class PromotionsAdminService {
 
   async listPromotions(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminPromotionsResponse> {
     authorization.assertCorporate('promotions.configure');
     const promotions = await this.prisma.promotion.findMany({
+      where: { tenantId: tenant.tenantId },
       include: PROMOTION_INCLUDE,
       orderBy: PROMOTION_ORDER_BY,
     });
@@ -118,6 +120,7 @@ export class PromotionsAdminService {
     request: CreatePromotionRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminPromotion> {
     authorization.assertCorporate('promotions.configure');
 
@@ -168,17 +171,18 @@ export class PromotionsAdminService {
       PER_CUSTOMER_LIMIT_MAX,
     );
 
-    await this.assertCatalogIdsExist(productIds, categoryIds);
+    await this.assertCatalogIdsExist(productIds, categoryIds, tenant);
     if (locationIds.length > 0) {
-      await this.assertLocationsExist(locationIds);
+      await this.assertLocationsExist(locationIds, tenant);
     }
     if (code !== null) {
-      await this.assertCodeAvailable(code, null);
+      await this.assertCodeAvailable(code, null, tenant);
     }
 
     const created = await this.prisma.$transaction(async (tx) => {
       const promotion = await tx.promotion.create({
         data: {
+          tenantId: tenant.tenantId,
           name,
           description,
           kind,
@@ -195,15 +199,30 @@ export class PromotionsAdminService {
           perCustomerRedemptionLimit,
           eligibleProducts:
             productIds.length > 0
-              ? { create: productIds.map((productId) => ({ productId })) }
+              ? {
+                  create: productIds.map((productId) => ({
+                    tenantId: tenant.tenantId,
+                    productId,
+                  })),
+                }
               : undefined,
           eligibleCategories:
             categoryIds.length > 0
-              ? { create: categoryIds.map((categoryId) => ({ categoryId })) }
+              ? {
+                  create: categoryIds.map((categoryId) => ({
+                    tenantId: tenant.tenantId,
+                    categoryId,
+                  })),
+                }
               : undefined,
           eligibleLocations:
             locationIds.length > 0
-              ? { create: locationIds.map((locationId) => ({ locationId })) }
+              ? {
+                  create: locationIds.map((locationId) => ({
+                    tenantId: tenant.tenantId,
+                    locationId,
+                  })),
+                }
               : undefined,
         },
         include: PROMOTION_INCLUDE,
@@ -226,11 +245,14 @@ export class PromotionsAdminService {
     request: UpdatePromotionRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminPromotion> {
     authorization.assertCorporate('promotions.configure');
 
-    const current = await this.prisma.promotion.findUnique({
-      where: { id: promotionId },
+    // Another business's promotion is reported exactly like a missing one,
+    // before any write.
+    const current = await this.prisma.promotion.findFirst({
+      where: { id: promotionId, tenantId: tenant.tenantId },
       include: PROMOTION_INCLUDE,
     });
     if (!current) {
@@ -268,7 +290,7 @@ export class PromotionsAdminService {
       nextCode = this.validateCode(request.code, current.kind);
       if (nextCode !== current.code) {
         if (nextCode !== null) {
-          await this.assertCodeAvailable(nextCode, promotionId);
+          await this.assertCodeAvailable(nextCode, promotionId, tenant);
         }
         data.code = nextCode;
       }
@@ -352,7 +374,7 @@ export class PromotionsAdminService {
         nextProductIds,
         nextCategoryIds,
       );
-      await this.assertCatalogIdsExist(nextProductIds, nextCategoryIds);
+      await this.assertCatalogIdsExist(nextProductIds, nextCategoryIds, tenant);
       data.applicability = nextApplicability;
     }
 
@@ -372,7 +394,7 @@ export class PromotionsAdminService {
       const resolved = this.validateLocations(intendedAll, intendedIds);
       nextLocationIds = resolved.locationIds;
       if (nextLocationIds.length > 0) {
-        await this.assertLocationsExist(nextLocationIds);
+        await this.assertLocationsExist(nextLocationIds, tenant);
       }
       data.appliesToAllLocations = resolved.appliesToAllLocations;
     }
@@ -397,7 +419,11 @@ export class PromotionsAdminService {
         await tx.promotionProduct.deleteMany({ where: { promotionId } });
         if (nextProductIds.length > 0) {
           await tx.promotionProduct.createMany({
-            data: nextProductIds.map((productId) => ({ promotionId, productId })),
+            data: nextProductIds.map((productId) => ({
+              tenantId: tenant.tenantId,
+              promotionId,
+              productId,
+            })),
           });
         }
       }
@@ -406,6 +432,7 @@ export class PromotionsAdminService {
         if (nextCategoryIds.length > 0) {
           await tx.promotionCategory.createMany({
             data: nextCategoryIds.map((categoryId) => ({
+              tenantId: tenant.tenantId,
               promotionId,
               categoryId,
             })),
@@ -417,6 +444,7 @@ export class PromotionsAdminService {
         if (nextLocationIds.length > 0) {
           await tx.promotionLocation.createMany({
             data: nextLocationIds.map((locationId) => ({
+              tenantId: tenant.tenantId,
               promotionId,
               locationId,
             })),
@@ -800,10 +828,13 @@ export class PromotionsAdminService {
   private async assertCatalogIdsExist(
     productIds: string[],
     categoryIds: string[],
+    tenant: TenantContext,
   ): Promise<void> {
+    // Eligibility may only reference the active business's own catalog and
+    // locations; another business's id reads exactly like a missing one.
     if (productIds.length > 0) {
       const found = await this.prisma.product.findMany({
-        where: { id: { in: productIds } },
+        where: { id: { in: productIds }, tenantId: tenant.tenantId },
         select: { id: true },
       });
       if (found.length !== productIds.length) {
@@ -814,7 +845,7 @@ export class PromotionsAdminService {
     }
     if (categoryIds.length > 0) {
       const found = await this.prisma.category.findMany({
-        where: { id: { in: categoryIds } },
+        where: { id: { in: categoryIds }, tenantId: tenant.tenantId },
         select: { id: true },
       });
       if (found.length !== categoryIds.length) {
@@ -825,9 +856,12 @@ export class PromotionsAdminService {
     }
   }
 
-  private async assertLocationsExist(locationIds: string[]): Promise<void> {
+  private async assertLocationsExist(
+    locationIds: string[],
+    tenant: TenantContext,
+  ): Promise<void> {
     const found = await this.prisma.location.findMany({
-      where: { id: { in: locationIds } },
+      where: { id: { in: locationIds }, tenantId: tenant.tenantId },
       select: { id: true },
     });
     if (found.length !== locationIds.length) {
@@ -840,9 +874,14 @@ export class PromotionsAdminService {
   private async assertCodeAvailable(
     normalizedCode: string,
     excludePromotionId: string | null,
+    tenant: TenantContext,
   ): Promise<void> {
+    // Coupon codes are unique per business (tenantId, code): another
+    // business may use the same code independently.
     const existing = await this.prisma.promotion.findUnique({
-      where: { code: normalizedCode },
+      where: {
+        tenantId_code: { tenantId: tenant.tenantId, code: normalizedCode },
+      },
       select: { id: true },
     });
     if (existing && existing.id !== excludePromotionId) {

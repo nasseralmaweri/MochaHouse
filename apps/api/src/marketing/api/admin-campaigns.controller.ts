@@ -37,10 +37,15 @@ export class AdminCampaignsController {
   @Get()
   list(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Query('status') status?: string,
     @Query('cursor') cursor?: string,
   ) {
-    return this.service.list({ status, cursor }, request.authorization!);
+    return this.service.list(
+      { status, cursor },
+      request.authorization!,
+      tenant,
+    );
   }
 
   @RequirePermission('marketing.view')
@@ -57,8 +62,9 @@ export class AdminCampaignsController {
   detail(
     @Param('campaignId') campaignId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.service.getDetail(campaignId, request.authorization!);
+    return this.service.getDetail(campaignId, request.authorization!, tenant);
   }
 
   @RequirePermission('marketing.manage')
@@ -66,11 +72,13 @@ export class AdminCampaignsController {
   create(
     @Body() body: CreateCampaignRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.create(
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -80,12 +88,14 @@ export class AdminCampaignsController {
     @Param('campaignId') campaignId: string,
     @Body() body: UpdateCampaignRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.update(
       campaignId,
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -94,11 +104,13 @@ export class AdminCampaignsController {
   requestApproval(
     @Param('campaignId') campaignId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.requestApproval(
       campaignId,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -108,12 +120,14 @@ export class AdminCampaignsController {
     @Param('campaignId') campaignId: string,
     @Body() body: UpdateCampaignStatusRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.updateStatus(
       campaignId,
       body?.status,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 }

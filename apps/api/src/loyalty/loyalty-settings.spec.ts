@@ -103,9 +103,15 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
 
   async function setRate(rate: number): Promise<void> {
     await prisma.loyaltyConfiguration.upsert({
-      where: { key: 'company' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+      },
       update: { earningRatePerDollar: rate },
-      create: { key: 'company', earningRatePerDollar: rate },
+      create: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        key: 'company',
+        earningRatePerDollar: rate,
+      },
     });
   }
 
@@ -181,10 +187,20 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
     ).id;
 
     const location = await prisma.location.findUniqueOrThrow({
-      where: { slug: 'dearborn-heights' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'dearborn-heights',
+        },
+      },
     });
     const product = await prisma.product.findUniqueOrThrow({
-      where: { slug: 'drip-coffee' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'drip-coffee',
+        },
+      },
       include: {
         modifierGroups: {
           include: { modifierGroup: { include: { options: true } } },
@@ -304,7 +320,9 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
     expect(body.earningRatePerDollar).toBe(3);
 
     const persisted = await prisma.loyaltyConfiguration.findUniqueOrThrow({
-      where: { key: 'company' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+      },
     });
     expect(persisted.earningRatePerDollar).toBe(3);
 
@@ -332,7 +350,9 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
       await putSettings('hq', { earningRatePerDollar: bad }).expect(400);
     }
     const persisted = await prisma.loyaltyConfiguration.findUniqueOrThrow({
-      where: { key: 'company' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+      },
     });
     expect(persisted.earningRatePerDollar).toBe(1);
   });

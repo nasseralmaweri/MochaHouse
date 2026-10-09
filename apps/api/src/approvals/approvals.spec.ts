@@ -351,6 +351,7 @@ describe('Approvals admin (integration)', () => {
     await expect(
       prisma.approvalRequest.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           targetType: approvalRequest.targetType,
           targetId: approvalRequest.targetId,
           action: approvalRequest.action,

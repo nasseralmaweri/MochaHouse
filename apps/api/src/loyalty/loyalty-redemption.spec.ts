@@ -64,9 +64,15 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
 
     // Pin the earning rate to 1 (the settings suite mutates the shared row).
     await prisma.loyaltyConfiguration.upsert({
-      where: { key: 'company' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+      },
       update: { earningRatePerDollar: 1 },
-      create: { key: 'company', earningRatePerDollar: 1 },
+      create: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        key: 'company',
+        earningRatePerDollar: 1,
+      },
     });
 
     const location = await prisma.location.create({
@@ -249,7 +255,11 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     await prisma.customerLoyaltyAccount.upsert({
       where: { customerId: customer.id },
       update: { balance: amount },
-      create: { customerId: customer.id, balance: amount },
+      create: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        customerId: customer.id,
+        balance: amount,
+      },
     });
   }
 
@@ -279,6 +289,7 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
   ): Promise<string> {
     const reward = await prisma.loyaltyReward.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `$${(fixedAmountMinorUnits / 100).toFixed(2)} Off ${randomUUID()}`,
         type: 'FIXED_AMOUNT',
         beanCost,
@@ -295,14 +306,25 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
   ): Promise<string> {
     const reward = await prisma.loyaltyReward.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Free Item ${randomUUID()}`,
         type: 'FREE_ITEM',
         beanCost,
         eligibleProducts: opts.productIds
-          ? { create: opts.productIds.map((productId) => ({ productId })) }
+          ? {
+              create: opts.productIds.map((productId) => ({
+                tenantId: TENANT_1_MOCHA_HOUSE_ID,
+                productId,
+              })),
+            }
           : undefined,
         eligibleCategories: opts.categoryIds
-          ? { create: opts.categoryIds.map((categoryId) => ({ categoryId })) }
+          ? {
+              create: opts.categoryIds.map((categoryId) => ({
+                tenantId: TENANT_1_MOCHA_HOUSE_ID,
+                categoryId,
+              })),
+            }
           : undefined,
       },
     });
@@ -754,7 +776,9 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
 
   it('respects the configured earning rate after the reward discount', async () => {
     await prisma.loyaltyConfiguration.update({
-      where: { key: 'company' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+      },
       data: { earningRatePerDollar: 2 },
     });
     try {
@@ -774,7 +798,9 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
       expect(await balanceOf(customerId)).toBe(300 - 100 + 8);
     } finally {
       await prisma.loyaltyConfiguration.update({
-        where: { key: 'company' },
+        where: {
+          tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+        },
         data: { earningRatePerDollar: 1 },
       });
     }

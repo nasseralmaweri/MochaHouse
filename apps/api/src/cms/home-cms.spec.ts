@@ -116,6 +116,7 @@ describe('CMS / Home page (integration)', () => {
   async function makeMediaAsset(overrides: { isActive?: boolean } = {}): Promise<string> {
     const asset = await prisma.mediaAsset.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         objectKey: `media/${randomUUID()}.jpg`,
         fileName: 'photo.jpg',
         contentType: 'image/jpeg',

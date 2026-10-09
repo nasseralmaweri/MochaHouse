@@ -541,7 +541,9 @@ describe('Closing Checklist (integration)', () => {
     );
 
     const template = await prisma.checklistTemplate.findUniqueOrThrow({
-      where: { key: 'closing' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'closing' },
+      },
     });
     const firstItem = await prisma.checklistTemplateItem.findFirstOrThrow({
       where: { templateId: template.id },
@@ -568,7 +570,9 @@ describe('Closing Checklist (integration)', () => {
 
   it('a NEW instance reflects the current active Closing template', async () => {
     const template = await prisma.checklistTemplate.findUniqueOrThrow({
-      where: { key: 'closing' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'closing' },
+      },
     });
     const target = await prisma.checklistTemplateItem.findFirstOrThrow({
       where: { templateId: template.id, label: 'Prepare next-day sandwiches.' },

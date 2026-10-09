@@ -7,7 +7,7 @@ import type {
   CmsPageKey,
 } from '@mocha-house/contracts';
 import { CMS_PAGE_KEYS } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
@@ -31,11 +31,16 @@ export class CmsPagesAdminService {
     private readonly audit: InternalAuditService,
   ) {}
 
-  async list(authorization: AuthorizationContext): Promise<AdminCmsPagesResponse> {
+  async list(
+    authorization: AuthorizationContext,
+    tenant: TenantContext,
+  ): Promise<AdminCmsPagesResponse> {
     authorization.assertCorporate('cms.view');
 
+    // Each business has its own copy of every managed page, keyed
+    // (tenantId, key).
     const rows = await this.prisma.cmsPage.findMany({
-      where: { key: { in: [...CMS_PAGE_KEYS] } },
+      where: { tenantId: tenant.tenantId, key: { in: [...CMS_PAGE_KEYS] } },
     });
     const rowByKey = new Map(rows.map((row) => [row.key, row]));
 
@@ -49,11 +54,16 @@ export class CmsPagesAdminService {
   async getDetail(
     rawKey: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCmsPageDetail> {
     authorization.assertCorporate('cms.view');
     const entry = this.entryOrThrow(rawKey);
 
-    const row = await this.prisma.cmsPage.findUnique({ where: { key: entry.key } });
+    const row = await this.prisma.cmsPage.findUnique({
+      where: {
+        tenantId_key: { tenantId: tenant.tenantId, key: entry.key },
+      },
+    });
     return this.toDetail(entry, row);
   }
 
@@ -62,16 +72,19 @@ export class CmsPagesAdminService {
     rawContent: unknown,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCmsPageDetail> {
     authorization.assertCorporate('cms.manage');
     const entry = this.entryOrThrow(rawKey);
     const content = entry.validate(rawContent);
     if (entry.validateReferences) {
-      await entry.validateReferences(content, this.prisma);
+      await entry.validateReferences(content, this.prisma, tenant.tenantId);
     }
 
     const existing = await this.prisma.cmsPage.findUnique({
-      where: { key: entry.key },
+      where: {
+        tenantId_key: { tenantId: tenant.tenantId, key: entry.key },
+      },
     });
     const previousDraft = existing
       ? (existing.draftContent as unknown as CmsPageContent)
@@ -80,8 +93,11 @@ export class CmsPagesAdminService {
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const row = await tx.cmsPage.upsert({
-        where: { key: entry.key },
+        where: {
+          tenantId_key: { tenantId: tenant.tenantId, key: entry.key },
+        },
         create: {
+          tenantId: tenant.tenantId,
           key: entry.key,
           title: entry.title,
           draftContent: content as object,
@@ -109,12 +125,15 @@ export class CmsPagesAdminService {
     rawKey: string,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCmsPageDetail> {
     authorization.assertCorporate('cms.manage');
     const entry = this.entryOrThrow(rawKey);
 
     const existing = await this.prisma.cmsPage.findUnique({
-      where: { key: entry.key },
+      where: {
+        tenantId_key: { tenantId: tenant.tenantId, key: entry.key },
+      },
     });
     // Re-validate defensively — the stored draft was already validated on
     // save, but this guards against any out-of-band data (and catches a
@@ -124,14 +143,17 @@ export class CmsPagesAdminService {
       existing ? existing.draftContent : entry.defaultContent,
     );
     if (entry.validateReferences) {
-      await entry.validateReferences(draft, this.prisma);
+      await entry.validateReferences(draft, this.prisma, tenant.tenantId);
     }
     const publishedAt = new Date();
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const row = await tx.cmsPage.upsert({
-        where: { key: entry.key },
+        where: {
+          tenantId_key: { tenantId: tenant.tenantId, key: entry.key },
+        },
         create: {
+          tenantId: tenant.tenantId,
           key: entry.key,
           title: entry.title,
           draftContent: draft as object,

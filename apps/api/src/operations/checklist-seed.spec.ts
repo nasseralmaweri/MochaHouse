@@ -80,7 +80,7 @@ describe('daily-checklist seed is create-once (integration)', () => {
 
     for (const key of ['opening', 'closing']) {
       const template = await prisma.checklistTemplate.findUniqueOrThrow({
-        where: { key },
+        where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key } },
       });
       templateIds[key] = template.id;
       snapshots[key] = (
