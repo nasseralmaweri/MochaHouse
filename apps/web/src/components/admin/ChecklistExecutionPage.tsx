@@ -75,7 +75,7 @@ export function ChecklistExecutionPage({
         {header}
         <AdminForbidden
           title="You're not assigned to that location"
-          description="The location in this link isn't in your assigned scope. Pick one of your locations from the location selector in the sidebar."
+          description="The location in this link isn't in your assigned scope. Pick one of your locations from the scope selector at the top of the page."
         />
       </AdminPage>
     );
@@ -102,7 +102,7 @@ export function ChecklistExecutionPage({
         />
         <AdminEmptyState
           title="Select a location"
-          description="This checklist is per store. Choose one from the location selector in the sidebar."
+          description="This checklist is per store. Choose one from the scope selector at the top of the page."
         />
       </AdminPage>
     );
@@ -117,7 +117,7 @@ export function ChecklistExecutionPage({
         />
         <AdminForbidden
           title="Not in your scope for operations"
-          description="You can view operations at some locations, but not this one. Switch to one of your locations from the location selector in the sidebar."
+          description="You can view operations at some locations, but not this one. Switch to one of your locations from the scope selector at the top of the page."
         />
       </AdminPage>
     );

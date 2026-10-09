@@ -50,12 +50,18 @@ function NavLink({
       aria-current={active ? "page" : undefined}
       title={collapsed ? item.label : undefined}
       onClick={onNavigate}
-      className={`group flex items-center gap-3 rounded-lg transition-colors ${
-        collapsed ? "mx-auto h-10 w-10 justify-center" : "px-3"
-      } ${collapsed ? "" : dense ? "h-9 text-[0.8125rem]" : "h-10 text-sm"} ${
+      className={`group relative flex items-center gap-3 rounded-lg transition-colors ${
+        collapsed ? "mx-auto h-11 w-11 justify-center" : "px-3"
+      } ${
+        collapsed
+          ? ""
+          : dense
+            ? "min-h-11 text-[0.8125rem] lg:min-h-9"
+            : "min-h-11 text-sm lg:min-h-10"
+      } ${
         active
-          ? "bg-accent-soft font-medium text-text-primary"
-          : "text-text-secondary hover:bg-black/[0.045] hover:text-text-primary"
+          ? "bg-accent-soft font-semibold text-text-primary before:absolute before:top-1/2 before:left-0 before:h-4 before:w-[3px] before:-translate-y-1/2 before:rounded-full before:bg-accent"
+          : "text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
       }`}
     >
       <Icon
@@ -118,7 +124,7 @@ function CollapsibleGroup({
         aria-expanded={open}
         aria-controls={listId}
         onClick={() => setChosen(!open)}
-        className="group flex h-9 w-full items-center justify-between rounded-lg px-3 text-[0.8125rem] font-medium text-text-muted transition-colors hover:bg-black/[0.045] hover:text-text-secondary"
+        className="group flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-[0.6875rem] font-semibold tracking-[0.14em] text-text-muted uppercase transition-colors hover:bg-surface-subtle hover:text-text-secondary lg:min-h-9"
       >
         <span className="flex items-center gap-2">
           {group.label}
@@ -186,7 +192,7 @@ export function AdminNav({
         </ul>
       ))}
       {collapsible.length > 0 ? (
-        <div className="flex flex-col gap-1 border-t border-black/[0.06] pt-3">
+        <div className="flex flex-col gap-1 border-t border-border-default pt-3">
           {collapsible.map((group) => (
             <CollapsibleGroup
               key={group.key}

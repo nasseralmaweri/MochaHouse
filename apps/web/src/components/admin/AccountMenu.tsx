@@ -77,13 +77,13 @@ export function AccountMenu({
         aria-controls={open ? panelId : undefined}
         aria-label={collapsed ? `Account: ${label}` : undefined}
         onClick={() => setOpen((value) => !value)}
-        className={`group flex w-full items-center rounded-lg text-left transition-colors hover:bg-black/[0.045] ${
-          collapsed ? "h-10 justify-center" : "gap-3 px-2.5 py-2"
+        className={`group flex w-full items-center rounded-lg text-left transition-colors hover:bg-surface-subtle ${
+          collapsed ? "h-11 justify-center" : "min-h-12 gap-3 px-2.5 py-2"
         }`}
       >
         <span
           aria-hidden="true"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-subtle text-xs font-semibold text-text-secondary ring-1 ring-border-default"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-xs font-semibold text-text-primary ring-1 ring-border-default"
         >
           {initials}
         </span>
@@ -110,7 +110,7 @@ export function AccountMenu({
           id={panelId}
           role="menu"
           aria-label="Account"
-          className={`cx-pop-in absolute z-40 w-64 rounded-xl border border-border-default bg-surface-card p-1.5 ${
+          className={`cx-light cx-pop-in absolute z-40 w-64 rounded-xl border border-border-default bg-surface-card p-1.5 ${
             collapsed ? "bottom-0 left-full ml-2" : "bottom-full left-0 mb-2"
           }`}
           style={{ boxShadow: "var(--cx-shadow-pop)" }}
@@ -136,7 +136,7 @@ export function AccountMenu({
               <button
                 type="submit"
                 role="menuitem"
-                className="flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-primary transition-colors hover:bg-surface-subtle focus-visible:bg-surface-subtle focus-visible:outline-none"
+                className="flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-primary transition-colors hover:bg-surface-subtle focus-visible:bg-surface-subtle focus-visible:outline-none"
               >
                 <IconSignOut className="h-4 w-4 text-text-muted" />
                 Sign out
