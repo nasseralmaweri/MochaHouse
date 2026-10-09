@@ -37,15 +37,19 @@ export class AdminCareersController {
   @Get()
   list(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Query('status') status?: string,
   ) {
-    return this.service.list(status, request.authorization!);
+    return this.service.list(status, request.authorization!, tenant);
   }
 
   @RequirePermission('careers.view')
   @Get('options')
-  options(@Req() request: InternalAuthenticatedRequest) {
-    return this.service.getOptions(request.authorization!);
+  options(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.service.getOptions(request.authorization!, tenant);
   }
 
   @RequirePermission('careers.view')
@@ -53,8 +57,9 @@ export class AdminCareersController {
   detail(
     @Param('jobId') jobId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.service.getDetail(jobId, request.authorization!);
+    return this.service.getDetail(jobId, request.authorization!, tenant);
   }
 
   @RequirePermission('careers.manage')

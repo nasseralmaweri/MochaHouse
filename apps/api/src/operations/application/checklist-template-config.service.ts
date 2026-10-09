@@ -67,9 +67,10 @@ export class ChecklistTemplateConfigService {
   async getConfig(
     templateKey: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<OpeningChecklistTemplateConfigResponse> {
     authorization.assertCorporate(CONFIGURE_PERMISSION);
-    const template = await this.requireTemplate(templateKey);
+    const template = await this.requireTemplate(templateKey, tenant);
     const items = await this.prisma.checklistTemplateItem.findMany({
       where: { templateId: template.id },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
@@ -83,6 +84,7 @@ export class ChecklistTemplateConfigService {
     itemId: string,
     input: { label?: unknown; isActive?: unknown },
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<OpeningChecklistTemplateConfigResponse> {
     authorization.assertCorporate(CONFIGURE_PERMISSION);
 
@@ -113,7 +115,7 @@ export class ChecklistTemplateConfigService {
       );
     }
 
-    const template = await this.requireTemplate(templateKey);
+    const template = await this.requireTemplate(templateKey, tenant);
     await this.prisma.$transaction(async (tx) => {
       await lockTemplate(tx, template.id);
       const existing = await tx.checklistTemplateItem.findFirst({
@@ -164,15 +166,11 @@ export class ChecklistTemplateConfigService {
       );
     }
 
-    const template = await this.requireTemplate(templateKey);
     // Milestone S0D-2A — a template item belongs to its template's tenant,
-    // copied from the server-loaded template after checking it belongs to
-    // the request's tenant.
-    const tenantId = requireTenantOwnership(
-      template,
-      tenant,
-      `The "${templateKey}" checklist template is not configured.`,
-    );
+    // copied from the server-loaded template (requireTemplate has already
+    // checked it belongs to the request's tenant).
+    const template = await this.requireTemplate(templateKey, tenant);
+    const tenantId = template.tenantId;
     await this.prisma.$transaction(async (tx) => {
       await lockTemplate(tx, template.id);
       const items = await loadItems(tx, template.id);
@@ -212,11 +210,12 @@ export class ChecklistTemplateConfigService {
     itemId: string,
     direction: unknown,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<OpeningChecklistTemplateConfigResponse> {
     authorization.assertCorporate(CONFIGURE_PERMISSION);
     assertDirection(direction);
 
-    const template = await this.requireTemplate(templateKey);
+    const template = await this.requireTemplate(templateKey, tenant);
     await this.prisma.$transaction(async (tx) => {
       await lockTemplate(tx, template.id);
       const items = await loadItems(tx, template.id);
@@ -253,6 +252,7 @@ export class ChecklistTemplateConfigService {
     templateKey: string,
     input: { from?: unknown; to?: unknown },
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<OpeningChecklistTemplateConfigResponse> {
     authorization.assertCorporate(CONFIGURE_PERMISSION);
 
@@ -270,7 +270,7 @@ export class ChecklistTemplateConfigService {
       );
     }
 
-    const template = await this.requireTemplate(templateKey);
+    const template = await this.requireTemplate(templateKey, tenant);
     await this.prisma.$transaction(async (tx) => {
       await lockTemplate(tx, template.id);
       const items = await loadItems(tx, template.id);
@@ -313,6 +313,7 @@ export class ChecklistTemplateConfigService {
     templateKey: string,
     input: { section?: unknown; direction?: unknown },
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<OpeningChecklistTemplateConfigResponse> {
     authorization.assertCorporate(CONFIGURE_PERMISSION);
 
@@ -326,7 +327,7 @@ export class ChecklistTemplateConfigService {
     const direction = input.direction;
     assertDirection(direction);
 
-    const template = await this.requireTemplate(templateKey);
+    const template = await this.requireTemplate(templateKey, tenant);
     await this.prisma.$transaction(async (tx) => {
       await lockTemplate(tx, template.id);
       const items = await loadItems(tx, template.id);
@@ -371,8 +372,12 @@ export class ChecklistTemplateConfigService {
     return buildConfigResponse(templateName, items);
   }
 
+  // Every read and every mutation goes through here, so a template that
+  // belongs to another tenant is never returned or changed: it is reported
+  // as not configured, the same response addItem has always given.
   private async requireTemplate(
     templateKey: string,
+    tenant: TenantContext,
   ): Promise<{ id: string; name: string; tenantId: string }> {
     const template = await this.prisma.checklistTemplate.findUnique({
       where: { key: templateKey },
@@ -384,6 +389,11 @@ export class ChecklistTemplateConfigService {
         `The "${templateKey}" checklist template is not configured. Run the database seed.`,
       );
     }
+    requireTenantOwnership(
+      template,
+      tenant,
+      `The "${templateKey}" checklist template is not configured.`,
+    );
     return template;
   }
 }

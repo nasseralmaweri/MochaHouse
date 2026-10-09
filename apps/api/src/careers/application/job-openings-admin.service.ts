@@ -55,9 +55,10 @@ export class JobOpeningsAdminService {
   async list(
     status: string | undefined,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminJobOpeningsResponse> {
     authorization.assertCorporate('careers.view');
-    const where: Prisma.JobOpeningWhereInput = {};
+    const where: Prisma.JobOpeningWhereInput = { tenantId: tenant.tenantId };
     if (status !== undefined) {
       where.status = this.parseStatusFilter(status);
     }
@@ -71,10 +72,11 @@ export class JobOpeningsAdminService {
 
   async getOptions(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminJobOpeningOptions> {
     authorization.assertCorporate('careers.view');
     const locations = await this.prisma.location.findMany({
-      where: { isActive: true },
+      where: { tenantId: tenant.tenantId, isActive: true },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },
     });
@@ -84,9 +86,10 @@ export class JobOpeningsAdminService {
   async getDetail(
     jobId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminJobOpening> {
     authorization.assertCorporate('careers.view');
-    return toAdminJobOpening(await this.loadOrThrow(jobId));
+    return toAdminJobOpening(await this.loadOwnedOrThrow(jobId, tenant));
   }
 
   async create(

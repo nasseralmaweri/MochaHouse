@@ -39,10 +39,11 @@ export class AdminCustomersController {
   @Get()
   list(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Query('q') q?: string,
     @Query('cursor') cursor?: string,
   ) {
-    return this.crm.list({ q, cursor }, request.authorization!);
+    return this.crm.list({ q, cursor }, request.authorization!, tenant);
   }
 
   @RequirePermission('customers.view')
@@ -50,8 +51,9 @@ export class AdminCustomersController {
   detail(
     @Param('customerId') customerId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.crm.getDetail(customerId, request.authorization!);
+    return this.crm.getDetail(customerId, request.authorization!, tenant);
   }
 
   @RequirePermission('customers.view')
@@ -59,8 +61,13 @@ export class AdminCustomersController {
   listNotes(
     @Param('customerId') customerId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.notes.listForCustomer(customerId, request.authorization!);
+    return this.notes.listForCustomer(
+      customerId,
+      request.authorization!,
+      tenant,
+    );
   }
 
   @RequirePermission('customers.notes.manage')

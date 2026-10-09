@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   JOB_APPLICATION_NOTE_MAX_LENGTH,
   type JobApplicationNote,
@@ -29,9 +25,10 @@ export class JobApplicationNotesService {
   async listForApplication(
     applicationId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<JobApplicationNote[]> {
     authorization.assertCorporate('applicants.view');
-    await this.assertApplicationExists(applicationId);
+    await this.assertApplicationOwned(applicationId, tenant);
     return this.load(applicationId);
   }
 
@@ -85,19 +82,10 @@ export class JobApplicationNotesService {
     return body;
   }
 
-  private async assertApplicationExists(applicationId: string): Promise<void> {
-    const found = await this.prisma.jobApplication.findUnique({
-      where: { id: applicationId },
-      select: { id: true },
-    });
-    if (!found) {
-      throw new NotFoundException('Application not found.');
-    }
-  }
-
-  // Milestone S0D-2D — the write-path variant of assertApplicationExists:
-  // returns the parent's own tenantId so the note copies ownership from it,
-  // and reports a foreign application exactly like a missing one.
+  // Milestone S0D-2D — returns the parent's own tenantId so a note copies
+  // ownership from it, and reports a foreign application exactly like a
+  // missing one. Reads use it too, so another tenant's notes are never
+  // listed.
   private async assertApplicationOwned(
     applicationId: string,
     tenant: TenantContext,

@@ -12,6 +12,7 @@ import type {
   UpdateLoyaltyRewardRequest,
 } from '@mocha-house/contracts';
 import { Prisma } from '@mocha-house/database';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
@@ -78,18 +79,20 @@ export class LoyaltyRewardsService {
 
   // Product/category picker data for the FREE_ITEM reward form. Identity +
   // name only — managing rewards never requires `catalog.view`.
+  // The active tenant's own catalog only.
   async getCatalogOptions(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLoyaltyCatalogOptions> {
     authorization.assertCorporate('loyalty.configure');
     const [products, categories] = await Promise.all([
       this.prisma.product.findMany({
-        where: { isActive: true },
+        where: { tenantId: tenant.tenantId, isActive: true },
         select: { id: true, name: true },
         orderBy: { name: 'asc' },
       }),
       this.prisma.category.findMany({
-        where: { isActive: true },
+        where: { tenantId: tenant.tenantId, isActive: true },
         select: { id: true, name: true },
         orderBy: { displayOrder: 'asc' },
       }),

@@ -14,6 +14,8 @@ import type {
   UpdateCampaignRequest,
   UpdateCampaignStatusRequest,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
@@ -43,8 +45,11 @@ export class AdminCampaignsController {
 
   @RequirePermission('marketing.view')
   @Get('options')
-  options(@Req() request: InternalAuthenticatedRequest) {
-    return this.service.getOptions(request.authorization!);
+  options(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.service.getOptions(request.authorization!, tenant);
   }
 
   @RequirePermission('marketing.view')

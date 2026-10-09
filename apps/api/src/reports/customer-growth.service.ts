@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { AdminCustomerGrowthReport } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthorizationContext } from '../internal-auth/authorization/authorization-context';
 import {
@@ -31,6 +32,7 @@ export class CustomerGrowthReportService {
   async getCustomerGrowthReport(
     query: CustomerGrowthQuery,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCustomerGrowthReport> {
     // `reports.view` is CORPORATE-only in the permission catalog, so
     // PermissionGuard already rejects a LOCATION grant; this is the
@@ -58,10 +60,13 @@ export class CustomerGrowthReportService {
       // starts. Deliberately not scoped to `start` — this is a running
       // total, not a period metric.
       this.prisma.customer.count({
-        where: { createdAt: { lt: endExclusive } },
+        where: { tenantId: tenant.tenantId, createdAt: { lt: endExclusive } },
       }),
       this.prisma.customer.count({
-        where: { createdAt: { gte: start, lt: endExclusive } },
+        where: {
+          tenantId: tenant.tenantId,
+          createdAt: { gte: start, lt: endExclusive },
+        },
       }),
       // One grouped query answers registeredCustomersWithOrders,
       // repeatRegisteredCustomers, registeredCustomerOrders and
@@ -71,7 +76,10 @@ export class CustomerGrowthReportService {
       // ever fetched in full.
       this.prisma.order.groupBy({
         by: ['customerId'],
-        where: { createdAt: { gte: start, lt: endExclusive } },
+        where: {
+          tenantId: tenant.tenantId,
+          createdAt: { gte: start, lt: endExclusive },
+        },
         _count: { _all: true },
       }),
     ]);

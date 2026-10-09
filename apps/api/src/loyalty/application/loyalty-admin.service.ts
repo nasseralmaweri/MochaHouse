@@ -11,7 +11,7 @@ import type {
   AdminLoyaltyCustomerSearchResponse,
   AdminMochaBeanLedgerEntry,
 } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
@@ -49,6 +49,7 @@ export class LoyaltyAdminService {
   async searchCustomers(
     rawQuery: string | undefined,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLoyaltyCustomerSearchResponse> {
     authorization.assertCorporate('loyalty.view');
 
@@ -59,9 +60,17 @@ export class LoyaltyAdminService {
       );
     }
 
+    // Only the active business's customers can match — never a lookup
+    // across tenants, whatever the query.
     const where: Prisma.CustomerWhereInput = UUID_PATTERN.test(query)
-      ? { OR: [{ id: query }, { email: { equals: query, mode: 'insensitive' } }] }
-      : { email: { equals: query, mode: 'insensitive' } };
+      ? {
+          tenantId: tenant.tenantId,
+          OR: [{ id: query }, { email: { equals: query, mode: 'insensitive' } }],
+        }
+      : {
+          tenantId: tenant.tenantId,
+          email: { equals: query, mode: 'insensitive' },
+        };
 
     const customers = await this.prisma.customer.findMany({
       where,
@@ -83,19 +92,23 @@ export class LoyaltyAdminService {
   async getCustomerDetail(
     customerId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLoyaltyCustomerDetail> {
     authorization.assertCorporate('loyalty.view');
-    return this.buildCustomerDetail(customerId);
+    return this.buildCustomerDetail(customerId, tenant);
   }
 
   // The detail projection with NO authorization check — callers must have
   // already asserted `loyalty.view` (getCustomerDetail) or `loyalty.adjust`
   // (adjust, whose response must not additionally require `loyalty.view`).
+  // A customer of another tenant is reported exactly like a missing one; the
+  // account and ledger below are then keyed by this validated customer.
   private async buildCustomerDetail(
     customerId: string,
+    tenant: TenantContext,
   ): Promise<AdminLoyaltyCustomerDetail> {
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: customerId },
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, tenantId: tenant.tenantId },
     });
     if (!customer) {
       throw new NotFoundException('Customer not found.');
@@ -137,6 +150,7 @@ export class LoyaltyAdminService {
     request: AdminAdjustMochaBeansRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLoyaltyCustomerDetail> {
     authorization.assertCorporate('loyalty.adjust');
 
@@ -144,8 +158,11 @@ export class LoyaltyAdminService {
     const reason = this.validateReason(request?.reason);
     const operationKey = this.validateOperationKey(request?.operationKey);
 
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: customerId },
+    // Only the active business's customers can be adjusted: another
+    // tenant's customer is reported exactly like a missing one, before any
+    // account, ledger entry or audit event is written.
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, tenantId: tenant.tenantId },
       select: { id: true },
     });
     if (!customer) {
@@ -163,7 +180,7 @@ export class LoyaltyAdminService {
     const preexisting = await this.findAdjustmentByOperationKey(operationKey);
     if (preexisting) {
       this.assertOperationKeyOwnedBy(preexisting, customerId);
-      return this.buildCustomerDetail(customerId);
+      return this.buildCustomerDetail(customerId, tenant);
     }
 
     try {
@@ -240,12 +257,12 @@ export class LoyaltyAdminService {
       // A concurrent request with the same operationKey beat us to the
       // unique ledger row — treat it as the idempotent replay it is.
       if (isUniqueConstraintViolation(error)) {
-        return this.buildCustomerDetail(customerId);
+        return this.buildCustomerDetail(customerId, tenant);
       }
       throw error;
     }
 
-    return this.buildCustomerDetail(customerId);
+    return this.buildCustomerDetail(customerId, tenant);
   }
 
   private async findAdjustmentByOperationKey(

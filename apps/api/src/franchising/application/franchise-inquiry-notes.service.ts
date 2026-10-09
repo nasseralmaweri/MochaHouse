@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   FRANCHISE_INQUIRY_NOTE_MAX_LENGTH,
   type FranchiseInquiryNote,
@@ -29,9 +25,10 @@ export class FranchiseInquiryNotesService {
   async listForInquiry(
     inquiryId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<FranchiseInquiryNote[]> {
     authorization.assertCorporate('franchising.view');
-    await this.assertInquiryExists(inquiryId);
+    await this.assertInquiryOwned(inquiryId, tenant);
     return this.load(inquiryId);
   }
 
@@ -85,19 +82,9 @@ export class FranchiseInquiryNotesService {
     return body;
   }
 
-  private async assertInquiryExists(inquiryId: string): Promise<void> {
-    const found = await this.prisma.franchiseInquiry.findUnique({
-      where: { id: inquiryId },
-      select: { id: true },
-    });
-    if (!found) {
-      throw new NotFoundException('Franchise inquiry not found.');
-    }
-  }
-
-  // Milestone S0D-2D — the write-path variant of assertInquiryExists:
-  // returns the parent's own tenantId so the note copies ownership from it,
-  // and reports a foreign inquiry exactly like a missing one.
+  // Milestone S0D-2D — returns the parent's own tenantId so a note copies
+  // ownership from it, and reports a foreign inquiry exactly like a missing
+  // one. Reads use it too, so another tenant's notes are never listed.
   private async assertInquiryOwned(
     inquiryId: string,
     tenant: TenantContext,

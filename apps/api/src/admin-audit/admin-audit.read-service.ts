@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import type { Prisma } from '@mocha-house/database';
+import type { Prisma, TenantContext } from '@mocha-house/database';
 import type {
   AdminAuditEventPage,
   AdminAuditEventSummary,
@@ -46,13 +46,14 @@ export class AdminAuditReadService {
   async list(
     query: AdminAuditListQuery,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminAuditEventPage> {
     // `audit.view` is CORPORATE-only in the permission catalog, so
     // PermissionGuard already rejects a LOCATION grant; this is the matching
     // service-layer defense.
     authorization.assertCorporate('audit.view');
 
-    const where = this.buildWhere(query);
+    const where = this.buildWhere(query, tenant);
 
     // Fetch one extra row to know whether an older page exists without a
     // second query.
@@ -79,6 +80,7 @@ export class AdminAuditReadService {
 
     const subjectLabelById = await this.resolveSubjects(
       pageRows.map((row) => row.targetId),
+      tenant,
     );
 
     const events: AdminAuditEventSummary[] = pageRows.map((row) => {
@@ -109,6 +111,7 @@ export class AdminAuditReadService {
 
   private buildWhere(
     query: AdminAuditListQuery,
+    tenant: TenantContext,
   ): Prisma.InternalAuditEventWhereInput {
     // The Admin Activity Log is, by its contract, the history of
     // administrative ACCESS changes — its subject is always an Admin user
@@ -118,8 +121,15 @@ export class AdminAuditReadService {
     // do not belong on this screen, so the base query is scoped to
     // internal-user targets. This is not a redesign — it makes an existing
     // implicit assumption explicit.
+    //
+    // Only the active business's history: every event has a required actor,
+    // and since S0F an actor is the InternalUser row of the business the
+    // action was taken in (InternalUser.tenantId is required). Scoping
+    // through the actor does not depend on the event's own nullable
+    // tenantId column, which audit writes do not populate yet.
     const where: Prisma.InternalAuditEventWhereInput = {
       targetType: 'internal_user',
+      actorInternalUser: { tenantId: tenant.tenantId },
     };
 
     // --- Cursor (forward pagination) ------------------------------
@@ -160,6 +170,7 @@ export class AdminAuditReadService {
       }
       if (actor.length > 0) {
         where.actorInternalUser = {
+          tenantId: tenant.tenantId,
           OR: [
             { displayName: { contains: actor, mode: 'insensitive' } },
             { email: { contains: actor, mode: 'insensitive' } },
@@ -218,13 +229,14 @@ export class AdminAuditReadService {
 
   private async resolveSubjects(
     targetIds: string[],
+    tenant: TenantContext,
   ): Promise<Map<string, string>> {
     const ids = [...new Set(targetIds)];
     if (ids.length === 0) {
       return new Map();
     }
     const users = await this.prisma.internalUser.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: ids }, tenantId: tenant.tenantId },
       select: { id: true, displayName: true, email: true },
     });
     return new Map(

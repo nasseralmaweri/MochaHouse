@@ -42,10 +42,13 @@ export class JobApplicationsAdminService {
   async list(
     query: { status?: string; jobOpeningId?: string; cursor?: string },
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminJobApplicationsResponse> {
     authorization.assertCorporate('applicants.view');
 
-    const where: Prisma.JobApplicationWhereInput = {};
+    const where: Prisma.JobApplicationWhereInput = {
+      tenantId: tenant.tenantId,
+    };
     if (query.status !== undefined) {
       where.status = this.parseStatus(query.status);
     }
@@ -74,9 +77,10 @@ export class JobApplicationsAdminService {
   async getDetail(
     applicationId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminJobApplicationDetail> {
     authorization.assertCorporate('applicants.view');
-    const application = await this.loadOrThrow(applicationId);
+    const application = await this.loadOwnedOrThrow(applicationId, tenant);
 
     const [notes, activityRows] = await Promise.all([
       this.notes.load(applicationId),
@@ -132,7 +136,7 @@ export class JobApplicationsAdminService {
     const next = this.parseStatus(rawStatus);
 
     if (next === current.status) {
-      return this.getDetail(applicationId, authorization);
+      return this.getDetail(applicationId, authorization, tenant);
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -148,7 +152,7 @@ export class JobApplicationsAdminService {
       });
     });
 
-    return this.getDetail(applicationId, authorization);
+    return this.getDetail(applicationId, authorization, tenant);
   }
 
   private async loadOrThrow(applicationId: string): Promise<ApplicationRow> {

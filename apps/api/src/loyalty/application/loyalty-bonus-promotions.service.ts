@@ -11,6 +11,7 @@ import type {
   UpdateLoyaltyBonusPromotionRequest,
 } from '@mocha-house/contracts';
 import { Prisma } from '@mocha-house/database';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
@@ -75,18 +76,20 @@ export class LoyaltyBonusPromotionsService {
 
   // Product + location picker data. Identity + name only — managing
   // promotions never requires `catalog.view` or `locations.view`.
+  // The active tenant's own catalog and locations only.
   async getOptions(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLoyaltyBonusPromotionOptions> {
     authorization.assertCorporate('loyalty.configure');
     const [products, locations] = await Promise.all([
       this.prisma.product.findMany({
-        where: { isActive: true },
+        where: { tenantId: tenant.tenantId, isActive: true },
         select: { id: true, name: true },
         orderBy: { name: 'asc' },
       }),
       this.prisma.location.findMany({
-        where: { isActive: true },
+        where: { tenantId: tenant.tenantId, isActive: true },
         select: { id: true, name: true },
         orderBy: { name: 'asc' },
       }),

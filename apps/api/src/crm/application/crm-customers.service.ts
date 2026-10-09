@@ -4,7 +4,7 @@ import type {
   AdminCustomerListResponse,
   AdminCustomerSummary,
 } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import { LoyaltyService } from '../../loyalty/application/loyalty.service';
@@ -47,11 +47,14 @@ export class CrmCustomersService {
   async list(
     query: { q?: string; cursor?: string },
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCustomerListResponse> {
     authorization.assertCorporate('customers.view');
 
     const q = typeof query.q === 'string' ? query.q.trim() : '';
-    const where: Prisma.CustomerWhereInput = {};
+    // The directory is the active business's customers only — never a
+    // cross-tenant search, whatever `q` or `cursor` says.
+    const where: Prisma.CustomerWhereInput = { tenantId: tenant.tenantId };
 
     if (q.length > 0) {
       where.OR = UUID_PATTERN.test(q)
@@ -90,11 +93,15 @@ export class CrmCustomersService {
   async getDetail(
     customerId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCustomerDetail> {
     authorization.assertCorporate('customers.view');
 
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: customerId },
+    // Another tenant's customer is reported exactly like a missing one. Every
+    // section below is then keyed by this validated customer's id, so it
+    // only ever returns that customer's own (same-tenant) records.
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, tenantId: tenant.tenantId },
     });
     if (!customer) {
       throw new NotFoundException('Customer not found.');
@@ -114,7 +121,7 @@ export class CrmCustomersService {
       this.preferredLocations.listForCustomer(customerId),
       this.preferences.getForCustomer(customerId),
       this.giftCards.getForCustomer(customerId),
-      this.notes.listForCustomer(customerId, authorization),
+      this.notes.listForCustomer(customerId, authorization, tenant),
       this.prisma.internalAuditEvent.findMany({
         where: { targetType: 'customer', targetId: customerId },
         orderBy: { createdAt: 'desc' },
