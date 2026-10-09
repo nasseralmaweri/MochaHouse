@@ -44,8 +44,8 @@ export class GiftCardsController {
   ) {}
 
   @Get('purchase-options')
-  purchaseOptions() {
-    return this.configuration.getPublicOptions();
+  purchaseOptions(@CurrentTenantContext() tenant: TenantContext) {
+    return this.configuration.getPublicOptions(tenant);
   }
 
   @UseGuards(GiftCardPublicThrottleGuard, OptionalCustomerAuthGuard)
@@ -79,7 +79,10 @@ export class GiftCardsController {
   @UseGuards(GiftCardPublicThrottleGuard)
   @Post('balance')
   @HttpCode(HttpStatus.OK)
-  balance(@Body() body: GiftCardBalanceRequest) {
-    return this.balanceService.lookup(body?.code);
+  balance(
+    @Body() body: GiftCardBalanceRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.balanceService.lookup(body?.code, tenant);
   }
 }

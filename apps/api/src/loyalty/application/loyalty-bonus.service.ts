@@ -8,7 +8,10 @@ import {
   type OrderLevelDiscountBucket,
 } from '@mocha-house/domain';
 import { PrismaService } from '../../prisma/prisma.service';
-import { LOYALTY_CONFIGURATION_KEY } from './loyalty.service';
+import {
+  LOYALTY_CONFIGURATION_KEY,
+  assertAccountTenant,
+} from './loyalty.service';
 
 // Milestone 7D — Bonus Mocha Beans Promotions, the ORDER-TIME earning path.
 // Called by CheckoutService INSIDE the order-creation transaction, AFTER
@@ -28,6 +31,9 @@ import { LOYALTY_CONFIGURATION_KEY } from './loyalty.service';
 export interface ApplyBonusForOrderInput {
   // The SAME transaction client creating the Order.
   tx: Prisma.TransactionClient;
+  // The order's own tenant: only its bonus promotions and earning rate
+  // apply, and every row written copies it.
+  tenantId: string;
   customerId: string;
   orderId: string;
   locationId: string;
@@ -57,6 +63,7 @@ export class LoyaltyBonusService {
   async applyBonusForOrder(input: ApplyBonusForOrderInput): Promise<void> {
     const {
       tx,
+      tenantId,
       customerId,
       orderId,
       locationId,
@@ -83,6 +90,7 @@ export class LoyaltyBonusService {
     const now = new Date();
     const promotions = await tx.loyaltyBonusPromotion.findMany({
       where: {
+        tenantId,
         isActive: true,
         eligibleProducts: { some: { productId: { in: productIds } } },
         AND: [
@@ -107,7 +115,7 @@ export class LoyaltyBonusService {
     }
 
     const config = await tx.loyaltyConfiguration.findUnique({
-      where: { key: LOYALTY_CONFIGURATION_KEY },
+      where: { tenantId_key: { tenantId, key: LOYALTY_CONFIGURATION_KEY } },
       select: { earningRatePerDollar: true },
     });
     const standardRatePerDollar =
@@ -142,15 +150,18 @@ export class LoyaltyBonusService {
 
     const account = await tx.customerLoyaltyAccount.findUniqueOrThrow({
       where: { customerId },
-      select: { id: true },
+      select: { id: true, tenantId: true },
     });
+    assertAccountTenant(account, tenantId);
 
     await tx.orderLoyaltyBonus.create({
       data: {
+        tenantId,
         orderId,
         totalBonusBeans: result.totalBonusBeans,
         items: {
           create: result.items.map((item) => ({
+            tenantId,
             sourcePromotionId: item.sourcePromotionId,
             promotionName: item.promotionName,
             promotionType: item.promotionType,
@@ -168,6 +179,7 @@ export class LoyaltyBonusService {
 
     await tx.mochaBeanLedgerEntry.create({
       data: {
+        tenantId,
         loyaltyAccountId: account.id,
         type: 'BONUS_EARN',
         amount: result.totalBonusBeans,

@@ -85,7 +85,11 @@ export class JobApplicationsAdminService {
     const [notes, activityRows] = await Promise.all([
       this.notes.load(applicationId),
       this.prisma.internalAuditEvent.findMany({
-        where: { targetType: 'job_application', targetId: applicationId },
+        where: {
+          tenantId: tenant.tenantId,
+          targetType: 'job_application',
+          targetId: applicationId,
+        },
         orderBy: { createdAt: 'desc' },
         take: ACTIVITY_LIMIT,
         select: {

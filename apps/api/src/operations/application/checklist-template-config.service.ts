@@ -10,7 +10,6 @@ import type {
 } from '@mocha-house/contracts';
 import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
-import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 
 const CONFIGURE_PERMISSION = 'operations.checklists.configure' as const;
@@ -167,8 +166,8 @@ export class ChecklistTemplateConfigService {
     }
 
     // Milestone S0D-2A — a template item belongs to its template's tenant,
-    // copied from the server-loaded template (requireTemplate has already
-    // checked it belongs to the request's tenant).
+    // copied from the server-loaded template (requireTemplate only ever
+    // loads the request's tenant's own template).
     const template = await this.requireTemplate(templateKey, tenant);
     const tenantId = template.tenantId;
     await this.prisma.$transaction(async (tx) => {
@@ -372,28 +371,23 @@ export class ChecklistTemplateConfigService {
     return buildConfigResponse(templateName, items);
   }
 
-  // Every read and every mutation goes through here, so a template that
-  // belongs to another tenant is never returned or changed: it is reported
-  // as not configured, the same response addItem has always given.
+  // Every read and every mutation goes through here. Each business has its
+  // own template per key, keyed (tenantId, key), so another business's
+  // template is never returned or changed; a business without one is told
+  // it is not configured.
   private async requireTemplate(
     templateKey: string,
     tenant: TenantContext,
   ): Promise<{ id: string; name: string; tenantId: string }> {
     const template = await this.prisma.checklistTemplate.findUnique({
-      where: { key: templateKey },
+      where: { tenantId_key: { tenantId: tenant.tenantId, key: templateKey } },
       select: { id: true, name: true, tenantId: true },
     });
     if (!template) {
-      // Configuration error — the checklist template is seeded.
-      throw new Error(
-        `The "${templateKey}" checklist template is not configured. Run the database seed.`,
+      throw new NotFoundException(
+        `The "${templateKey}" checklist template is not configured.`,
       );
     }
-    requireTenantOwnership(
-      template,
-      tenant,
-      `The "${templateKey}" checklist template is not configured.`,
-    );
     return template;
   }
 }

@@ -212,8 +212,14 @@ describe('S0D-2C-1 order & payment tenant ownership (integration)', () => {
     tb = await makeCatalog(TEST_TENANT_B_ID, 'b');
 
     await prisma.giftCardConfiguration.upsert({
-      where: { key: GIFT_CARD_CONFIGURATION_KEY },
+      where: {
+        tenantId_key: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          key: GIFT_CARD_CONFIGURATION_KEY,
+        },
+      },
       create: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: GIFT_CARD_CONFIGURATION_KEY,
         presetAmountsMinorUnits: [1000, 2500, 5000, 10000],
         customAmountEnabled: true,

@@ -16,7 +16,7 @@ import {
   MEDIA_ALLOWED_CONTENT_TYPES,
   MEDIA_MAX_FILE_SIZE_BYTES,
 } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
@@ -54,10 +54,14 @@ export class MediaAssetsAdminService {
   async list(
     query: { cursor?: string; q?: string },
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminMediaAssetsResponse> {
     authorization.assertCorporate('media.view');
 
-    const where: Prisma.MediaAssetWhereInput = { isActive: true };
+    const where: Prisma.MediaAssetWhereInput = {
+      tenantId: tenant.tenantId,
+      isActive: true,
+    };
     const q = typeof query.q === 'string' ? query.q.trim() : '';
     if (q.length > 0) {
       // Same simple contains/insensitive pattern as CrmCustomersService —
@@ -92,10 +96,11 @@ export class MediaAssetsAdminService {
   async getOne(
     mediaAssetId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminMediaAsset> {
     authorization.assertCorporate('media.view');
-    const row = await this.prisma.mediaAsset.findUnique({
-      where: { id: mediaAssetId },
+    const row = await this.prisma.mediaAsset.findFirst({
+      where: { id: mediaAssetId, tenantId: tenant.tenantId },
       include: {
         uploadedByInternalUser: { select: { displayName: true, email: true } },
       },
@@ -110,6 +115,7 @@ export class MediaAssetsAdminService {
     file: { buffer: Buffer; originalname: string; mimetype: string; size: number } | undefined,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminMediaAsset> {
     authorization.assertCorporate('media.manage');
     this.validateFile(file);
@@ -131,6 +137,7 @@ export class MediaAssetsAdminService {
       const row = await this.prisma.$transaction(async (tx) => {
         const created = await tx.mediaAsset.create({
           data: {
+            tenantId: tenant.tenantId,
             objectKey,
             fileName,
             contentType: validFile.mimetype,
@@ -168,10 +175,11 @@ export class MediaAssetsAdminService {
     mediaAssetId: string,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminMediaAsset> {
     authorization.assertCorporate('media.manage');
-    const existing = await this.prisma.mediaAsset.findUnique({
-      where: { id: mediaAssetId },
+    const existing = await this.prisma.mediaAsset.findFirst({
+      where: { id: mediaAssetId, tenantId: tenant.tenantId },
       include: {
         uploadedByInternalUser: { select: { displayName: true, email: true } },
       },
@@ -185,7 +193,11 @@ export class MediaAssetsAdminService {
       return this.toSummary(existing);
     }
 
-    const referenced = await isMediaAssetReferenced(this.prisma, mediaAssetId);
+    const referenced = await isMediaAssetReferenced(
+      this.prisma,
+      mediaAssetId,
+      tenant.tenantId,
+    );
     if (referenced) {
       throw new ConflictException(
         'This image is currently used as the Home page hero background or by a marketing campaign and cannot be removed. Replace it there first.',
@@ -215,6 +227,7 @@ export class MediaAssetsAdminService {
     input: UpdateMediaAssetMetadataRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminMediaAsset> {
     authorization.assertCorporate('media.manage');
 
@@ -233,8 +246,8 @@ export class MediaAssetsAdminService {
       throw new BadRequestException('Alt text must be a string or null.');
     }
 
-    const existing = await this.prisma.mediaAsset.findUnique({
-      where: { id: mediaAssetId },
+    const existing = await this.prisma.mediaAsset.findFirst({
+      where: { id: mediaAssetId, tenantId: tenant.tenantId },
       include: {
         uploadedByInternalUser: { select: { displayName: true, email: true } },
       },

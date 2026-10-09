@@ -12,8 +12,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 export async function isMediaAssetReferenced(
   prisma: PrismaService,
   mediaAssetId: string,
+  // The asset's own business: only its home page and campaigns can
+  // reference it.
+  tenantId: string,
 ): Promise<boolean> {
-  const home = await prisma.cmsPage.findUnique({ where: { key: 'home' } });
+  const home = await prisma.cmsPage.findUnique({
+    where: { tenantId_key: { tenantId, key: 'home' } },
+  });
   const draft = home?.draftContent as unknown as HomePageContent | null;
   const published = home?.publishedContent as unknown as
     | HomePageContent
@@ -26,7 +31,7 @@ export async function isMediaAssetReferenced(
   }
 
   const campaign = await prisma.campaign.findFirst({
-    where: { mediaAssetId },
+    where: { tenantId, mediaAssetId },
     select: { id: true },
   });
   return campaign !== null;

@@ -133,10 +133,17 @@ describe('Internal admin authorization matrix (integration)', () => {
     // Two throwaway locations. locA gets the seeded main-menu wired to it so
     // override routes reach their business validation; locB has no menu.
     const menu = await prisma.menu.findUniqueOrThrow({
-      where: { slug: 'main-menu' },
+      where: {
+        tenantId_slug: { tenantId: TENANT_1_MOCHA_HOUSE_ID, slug: 'main-menu' },
+      },
     });
     const product = await prisma.product.findUniqueOrThrow({
-      where: { slug: 'drip-coffee' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'drip-coffee',
+        },
+      },
     });
     menuId = menu.id;
     productId = product.id;

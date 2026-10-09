@@ -754,7 +754,9 @@ describe('Admin cross-tenant read isolation (integration)', () => {
 
   it('(8c) the checklist templates of another tenant are neither read nor changed', async () => {
     const template = await prisma.checklistTemplate.findUnique({
-      where: { key: 'opening' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'opening' },
+      },
       include: { items: { take: 1, orderBy: { sortOrder: 'asc' } } },
     });
     // The seeded templates belong to Tenant #1.
@@ -870,15 +872,16 @@ describe('Admin cross-tenant read isolation (integration)', () => {
   });
 
   it('(8e) the Admin activity log shows only the active business', async () => {
-    // Access-change events as the audit writer records them today: actor
-    // and subject are the business's own InternalUser rows; the event's own
-    // tenantId is not populated.
-    for (const [actor, reason] of [
-      [authorA, `TRI a staff audit ${suffix}`],
-      [authorB, `TRI b staff audit ${suffix}`],
+    // Access-change events as the audit writer records them: actor and
+    // subject are the business's own InternalUser rows and the event carries
+    // the actor's tenantId.
+    for (const [actor, tenantId, reason] of [
+      [authorA, TENANT_A, `TRI a staff audit ${suffix}`],
+      [authorB, TENANT_B, `TRI b staff audit ${suffix}`],
     ] as const) {
       const event = await prisma.internalAuditEvent.create({
         data: {
+          tenantId,
           actorInternalUserId: actor,
           action: 'internal_user.status_changed',
           targetType: 'internal_user',

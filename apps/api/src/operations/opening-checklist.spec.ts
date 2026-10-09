@@ -129,7 +129,9 @@ describe('Opening Checklist (integration)', () => {
 
   async function openingTemplateId(): Promise<string> {
     const template = await prisma.checklistTemplate.findUniqueOrThrow({
-      where: { key: 'opening' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'opening' },
+      },
     });
     return template.id;
   }

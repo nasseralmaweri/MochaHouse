@@ -9,6 +9,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { UpdateCmsPageContentRequest } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
@@ -28,8 +30,11 @@ export class AdminCmsController {
 
   @RequirePermission('cms.view')
   @Get()
-  list(@Req() request: InternalAuthenticatedRequest) {
-    return this.service.list(request.authorization!);
+  list(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.service.list(request.authorization!, tenant);
   }
 
   @RequirePermission('cms.view')
@@ -37,8 +42,9 @@ export class AdminCmsController {
   detail(
     @Param('pageKey') pageKey: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.service.getDetail(pageKey, request.authorization!);
+    return this.service.getDetail(pageKey, request.authorization!, tenant);
   }
 
   @RequirePermission('cms.manage')
@@ -47,12 +53,14 @@ export class AdminCmsController {
     @Param('pageKey') pageKey: string,
     @Body() body: UpdateCmsPageContentRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.saveDraft(
       pageKey,
       body?.content,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -61,11 +69,13 @@ export class AdminCmsController {
   publish(
     @Param('pageKey') pageKey: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.publish(
       pageKey,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 }

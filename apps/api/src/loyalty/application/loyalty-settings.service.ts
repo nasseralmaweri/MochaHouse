@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import type { LoyaltySettings } from '@mocha-house/contracts';
 import { DEFAULT_MOCHA_BEANS_PER_DOLLAR } from '@mocha-house/domain';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { TenantContext } from '@mocha-house/database';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import { LOYALTY_CONFIGURATION_KEY } from './loyalty.service';
@@ -28,17 +29,23 @@ export class LoyaltySettingsService {
 
   async getSettings(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<LoyaltySettings> {
     authorization.assertCorporate('loyalty.configure');
-    const config = await this.ensureConfiguration();
+    const config = await this.ensureConfiguration(tenant);
     return { earningRatePerDollar: config.earningRatePerDollar };
   }
 
   // Reads the current rate without an authorization check — for the earn
   // path and the customer surface, which have their own gating.
-  async getEarningRatePerDollar(): Promise<number> {
+  async getEarningRatePerDollar(tenant: TenantContext): Promise<number> {
     const config = await this.prisma.loyaltyConfiguration.findUnique({
-      where: { key: LOYALTY_CONFIGURATION_KEY },
+      where: {
+        tenantId_key: {
+          tenantId: tenant.tenantId,
+          key: LOYALTY_CONFIGURATION_KEY,
+        },
+      },
       select: { earningRatePerDollar: true },
     });
     return config?.earningRatePerDollar ?? DEFAULT_MOCHA_BEANS_PER_DOLLAR;
@@ -48,11 +55,12 @@ export class LoyaltySettingsService {
     rawRate: unknown,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<LoyaltySettings> {
     authorization.assertCorporate('loyalty.configure');
 
     const afterRate = this.validateRate(rawRate);
-    const current = await this.ensureConfiguration();
+    const current = await this.ensureConfiguration(tenant);
 
     if (current.earningRatePerDollar === afterRate) {
       // No-op — nothing to change, nothing to audit.
@@ -63,7 +71,12 @@ export class LoyaltySettingsService {
       // Update by the stable key so this is safe even if two requests race:
       // updateMany on the unique key, then re-read.
       await tx.loyaltyConfiguration.update({
-        where: { key: LOYALTY_CONFIGURATION_KEY },
+        where: {
+          tenantId_key: {
+            tenantId: tenant.tenantId,
+            key: LOYALTY_CONFIGURATION_KEY,
+          },
+        },
         data: { earningRatePerDollar: afterRate },
       });
       await this.audit.recordLoyaltyEarningRateChanged(tx, {
@@ -76,12 +89,18 @@ export class LoyaltySettingsService {
     return { earningRatePerDollar: afterRate };
   }
 
-  private async ensureConfiguration(): Promise<{
+  // The active business's own configuration row, created on first use.
+  private async ensureConfiguration(tenant: TenantContext): Promise<{
     earningRatePerDollar: number;
   }> {
     return this.prisma.loyaltyConfiguration.upsert({
-      where: { key: LOYALTY_CONFIGURATION_KEY },
-      create: { key: LOYALTY_CONFIGURATION_KEY },
+      where: {
+        tenantId_key: {
+          tenantId: tenant.tenantId,
+          key: LOYALTY_CONFIGURATION_KEY,
+        },
+      },
+      create: { tenantId: tenant.tenantId, key: LOYALTY_CONFIGURATION_KEY },
       update: {},
       select: { earningRatePerDollar: true },
     });

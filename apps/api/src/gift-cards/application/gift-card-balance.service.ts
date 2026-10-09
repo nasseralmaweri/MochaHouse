@@ -4,6 +4,7 @@ import type {
   GiftCardPublicStatus,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { TenantContext } from '@mocha-house/database';
 import {
   canonicalizeGiftCardCode,
   hashGiftCardCode,
@@ -21,14 +22,22 @@ import {
 export class GiftCardBalanceService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async lookup(rawCode: unknown): Promise<GiftCardBalanceResponse> {
+  // Only the storefront business's cards: another business's code returns
+  // the same `{ found: false }` as an unknown one.
+  async lookup(
+    rawCode: unknown,
+    tenant: TenantContext,
+  ): Promise<GiftCardBalanceResponse> {
     const canonical = canonicalizeGiftCardCode(rawCode);
     if (canonical === null) {
       return { found: false };
     }
 
-    const card = await this.prisma.giftCard.findUnique({
-      where: { codeHash: hashGiftCardCode(canonical) },
+    const card = await this.prisma.giftCard.findFirst({
+      where: {
+        codeHash: hashGiftCardCode(canonical),
+        tenantId: tenant.tenantId,
+      },
       select: {
         last4: true,
         status: true,

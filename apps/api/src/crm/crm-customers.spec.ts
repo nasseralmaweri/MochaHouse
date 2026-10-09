@@ -376,17 +376,27 @@ describe('Admin CRM customers (integration)', () => {
 
   it('detail: aggregates orders, Mocha Beans, gift cards, preferred locations', async () => {
     const location = await prisma.location.findUniqueOrThrow({
-      where: { slug: 'dearborn-heights' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'dearborn-heights',
+        },
+      },
     });
     const c = await makeCustomer();
 
     // Loyalty account + a manual adjustment (also produces a customer audit
     // event for the timeline).
     const account = await prisma.customerLoyaltyAccount.create({
-      data: { customerId: c, balance: 120 },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        customerId: c,
+        balance: 120,
+      },
     });
     await prisma.mochaBeanLedgerEntry.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         loyaltyAccountId: account.id,
         type: 'MANUAL_ADJUSTMENT',
         amount: 120,
@@ -397,6 +407,7 @@ describe('Admin CRM customers (integration)', () => {
     });
     await prisma.internalAuditEvent.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         actorInternalUserId: users[`notes-${suffix}`],
         action: 'loyalty.beans_adjusted',
         targetType: 'customer',
@@ -449,6 +460,7 @@ describe('Admin CRM customers (integration)', () => {
     });
     const giftCard = await prisma.giftCard.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         codeHash: `crm-spec-${randomUUID()}`,
         last4: 'WXYZ',
         originalValueMinorUnits: 2500,

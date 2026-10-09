@@ -107,6 +107,7 @@ describe('Admin activity log (integration)', () => {
   }): Promise<string> {
     const event = await prisma.internalAuditEvent.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         actorInternalUserId: input.actorId,
         action: input.action,
         targetType: 'internal_user',

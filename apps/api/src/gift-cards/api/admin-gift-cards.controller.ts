@@ -15,6 +15,8 @@ import type {
   IssueGiftCardRequest,
   UpdateGiftCardConfigurationRequest,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
@@ -46,8 +48,9 @@ export class AdminGiftCardsController {
   search(
     @Body() body: GiftCardSearchRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.service.search(body, request.authorization!);
+    return this.service.search(body, request.authorization!, tenant);
   }
 
   // --- Configuration (giftcards.configure) — declared before :giftCardId
@@ -55,8 +58,11 @@ export class AdminGiftCardsController {
 
   @RequirePermission('giftcards.configure')
   @Get('configuration')
-  getConfiguration(@Req() request: InternalAuthenticatedRequest) {
-    return this.configuration.getConfiguration(request.authorization!);
+  getConfiguration(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.configuration.getConfiguration(request.authorization!, tenant);
   }
 
   @RequirePermission('giftcards.configure')
@@ -64,11 +70,13 @@ export class AdminGiftCardsController {
   updateConfiguration(
     @Body() body: UpdateGiftCardConfigurationRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.configuration.updateConfiguration(
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -79,11 +87,13 @@ export class AdminGiftCardsController {
   issue(
     @Body() body: IssueGiftCardRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.issue(
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -92,8 +102,9 @@ export class AdminGiftCardsController {
   detail(
     @Param('giftCardId') giftCardId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.service.getDetail(giftCardId, request.authorization!);
+    return this.service.getDetail(giftCardId, request.authorization!, tenant);
   }
 
   @RequirePermission('giftcards.manage')
@@ -102,12 +113,14 @@ export class AdminGiftCardsController {
     @Param('giftCardId') giftCardId: string,
     @Body() body: GiftCardStatusChangeRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.deactivate(
       giftCardId,
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -117,12 +130,14 @@ export class AdminGiftCardsController {
     @Param('giftCardId') giftCardId: string,
     @Body() body: GiftCardStatusChangeRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.reactivate(
       giftCardId,
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -136,12 +151,14 @@ export class AdminGiftCardsController {
     @Param('giftCardId') giftCardId: string,
     @Body() body: AdjustGiftCardBalanceRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.correct(
       giftCardId,
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 }

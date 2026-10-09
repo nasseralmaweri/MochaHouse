@@ -84,10 +84,20 @@ describe('AdminOrdersService (integration)', () => {
     await prisma.$connect();
 
     const location = await prisma.location.findUniqueOrThrow({
-      where: { slug: 'dearborn-heights' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'dearborn-heights',
+        },
+      },
     });
     const product = await prisma.product.findUniqueOrThrow({
-      where: { slug: 'drip-coffee' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'drip-coffee',
+        },
+      },
       include: {
         modifierGroups: {
           include: { modifierGroup: { include: { options: true } } },
@@ -103,7 +113,12 @@ describe('AdminOrdersService (integration)', () => {
     // A second, real location so "wrong location can't see it" tests
     // against genuine data rather than a made-up id. Removed in afterAll.
     const otherLocation = await prisma.location.upsert({
-      where: { slug: 'admin-orders-spec-other-location' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'admin-orders-spec-other-location',
+        },
+      },
       update: {},
       create: {
         tenantId: TENANT_1_MOCHA_HOUSE_ID,

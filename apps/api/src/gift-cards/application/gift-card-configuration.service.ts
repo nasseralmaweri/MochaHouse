@@ -8,6 +8,7 @@ import {
   type UpdateGiftCardConfigurationRequest,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { TenantContext } from '@mocha-house/database';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 
@@ -36,9 +37,10 @@ export class GiftCardConfigurationService {
 
   async getConfiguration(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<GiftCardConfiguration> {
     authorization.assertCorporate('giftcards.configure');
-    const config = await this.ensureConfiguration();
+    const config = await this.ensureConfiguration(tenant);
     return {
       presetAmountsMinorUnits: config.presetAmountsMinorUnits,
       customAmountEnabled: config.customAmountEnabled,
@@ -54,9 +56,18 @@ export class GiftCardConfigurationService {
   // If the singleton row does not exist yet it returns the same safe
   // defaults in memory WITHOUT persisting them — an authorised HQ write path
   // (getConfiguration / updateConfiguration) creates the row when needed.
-  async getPublicOptions(): Promise<GiftCardPurchaseOptions> {
+  //
+  // Each business has its own configuration, keyed (tenantId, key).
+  async getPublicOptions(
+    tenant: TenantContext,
+  ): Promise<GiftCardPurchaseOptions> {
     const config = await this.prisma.giftCardConfiguration.findUnique({
-      where: { key: GIFT_CARD_CONFIGURATION_KEY },
+      where: {
+        tenantId_key: {
+          tenantId: tenant.tenantId,
+          key: GIFT_CARD_CONFIGURATION_KEY,
+        },
+      },
       select: { presetAmountsMinorUnits: true, customAmountEnabled: true },
     });
     return {
@@ -73,6 +84,7 @@ export class GiftCardConfigurationService {
     request: UpdateGiftCardConfigurationRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<GiftCardConfiguration> {
     authorization.assertCorporate('giftcards.configure');
 
@@ -83,7 +95,7 @@ export class GiftCardConfigurationService {
       request?.customAmountEnabled,
     );
 
-    const current = await this.ensureConfiguration();
+    const current = await this.ensureConfiguration(tenant);
     const before = {
       presetAmountsMinorUnits: current.presetAmountsMinorUnits,
       customAmountEnabled: current.customAmountEnabled,
@@ -100,7 +112,12 @@ export class GiftCardConfigurationService {
 
     await this.prisma.$transaction(async (tx) => {
       await tx.giftCardConfiguration.update({
-        where: { key: GIFT_CARD_CONFIGURATION_KEY },
+        where: {
+          tenantId_key: {
+            tenantId: tenant.tenantId,
+            key: GIFT_CARD_CONFIGURATION_KEY,
+          },
+        },
         data: after,
       });
       await this.audit.recordGiftCardConfigurationUpdated(tx, {
@@ -113,13 +130,20 @@ export class GiftCardConfigurationService {
     return after;
   }
 
-  private async ensureConfiguration(): Promise<{
+  // The active business's own configuration row, created on first use.
+  private async ensureConfiguration(tenant: TenantContext): Promise<{
     presetAmountsMinorUnits: number[];
     customAmountEnabled: boolean;
   }> {
     return this.prisma.giftCardConfiguration.upsert({
-      where: { key: GIFT_CARD_CONFIGURATION_KEY },
+      where: {
+        tenantId_key: {
+          tenantId: tenant.tenantId,
+          key: GIFT_CARD_CONFIGURATION_KEY,
+        },
+      },
       create: {
+        tenantId: tenant.tenantId,
         key: GIFT_CARD_CONFIGURATION_KEY,
         presetAmountsMinorUnits: DEFAULT_PRESET_AMOUNTS_MINOR_UNITS,
         customAmountEnabled: true,

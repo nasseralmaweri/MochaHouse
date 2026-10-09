@@ -68,9 +68,11 @@ export class LoyaltyRewardsService {
 
   async listAdminRewards(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLoyaltyRewardsResponse> {
     authorization.assertCorporate('loyalty.configure');
     const rewards = await this.prisma.loyaltyReward.findMany({
+      where: { tenantId: tenant.tenantId },
       include: REWARD_INCLUDE,
       orderBy: REWARD_ORDER_BY,
     });
@@ -104,6 +106,7 @@ export class LoyaltyRewardsService {
     request: CreateLoyaltyRewardRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLoyaltyReward> {
     authorization.assertCorporate('loyalty.configure');
 
@@ -141,12 +144,13 @@ export class LoyaltyRewardsService {
           'A free-item reward needs at least one eligible product or category.',
         );
       }
-      await this.assertCatalogIdsExist(productIds, categoryIds);
+      await this.assertCatalogIdsExist(productIds, categoryIds, tenant);
     }
 
     const created = await this.prisma.$transaction(async (tx) => {
       const reward = await tx.loyaltyReward.create({
         data: {
+          tenantId: tenant.tenantId,
           name,
           description,
           type,
@@ -155,11 +159,21 @@ export class LoyaltyRewardsService {
           sortOrder,
           eligibleProducts:
             productIds.length > 0
-              ? { create: productIds.map((productId) => ({ productId })) }
+              ? {
+                  create: productIds.map((productId) => ({
+                    tenantId: tenant.tenantId,
+                    productId,
+                  })),
+                }
               : undefined,
           eligibleCategories:
             categoryIds.length > 0
-              ? { create: categoryIds.map((categoryId) => ({ categoryId })) }
+              ? {
+                  create: categoryIds.map((categoryId) => ({
+                    tenantId: tenant.tenantId,
+                    categoryId,
+                  })),
+                }
               : undefined,
         },
         include: REWARD_INCLUDE,
@@ -182,11 +196,14 @@ export class LoyaltyRewardsService {
     request: UpdateLoyaltyRewardRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLoyaltyReward> {
     authorization.assertCorporate('loyalty.configure');
 
-    const current = await this.prisma.loyaltyReward.findUnique({
-      where: { id: rewardId },
+    // Another business's reward is reported exactly like a missing one,
+    // before any write.
+    const current = await this.prisma.loyaltyReward.findFirst({
+      where: { id: rewardId, tenantId: tenant.tenantId },
       include: REWARD_INCLUDE,
     });
     if (!current) {
@@ -270,7 +287,11 @@ export class LoyaltyRewardsService {
             'A free-item reward needs at least one eligible product or category.',
           );
         }
-        await this.assertCatalogIdsExist(nextProductIds, nextCategoryIds);
+        await this.assertCatalogIdsExist(
+          nextProductIds,
+          nextCategoryIds,
+          tenant,
+        );
       }
     }
 
@@ -286,12 +307,17 @@ export class LoyaltyRewardsService {
         await tx.loyaltyRewardCategory.deleteMany({ where: { rewardId } });
         if (nextProductIds.length > 0) {
           await tx.loyaltyRewardProduct.createMany({
-            data: nextProductIds.map((productId) => ({ rewardId, productId })),
+            data: nextProductIds.map((productId) => ({
+              tenantId: tenant.tenantId,
+              rewardId,
+              productId,
+            })),
           });
         }
         if (nextCategoryIds.length > 0) {
           await tx.loyaltyRewardCategory.createMany({
             data: nextCategoryIds.map((categoryId) => ({
+              tenantId: tenant.tenantId,
               rewardId,
               categoryId,
             })),
@@ -323,11 +349,14 @@ export class LoyaltyRewardsService {
   // Active rewards only, in catalog order, each annotated with whether the
   // customer can currently afford it. NO redemption, NO reservation, NO
   // Bean movement.
+  // `tenantId` is the business the customer belongs to (the storefront's
+  // server-resolved tenant, or the CRM customer's own tenant).
   async listActiveRewardsForCustomer(
     balance: number,
+    tenantId: string,
   ): Promise<CustomerLoyaltyReward[]> {
     const rewards = await this.prisma.loyaltyReward.findMany({
-      where: { isActive: true },
+      where: { tenantId, isActive: true },
       include: REWARD_INCLUDE,
       orderBy: REWARD_ORDER_BY,
     });
@@ -494,10 +523,13 @@ export class LoyaltyRewardsService {
   private async assertCatalogIdsExist(
     productIds: string[],
     categoryIds: string[],
+    tenant: TenantContext,
   ): Promise<void> {
+    // Eligibility may only reference the active business's own catalog;
+    // another business's id reads exactly like a missing one.
     if (productIds.length > 0) {
       const found = await this.prisma.product.findMany({
-        where: { id: { in: productIds } },
+        where: { id: { in: productIds }, tenantId: tenant.tenantId },
         select: { id: true },
       });
       if (found.length !== productIds.length) {
@@ -508,7 +540,7 @@ export class LoyaltyRewardsService {
     }
     if (categoryIds.length > 0) {
       const found = await this.prisma.category.findMany({
-        where: { id: { in: categoryIds } },
+        where: { id: { in: categoryIds }, tenantId: tenant.tenantId },
         select: { id: true },
       });
       if (found.length !== categoryIds.length) {

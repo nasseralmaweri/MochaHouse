@@ -129,6 +129,7 @@ describe('POST /api/v1/orders/reward-eligibility (integration)', () => {
 
     const fixed = await prisma.loyaltyReward.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `CR $5 Off ${suffix}`,
         type: 'FIXED_AMOUNT',
         beanCost: 100,
@@ -138,15 +139,19 @@ describe('POST /api/v1/orders/reward-eligibility (integration)', () => {
     });
     const freeLatte = await prisma.loyaltyReward.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `CR Free Latte ${suffix}`,
         type: 'FREE_ITEM',
         beanCost: 150,
         sortOrder: 2,
-        eligibleProducts: { create: [{ productId: latteId }] },
+        eligibleProducts: {
+          create: [{ tenantId: TENANT_1_MOCHA_HOUSE_ID, productId: latteId }],
+        },
       },
     });
     const inactive = await prisma.loyaltyReward.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `CR Inactive ${suffix}`,
         type: 'FIXED_AMOUNT',
         beanCost: 10,
@@ -210,7 +215,11 @@ describe('POST /api/v1/orders/reward-eligibility (integration)', () => {
     await prisma.customerLoyaltyAccount.upsert({
       where: { customerId: customer.id },
       update: { balance },
-      create: { customerId: customer.id, balance },
+      create: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        customerId: customer.id,
+        balance,
+      },
     });
   }
 

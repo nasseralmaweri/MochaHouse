@@ -87,21 +87,17 @@ export class ChecklistExecutionService {
     authorization.assertCanActOnLocation('operations.view', trimmedLocationId);
 
     const location = await this.requireLocation(trimmedLocationId);
-    const template = await this.requireTemplate(templateKey);
+    const template = await this.requireTemplate(templateKey, tenant);
 
     // Milestone S0D-2A — a GET here may lazily CREATE today's instance, so
     // its owning tenant is established now: copied from the server-loaded
-    // Location, which (like the template) must belong to the request's
-    // tenant. Another tenant's Location reads as not found.
+    // Location, which (like the template, looked up by (tenantId, key))
+    // must belong to the request's tenant. Another tenant's Location reads
+    // as not found.
     const tenantId = requireTenantOwnership(
       location,
       tenant,
       'Location not found.',
-    );
-    requireTenantOwnership(
-      template,
-      tenant,
-      `The "${templateKey}" checklist template is not configured.`,
     );
 
     const businessDate = businessDateToStorage(resolveBusinessDate(new Date()));
@@ -522,19 +518,24 @@ export class ChecklistExecutionService {
     return location;
   }
 
-  private async requireTemplate(templateKey: string): Promise<{
+  // Each business has its own template per key, keyed (tenantId, key). A
+  // business without one has no checklist configured — never another
+  // business's template.
+  private async requireTemplate(
+    templateKey: string,
+    tenant: TenantContext,
+  ): Promise<{
     id: string;
     name: string;
     tenantId: string;
   }> {
     const template = await this.prisma.checklistTemplate.findUnique({
-      where: { key: templateKey },
+      where: { tenantId_key: { tenantId: tenant.tenantId, key: templateKey } },
       select: { id: true, name: true, tenantId: true },
     });
     if (!template) {
-      // Configuration error — the checklist template is seeded.
-      throw new Error(
-        `The "${templateKey}" checklist template is not configured. Run the database seed.`,
+      throw new NotFoundException(
+        `The "${templateKey}" checklist template is not configured.`,
       );
     }
     return template;

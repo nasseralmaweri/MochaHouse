@@ -66,10 +66,20 @@ describe('Gift card redemption at checkout (integration)', () => {
     await prisma.$connect();
 
     const location = await prisma.location.findUniqueOrThrow({
-      where: { slug: 'dearborn-heights' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'dearborn-heights',
+        },
+      },
     });
     const product = await prisma.product.findUniqueOrThrow({
-      where: { slug: 'drip-coffee' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'drip-coffee',
+        },
+      },
       include: {
         modifierGroups: {
           include: { modifierGroup: { include: { options: true } } },
@@ -191,6 +201,7 @@ describe('Gift card redemption at checkout (integration)', () => {
     const last4 = canonical.slice(-4);
     const card = await prisma.giftCard.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         codeHash: hashGiftCardCode(canonical),
         last4,
         status: opts.status ?? 'ACTIVE',
@@ -199,6 +210,7 @@ describe('Gift card redemption at checkout (integration)', () => {
         currency: opts.currency ?? 'USD',
         transactions: {
           create: {
+            tenantId: TENANT_1_MOCHA_HOUSE_ID,
             type: 'ISSUANCE',
             amountMinorUnits: balanceMinorUnits,
             balanceAfterMinorUnits: balanceMinorUnits,
@@ -310,6 +322,7 @@ describe('Gift card redemption at checkout (integration)', () => {
     const couponCode = `GC7G${Math.floor(Math.random() * 1e6)}`;
     const promotion = await prisma.promotion.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: 'GCR coupon',
         kind: 'COUPON',
         code: couponCode,
@@ -320,6 +333,7 @@ describe('Gift card redemption at checkout (integration)', () => {
     });
     const reward = await prisma.loyaltyReward.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: 'GCR $1 off',
         type: 'FIXED_AMOUNT',
         beanCost: 5,
@@ -344,7 +358,11 @@ describe('Gift card redemption at checkout (integration)', () => {
       },
     });
     await prisma.customerLoyaltyAccount.create({
-      data: { customerId: customer.id, balance: 100 },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        customerId: customer.id,
+        balance: 100,
+      },
     });
 
     const gc = await createGiftCard(10_000);
@@ -727,7 +745,11 @@ describe('Gift card redemption at checkout (integration)', () => {
     expect(txns).toBe(1); // just the ISSUANCE entry
 
     // resolveUsableCard on its own also mutates nothing.
-    await redemptionService.resolveUsableCard(gc.code, 'USD');
+    await redemptionService.resolveUsableCard(
+      gc.code,
+      'USD',
+      TENANT_1_MOCHA_HOUSE_ID,
+    );
     expect((await reloadCard(gc.id)).balanceMinorUnits).toBe(300);
   });
 
@@ -809,6 +831,7 @@ describe('Gift card redemption at checkout (integration)', () => {
     await expect(
       prisma.giftCardTransaction.create({
         data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           giftCardId: gc.id,
           type: 'REDEMPTION',
           amountMinorUnits: -1,

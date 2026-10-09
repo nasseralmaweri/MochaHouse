@@ -62,9 +62,15 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     await prisma.$connect();
 
     await prisma.loyaltyConfiguration.upsert({
-      where: { key: 'company' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+      },
       update: { earningRatePerDollar: 1 },
-      create: { key: 'company', earningRatePerDollar: 1 },
+      create: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        key: 'company',
+        earningRatePerDollar: 1,
+      },
     });
 
     const mkLoc = (n: string) =>
@@ -341,7 +347,11 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     await prisma.customerLoyaltyAccount.upsert({
       where: { customerId: customer.id },
       update: { balance: amount },
-      create: { customerId: customer.id, balance: amount },
+      create: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        customerId: customer.id,
+        balance: amount,
+      },
     });
   }
 
@@ -385,6 +395,7 @@ describe('Promotions & Coupons at checkout (integration)', () => {
   }): Promise<string> {
     const promotion = await prisma.promotion.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `${opts.kind} ${opts.discountType} ${randomUUID()} ${suffix}`,
         kind: opts.kind,
         code: opts.code ?? null,
@@ -400,13 +411,28 @@ describe('Promotions & Coupons at checkout (integration)', () => {
         totalRedemptionLimit: opts.totalRedemptionLimit ?? null,
         perCustomerRedemptionLimit: opts.perCustomerRedemptionLimit ?? null,
         eligibleProducts: opts.productIds
-          ? { create: opts.productIds.map((productId) => ({ productId })) }
+          ? {
+              create: opts.productIds.map((productId) => ({
+                tenantId: TENANT_1_MOCHA_HOUSE_ID,
+                productId,
+              })),
+            }
           : undefined,
         eligibleCategories: opts.categoryIds
-          ? { create: opts.categoryIds.map((categoryId) => ({ categoryId })) }
+          ? {
+              create: opts.categoryIds.map((categoryId) => ({
+                tenantId: TENANT_1_MOCHA_HOUSE_ID,
+                categoryId,
+              })),
+            }
           : undefined,
         eligibleLocations: opts.locationIds
-          ? { create: opts.locationIds.map((locId) => ({ locationId: locId })) }
+          ? {
+              create: opts.locationIds.map((locId) => ({
+                tenantId: TENANT_1_MOCHA_HOUSE_ID,
+                locationId: locId,
+              })),
+            }
           : undefined,
       },
     });
@@ -420,6 +446,7 @@ describe('Promotions & Coupons at checkout (integration)', () => {
   ): Promise<string> {
     const reward = await prisma.loyaltyReward.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Fixed Reward ${randomUUID()} ${suffix}`,
         type: 'FIXED_AMOUNT',
         beanCost,
@@ -435,10 +462,16 @@ describe('Promotions & Coupons at checkout (integration)', () => {
   ): Promise<string> {
     const reward = await prisma.loyaltyReward.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Free Reward ${randomUUID()} ${suffix}`,
         type: 'FREE_ITEM',
         beanCost,
-        eligibleProducts: { create: productIds.map((productId) => ({ productId })) },
+        eligibleProducts: {
+          create: productIds.map((productId) => ({
+            tenantId: TENANT_1_MOCHA_HOUSE_ID,
+            productId,
+          })),
+        },
       },
     });
     return reward.id;
@@ -777,12 +810,15 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     });
     await prisma.loyaltyBonusPromotion.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Bonus ${randomUUID()} ${suffix}`,
         type: 'MULTIPLIER',
         bonusValue: 2,
         isActive: true,
         appliesToAllLocations: true,
-        eligibleProducts: { create: [{ productId: latteId }] },
+        eligibleProducts: {
+          create: [{ tenantId: TENANT_1_MOCHA_HOUSE_ID, productId: latteId }],
+        },
       },
     });
 
@@ -823,12 +859,15 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     // 2x Bonus Beans on the muffin (a different product).
     await prisma.loyaltyBonusPromotion.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Bonus ${randomUUID()} ${suffix}`,
         type: 'MULTIPLIER',
         bonusValue: 2,
         isActive: true,
         appliesToAllLocations: true,
-        eligibleProducts: { create: [{ productId: muffinId }] },
+        eligibleProducts: {
+          create: [{ tenantId: TENANT_1_MOCHA_HOUSE_ID, productId: muffinId }],
+        },
       },
     });
 
@@ -873,12 +912,15 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     // 2x Bonus Beans on the latte (drinks — unrelated category).
     await prisma.loyaltyBonusPromotion.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Bonus ${randomUUID()} ${suffix}`,
         type: 'MULTIPLIER',
         bonusValue: 2,
         isActive: true,
         appliesToAllLocations: true,
-        eligibleProducts: { create: [{ productId: latteId }] },
+        eligibleProducts: {
+          create: [{ tenantId: TENANT_1_MOCHA_HOUSE_ID, productId: latteId }],
+        },
       },
     });
 
@@ -919,12 +961,15 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     });
     await prisma.loyaltyBonusPromotion.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Bonus ${randomUUID()} ${suffix}`,
         type: 'MULTIPLIER',
         bonusValue: 2,
         isActive: true,
         appliesToAllLocations: true,
-        eligibleProducts: { create: [{ productId: latteId }] },
+        eligibleProducts: {
+          create: [{ tenantId: TENANT_1_MOCHA_HOUSE_ID, productId: latteId }],
+        },
       },
     });
 
