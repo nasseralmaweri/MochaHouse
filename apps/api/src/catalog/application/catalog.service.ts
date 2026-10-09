@@ -68,9 +68,13 @@ function toAdminProductDetail(row: {
 export class CatalogService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findCategories(): Promise<CategorySummary[]> {
+  // Public storefront reads (S3P): only the storefront business's own
+  // catalog, never another business's — the tenant is the server-resolved
+  // storefront TenantContext, never a client-supplied value.
+  findCategories(tenant: TenantContext): Promise<CategorySummary[]> {
     return this.prisma.category.findMany({
       where: {
+        tenantId: tenant.tenantId,
         isActive: true,
       },
       select: {
@@ -85,10 +89,12 @@ export class CatalogService {
     });
   }
 
-  findProducts(): Promise<ProductSummary[]> {
+  findProducts(tenant: TenantContext): Promise<ProductSummary[]> {
     return this.prisma.product.findMany({
       where: {
+        tenantId: tenant.tenantId,
         isActive: true,
+        category: { tenantId: tenant.tenantId },
       },
       select: {
         id: true,
@@ -112,9 +118,10 @@ export class CatalogService {
     });
   }
 
-  findMenus(): Promise<MenuSummary[]> {
+  findMenus(tenant: TenantContext): Promise<MenuSummary[]> {
     return this.prisma.menu.findMany({
       where: {
+        tenantId: tenant.tenantId,
         isActive: true,
       },
       select: {
@@ -128,9 +135,10 @@ export class CatalogService {
     });
   }
 
-  findModifierGroups(): Promise<ModifierGroupSummary[]> {
+  findModifierGroups(tenant: TenantContext): Promise<ModifierGroupSummary[]> {
     return this.prisma.modifierGroup.findMany({
       where: {
+        tenantId: tenant.tenantId,
         isActive: true,
       },
       select: {
@@ -142,6 +150,7 @@ export class CatalogService {
         maxSelections: true,
         options: {
           where: {
+            tenantId: tenant.tenantId,
             isActive: true,
           },
           select: {

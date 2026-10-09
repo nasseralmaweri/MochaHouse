@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
+import { TenancyModule } from '../tenancy/tenancy.module';
 import { AdminLocationsController } from './api/admin-locations.controller';
 import { LocationsController } from './api/locations.controller';
 import { LocationsService } from './application/locations.service';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, TenancyModule],
   controllers: [LocationsController, AdminLocationsController],
   providers: [LocationsService],
   exports: [LocationsService],

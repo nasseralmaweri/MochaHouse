@@ -4,6 +4,7 @@ import type {
   PublicJobOpeningsResponse,
 } from '@mocha-house/contracts';
 import { Prisma } from '@mocha-house/database';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   isPubliclyVisible,
@@ -24,11 +25,15 @@ const JOB_INCLUDE = {
 export class JobOpeningsPublicService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(): Promise<PublicJobOpeningsResponse> {
+  // Public storefront reads (S3P): only the storefront business's own
+  // jobs. Another business's job — published or not — is reported exactly
+  // like a missing one.
+  async list(tenant: TenantContext): Promise<PublicJobOpeningsResponse> {
     // Narrow at the DB where we can (status + active/absent location), then
     // apply the exact visibility rule in the mapper.
     const jobs = await this.prisma.jobOpening.findMany({
       where: {
+        tenantId: tenant.tenantId,
         status: 'PUBLISHED',
         OR: [{ locationId: null }, { location: { isActive: true } }],
       },
@@ -40,11 +45,14 @@ export class JobOpeningsPublicService {
     };
   }
 
-  async getDetail(jobId: string): Promise<PublicJobOpeningDetail> {
+  async getDetail(
+    jobId: string,
+    tenant: TenantContext,
+  ): Promise<PublicJobOpeningDetail> {
     const job =
       typeof jobId === 'string'
-        ? await this.prisma.jobOpening.findUnique({
-            where: { id: jobId },
+        ? await this.prisma.jobOpening.findFirst({
+            where: { id: jobId, tenantId: tenant.tenantId },
             include: JOB_INCLUDE,
           })
         : null;
