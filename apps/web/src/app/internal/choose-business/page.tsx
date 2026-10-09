@@ -8,6 +8,7 @@ import {
 } from "@/lib/internal-auth/active-business";
 import { resolveActiveBusiness } from "@/lib/admin/business-context";
 import { CenterivoWordmark } from "@/components/centerivo/Wordmark";
+import { centerivoSans } from "@/components/centerivo/fonts";
 import { BusinessChooser } from "./BusinessChooser";
 
 export const metadata: Metadata = { title: "Choose a business · CENTERIVO" };
@@ -34,7 +35,9 @@ export default async function ChooseBusinessPage() {
   }
 
   return (
-    <div className="centerivo flex min-h-dvh flex-col items-center px-4 py-16">
+    <div
+      className={`${centerivoSans.variable} centerivo flex min-h-dvh flex-col items-center px-4 py-16`}
+    >
       <CenterivoWordmark />
       <main className="mt-14 flex w-full max-w-md flex-col gap-6">
         <div className="flex flex-col gap-1.5">

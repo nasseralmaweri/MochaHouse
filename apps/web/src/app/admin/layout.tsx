@@ -10,6 +10,7 @@ import {
 import { getAccessibleBusinesses } from "@/lib/internal-auth/active-business";
 import { adminNavItems } from "@/lib/admin/nav";
 import { AdminShell } from "@/components/admin/AdminShell";
+import { centerivoSans } from "@/components/centerivo/fonts";
 
 export const metadata: Metadata = {
   title: "CENTERIVO",
@@ -52,21 +53,25 @@ export default async function AdminLayout({
   const navItems = adminNavItems(capabilities);
 
   return (
-    // <AdminShell> reads useSearchParams() for the current ?location; the
-    // Suspense boundary keeps that from opting the whole route into CSR.
-    <Suspense fallback={<div className="centerivo min-h-dvh" />}>
-      <AdminShell
-        user={session.user}
-        business={session.business}
-        businesses={businesses}
-        capabilities={capabilities}
-        isCorporate={isCorporate}
-        locations={locations}
-        navItems={navItems}
-        cookieLocationId={cookieLocationId}
-      >
-        {children}
-      </AdminShell>
-    </Suspense>
+    // `contents` carries the CENTERIVO font variable to the shell without
+    // adding a layout box.
+    <div className={`${centerivoSans.variable} contents`}>
+      {/* <AdminShell> reads useSearchParams() for the current ?location; the
+          Suspense boundary keeps that from opting the whole route into CSR. */}
+      <Suspense fallback={<div className="centerivo min-h-dvh" />}>
+        <AdminShell
+          user={session.user}
+          business={session.business}
+          businesses={businesses}
+          capabilities={capabilities}
+          isCorporate={isCorporate}
+          locations={locations}
+          navItems={navItems}
+          cookieLocationId={cookieLocationId}
+        >
+          {children}
+        </AdminShell>
+      </Suspense>
+    </div>
   );
 }

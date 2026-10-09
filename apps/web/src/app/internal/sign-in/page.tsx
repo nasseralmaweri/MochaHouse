@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getInternalSession } from "@/lib/internal-auth/session";
 import { CenterivoWordmark } from "@/components/centerivo/Wordmark";
+import { centerivoSans } from "@/components/centerivo/fonts";
 import { InternalSignInForm } from "./InternalSignInForm";
 
 export const metadata: Metadata = { title: "Sign in · CENTERIVO" };
@@ -17,7 +18,9 @@ export default async function InternalSignInPage() {
   }
 
   return (
-    <div className="centerivo flex min-h-dvh flex-col items-center px-4 py-12 sm:py-20">
+    <div
+      className={`${centerivoSans.variable} centerivo flex min-h-dvh flex-col items-center px-4 py-12 sm:py-20`}
+    >
       <CenterivoWordmark />
       <main className="mt-16 flex w-full max-w-sm flex-1 flex-col gap-8 sm:mt-24 sm:flex-none">
         <div className="flex flex-col gap-2">

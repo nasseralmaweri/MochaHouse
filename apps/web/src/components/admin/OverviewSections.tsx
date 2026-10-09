@@ -102,13 +102,19 @@ const STATUS_ORDER: OrderStatus[] = [
   "COMPLETED",
 ];
 
-// Neutral ramp for in-progress statuses, the accent for completed — one hue,
-// so the bar informs without becoming a rainbow.
+// A ramp of the accent for in-progress statuses, the full accent for
+// completed — one hue, so the bar informs without becoming a rainbow.
 const STATUS_BAR_STYLE: Record<OrderStatus, React.CSSProperties> = {
-  RECEIVED: { background: "rgb(23 32 29 / 0.16)" },
-  ACCEPTED: { background: "rgb(23 32 29 / 0.28)" },
-  PREPARING: { background: "rgb(23 32 29 / 0.42)" },
-  READY: { background: "rgb(31 92 79 / 0.55)" },
+  RECEIVED: {
+    background: "color-mix(in srgb, var(--accent) 16%, transparent)",
+  },
+  ACCEPTED: {
+    background: "color-mix(in srgb, var(--accent) 28%, transparent)",
+  },
+  PREPARING: {
+    background: "color-mix(in srgb, var(--accent) 42%, transparent)",
+  },
+  READY: { background: "color-mix(in srgb, var(--accent) 62%, transparent)" },
   COMPLETED: { background: "var(--accent)" },
 };
 
