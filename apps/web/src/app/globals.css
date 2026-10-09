@@ -42,6 +42,13 @@
   --color-accent: var(--accent);
   --color-accent-soft: var(--accent-soft);
   --color-accent-contrast: var(--accent-contrast);
+  --color-accent-gold: var(--accent-gold);
+  --color-accent-gold-ink: var(--accent-gold-ink);
+
+  --radius-cx-control: var(--cx-radius-control);
+  --radius-cx-panel: var(--cx-radius-panel);
+  --shadow-cx-raised: var(--cx-shadow-raised);
+  --shadow-cx-pop: var(--cx-shadow-pop);
 
   --color-status-success: var(--status-success);
   --color-status-warning: var(--status-warning);
@@ -59,40 +66,72 @@
  * page that uses bg-surface-card / text-text-secondary / border-border-default
  * adopts the platform look without being rewritten.
  *
- * Direction: quiet, light, mineral neutrals; one restrained deep-green
- * accent used only for selection, focus and primary emphasis.
+ * Direction: warm ivory surfaces, deep navy for structure and primary
+ * emphasis, and a restrained warm gold used only for focus and small
+ * highlights — never for large fills.
+ *
+ * Contrast (WCAG 2.2 AA): every text token, and every status colour on its
+ * own 5–15% tint, is >= 4.5:1 on page, card and subtle surfaces; the focus
+ * ring is >= 3:1 against every surface.
  */
 .centerivo {
-  --surface-page: #fafaf8;
-  --surface-card: #ffffff;
-  --surface-subtle: #f0f0ec;
-  --surface-sidebar: #efefea;
+  --surface-page: #faf7f2;
+  --surface-card: #fefdfa;
+  --surface-subtle: #f0ece4;
+  --surface-sidebar: #f4f0e7;
 
-  --text-primary: #17201d;
-  --text-secondary: #46504b;
-  --text-muted: #69726d;
+  --text-primary: #121a2b;
+  --text-secondary: #3a4353;
+  --text-muted: #5d646f;
 
-  --border-default: #e5e5df;
+  --border-default: #e2ddd4;
 
-  --accent: #1f5c4f;
-  --accent-soft: #e5f0ec;
-  --accent-contrast: #ffffff;
-  --focus: #2a7a68;
+  --accent: #162644;
+  --accent-soft: #e1e6f0;
+  --accent-contrast: #fbf8f1;
+  --accent-gold: #cfa354;
+  --accent-gold-ink: #875814;
+  --focus: #a97416;
 
-  --status-success: #1f6b45;
-  --status-warning: #8a5a12;
-  --status-error: #a3271f;
-  --status-info: #2f5d8a;
+  --status-success: #136842;
+  --status-warning: #824c11;
+  --status-error: #b7191c;
+  --status-info: #2a5885;
 
   --cx-radius-control: 0.625rem;
-  --cx-shadow-pop: 0 12px 32px -8px rgb(23 32 29 / 0.18),
-    0 2px 6px rgb(23 32 29 / 0.06);
-  --cx-shadow-raised: 0 1px 2px rgb(23 32 29 / 0.06);
+  --cx-radius-panel: 1rem;
+  --cx-shadow-pop:
+    0 12px 32px -8px rgb(18 26 43 / 0.2), 0 2px 6px rgb(18 26 43 / 0.06);
+  --cx-shadow-raised: 0 1px 2px rgb(18 26 43 / 0.06);
   --cx-sidebar-width: 16rem;
   --cx-sidebar-width-collapsed: 4.5rem;
 
   background: var(--surface-page);
   color: var(--text-primary);
+  font-family: var(--font-centerivo-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/*
+ * CENTERIVO type hierarchy: Regular body, Medium controls and navigation,
+ * SemiBold headings. In the base layer so any explicit weight utility on a
+ * component still wins.
+ */
+@layer base {
+  .centerivo :is(h1, h2, h3) {
+    font-weight: 600;
+    letter-spacing: -0.011em;
+  }
+  .centerivo :is(button, nav a, [role="tab"], label) {
+    font-weight: 500;
+  }
+  /*
+   * Figures line up in tables and stat values. Not applied to the whole
+   * shell: Inter's tabular feature also widens the hyphen, which would
+   * loosen prose such as "Company-wide".
+   */
+  .centerivo :is(td, dd) {
+    font-variant-numeric: tabular-nums;
+  }
 }
 
 /* The Admin shell sits on the sidebar tone; the workspace is an inset panel. */
@@ -146,5 +185,5 @@ body {
   scrollbar-color: transparent transparent;
 }
 .centerivo .cx-scroll:hover {
-  scrollbar-color: rgb(23 32 29 / 0.18) transparent;
+  scrollbar-color: rgb(18 26 43 / 0.18) transparent;
 }
