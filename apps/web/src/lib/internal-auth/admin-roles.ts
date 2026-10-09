@@ -4,6 +4,7 @@ import type {
   AdminRoleSummary,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only reads of the authorized Admin access-levels API
 // (Milestone 5E-2). Mirrors lib/internal-auth/admin-users.ts. The API
@@ -35,7 +36,7 @@ async function adminRolesGet<T>(path: string): Promise<AdminReadResult<T>> {
   let response: Response;
   try {
     response = await fetch(`${getApiUrl()}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: await internalAuthHeaders(token),
       cache: "no-store",
     });
   } catch {

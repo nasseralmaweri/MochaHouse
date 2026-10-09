@@ -11,6 +11,11 @@ export interface AttentionItem {
   description: string;
   // Omitted in 5C where the responsible module doesn't exist yet.
   href?: string;
+  // CENTERIVO Overview: where the item applies — a location name, or
+  // "Company". Optional so older callers are unaffected.
+  context?: string;
+  // The action's wording ("Review", "Open orders"). Defaults to "Review".
+  actionLabel?: string;
 }
 
 // Digital-ordering "needs attention" items. A disabled location is surfaced

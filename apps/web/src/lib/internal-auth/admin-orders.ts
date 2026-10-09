@@ -1,6 +1,7 @@
 import "server-only";
 import type { StoreOrderSummary } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only reads of the authorized Admin Orders API for the dashboard
 // snapshot. Attaches the internal bearer token server-side (never exposed
@@ -34,7 +35,7 @@ export async function getActiveStoreOrders(
   try {
     response = await fetch(
       `${getApiUrl()}/admin/orders?locationId=${encodeURIComponent(locationId)}`,
-      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+      { headers: await internalAuthHeaders(token), cache: "no-store" },
     );
   } catch {
     return { outcome: "error" };

@@ -4,6 +4,7 @@ import type {
   AdminJobApplicationsResponse,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only reads of the HQ Applicants API (Milestone 8C). The API
 // (`/api/v1/admin/careers/applications*`, InternalAuthGuard +
@@ -39,7 +40,7 @@ async function read<T>(path: string): Promise<ReadResult<T>> {
     response = await fetch(
       `${getApiUrl()}/admin/careers/applications${path}`,
       {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: await internalAuthHeaders(token),
         cache: "no-store",
       },
     );

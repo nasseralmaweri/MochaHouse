@@ -1,6 +1,7 @@
 import "server-only";
 import type { AdminAuditEventPage } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only reads of the authorized Admin Activity Log API (Milestone
 // 5F). Mirrors lib/internal-auth/admin-users.ts. The API
@@ -43,7 +44,7 @@ export async function getAdminAuditEvents(
   let response: Response;
   try {
     response = await fetch(`${getApiUrl()}/admin/audit${suffix}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: await internalAuthHeaders(token),
       cache: "no-store",
     });
   } catch {

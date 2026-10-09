@@ -1,23 +1,24 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { AdminNavItem } from "@/lib/admin/nav";
-import { AdminNav } from "./AdminNav";
+import { IconClose } from "@/components/centerivo/Icons";
 
-// The off-canvas navigation drawer for narrow viewports. Opened from the
-// top-bar toggle. Keyboard-operable: Esc closes, focus moves into the
-// drawer on open and returns to the toggle on close, focus is trapped while
-// open, background is inert-ish (pointer + tab). Backdrop click closes.
+// The off-canvas drawer for narrow viewports. It holds the SAME sidebar
+// content as the desktop sidebar (business, location, modules, account) so
+// nothing is reachable only on large screens. Keyboard-operable: Esc closes,
+// focus moves into the drawer on open and returns to the trigger on close,
+// focus is trapped while open, the page behind does not scroll, backdrop
+// click closes.
 export function MobileNav({
   open,
   onClose,
-  items,
   triggerRef,
+  children,
 }: {
   open: boolean;
   onClose: () => void;
-  items: AdminNavItem[];
   triggerRef: React.RefObject<HTMLButtonElement | null>;
+  children: React.ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -29,13 +30,16 @@ export function MobileNav({
     panelRef.current?.focus();
 
     function onKeyDown(event: KeyboardEvent) {
+      // The context popovers handle their own Escape (they stop at the
+      // listbox); only close the drawer when no popover is open.
       if (event.key === "Escape") {
+        if (panelRef.current?.querySelector('[aria-expanded="true"]')) return;
         onClose();
         return;
       }
       if (event.key === "Tab") {
         const focusable = panelRef.current?.querySelectorAll<HTMLElement>(
-          'a[href], button:not([disabled])',
+          'a[href], button:not([disabled]), input:not([disabled])',
         );
         if (!focusable || focusable.length === 0) return;
         const first = focusable[0];
@@ -73,24 +77,19 @@ export function MobileNav({
         ref={panelRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Admin navigation"
+        aria-label="Navigation"
         tabIndex={-1}
-        className="absolute inset-y-0 left-0 flex w-72 max-w-[80%] flex-col gap-4 border-r border-border-default bg-surface-card p-4 focus:outline-none"
+        className="cx-pop-in absolute inset-y-0 left-0 w-80 max-w-[88%] border-r border-border-default bg-surface-sidebar focus:outline-none"
       >
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold text-text-primary">
-            Mocha House Admin
-          </span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex min-h-11 min-w-11 items-center justify-center rounded-xl text-text-secondary hover:bg-surface-subtle focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-            aria-label="Close navigation"
-          >
-            <span aria-hidden="true">✕</span>
-          </button>
-        </div>
-        <AdminNav items={items} onNavigate={onClose} />
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-3 top-3.5 z-10 flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm text-text-secondary transition-colors hover:bg-surface-subtle"
+        >
+          <IconClose className="h-4 w-4" />
+          Close
+        </button>
+        {children}
       </div>
     </div>
   );

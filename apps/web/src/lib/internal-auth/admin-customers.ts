@@ -4,6 +4,7 @@ import type {
   AdminCustomerListResponse,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only reads of the HQ CRM API (Milestone 8A). The API
 // (`/api/v1/admin/customers*`, InternalAuthGuard + PermissionGuard +
@@ -37,7 +38,7 @@ async function read<T>(path: string): Promise<ReadResult<T>> {
   let response: Response;
   try {
     response = await fetch(`${getApiUrl()}/admin/customers${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: await internalAuthHeaders(token),
       cache: "no-store",
     });
   } catch {

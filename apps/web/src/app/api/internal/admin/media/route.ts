@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { INTERNAL_SESSION_COOKIE } from "@/lib/internal-auth/session";
+import { internalAuthHeaders } from "@/lib/internal-auth/active-business";
 
 // Milestone 8F — a DEDICATED proxy for /api/v1/admin/media, sitting in
 // front of the generic [...path] catch-all (see
@@ -37,7 +38,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   let response: Response;
   try {
     response = await fetch(`${getApiUrl()}/admin/media${request.nextUrl.search}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: await internalAuthHeaders(token),
       cache: "no-store",
     });
   } catch {
@@ -74,7 +75,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     response = await fetch(`${getApiUrl()}/admin/media`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${token}`,
+        ...(await internalAuthHeaders(token)),
         "Content-Type": contentType,
       },
       body: bytes,

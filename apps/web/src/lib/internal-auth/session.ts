@@ -1,7 +1,14 @@
 import "server-only";
 import { cache } from "react";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import type { InternalMeResponse } from "@mocha-house/contracts";
+import { resolveActiveBusiness } from "@/lib/admin/business-context";
+import {
+  ACTIVE_TENANT_HEADER,
+  ADMIN_BUSINESS_COOKIE,
+  getAccessibleBusinesses,
+} from "./active-business";
 
 // The "server-only" import above makes it a build error for any Client
 // Component to import this module (directly or transitively). This file
@@ -55,10 +62,32 @@ export const getInternalSession = cache(
       return null;
     }
 
+    // Milestone S0F: the active business comes from the API's own list of
+    // businesses this identity may enter; the cookie is only a validated
+    // preference. Several businesses and no valid choice -> the chooser.
+    const accessible = await getAccessibleBusinesses(token);
+    if (accessible.outcome !== "ok") {
+      return null;
+    }
+    const cookieStore = await cookies();
+    const resolution = resolveActiveBusiness(
+      accessible.businesses,
+      cookieStore.get(ADMIN_BUSINESS_COOKIE)?.value ?? null,
+    );
+    if (resolution.kind === "selection-required") {
+      redirect("/internal/choose-business");
+    }
+    if (resolution.kind === "none") {
+      return null;
+    }
+
     let response: Response;
     try {
       response = await fetch(`${getApiUrl()}/internal/me`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          [ACTIVE_TENANT_HEADER]: resolution.business.id,
+        },
         cache: "no-store",
       });
     } catch {

@@ -6,6 +6,7 @@ import type {
   AdminOrdersOverviewReport,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only read of the authorized Admin Reports API (Milestone 9A).
 // Mirrors lib/internal-auth/admin-platform.ts. The API
@@ -52,7 +53,7 @@ export async function getAdminOrdersOverviewReport(query: {
     response = await fetch(
       `${getApiUrl()}/admin/reports/orders-overview?${params.toString()}`,
       {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: await internalAuthHeaders(token),
         cache: "no-store",
       },
     );
@@ -108,7 +109,7 @@ export async function getAdminLocationPerformanceReport(query: {
     response = await fetch(
       `${getApiUrl()}/admin/reports/location-performance?${params.toString()}`,
       {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: await internalAuthHeaders(token),
         cache: "no-store",
       },
     );
@@ -165,7 +166,7 @@ export async function getAdminOperationsChecklistReport(query: {
     response = await fetch(
       `${getApiUrl()}/admin/reports/operations-checklists?${params.toString()}`,
       {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: await internalAuthHeaders(token),
         cache: "no-store",
       },
     );
@@ -221,7 +222,7 @@ export async function getAdminCustomerGrowthReport(query: {
     response = await fetch(
       `${getApiUrl()}/admin/reports/customer-growth?${params.toString()}`,
       {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: await internalAuthHeaders(token),
         cache: "no-store",
       },
     );

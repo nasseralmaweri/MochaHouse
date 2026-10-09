@@ -1,6 +1,7 @@
 import "server-only";
 import type { AdminPlatformStatus } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only read of the authorized Admin Platform Status API (Milestone
 // 5G). Mirrors lib/internal-auth/admin-audit.ts. The API
@@ -32,7 +33,7 @@ export async function getAdminPlatformStatus(): Promise<AdminPlatformStatusResul
   let response: Response;
   try {
     response = await fetch(`${getApiUrl()}/admin/platform/status`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: await internalAuthHeaders(token),
       cache: "no-store",
     });
   } catch {

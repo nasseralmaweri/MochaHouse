@@ -5,6 +5,7 @@ import type {
   GiftCardConfiguration,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only reads of the HQ Gift Card API (Milestone 7F). The API
 // (`/api/v1/admin/gift-cards*`, InternalAuthGuard + PermissionGuard,
@@ -43,7 +44,7 @@ export async function searchGiftCards(
     response = await fetch(`${getApiUrl()}/admin/gift-cards/search`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${token}`,
+        ...(await internalAuthHeaders(token)),
         "Content-Type": "application/json",
       },
       body: JSON.stringify(input),
@@ -91,7 +92,7 @@ export async function getGiftCardDetail(
   try {
     response = await fetch(
       `${getApiUrl()}/admin/gift-cards/${encodeURIComponent(giftCardId)}`,
-      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+      { headers: await internalAuthHeaders(token), cache: "no-store" },
     );
   } catch {
     return { outcome: "error" };
@@ -131,7 +132,7 @@ export async function getGiftCardConfiguration(): Promise<GiftCardConfigurationR
   let response: Response;
   try {
     response = await fetch(`${getApiUrl()}/admin/gift-cards/configuration`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: await internalAuthHeaders(token),
       cache: "no-store",
     });
   } catch {

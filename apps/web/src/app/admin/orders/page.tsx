@@ -53,7 +53,7 @@ export default function AdminOrdersPage() {
         <AdminPageHeader title="Orders" />
         <AdminForbidden
           title="You're not assigned to that location"
-          description="The location in this link isn't in your assigned scope. Pick one of your locations from the selector above."
+          description="The location in this link isn't in your assigned scope. Pick one of your locations from the location selector in the sidebar."
         />
       </AdminPage>
     );
@@ -80,7 +80,7 @@ export default function AdminOrdersPage() {
         />
         <AdminEmptyState
           title="Select a location"
-          description="The order queue is per location. Choose one from the selector in the top bar."
+          description="The order queue is per location. Choose one from the location selector in the sidebar."
         />
       </AdminPage>
     );
@@ -97,7 +97,7 @@ export default function AdminOrdersPage() {
         />
         <AdminForbidden
           title="Not in your scope for orders"
-          description="You can view orders at some locations, but not this one. Switch to one of your order locations from the selector above."
+          description="You can view orders at some locations, but not this one. Switch to one of your order locations from the location selector in the sidebar."
         />
       </AdminPage>
     );

@@ -4,6 +4,7 @@ import type {
   AdminFranchiseInquiryDetail,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
+import { internalAuthHeaders } from "./active-business";
 
 // Server-only reads of the HQ Franchising API (Milestone 8D). The API
 // (`/api/v1/admin/franchising/inquiries*`, InternalAuthGuard +
@@ -39,7 +40,7 @@ async function read<T>(path: string): Promise<ReadResult<T>> {
     response = await fetch(
       `${getApiUrl()}/admin/franchising/inquiries${path}`,
       {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: await internalAuthHeaders(token),
         cache: "no-store",
       },
     );

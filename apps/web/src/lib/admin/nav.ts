@@ -39,7 +39,7 @@ export function adminNavItems(
   capabilities: AdminCapabilities,
 ): AdminNavItem[] {
   const items: AdminNavItem[] = [
-    { key: "dashboard", label: "Dashboard", href: "/admin" },
+    { key: "dashboard", label: "Overview", href: "/admin" },
   ];
 
   if (
@@ -233,4 +233,79 @@ export function isNavItemActive(item: AdminNavItem, pathname: string): boolean {
     return pathname === "/admin";
   }
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
+}
+
+// "primary"     — the daily operating modules, always visible, no heading.
+// "collapsible" — lower-frequency areas, a quiet heading that expands (and
+//                 opens by itself when it holds the current page).
+// "footer"      — pinned just above the account area.
+export type AdminNavTier = "primary" | "collapsible" | "footer";
+
+export interface AdminNavGroup {
+  key: string;
+  label: string | null;
+  tier: AdminNavTier;
+  items: AdminNavItem[];
+}
+
+// How the flat, permission-filtered item list is organised for display. The
+// grouping is presentation only: which items exist is still decided solely
+// by adminNavItems (the capability map). Unlisted keys fall into "More" so a
+// future module can never silently disappear from the navigation.
+const NAV_GROUPS: ReadonlyArray<{
+  key: string;
+  label: string | null;
+  tier: AdminNavTier;
+  itemKeys: readonly string[];
+}> = [
+  {
+    key: "primary",
+    label: null,
+    tier: "primary",
+    itemKeys: [
+      "dashboard",
+      "orders",
+      "operations",
+      "customers",
+      "menu",
+      "locations",
+      "reports",
+    ],
+  },
+  {
+    key: "growth",
+    label: "Growth",
+    tier: "collapsible",
+    itemKeys: ["loyalty", "promotions", "gift-cards", "marketing"],
+  },
+  {
+    key: "content",
+    label: "Content",
+    tier: "collapsible",
+    itemKeys: ["content", "media"],
+  },
+  {
+    key: "company",
+    label: "Company",
+    tier: "collapsible",
+    itemKeys: ["approvals", "careers", "franchising"],
+  },
+  { key: "admin", label: null, tier: "footer", itemKeys: ["administration"] },
+];
+
+export function groupAdminNavItems(items: AdminNavItem[]): AdminNavGroup[] {
+  const known = new Set(NAV_GROUPS.flatMap((group) => group.itemKeys));
+  const groups: AdminNavGroup[] = NAV_GROUPS.map((group) => ({
+    key: group.key,
+    label: group.label,
+    tier: group.tier,
+    items: group.itemKeys
+      .map((key) => items.find((item) => item.key === key))
+      .filter((item): item is AdminNavItem => item !== undefined),
+  }));
+  const rest = items.filter((item) => !known.has(item.key));
+  if (rest.length > 0) {
+    groups.push({ key: "more", label: "More", tier: "collapsible", items: rest });
+  }
+  return groups.filter((group) => group.items.length > 0);
 }
