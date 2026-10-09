@@ -146,7 +146,10 @@ export class CheckoutService {
       tenant,
     );
 
-    const menu = await this.locationsService.findMenu(request.locationId);
+    const menu = await this.locationsService.findMenu(
+      request.locationId,
+      tenantId,
+    );
     if (!menu) {
       throw new NotFoundException('Location or menu not found.');
     }
@@ -368,7 +371,10 @@ export class CheckoutService {
       request.locationId,
       tenant,
     );
-    const menu = await this.locationsService.findMenu(request.locationId);
+    const menu = await this.locationsService.findMenu(
+      request.locationId,
+      tenantId,
+    );
     if (!menu) {
       throw new NotFoundException('Location or menu not found.');
     }
@@ -415,7 +421,10 @@ export class CheckoutService {
       request.locationId,
       tenant,
     );
-    const menu = await this.locationsService.findMenu(request.locationId);
+    const menu = await this.locationsService.findMenu(
+      request.locationId,
+      tenantId,
+    );
     if (!menu) {
       throw new NotFoundException('Location or menu not found.');
     }
@@ -851,7 +860,11 @@ export class CheckoutService {
       // Revalidate against the current catalog state — payment succeeding
       // does not itself guarantee nothing changed in the window since the
       // first repricing pass.
-      const menu = await this.locationsService.findMenu(request.locationId, tx);
+      const menu = await this.locationsService.findMenu(
+        request.locationId,
+        tenantId,
+        tx,
+      );
       if (!menu) {
         throw new ConflictException(
           `Payment succeeded but this location is no longer orderable. ` +
