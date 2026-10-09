@@ -15,6 +15,7 @@ import type {
   UpdatePromotionRequest,
 } from '@mocha-house/contracts';
 import { Prisma } from '@mocha-house/database';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
@@ -87,23 +88,25 @@ export class PromotionsAdminService {
     return { promotions: promotions.map((p) => this.toAdminPromotion(p)) };
   }
 
+  // Picker data: the active tenant's own catalog and locations only.
   async getOptions(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminPromotionOptions> {
     authorization.assertCorporate('promotions.configure');
     const [products, categories, locations] = await Promise.all([
       this.prisma.product.findMany({
-        where: { isActive: true },
+        where: { tenantId: tenant.tenantId, isActive: true },
         select: { id: true, name: true },
         orderBy: { name: 'asc' },
       }),
       this.prisma.category.findMany({
-        where: { isActive: true },
+        where: { tenantId: tenant.tenantId, isActive: true },
         select: { id: true, name: true },
         orderBy: { displayOrder: 'asc' },
       }),
       this.prisma.location.findMany({
-        where: { isActive: true },
+        where: { tenantId: tenant.tenantId, isActive: true },
         select: { id: true, name: true },
         orderBy: { name: 'asc' },
       }),

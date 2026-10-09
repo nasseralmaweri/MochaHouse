@@ -21,6 +21,7 @@ import {
   CAMPAIGN_NAME_MAX_LENGTH,
 } from '@mocha-house/contracts';
 import { Prisma } from '@mocha-house/database';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
@@ -111,11 +112,13 @@ export class CampaignsAdminService {
 
   async getOptions(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCampaignOptions> {
     authorization.assertCorporate('marketing.view');
     const [products, promotions, loyaltyBonusPromotions] = await Promise.all([
+      // The active tenant's own catalog only.
       this.prisma.product.findMany({
-        where: { isActive: true },
+        where: { tenantId: tenant.tenantId, isActive: true },
         select: {
           id: true,
           name: true,

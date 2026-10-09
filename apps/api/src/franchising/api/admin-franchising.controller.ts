@@ -40,10 +40,15 @@ export class AdminFranchisingController {
   @Get()
   list(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Query('status') status?: string,
     @Query('cursor') cursor?: string,
   ) {
-    return this.service.list({ status, cursor }, request.authorization!);
+    return this.service.list(
+      { status, cursor },
+      request.authorization!,
+      tenant,
+    );
   }
 
   @RequirePermission('franchising.view')
@@ -51,8 +56,9 @@ export class AdminFranchisingController {
   detail(
     @Param('inquiryId') inquiryId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.service.getDetail(inquiryId, request.authorization!);
+    return this.service.getDetail(inquiryId, request.authorization!, tenant);
   }
 
   @RequirePermission('franchising.manage')
@@ -77,8 +83,9 @@ export class AdminFranchisingController {
   listNotes(
     @Param('inquiryId') inquiryId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.notes.listForInquiry(inquiryId, request.authorization!);
+    return this.notes.listForInquiry(inquiryId, request.authorization!, tenant);
   }
 
   @RequirePermission('franchising.manage')

@@ -18,10 +18,12 @@ import type {
   UpdateLoyaltyRewardRequest,
   UpdateLoyaltySettingsRequest,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { LoyaltyAdminService } from '../application/loyalty-admin.service';
 import { LoyaltySettingsService } from '../application/loyalty-settings.service';
 import { LoyaltyRewardsService } from '../application/loyalty-rewards.service';
@@ -54,8 +56,9 @@ export class AdminLoyaltyController {
   search(
     @Query('query') query: string | undefined,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.service.searchCustomers(query, request.authorization!);
+    return this.service.searchCustomers(query, request.authorization!, tenant);
   }
 
   @RequirePermission('loyalty.view')
@@ -63,8 +66,13 @@ export class AdminLoyaltyController {
   detail(
     @Param('customerId') customerId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.service.getCustomerDetail(customerId, request.authorization!);
+    return this.service.getCustomerDetail(
+      customerId,
+      request.authorization!,
+      tenant,
+    );
   }
 
   // Manual add/deduct. `reason` and `operationKey` are required; the actor
@@ -76,12 +84,14 @@ export class AdminLoyaltyController {
     @Param('customerId') customerId: string,
     @Body() body: AdminAdjustMochaBeansRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.adjust(
       customerId,
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -116,8 +126,11 @@ export class AdminLoyaltyController {
 
   @RequirePermission('loyalty.configure')
   @Get('catalog-options')
-  catalogOptions(@Req() request: InternalAuthenticatedRequest) {
-    return this.rewards.getCatalogOptions(request.authorization!);
+  catalogOptions(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.rewards.getCatalogOptions(request.authorization!, tenant);
   }
 
   @RequirePermission('loyalty.configure')
@@ -158,8 +171,11 @@ export class AdminLoyaltyController {
 
   @RequirePermission('loyalty.configure')
   @Get('bonus-promotion-options')
-  bonusPromotionOptions(@Req() request: InternalAuthenticatedRequest) {
-    return this.bonusPromotions.getOptions(request.authorization!);
+  bonusPromotionOptions(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.bonusPromotions.getOptions(request.authorization!, tenant);
   }
 
   @RequirePermission('loyalty.configure')

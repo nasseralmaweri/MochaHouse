@@ -1,9 +1,11 @@
 import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
+import type { TenantContext } from '@mocha-house/database';
 import { AdminAuditReadService } from './admin-audit.read-service';
 import { InternalAuthGuard } from '../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../internal-auth/infrastructure/internal-identity';
+import { CurrentTenantContext } from '../tenancy/current-tenant-context.decorator';
 
 // Administration → Activity log (Milestone 5F). Read-only.
 //
@@ -21,6 +23,7 @@ export class AdminAuditController {
   @Get()
   list(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Query('cursor') cursor?: string,
     @Query('type') type?: string,
     @Query('from') from?: string,
@@ -30,6 +33,7 @@ export class AdminAuditController {
     return this.service.list(
       { cursor, type, from, to, actor },
       request.authorization!,
+      tenant,
     );
   }
 }

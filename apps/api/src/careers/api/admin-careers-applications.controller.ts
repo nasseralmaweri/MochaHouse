@@ -40,6 +40,7 @@ export class AdminCareersApplicationsController {
   @Get()
   list(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Query('status') status?: string,
     @Query('jobOpeningId') jobOpeningId?: string,
     @Query('cursor') cursor?: string,
@@ -47,6 +48,7 @@ export class AdminCareersApplicationsController {
     return this.service.list(
       { status, jobOpeningId, cursor },
       request.authorization!,
+      tenant,
     );
   }
 
@@ -55,8 +57,13 @@ export class AdminCareersApplicationsController {
   detail(
     @Param('applicationId') applicationId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.service.getDetail(applicationId, request.authorization!);
+    return this.service.getDetail(
+      applicationId,
+      request.authorization!,
+      tenant,
+    );
   }
 
   @RequirePermission('applicants.manage')
@@ -81,10 +88,12 @@ export class AdminCareersApplicationsController {
   listNotes(
     @Param('applicationId') applicationId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.notes.listForApplication(
       applicationId,
       request.authorization!,
+      tenant,
     );
   }
 

@@ -51,8 +51,14 @@ export class AdminCatalogController {
   // inactive products; the service asserts corporate scope before reading.
   @RequirePermission('catalog.view')
   @Get('products')
-  listProducts(@Req() request: InternalAuthenticatedRequest) {
-    return this.catalogService.listAdminProducts(request.authorization!);
+  listProducts(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.catalogService.listAdminProducts(
+      request.authorization!,
+      tenant,
+    );
   }
 
   @RequirePermission('catalog.view')
@@ -60,10 +66,12 @@ export class AdminCatalogController {
   getProduct(
     @Param('productId') productId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.catalogService.getAdminProductDetail(
       productId,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -72,8 +80,11 @@ export class AdminCatalogController {
   // inactive menu placements — an Admin manages both.
   @RequirePermission('catalog.view')
   @Get('menus')
-  listMenus(@Req() request: InternalAuthenticatedRequest) {
-    return this.catalogService.listAdminMenus(request.authorization!);
+  listMenus(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.catalogService.listAdminMenus(request.authorization!, tenant);
   }
 
   @RequirePermission('catalog.view')
@@ -81,10 +92,12 @@ export class AdminCatalogController {
   getMenu(
     @Param('menuId') menuId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.catalogService.getAdminMenuDetail(
       menuId,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -111,6 +124,7 @@ export class AdminCatalogController {
     @Param('productId') productId: string,
     @Body() body: AdminUpdateProductRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     // Explicit fields only — the request body is never spread into the
     // service / Prisma, so `slug`, `categoryId`, `currency` etc. in the
@@ -124,6 +138,7 @@ export class AdminCatalogController {
         isActive: body.isActive,
       },
       request.authorization!,
+      tenant,
     );
   }
 
@@ -134,12 +149,14 @@ export class AdminCatalogController {
     @Param('productId') productId: string,
     @Body() body: UpdateMenuProductAssignmentBody,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.catalogService.updateMenuProductAssignment(
       menuId,
       productId,
       body.isActive,
       request.authorization!,
+      tenant,
     );
   }
 

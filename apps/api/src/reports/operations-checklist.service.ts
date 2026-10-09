@@ -3,6 +3,7 @@ import type {
   AdminOperationsChecklistReport,
   AdminOperationsChecklistRow,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthorizationContext } from '../internal-auth/authorization/authorization-context';
 import { businessDateToStorage } from '../operations/application/business-date';
@@ -57,6 +58,7 @@ export class OperationsChecklistReportService {
   async getOperationsChecklistReport(
     query: OperationsChecklistQuery,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminOperationsChecklistReport> {
     // `reports.view` is CORPORATE-only in the permission catalog, so
     // PermissionGuard already rejects a LOCATION grant; this is the
@@ -77,7 +79,10 @@ export class OperationsChecklistReportService {
     const rangeEnd = businessDateToStorage(endDate);
 
     const templates = await this.prisma.checklistTemplate.findMany({
-      where: { key: { in: [OPENING_TEMPLATE_KEY, CLOSING_TEMPLATE_KEY] } },
+      where: {
+        tenantId: tenant.tenantId,
+        key: { in: [OPENING_TEMPLATE_KEY, CLOSING_TEMPLATE_KEY] },
+      },
       select: { id: true, key: true },
     });
     const openingTemplateId =
@@ -93,6 +98,7 @@ export class OperationsChecklistReportService {
         this.prisma.checklistInstance.groupBy({
           by: ['locationId', 'templateId'],
           where: {
+            tenantId: tenant.tenantId,
             templateId: { in: templateIds },
             businessDate: { gte: rangeStart, lte: rangeEnd },
           },
@@ -101,6 +107,7 @@ export class OperationsChecklistReportService {
         this.prisma.checklistInstance.groupBy({
           by: ['locationId', 'templateId'],
           where: {
+            tenantId: tenant.tenantId,
             templateId: { in: templateIds },
             businessDate: { gte: rangeStart, lte: rangeEnd },
             completedAt: { not: null },
@@ -113,6 +120,7 @@ export class OperationsChecklistReportService {
           where: {
             exceptionAt: { not: null },
             checklistInstance: {
+              tenantId: tenant.tenantId,
               templateId: { in: templateIds },
               businessDate: { gte: rangeStart, lte: rangeEnd },
             },
@@ -124,6 +132,7 @@ export class OperationsChecklistReportService {
           },
         }),
         this.prisma.location.findMany({
+          where: { tenantId: tenant.tenantId },
           select: { id: true, name: true, isActive: true },
         }),
       ]);
