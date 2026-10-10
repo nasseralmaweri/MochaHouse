@@ -245,7 +245,9 @@ describe('CMS / Content pages (integration)', () => {
     expect(detail.status).toBe('DRAFT');
     expect(detail.publishedContent).toBeNull();
     expect(detail.hasUnpublishedChanges).toBe(true);
-    expect(detail.draftContent.intro.heading).toEqual(expect.any(String));
+    expect(
+      (detail.draftContent as FranchisingPageContent).intro.heading,
+    ).toEqual(expect.any(String));
 
     // Neither GET wrote a row.
     expect(
@@ -284,8 +286,12 @@ describe('CMS / Content pages (integration)', () => {
     ).body as AdminCmsPageDetail;
 
     expect(detail.status).toBe('DRAFT');
-    expect(detail.draftContent.intro.heading).toBe('Trimmed Heading');
-    expect(detail.draftContent.intro.body).toBe('Trimmed body.');
+    expect((detail.draftContent as FranchisingPageContent).intro.heading).toBe(
+      'Trimmed Heading',
+    );
+    expect((detail.draftContent as FranchisingPageContent).intro.body).toBe(
+      'Trimmed body.',
+    );
     expect(detail.publishedContent).toBeNull();
     expect(detail.hasUnpublishedChanges).toBe(true);
 
@@ -359,8 +365,12 @@ describe('CMS / Content pages (integration)', () => {
 
     expect(edited.status).toBe('PUBLISHED');
     expect(edited.hasUnpublishedChanges).toBe(true);
-    expect(edited.draftContent.intro.heading).toBe('Edited');
-    expect(edited.publishedContent!.intro.heading).not.toBe('Edited');
+    expect((edited.draftContent as FranchisingPageContent).intro.heading).toBe(
+      'Edited',
+    );
+    expect(
+      (edited.publishedContent as FranchisingPageContent).intro.heading,
+    ).not.toBe('Edited');
   });
 
   it('audits the draft save atomically with only changed field keys, never content values', async () => {

@@ -587,6 +587,7 @@ describe('AdminOrdersService (integration)', () => {
     let status = await checkoutService.getStatus(
       confirmation.orderId,
       confirmation.accessToken,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     expect(status.status).toBe('RECEIVED');
 
@@ -601,6 +602,7 @@ describe('AdminOrdersService (integration)', () => {
     status = await checkoutService.getStatus(
       confirmation.orderId,
       confirmation.accessToken,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     expect(status.status).toBe('ACCEPTED');
     // Payment status is reported separately and is unaffected.

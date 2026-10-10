@@ -939,6 +939,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const status = await checkoutService.getStatus(
       confirmation.orderId,
       confirmation.accessToken,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     expect(status.loyaltyBonus?.totalBonusBeans).toBe(20);
   });

@@ -509,11 +509,16 @@ describe('CheckoutService (integration)', () => {
     const status = await checkoutService.getStatus(
       confirmation.orderId,
       confirmation.accessToken,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     expect(status.orderNumber).toBe(confirmation.orderNumber);
 
     await expect(
-      checkoutService.getStatus(confirmation.orderId, 'wrong-token'),
+      checkoutService.getStatus(
+        confirmation.orderId,
+        'wrong-token',
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
     ).rejects.toThrow('Order not found.');
   });
 });

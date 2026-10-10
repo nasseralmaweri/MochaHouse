@@ -55,6 +55,33 @@ export async function removeTestTenantB(client: TenantFixtureClient): Promise<vo
   await client.tenant.deleteMany({ where: { id: TEST_TENANT_B_ID } });
 }
 
+// Security 4B — a THIRD test-only business, so isolation suites can prove
+// every pair (A↔B, A↔C, B↔C) — including pairs where neither business is
+// Mocha House. Same rules as Tenant B: created and removed by the test that
+// uses it, never resolved by application code on its own. Distinct from the
+// suspended "Tenant C" the S0F tenant-resolution spec defines locally.
+export const TEST_TENANT_C_ID = '01a0db02-f800-7000-8000-7e5700000c0c';
+export const TEST_TENANT_C_SLUG = 'test-tenant-c';
+export const TEST_TENANT_C_NAME = 'Test Tenant C (isolation tests only)';
+
+export async function createTestTenantC(client: TenantFixtureClient): Promise<string> {
+  const tenant = await client.tenant.upsert({
+    where: { id: TEST_TENANT_C_ID },
+    update: {},
+    create: {
+      id: TEST_TENANT_C_ID,
+      slug: TEST_TENANT_C_SLUG,
+      name: TEST_TENANT_C_NAME,
+      status: 'ACTIVE',
+    },
+  });
+  return tenant.id;
+}
+
+export async function removeTestTenantC(client: TenantFixtureClient): Promise<void> {
+  await client.tenant.deleteMany({ where: { id: TEST_TENANT_C_ID } });
+}
+
 // A server-side TenantContext for a test that calls a service directly
 // (bypassing the HTTP middleware that normally establishes it). The tenant
 // is always passed EXPLICITLY — there is no default tenant. 'anonymous' is

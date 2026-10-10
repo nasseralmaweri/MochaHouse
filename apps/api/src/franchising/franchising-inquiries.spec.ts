@@ -8,6 +8,7 @@ import type { App } from 'supertest/types';
 import type {
   AdminFranchiseInquiriesResponse,
   AdminFranchiseInquiryDetail,
+  SubmitFranchiseInquiryRequest,
 } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
@@ -96,7 +97,12 @@ describe('Franchising / Inquiries (integration)', () => {
       .post('/api/v1/franchising/inquiries')
       .send(body);
 
-  function inquiryBody(overrides: Record<string, unknown> = {}) {
+  function inquiryBody(
+    overrides: Record<string, unknown> = {},
+    // The real request contract (so optional fields are typed), still
+    // usable wherever the helpers accept an arbitrary — possibly invalid —
+    // body.
+  ): SubmitFranchiseInquiryRequest & Record<string, unknown> {
     return {
       firstName: 'Jordan',
       lastName: 'Lee',
