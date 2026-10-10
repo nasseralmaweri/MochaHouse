@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
+import { headerText } from './header-text';
 import type { EmailSender, SendEmailInput, SendEmailResult } from './email-sender';
 
 // Milestone 8H — the production EmailSender. Credentials are resolved
@@ -40,7 +41,7 @@ export class SesEmailSender implements EmailSender {
   async send(input: SendEmailInput): Promise<SendEmailResult> {
     const response = await this.getClient().send(
       new SendEmailCommand({
-        Source: this.getFromAddress(),
+        Source: formatSource(this.getFromAddress(), input.fromName),
         Destination: { ToAddresses: [input.to] },
         Message: {
           Subject: { Data: input.subject },
@@ -53,4 +54,19 @@ export class SesEmailSender implements EmailSender {
     );
     return { providerMessageId: response.MessageId };
   }
+}
+
+// Security 4A — `"Business Name" <address>`. The display name is made
+// header-safe (no control characters, so no header injection); ASCII names
+// are sent as an RFC 5322 quoted string, anything else as an RFC 2047
+// encoded word. An empty name falls back to the bare address.
+export function formatSource(address: string, displayName?: string): string {
+  const name = headerText(displayName ?? '');
+  if (!name) {
+    return address;
+  }
+  if (/^[\x20-\x7e]*$/.test(name)) {
+    return `"${name.replace(/(["\\])/g, '\\$1')}" <${address}>`;
+  }
+  return `=?UTF-8?B?${Buffer.from(name, 'utf8').toString('base64')}?= <${address}>`;
 }

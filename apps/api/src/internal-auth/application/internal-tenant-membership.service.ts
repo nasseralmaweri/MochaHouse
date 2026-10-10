@@ -70,7 +70,11 @@ export class InternalTenantMembershipService {
         externalSubject: identity.subject,
       });
     }
-    if (identity.email) {
+    // Security 4A — an unbound row is matched by email only when the
+    // identity provider verified that email; otherwise an account that
+    // merely claims someone's address could see (and then enter) a
+    // business it was never invited to.
+    if (identity.email && identity.emailVerified === true) {
       matchers.push({
         externalProvider: identity.provider,
         email: identity.email,

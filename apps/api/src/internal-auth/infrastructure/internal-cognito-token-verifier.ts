@@ -55,6 +55,10 @@ export class InternalCognitoTokenVerifier {
       subject: payload.sub,
       email: typeof payload.email === 'string' ? payload.email : null,
       name: typeof payload.name === 'string' ? payload.name : null,
+      // Cognito ID tokens carry `email_verified` as a boolean; accept the
+      // string form some pools emit, nothing else.
+      emailVerified:
+        payload.email_verified === true || payload.email_verified === 'true',
     };
   }
 }

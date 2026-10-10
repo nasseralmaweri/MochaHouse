@@ -1,3 +1,5 @@
+import { headerText } from './email/header-text';
+
 // Milestone 8H — code-owned templates, deliberately not a database-backed
 // template system (no editor, no WYSIWYG, no CMS integration — out of
 // scope for this slice). Every dynamic value is HTML-escaped before being
@@ -23,29 +25,41 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
+// Security 4A — customer-facing order emails carry the ORDERING business's
+// own name (Tenant.name, resolved by the dispatcher from the event's
+// tenant), never a hardcoded brand. For Mocha House the wording is
+// unchanged.
 export function renderOrderReceived(data: {
+  businessName: string;
   orderNumber: string;
   locationName: string;
 }): RenderedEmail {
+  const businessName = escapeHtml(data.businessName);
   const orderNumber = escapeHtml(data.orderNumber);
   const locationName = escapeHtml(data.locationName);
   return {
-    subject: `Mocha House — order ${data.orderNumber} received`,
-    html: `<p>Mocha House</p><p>We've received your order <strong>${orderNumber}</strong> at ${locationName}. We'll let you know when it's ready.</p>`,
-    text: `Mocha House\n\nWe've received your order ${data.orderNumber} at ${data.locationName}. We'll let you know when it's ready.`,
+    subject: headerText(
+      `${data.businessName} — order ${data.orderNumber} received`,
+    ),
+    html: `<p>${businessName}</p><p>We've received your order <strong>${orderNumber}</strong> at ${locationName}. We'll let you know when it's ready.</p>`,
+    text: `${data.businessName}\n\nWe've received your order ${data.orderNumber} at ${data.locationName}. We'll let you know when it's ready.`,
   };
 }
 
 export function renderOrderReady(data: {
+  businessName: string;
   orderNumber: string;
   locationName: string;
 }): RenderedEmail {
+  const businessName = escapeHtml(data.businessName);
   const orderNumber = escapeHtml(data.orderNumber);
   const locationName = escapeHtml(data.locationName);
   return {
-    subject: `Mocha House — order ${data.orderNumber} is ready`,
-    html: `<p>Mocha House</p><p>Your order <strong>${orderNumber}</strong> is ready for pickup at ${locationName}.</p>`,
-    text: `Mocha House\n\nYour order ${data.orderNumber} is ready for pickup at ${data.locationName}.`,
+    subject: headerText(
+      `${data.businessName} — order ${data.orderNumber} is ready`,
+    ),
+    html: `<p>${businessName}</p><p>Your order <strong>${orderNumber}</strong> is ready for pickup at ${locationName}.</p>`,
+    text: `${data.businessName}\n\nYour order ${data.orderNumber} is ready for pickup at ${data.locationName}.`,
   };
 }
 

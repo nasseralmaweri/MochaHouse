@@ -5,6 +5,7 @@ import type {
 } from '@mocha-house/contracts';
 import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../prisma/prisma.service';
+import { businessDisplayName } from '../tenancy/business-name';
 import type { AuthorizationContext } from '../internal-auth/authorization/authorization-context';
 import { businessDateToStorage } from '../operations/application/business-date';
 import {
@@ -204,8 +205,8 @@ export class OperationsChecklistReportService {
       locations: rows,
       source: {
         scope: 'INTERNAL_OPERATIONS',
-        scopeLabel:
-          'Store operations data recorded in the Mocha House platform.',
+        // Security 4A — names the report's own business, never a brand.
+        scopeLabel: `Store operations data recorded in the ${await businessDisplayName(this.prisma, tenant.tenantId)} platform.`,
         freshnessLabel: 'Live platform data',
       },
     };

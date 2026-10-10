@@ -203,6 +203,7 @@ describe('InternalAuthGuard', () => {
       subject: 'internal-dev:admin@example.com',
       email: 'admin@example.com',
       name: null,
+      emailVerified: false,
     });
     expect(request.internalUser).toBe(activeUser);
     // Never writes the customer request contract.
@@ -219,6 +220,7 @@ describe('InternalAuthGuard', () => {
       subject: 'internal-dev:other@example.com',
       email: 'other@example.com',
       name: null,
+      emailVerified: false,
     });
   });
 

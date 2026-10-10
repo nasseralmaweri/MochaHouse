@@ -25,6 +25,13 @@ export interface InternalIdentity {
   subject: string;
   email: string | null;
   name: string | null;
+  // Security 4A — true only when the identity provider itself confirmed the
+  // email address (Cognito `email_verified`). An unverified or absent value
+  // means the email is just a claim: it may never be used to find or bind
+  // an InternalUser (see InternalUsersService.findUnboundByEmail and
+  // InternalTenantMembershipService.findMemberships). Optional so that an
+  // identity source that does not state it fails closed.
+  emailVerified?: boolean;
 }
 
 // Attached to the request by InternalAuthGuard, and only ever by it:

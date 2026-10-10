@@ -10,6 +10,7 @@ import {
 } from '@mocha-house/contracts';
 import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { businessDisplayName } from '../../tenancy/business-name';
 
 // Milestone 8D — the PUBLIC franchise-inquiry submission. No auth, no
 // account. Every field is validated server-side. The response is ONLY
@@ -24,6 +25,12 @@ export class FranchiseInquiriesPublicService {
     request: SubmitFranchiseInquiryRequest,
     tenant: TenantContext,
   ): Promise<SubmitFranchiseInquiryResponse> {
+    // Security 4A — the consent wording names the business receiving the
+    // inquiry (this storefront's own business), never a hardcoded brand.
+    const businessName = await businessDisplayName(
+      this.prisma,
+      tenant.tenantId,
+    );
     const data = {
       firstName: this.text(
         request?.firstName,
@@ -77,7 +84,10 @@ export class FranchiseInquiriesPublicService {
         'additional information',
         FRANCHISE_INQUIRY_MESSAGE_MAX_LENGTH,
       ),
-      consentAcknowledged: this.consent(request?.consentAcknowledged),
+      consentAcknowledged: this.consent(
+        request?.consentAcknowledged,
+        businessName,
+      ),
       // Milestone S0D-2D — root ownership comes ONLY from the request's
       // server-resolved TenantContext, never from client input.
       tenantId: tenant.tenantId,
@@ -167,10 +177,10 @@ export class FranchiseInquiriesPublicService {
     return value;
   }
 
-  private consent(raw: unknown): boolean {
+  private consent(raw: unknown, businessName: string): boolean {
     if (raw !== true) {
       throw new BadRequestException(
-        'Please acknowledge that Mocha House may contact you regarding this inquiry.',
+        `Please acknowledge that ${businessName} may contact you regarding this inquiry.`,
       );
     }
     return true;

@@ -197,14 +197,20 @@ function validateFranchisingContent(raw: unknown): FranchisingPageContent {
   };
 }
 
+// Security 4A — default content is shared by every business, so it never
+// names one. BUSINESS_NAME_TOKEN marks where the business's own name goes;
+// defaultContentFor() substitutes it (for Mocha House the text is
+// unchanged).
+export const BUSINESS_NAME_TOKEN = '{{businessName}}';
+
 const FRANCHISING_DEFAULT_CONTENT: FranchisingPageContent = {
   intro: {
     heading: 'A growing coffeehouse brand',
-    body: 'Mocha House is built around quality coffee, a warm neighborhood feel, and consistent day-to-day operations. We’re exploring franchising as a way to bring that experience to new communities alongside motivated local owners.',
+    body: `${BUSINESS_NAME_TOKEN} is built around quality coffee, a warm neighborhood feel, and consistent day-to-day operations. We’re exploring franchising as a way to bring that experience to new communities alongside motivated local owners.`,
   },
   opportunity: {
     heading: 'The opportunity',
-    body: 'As a franchisee, you would operate a Mocha House location using our brand, recipes, and operating know-how, backed by ongoing support from our team. Specific terms — investment, fees, and territory details — are worked out individually with qualified candidates as part of our review process.',
+    body: `As a franchisee, you would operate a ${BUSINESS_NAME_TOKEN} location using our brand, recipes, and operating know-how, backed by ongoing support from our team. Specific terms — investment, fees, and territory details — are worked out individually with qualified candidates as part of our review process.`,
   },
   process: {
     heading: 'How it works',
@@ -225,7 +231,7 @@ const FRANCHISING_DEFAULT_CONTENT: FranchisingPageContent = {
   },
   cta: {
     heading: 'Interested?',
-    body: "Interested in bringing Mocha House to your area? Start with a short inquiry — it only takes a few minutes.",
+    body: `Interested in bringing ${BUSINESS_NAME_TOKEN} to your area? Start with a short inquiry — it only takes a few minutes.`,
     buttonLabel: 'Submit a franchise inquiry',
   },
   seo: {
@@ -334,7 +340,7 @@ async function validateHomeReferences(
 
 const HOME_DEFAULT_CONTENT: HomePageContent = {
   hero: {
-    headline: 'Welcome to Mocha House',
+    headline: `Welcome to ${BUSINESS_NAME_TOKEN}`,
     supportingText:
       'Freshly brewed coffee and a warm neighborhood feel, right in your community.',
     buttonLabel: 'Order Online',
@@ -367,6 +373,30 @@ export const CMS_PAGE_REGISTRY: Record<CmsPageKey, CmsPageRegistryEntry> = {
     validateReferences: validateHomeReferences,
   },
 };
+
+// The entry's default content for one business: every BUSINESS_NAME_TOKEN
+// in every string replaced by that business's name. Returns a fresh object
+// (the shared defaults are never mutated).
+export function defaultContentFor(
+  entry: CmsPageRegistryEntry,
+  businessName: string,
+): CmsPageContent {
+  const fill = (value: unknown): unknown => {
+    if (typeof value === 'string') {
+      return value.split(BUSINESS_NAME_TOKEN).join(businessName);
+    }
+    if (Array.isArray(value)) {
+      return value.map(fill);
+    }
+    if (value !== null && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value).map(([k, v]) => [k, fill(v)]),
+      );
+    }
+    return value;
+  };
+  return fill(entry.defaultContent) as CmsPageContent;
+}
 
 export function getRegistryEntry(key: string): CmsPageRegistryEntry | null {
   if ((CMS_PAGE_KEYS as readonly string[]).includes(key)) {
