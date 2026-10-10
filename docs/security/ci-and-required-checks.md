@@ -63,11 +63,20 @@ these hold — no single one is trusted alone:
    connection `options` or `PGOPTIONS`, no second database URL naming another
    database.
 3. **Disposable marker:** the database's own catalog settings
-   (`pg_db_role_setting`) carry `centerivo.disposable_database` equal to its
-   name and `centerivo.disposable_token` equal to the run's token. Only
-   `createDisposableDatabase` writes the marker, and only onto a database it
-   has just created — an existing database is never marked, and a restored
-   dump does not carry it.
+   (`pg_db_role_setting`, database-wide entries only) carry
+   `centerivo.disposable_database` equal to its name and
+   `centerivo.disposable_token` equal to the run's token. Role-level settings
+   and connection options cannot fake it, and `CREATE DATABASE … TEMPLATE`
+   copies do not inherit it. Only `createDisposableDatabase` writes the
+   marker, and only onto a database it has just created — an existing
+   database is never marked.
+
+   **The marker alone does not make a database safe to use.**
+   `pg_dump --create` preserves database-level settings, so restoring such a
+   dump recreates the marker (under the original database name); any
+   database owner can also set it deliberately; and it says nothing about
+   the data inside the database. It is therefore only one of four
+   independent checks, and the guard refuses unless all four hold.
 4. **Fictional businesses only:** every Tenant is Mocha House (Tenant #1 under
    its own slug) or a visibly-test `…7e57…` business; ambiguous identities
    and more than 25 businesses are refused.
@@ -94,9 +103,30 @@ changes one without a classification.
 `pnpm --filter @mocha-house/database integrity:check` reports, read-only,
 references that point at another business, at nothing, or contradict their
 type. It runs in a `READ ONLY` transaction (SELECT privileges suffice),
-prints counts by relationship type and primary keys only, never the
-connection string, and exits 1 on violations. CI runs it on every freshly
-seeded database in the tenant isolation job.
+never repairs anything, prints counts by relationship type and primary keys
+only, and never the connection string. CI runs it on every freshly seeded
+database in the tenant isolation job.
+
+Severity rules:
+
+- A reference that resolves to **another business** is always a violation —
+  for live and historical rows alike.
+- A **missing** target is a violation for live references; it is a warning
+  only for history (snapshots, audit entries, processed / sent / failed
+  events). A row still being acted on — a `PENDING` outbox event or
+  notification delivery — with a missing target is a violation.
+- A polymorphic **type the inventory cannot resolve** is a violation and is
+  listed under **Not checkable** with its row count: its target is unknown,
+  so a cross-business link cannot be ruled out. Audit entries whose target
+  is not a record id are verified too — configuration audits must name
+  `company`, notification-recipient audits must name a purpose of the same
+  business.
+
+The report's **verdict** is `CLEAN` only with zero violations and zero rows
+that could not be evaluated (`INCOMPLETE` otherwise, `VIOLATIONS` when any
+violation exists). By-design exclusions (snapshot JSON, external ids) are
+listed under Not checkable without a row count. Exit codes: 0 clean,
+1 violations, 3 incomplete, 2 the check could not run.
 
 ## Running the same checks locally
 

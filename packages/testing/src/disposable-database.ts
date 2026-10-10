@@ -19,12 +19,18 @@ import { Client } from "pg";
 //      `options` that could override server settings, and no second
 //      database URL in the environment naming a different database.
 //   3. The database itself carries the disposable marker, read from the
-//      server catalog (pg_db_role_setting), not from the session: both the
-//      marker's database name and its token must match. The marker is only
-//      ever written by `createDisposableDatabase`, which writes it onto a
-//      database it has JUST created — never onto an existing one — so a
-//      production or development database cannot acquire it by accident,
-//      and a dump restored elsewhere does not carry it.
+//      server catalog (pg_db_role_setting, database-wide entries only), not
+//      from the session: both the marker's database name and its token
+//      must match. Role-level settings and connection options cannot fake
+//      it, and `CREATE DATABASE ... TEMPLATE` copies do not inherit it. The
+//      marker is only ever written by `createDisposableDatabase`, onto a
+//      database it has JUST created — never onto an existing one.
+//
+//      The marker alone is NOT proof of safety: `pg_dump --create` emits
+//      database-level settings (`ALTER DATABASE ... SET`), so restoring
+//      such a dump recreates the marker under the original name, and any
+//      database owner can set it deliberately. It also says nothing about
+//      the data inside. That is why it is one of four independent checks.
 //   4. Every business (Tenant row) in it is an approved fictional test
 //      identity, and no identity is ambiguous (a known id with a different
 //      slug, or a known slug under a different id).

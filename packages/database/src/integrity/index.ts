@@ -13,9 +13,12 @@ export {
 export {
   checkTenantIntegrity,
   formatTenantIntegrityReport,
+  integrityVerdict,
   type FindingType,
+  type IntegrityVerdict,
   type IntegrityQueryable,
   type KindSummary,
+  type NotCheckableEntry,
   type RelationshipFinding,
   type TenantIntegrityOptions,
   type TenantIntegrityReport,

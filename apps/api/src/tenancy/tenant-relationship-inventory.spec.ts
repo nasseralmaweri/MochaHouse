@@ -46,6 +46,7 @@ interface Model {
   fields: Map<string, Field>;
   relations: Relation[];
   primaryKey: string[];
+  body: string;
 }
 
 function parseSchema(source: string): Map<string, Model> {
@@ -56,6 +57,7 @@ function parseSchema(source: string): Map<string, Model> {
       fields: new Map(),
       relations: [],
       primaryKey: [],
+      body: match[2],
     };
     for (const rawLine of match[2].split('\n')) {
       const line = rawLine.replace(/\/\/.*$/, '').trim();
@@ -271,6 +273,35 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
           stale.push(`${entry.id}: target ${target} is not business-owned`);
         }
       }
+      if (entry.kind === 'polymorphic') {
+        for (const [type, key] of Object.entries(entry.keyedTargets ?? {})) {
+          if (MODEL_TENANCY[key.model] !== 'tenant') {
+            stale.push(
+              `${entry.id}: keyed target ${key.model} is not business-owned`,
+            );
+          }
+          if (!models.get(key.model)?.fields.has(key.column)) {
+            stale.push(
+              `${entry.id}: ${type} key ${key.model}.${key.column} not found`,
+            );
+          }
+          // The key must identify one record per business.
+          if (
+            !models
+              .get(key.model)
+              ?.body.includes(`@@unique([tenantId, ${key.column}])`)
+          ) {
+            stale.push(
+              `${entry.id}: ${key.model}.${key.column} is not unique per business`,
+            );
+          }
+        }
+        if (entry.activeWhen && !model.fields.has(entry.activeWhen.column)) {
+          stale.push(
+            `${entry.id}: active column ${entry.activeWhen.column} not found`,
+          );
+        }
+      }
       if (entry.kind === 'polymorphic' && !model.fields.has(entry.typeColumn)) {
         stale.push(`${entry.id}: type column ${entry.typeColumn} not found`);
       }
@@ -357,7 +388,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       const entry = byId.get(id) as PolymorphicReference;
       return new Set([
         ...Object.keys(entry.targets),
-        ...entry.nonRecordTypes,
+        ...Object.keys(entry.keyedTargets ?? {}),
+        ...Object.keys(entry.fixedTargets ?? {}),
         ...(entry.nullForTypes ?? []),
       ]);
     };

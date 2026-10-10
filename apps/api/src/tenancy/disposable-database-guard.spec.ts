@@ -246,6 +246,65 @@ describe('Disposable database guard (Security 4C-1)', () => {
       );
     });
 
+    it('a forged test environment (all flags, the right token, NODE_ENV=development with a fake JEST_WORKER_ID) cannot unlock an unmarked database', async () => {
+      const name = scratchName('forgedenv');
+      await createUnmarked(name);
+      const forged = {
+        ...process.env,
+        NODE_ENV: 'development',
+        JEST_WORKER_ID: '99',
+        CENTERIVO_TEST_DATABASE: '1',
+        CENTERIVO_TEST_DB_TOKEN: token,
+      };
+      expect(
+        await refusal(assertDisposableDatabase(urlFor(name), forged)),
+      ).toMatch(/\(marker\).*no disposable marker/);
+    });
+
+    it('ignores a marker forged as a ROLE setting (ALTER ROLE ... IN DATABASE), even though the session sees it', async () => {
+      const name = scratchName('roleforged');
+      await createUnmarked(name);
+      const role = new URL(baseUrl).username;
+      await raw(baseUrl, async (c) => {
+        await c.query(
+          `ALTER ROLE "${role}" IN DATABASE "${name}" SET ${DISPOSABLE_TOKEN_SETTING} = '${token}'`,
+        );
+        await c.query(
+          `ALTER ROLE "${role}" IN DATABASE "${name}" SET ${DISPOSABLE_NAME_SETTING} = '${name}'`,
+        );
+      });
+      try {
+        const seen = await raw(urlFor(name), (c) =>
+          c.query<{ t: string }>(
+            `SELECT current_setting('${DISPOSABLE_TOKEN_SETTING}', true) AS t`,
+          ),
+        );
+        expect(seen.rows[0].t).toBe(token);
+        expect(await refusal(assertDisposableDatabase(urlFor(name)))).toMatch(
+          /\(marker\).*no disposable marker/,
+        );
+      } finally {
+        await raw(baseUrl, (c) =>
+          c.query(`ALTER ROLE "${role}" IN DATABASE "${name}" RESET ALL`),
+        );
+      }
+    });
+
+    it('a copy made from a marked database (CREATE DATABASE ... TEMPLATE) does not inherit the marker', async () => {
+      const original = scratchName('tplsrc');
+      await createDisposableDatabase(baseUrl, original);
+      guardCreated.push(original);
+      const copy = scratchName('tplcopy');
+      await raw(baseUrl, (c) =>
+        c.query(`CREATE DATABASE "${copy}" TEMPLATE "${original}"`),
+      );
+      rawCreated.push(copy);
+      expect(await markerOf(copy)).toEqual([]);
+      expect(await refusal(assertDisposableDatabase(urlFor(copy)))).toMatch(
+        /\(marker\).*no disposable marker/,
+      );
+    });
+
     it('never marks an existing database: creating over it is refused and it stays unmarked', async () => {
       const name = scratchName('existing');
       await createUnmarked(name);

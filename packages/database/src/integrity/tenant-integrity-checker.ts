@@ -13,10 +13,26 @@ import {
 //
 // For every relationship in the inventory it counts rows whose reference
 // resolves to ANOTHER business's record (cross-tenant), resolves to nothing
-// (missing target), is absent although required, or contradicts its type
-// (polymorphic scope rules). It never writes: all queries run inside one
-// `READ ONLY` transaction (a consistent snapshot) that is always rolled
-// back, so it needs nothing beyond SELECT privileges.
+// (missing target), is absent although required, carries an id its type
+// does not allow, or has a type the inventory cannot resolve. It never
+// writes: all queries run inside one `READ ONLY` transaction (a consistent
+// snapshot) that is always rolled back, so it needs nothing beyond SELECT
+// privileges. It never repairs or deletes anything.
+//
+// Severity rules:
+//   - a reference that resolves to another business is ALWAYS a violation,
+//     for live and historical rows alike;
+//   - a missing target is a violation for live references, and a warning
+//     only for history (snapshots, audit entries, processed / failed
+//     events) — but a row still being acted on (e.g. a PENDING outbox
+//     event) with a missing target is a violation;
+//   - a polymorphic type the inventory cannot resolve is a violation (its
+//     target cannot be checked at all) and is also listed under
+//     `notCheckable` with its row count.
+//
+// The report's `verdict` is 'clean' only with zero violations AND zero rows
+// that could not be evaluated; documented by-design exclusions (snapshot
+// JSON, external ids) are listed but never hide data.
 //
 // Findings carry counts and, optionally, the primary-key values of a few
 // offending rows — never row contents, names, emails, codes or amounts.
@@ -56,14 +72,27 @@ export interface KindSummary {
   warnings: number;
 }
 
+export interface NotCheckableEntry {
+  readonly id: string;
+  readonly reason: string;
+  // Rows that could not be evaluated; null for a by-design exclusion that
+  // holds no live references at all.
+  readonly rows: number | null;
+}
+
+export type IntegrityVerdict = 'clean' | 'violations' | 'incomplete';
+
 export interface TenantIntegrityReport {
+  // 'clean' only when there are no violations and no unevaluated rows.
+  readonly verdict: IntegrityVerdict;
   readonly relationshipsChecked: number;
   readonly violations: number;
   readonly warnings: number;
+  // Rows that exist but could not be evaluated (never counted as clean).
+  readonly uncheckedRows: number;
   readonly byKind: Readonly<Record<RelationshipKind, KindSummary>>;
   readonly findings: readonly RelationshipFinding[];
-  // Relationships the checker cannot verify, with the reason.
-  readonly notCheckable: ReadonlyArray<{ id: string; reason: string }>;
+  readonly notCheckable: readonly NotCheckableEntry[];
 }
 
 export interface TenantIntegrityOptions {
@@ -72,6 +101,15 @@ export interface TenantIntegrityOptions {
   relationships?: readonly TenantRelationship[];
   // Per-statement timeout inside the read-only transaction.
   statementTimeoutMs?: number;
+}
+
+export function integrityVerdict(
+  violations: number,
+  uncheckedRows: number,
+): IntegrityVerdict {
+  if (violations > 0) return 'violations';
+  if (uncheckedRows > 0) return 'incomplete';
+  return 'clean';
 }
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -89,16 +127,21 @@ function keyExpression(model: TenantOwnedModel): string {
     : `concat_ws(':', ${keys.map((k) => `c.${ident(k)}::text`).join(', ')})`;
 }
 
-interface JoinCheck {
+interface ReferenceCheck {
   relationship: TenantRelationship;
   model: TenantOwnedModel;
   target: TenantOwnedModel;
-  // SQL for the referenced id, in terms of alias `c`.
+  // The target column the reference names (`id`, or a per-business key).
+  targetColumn: string;
+  // SQL for the referenced value, in terms of alias `c`.
   reference: string;
   // Extra AND-condition (e.g. a polymorphic type) and its parameters.
   condition?: string;
   params: unknown[];
   missingSeverity: 'violation' | 'warning';
+  // SQL condition (alias `c`) marking rows still being acted on, whose
+  // missing target is always a violation.
+  active?: string;
   detail?: string;
 }
 
@@ -111,7 +154,7 @@ export async function checkTenantIntegrity(
   const timeout = Math.max(1, Math.floor(options.statementTimeoutMs ?? 60_000));
 
   const findings: RelationshipFinding[] = [];
-  const notCheckable: Array<{ id: string; reason: string }> = [];
+  const notCheckable: NotCheckableEntry[] = [];
   const byKind = {} as Record<RelationshipKind, KindSummary>;
   for (const kind of [
     'composite-fk-candidate',
@@ -146,53 +189,81 @@ export async function checkTenantIntegrity(
     return rows.map((row) => row.key);
   };
 
-  const runJoinCheck = async (check: JoinCheck) => {
-    const from = `FROM ${ident(check.model)} c
-      LEFT JOIN ${ident(check.target)} p ON p."id" = (${check.reference})`;
+  // Resolves each reference against the target table by EXISTS: one row of
+  // the SAME business means the reference is sound; otherwise a row of
+  // another business makes it cross-tenant, and no row at all makes it
+  // missing. (For record ids, which are globally unique, this is the same as
+  // a join; for per-business keys it is the only correct reading.)
+  const checkReferences = async (check: ReferenceCheck) => {
+    const target = ident(check.target);
+    const column = ident(check.targetColumn);
+    const same = `EXISTS (SELECT 1 FROM ${target} p WHERE p.${column}::text = (${check.reference}) AND p."tenantId" = c."tenantId")`;
+    const other = `EXISTS (SELECT 1 FROM ${target} p WHERE p.${column}::text = (${check.reference}) AND p."tenantId" <> c."tenantId")`;
+    const from = `FROM ${ident(check.model)} c`;
     const base = `(${check.reference}) IS NOT NULL${
       check.condition ? ` AND ${check.condition}` : ''
     }`;
-    const crossWhere = `${base} AND p."id" IS NOT NULL AND p."tenantId" <> c."tenantId"`;
-    const missingWhere = `${base} AND p."id" IS NULL`;
+    const crossWhere = `${base} AND NOT ${same} AND ${other}`;
+    const missingWhere = `${base} AND NOT ${same} AND NOT ${other}`;
+    const active = check.active ?? 'false';
+    const missingActiveWhere = `${missingWhere} AND (${active})`;
+    const missingOtherWhere = `${missingWhere} AND NOT (${active})`;
     const { rows } = await client.query<{
       cross_tenant: number;
-      missing: number;
+      missing_active: number;
+      missing_other: number;
     }>(
       `SELECT count(*) FILTER (WHERE ${crossWhere})::int AS cross_tenant,
-              count(*) FILTER (WHERE ${missingWhere})::int AS missing
+              count(*) FILTER (WHERE ${missingActiveWhere})::int AS missing_active,
+              count(*) FILTER (WHERE ${missingOtherWhere})::int AS missing_other
          ${from} WHERE ${base}`,
       check.params,
     );
-    const cross = rows[0]?.cross_tenant ?? 0;
-    const missing = rows[0]?.missing ?? 0;
+    const counts = rows[0] ?? {
+      cross_tenant: 0,
+      missing_active: 0,
+      missing_other: 0,
+    };
     const kind = check.relationship.kind;
-    if (cross > 0) {
+    const emit = async (
+      count: number,
+      type: FindingType,
+      severity: 'violation' | 'warning',
+      where: string,
+      detail?: string,
+    ) => {
+      if (count === 0) return;
       record({
         relationshipId: check.relationship.id,
         kind,
-        type: 'cross-tenant',
-        severity: 'violation',
-        count: cross,
-        detail: check.detail,
-        sampleKeys: await samples(from, crossWhere, check.params, check.model),
+        type,
+        severity,
+        count,
+        detail,
+        sampleKeys: await samples(from, where, check.params, check.model),
       });
-    }
-    if (missing > 0) {
-      record({
-        relationshipId: check.relationship.id,
-        kind,
-        type: 'missing-target',
-        severity: check.missingSeverity,
-        count: missing,
-        detail: check.detail,
-        sampleKeys: await samples(
-          from,
-          missingWhere,
-          check.params,
-          check.model,
-        ),
-      });
-    }
+    };
+    await emit(
+      counts.cross_tenant,
+      'cross-tenant',
+      'violation',
+      crossWhere,
+      check.detail,
+    );
+    await emit(
+      counts.missing_active,
+      'missing-target',
+      'violation',
+      missingActiveWhere,
+      [check.detail, 'still active'].filter(Boolean).join(', '),
+    );
+    await emit(
+      counts.missing_other,
+      'missing-target',
+      check.missingSeverity,
+      missingOtherWhere,
+      check.detail,
+    );
   };
 
   const countWhere = async (
@@ -202,7 +273,7 @@ export async function checkTenantIntegrity(
     type: FindingType,
     severity: 'violation' | 'warning',
     detail?: string,
-  ) => {
+  ): Promise<number> => {
     const from = `FROM ${ident(relationship.model)} c`;
     const { rows } = await client.query<{ n: number }>(
       `SELECT count(*)::int AS n ${from} WHERE ${where}`,
@@ -220,6 +291,7 @@ export async function checkTenantIntegrity(
         sampleKeys: await samples(from, where, params, relationship.model),
       });
     }
+    return count;
   };
 
   const checkDirect = async (relationship: DirectReference) => {
@@ -236,10 +308,11 @@ export async function checkTenantIntegrity(
         'violation',
       );
     }
-    await runJoinCheck({
+    await checkReferences({
       relationship,
       model: relationship.model,
       target: relationship.target,
+      targetColumn: 'id',
       reference: relationship.hasForeignKey ? column : `NULLIF(${column}, '')`,
       params: [],
       missingSeverity:
@@ -250,17 +323,48 @@ export async function checkTenantIntegrity(
   const checkPolymorphic = async (relationship: PolymorphicReference) => {
     const column = `c.${ident(relationship.column)}`;
     const type = `c.${ident(relationship.typeColumn)}::text`;
-    for (const [value, target] of Object.entries(relationship.targets)) {
-      await runJoinCheck({
+    // Status labels are code-defined enum values; validated, then inlined.
+    const active = relationship.activeWhen
+      ? `c.${ident(relationship.activeWhen.column)}::text IN (${relationship.activeWhen.values
+          .map((v) => `'${ident(v).slice(1, -1)}'`)
+          .join(', ')})`
+      : undefined;
+    const resolve = async (
+      value: string,
+      target: TenantOwnedModel,
+      targetColumn: string,
+    ) =>
+      checkReferences({
         relationship,
         model: relationship.model,
         target,
+        targetColumn,
         reference: `NULLIF(${column}, '')`,
         condition: `${type} = $1`,
         params: [value],
         missingSeverity: relationship.missingTarget,
+        active,
         detail: value,
       });
+    for (const [value, target] of Object.entries(relationship.targets)) {
+      await resolve(value, target, 'id');
+    }
+    for (const [value, key] of Object.entries(
+      relationship.keyedTargets ?? {},
+    )) {
+      await resolve(value, key.model, key.column);
+    }
+    for (const [value, fixed] of Object.entries(
+      relationship.fixedTargets ?? {},
+    )) {
+      await countWhere(
+        relationship,
+        `${type} = $1 AND ${column} IS DISTINCT FROM $2`,
+        [value, fixed],
+        'invalid-reference',
+        'violation',
+        `${value} must name '${fixed}'`,
+      );
     }
     for (const value of relationship.nullForTypes ?? []) {
       await countWhere(
@@ -284,25 +388,37 @@ export async function checkTenantIntegrity(
     }
     const known = [
       ...Object.keys(relationship.targets),
-      ...relationship.nonRecordTypes,
+      ...Object.keys(relationship.keyedTargets ?? {}),
+      ...Object.keys(relationship.fixedTargets ?? {}),
       ...(relationship.nullForTypes ?? []),
     ];
-    const { rows } = await client.query<{ value: string; n: number }>(
+    const unknownWhere = `${type} IS NULL OR NOT (${type} = ANY($1::text[]))`;
+    const { rows } = await client.query<{ value: string | null; n: number }>(
       `SELECT ${type} AS value, count(*)::int AS n FROM ${ident(relationship.model)} c
-        WHERE NOT (${type} = ANY($1::text[]))
-        GROUP BY 1 ORDER BY 1 LIMIT 20`,
+        WHERE ${unknownWhere} GROUP BY 1 ORDER BY 1`,
       [known],
     );
     for (const row of rows) {
       // Type values are code-defined labels, never customer data.
+      const label = row.value ?? '(null)';
       record({
         relationshipId: relationship.id,
         kind: relationship.kind,
         type: 'unresolved-type',
-        severity: 'warning',
+        severity: 'violation',
         count: row.n,
-        detail: row.value,
-        sampleKeys: [],
+        detail: label,
+        sampleKeys: await samples(
+          `FROM ${ident(relationship.model)} c`,
+          row.value === null ? `${type} IS NULL` : `${type} = $1`,
+          row.value === null ? [] : [row.value],
+          relationship.model,
+        ),
+      });
+      notCheckable.push({
+        id: relationship.id,
+        reason: `unknown ${relationship.typeColumn} "${label}": its target cannot be resolved, so cross-business links cannot be ruled out`,
+        rows: row.n,
       });
     }
   };
@@ -310,10 +426,11 @@ export async function checkTenantIntegrity(
   const checkJson = async (relationship: JsonReference) => {
     for (const { path, target } of relationship.paths) {
       for (const segment of path) ident(segment);
-      await runJoinCheck({
+      await checkReferences({
         relationship,
         model: relationship.model,
         target,
+        targetColumn: 'id',
         reference: `NULLIF(c.${ident(relationship.column)} #>> $1::text[], '')`,
         params: [path],
         missingSeverity: 'violation',
@@ -341,7 +458,8 @@ export async function checkTenantIntegrity(
           if (relationship.paths.length === 0) {
             notCheckable.push({
               id: relationship.id,
-              reason: 'snapshot JSON with no live references',
+              reason: 'by design: snapshot JSON with no live references',
+              rows: null,
             });
             continue;
           }
@@ -350,7 +468,8 @@ export async function checkTenantIntegrity(
         case 'external-identifier':
           notCheckable.push({
             id: relationship.id,
-            reason: `issued by an external system (${relationship.system})`,
+            reason: `by design: issued by an external system (${relationship.system})`,
+            rows: null,
           });
           continue;
       }
@@ -364,13 +483,17 @@ export async function checkTenantIntegrity(
     findings
       .filter((f) => f.severity === severity)
       .reduce((sum, f) => sum + f.count, 0);
+  const violations = total('violation');
+  const uncheckedRows = notCheckable.reduce((sum, n) => sum + (n.rows ?? 0), 0);
   return {
+    verdict: integrityVerdict(violations, uncheckedRows),
     relationshipsChecked: Object.values(byKind).reduce(
       (sum, s) => sum + s.checked,
       0,
     ),
-    violations: total('violation'),
+    violations,
     warnings: total('warning'),
+    uncheckedRows,
     byKind,
     findings,
     notCheckable,
@@ -381,8 +504,10 @@ export function formatTenantIntegrityReport(
   report: TenantIntegrityReport,
 ): string {
   const lines = [
+    `Verdict: ${report.verdict.toUpperCase()}`,
     `Tenant relationship integrity: ${report.relationshipsChecked} relationships checked, ` +
-      `${report.violations} violation(s), ${report.warnings} warning(s).`,
+      `${report.violations} violation(s), ${report.warnings} warning(s), ` +
+      `${report.uncheckedRows} row(s) not checkable.`,
     '',
     'By relationship type:',
   ];
@@ -410,7 +535,9 @@ export function formatTenantIntegrityReport(
   if (report.notCheckable.length > 0) {
     lines.push('', 'Not checkable:');
     for (const n of report.notCheckable) {
-      lines.push(`  ${n.id}: ${n.reason}`);
+      lines.push(
+        `  ${n.id}: ${n.reason}${n.rows === null ? '' : ` — ${n.rows} row(s)`}`,
+      );
     }
   }
   return lines.join('\n');

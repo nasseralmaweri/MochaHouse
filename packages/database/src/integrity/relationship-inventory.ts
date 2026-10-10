@@ -54,16 +54,31 @@ export interface DirectReference extends RelationshipBase {
 export interface PolymorphicReference extends RelationshipBase {
   readonly kind: 'polymorphic';
   readonly typeColumn: string;
-  // Type value -> target table, for types whose id names a record.
+  // Type value -> target table, for types whose id is a record id.
   readonly targets: Readonly<Record<string, TenantOwnedModel>>;
-  // Type values whose id is not a record id (e.g. 'company', a purpose).
-  readonly nonRecordTypes: readonly string[];
+  // Type value -> a per-business key the id holds instead of a record id
+  // (e.g. a notification purpose). Checked like a record reference.
+  readonly keyedTargets?: Readonly<
+    Record<
+      string,
+      { readonly model: TenantOwnedModel; readonly column: string }
+    >
+  >;
+  // Type value -> the only id it may carry (e.g. 'company' for a
+  // business-wide configuration). Any other id is invalid.
+  readonly fixedTargets?: Readonly<Record<string, string>>;
   // Type values for which the id must be NULL / must be set.
   readonly nullForTypes?: readonly string[];
   readonly requiredForTypes?: readonly string[];
   // A target that no longer exists: a violation for live data (an
   // authorization scope), a warning for history (an audit entry).
   readonly missingTarget: 'violation' | 'warning';
+  // Rows still being acted on (e.g. a PENDING outbox event): for these a
+  // missing target is always a violation, whatever `missingTarget` says.
+  readonly activeWhen?: {
+    readonly column: string;
+    readonly values: readonly string[];
+  };
 }
 
 export interface JsonReference extends RelationshipBase {
@@ -1118,7 +1133,6 @@ const POLYMORPHIC_REFERENCES: readonly PolymorphicReference[] = [
     nullable: true,
     typeColumn: 'scopeType',
     targets: { LOCATION: 'Location' },
-    nonRecordTypes: [],
     nullForTypes: ['CORPORATE'],
     requiredForTypes: ['LOCATION'],
     missingTarget: 'violation',
@@ -1132,12 +1146,18 @@ const POLYMORPHIC_REFERENCES: readonly PolymorphicReference[] = [
     nullable: false,
     typeColumn: 'targetType',
     targets: AUDIT_TARGETS,
-    // targetId is 'company' (configuration) or a notification purpose.
-    nonRecordTypes: [
-      'giftcard_configuration',
-      'loyalty_configuration',
-      'notification_recipient',
-    ],
+    // Configuration audits name the whole business ('company'); recipient
+    // audits name a notification purpose of that business.
+    fixedTargets: {
+      giftcard_configuration: 'company',
+      loyalty_configuration: 'company',
+    },
+    keyedTargets: {
+      notification_recipient: {
+        model: 'NotificationRecipient',
+        column: 'purpose',
+      },
+    },
     missingTarget: 'warning',
   },
   {
@@ -1148,7 +1168,6 @@ const POLYMORPHIC_REFERENCES: readonly PolymorphicReference[] = [
     nullable: false,
     typeColumn: 'targetType',
     targets: { Campaign: 'Campaign' },
-    nonRecordTypes: [],
     missingTarget: 'violation',
   },
   {
@@ -1159,8 +1178,10 @@ const POLYMORPHIC_REFERENCES: readonly PolymorphicReference[] = [
     nullable: false,
     typeColumn: 'aggregateType',
     targets: OUTBOX_AGGREGATES,
-    nonRecordTypes: [],
+    // Processed / sent / failed rows are history; a PENDING row is still
+    // going to be acted on, so its target must exist.
     missingTarget: 'warning',
+    activeWhen: { column: 'status', values: ['PENDING'] },
   },
   {
     id: 'NotificationDelivery.aggregateId',
@@ -1170,8 +1191,10 @@ const POLYMORPHIC_REFERENCES: readonly PolymorphicReference[] = [
     nullable: false,
     typeColumn: 'aggregateType',
     targets: OUTBOX_AGGREGATES,
-    nonRecordTypes: [],
+    // Processed / sent / failed rows are history; a PENDING row is still
+    // going to be acted on, so its target must exist.
     missingTarget: 'warning',
+    activeWhen: { column: 'status', values: ['PENDING'] },
   },
 ];
 

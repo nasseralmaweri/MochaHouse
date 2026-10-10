@@ -9,8 +9,11 @@ import {
   TENANT_1_MOCHA_HOUSE_ID,
   TENANT_RELATIONSHIPS,
   checkTenantIntegrity,
+  formatTenantIntegrityReport,
+  integrityVerdict,
   type DirectReference,
   type IntegrityQueryable,
+  type PolymorphicReference,
   type TenantIntegrityReport,
 } from '@mocha-house/database';
 import {
@@ -195,6 +198,35 @@ async function business(prisma: PrismaClient, tenantId: string, tag: string) {
       payload: { orderId: order.id },
     },
   });
+  // Audits whose target is not a record id: a notification purpose of this
+  // business, and the business-wide configuration ('company').
+  await prisma.notificationRecipient.create({
+    data: {
+      tenantId,
+      purpose: 'careers',
+      email: `${tag}.careers@example.test`,
+    },
+  });
+  await prisma.internalAuditEvent.create({
+    data: {
+      tenantId,
+      actorInternalUserId: user.id,
+      action: 'notification_recipient.updated',
+      targetType: 'notification_recipient',
+      targetId: 'careers',
+      reason: 'fixture',
+    },
+  });
+  await prisma.internalAuditEvent.create({
+    data: {
+      tenantId,
+      actorInternalUserId: user.id,
+      action: 'loyalty_configuration.updated',
+      targetType: 'loyalty_configuration',
+      targetId: 'company',
+      reason: 'fixture',
+    },
+  });
   const approval = await prisma.approvalRequest.create({
     data: {
       tenantId,
@@ -338,13 +370,51 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     expect(report.violations).toBe(0);
     expect(report.warnings).toBe(0);
     expect(report.relationshipsChecked).toBe(100);
-    expect(report.notCheckable.map((n) => n.id).sort()).toEqual([
-      'InternalAuditEvent.afterData',
-      'InternalAuditEvent.beforeData',
-      'NotificationDelivery.providerMessageId',
-      'OrderLine.selections',
-      'OutboxEvent.payload',
+    expect(report.verdict).toBe('clean');
+    expect(report.uncheckedRows).toBe(0);
+    // Only the documented by-design exclusions, none holding unchecked rows.
+    expect(report.notCheckable.map((n) => [n.id, n.rows]).sort()).toEqual([
+      ['InternalAuditEvent.afterData', null],
+      ['InternalAuditEvent.beforeData', null],
+      ['NotificationDelivery.providerMessageId', null],
+      ['OrderLine.selections', null],
+      ['OutboxEvent.payload', null],
     ]);
+    expect(formatTenantIntegrityReport(report)).toMatch(/^Verdict: CLEAN/);
+  });
+
+  it('an unknown polymorphic type can never pass: it is a violation and is listed as not checkable', async () => {
+    // The clean database, checked with an inventory that no longer knows
+    // the 'Order' outbox aggregate: its rows become unresolvable.
+    const relationships = TENANT_RELATIONSHIPS.map((r) =>
+      r.id === 'OutboxEvent.aggregateId'
+        ? ({
+            ...r,
+            targets: { JobApplication: 'JobApplication' },
+          } as PolymorphicReference)
+        : r,
+    );
+    const report = await check({ relationships });
+    expect(report.verdict).toBe('violations');
+    expect(report.violations).toBe(2);
+    expect(summarize(report)).toEqual([
+      'violation OutboxEvent.aggregateId unresolved-type [Order] x2',
+    ]);
+    expect(report.uncheckedRows).toBe(2);
+    expect(
+      report.notCheckable.filter((n) => n.rows !== null).map((n) => n.id),
+    ).toEqual(['OutboxEvent.aggregateId']);
+    const text = formatTenantIntegrityReport(report);
+    expect(text).toMatch(/^Verdict: VIOLATIONS/);
+    expect(text).toContain('2 row(s) not checkable');
+    expect(text).not.toContain('CLEAN');
+  });
+
+  it('a report is clean only with zero violations and zero unchecked rows', () => {
+    expect(integrityVerdict(0, 0)).toBe('clean');
+    expect(integrityVerdict(0, 1)).toBe('incomplete');
+    expect(integrityVerdict(1, 0)).toBe('violations');
+    expect(integrityVerdict(1, 1)).toBe('violations');
   });
 
   describe('with deliberately planted bad references', () => {
@@ -454,6 +524,84 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
         },
       });
 
+      // Polymorphic audit targets that are not record ids: a purpose only
+      // the OTHER business has (cross), one nobody has (missing, history),
+      // and a configuration audit not naming 'company' (invalid).
+      await prisma.notificationRecipient.create({
+        data: {
+          tenantId: B,
+          purpose: 'franchising',
+          email: 'b.fr@example.test',
+        },
+      });
+      for (const [targetType, targetId] of [
+        ['notification_recipient', 'franchising'],
+        ['notification_recipient', 'nowhere'],
+        ['loyalty_configuration', 'not-company'],
+      ]) {
+        await prisma.internalAuditEvent.create({
+          data: {
+            tenantId: A,
+            actorInternalUserId: a.user,
+            action: `${targetType}.updated`,
+            targetType,
+            targetId,
+            reason: 'fixture',
+          },
+        });
+      }
+      // Outbox events: a PENDING (active) event whose target is missing is
+      // a violation; PROCESSED / FAILED ones are history (warnings); a
+      // resolvable cross-business link is a violation even when PROCESSED;
+      // an unknown aggregate type can never pass.
+      const outbox = (
+        aggregateType: string,
+        aggregateId: string,
+        status: 'PENDING' | 'PROCESSED' | 'FAILED',
+      ) =>
+        prisma.outboxEvent.create({
+          data: {
+            tenantId: A,
+            aggregateType,
+            aggregateId,
+            eventType: 'fixture.event',
+            payload: {},
+            status,
+          },
+        });
+      const pendingMissing = await outbox(
+        'JobApplication',
+        missingId,
+        'PENDING',
+      );
+      const processedMissing = await outbox(
+        'JobApplication',
+        missingId,
+        'PROCESSED',
+      );
+      await outbox('Order', missingId, 'FAILED');
+      await outbox('Order', b.order, 'PROCESSED');
+      await outbox('Location', b.location, 'PROCESSED');
+      // Notification deliveries: PENDING with a missing target (violation),
+      // SENT with a missing target (history, warning).
+      for (const [event, status] of [
+        [pendingMissing.id, 'PENDING'],
+        [processedMissing.id, 'SENT'],
+      ] as const) {
+        await prisma.notificationDelivery.create({
+          data: {
+            tenantId: A,
+            outboxEventId: event,
+            channel: 'EMAIL',
+            recipient: 'ops@example.test',
+            templateKey: 'fixture',
+            status,
+            aggregateType: 'JobApplication',
+            aggregateId: missingId,
+          },
+        });
+      }
+
       before = await databaseChecksum(scratch.url);
       report = await withScratchClient(scratch.url, (client) => {
         const recording: IntegrityQueryable = {
@@ -489,15 +637,52 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
           'violation OrderLine.productId cross-tenant x1',
           'violation OrderPromotionRedemption.customerId cross-tenant x1',
           'violation OrderPromotionRedemption.sourcePromotionId cross-tenant x1',
-          'violation OutboxEvent.aggregateId cross-tenant [Order] x1',
+          'violation OutboxEvent.aggregateId cross-tenant [Order] x2',
+          'violation OutboxEvent.aggregateId missing-target [JobApplication, still active] x1',
+          'warning OutboxEvent.aggregateId missing-target [JobApplication] x1',
+          'warning OutboxEvent.aggregateId missing-target [Order] x1',
+          'violation OutboxEvent.aggregateId unresolved-type [Location] x1',
+          'violation NotificationDelivery.aggregateId missing-target [JobApplication, still active] x1',
+          'warning NotificationDelivery.aggregateId missing-target [JobApplication] x1',
+          'violation InternalAuditEvent.targetId cross-tenant [notification_recipient] x1',
+          'warning InternalAuditEvent.targetId missing-target [notification_recipient] x1',
+          "violation InternalAuditEvent.targetId invalid-reference [loyalty_configuration must name 'company'] x1",
           'violation PaymentAttempt.locationId cross-tenant x1',
           'violation PaymentAttempt.locationId missing-target x1',
-          'warning InternalAuditEvent.targetId unresolved-type [mystery_type] x1',
+          'violation InternalAuditEvent.targetId unresolved-type [mystery_type] x1',
           'warning OrderLine.productId missing-target x1',
         ].sort(),
       );
-      expect(report.violations).toBe(17);
-      expect(report.warnings).toBe(2);
+      expect(report.violations).toBe(24);
+      expect(report.warnings).toBe(5);
+      expect(report.verdict).toBe('violations');
+    });
+
+    it('lists every unresolved type under "Not checkable" with its row count, never as zero findings', () => {
+      expect(
+        report.notCheckable
+          .filter((n) => n.rows !== null)
+          .map((n) => `${n.id} ${n.rows}`)
+          .sort(),
+      ).toEqual(['InternalAuditEvent.targetId 1', 'OutboxEvent.aggregateId 1']);
+      expect(report.uncheckedRows).toBe(2);
+      expect(
+        report.notCheckable.find((n) => n.reason.includes('"Location"'))
+          ?.reason,
+      ).toContain('cross-business links cannot be ruled out');
+    });
+
+    it('never treats a resolvable cross-business link as history', () => {
+      for (const f of report.findings.filter(
+        (x) => x.type === 'cross-tenant',
+      )) {
+        expect(f.severity).toBe('violation');
+      }
+      // Warnings are only missing targets of historical rows.
+      for (const f of report.findings.filter((x) => x.severity === 'warning')) {
+        expect(f.type).toBe('missing-target');
+        expect(f.detail ?? '').not.toContain('still active');
+      }
     });
 
     it('summarizes violations by relationship type', () => {
@@ -517,8 +702,8 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
         polymorphic: {
           relationships: 5,
           checked: 5,
-          violations: 6,
-          warnings: 1,
+          violations: 13,
+          warnings: 4,
         },
         'json-reference': {
           relationships: 6,
@@ -566,7 +751,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
 
     it('reports without samples when asked to', async () => {
       const quiet = await check({ sampleLimit: 0 });
-      expect(quiet.violations).toBe(17);
+      expect(quiet.violations).toBe(24);
       expect(quiet.findings.every((f) => f.sampleKeys.length === 0)).toBe(true);
     });
 
@@ -591,7 +776,10 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
         }),
       );
       expect(result.code).toBe(1);
-      expect(result.out).toContain('17 violation(s), 2 warning(s)');
+      expect(result.out).toMatch(/^Verdict: VIOLATIONS/m);
+      expect(result.out).toContain(
+        '24 violation(s), 5 warning(s), 2 row(s) not checkable',
+      );
       expect(result.out).toContain('Order.locationId cross-tenant: 1');
       const url = new URL(scratch.url);
       expect(result.out).not.toContain(scratch.url);

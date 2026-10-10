@@ -9,7 +9,8 @@
 // rolled back, so it modifies nothing; a role with SELECT only is enough.
 // The connection string is never printed.
 //
-// Exit codes: 0 = no violations (warnings allowed), 1 = violations found,
+// Exit codes: 0 = verdict CLEAN (warnings allowed), 1 = violations found,
+// 3 = rows that could not be evaluated (never treated as clean),
 // 2 = the check could not run.
 import 'dotenv/config';
 import { Client } from 'pg';
@@ -50,7 +51,9 @@ async function main(): Promise<number> {
         ? JSON.stringify(report, null, 2)
         : formatTenantIntegrityReport(report),
     );
-    return report.violations > 0 ? 1 : 0;
+    if (report.verdict === 'violations') return 1;
+    if (report.verdict === 'incomplete') return 3;
+    return 0;
   } catch (error) {
     console.error(
       `The integrity check failed: ${error instanceof Error ? error.message : 'unknown error'}`,
