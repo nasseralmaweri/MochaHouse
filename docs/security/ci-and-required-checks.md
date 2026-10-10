@@ -12,7 +12,7 @@ in the workflow's `env` block. The workflow token is read-only
 |---|---|
 | **Typecheck, lint and build** | API, worker and web typecheck; API, worker and web build; on pull requests, `scripts/ci/lint-changed.mjs` fails if any changed file gains an ESLint/Prettier finding compared with the merge base |
 | **API tests** | Every API suite except the tenancy and route-inventory suites, against a freshly migrated and seeded database |
-| **Tenant isolation and route inventory** | The route inventory (every registered API route classified), every `src/tenancy/` suite — three-business isolation, checkout financial isolation, storefront isolation, read isolation, phase 2/3/4A suites and the phase 2 migration regression tests — and the worker's tenancy suites |
+| **Tenant isolation and route inventory** | The read-only tenant relationship integrity check on the seeded database, the route inventory (every registered API route classified), every `src/tenancy/` suite (including the disposable-database guard, relationship inventory and integrity checker suites) — three-business isolation, checkout financial isolation, storefront isolation, read isolation, phase 2/3/4A suites and the phase 2 migration regression tests — and the worker's tenancy suites |
 | **Worker tests** | Every worker suite against a freshly migrated and seeded database |
 | **Web tests** | Every web (Jest) suite |
 
@@ -48,14 +48,98 @@ routes must also carry `InternalAuthGuard` and `PermissionGuard`. A
 classification documents intent; it never replaces the runtime checks or
 the isolation tests.
 
+## Test database safety (Security 4C-1)
+
+API and worker test runs (Jest `globalSetup`), scratch-database helpers and
+the shared tenant cleanup helpers call `assertDisposableDatabase()`
+(`packages/testing/src/disposable-database.ts`). It proceeds only when ALL of
+these hold — no single one is trusted alone:
+
+1. **Declared test run:** `NODE_ENV=test`, `CENTERIVO_TEST_DATABASE=1`, a
+   well-formed `CENTERIVO_TEST_DB_TOKEN`, and no `CENTERIVO_ENV` / `APP_ENV` /
+   `DEPLOYMENT_ENV` / `ENVIRONMENT` declaring production, staging or live.
+2. **Unambiguous connection:** one PostgreSQL host, a lower-case database name
+   with a `test` or `ci` segment (or a `mh_scratch_` scratch name), no
+   connection `options` or `PGOPTIONS`, no second database URL naming another
+   database.
+3. **Disposable marker:** the database's own catalog settings
+   (`pg_db_role_setting`, database-wide entries only) carry
+   `centerivo.disposable_database` equal to its name and
+   `centerivo.disposable_token` equal to the run's token. Role-level settings
+   and connection options cannot fake it, and `CREATE DATABASE … TEMPLATE`
+   copies do not inherit it. Only `createDisposableDatabase` writes the
+   marker, and only onto a database it has just created — an existing
+   database is never marked.
+
+   **The marker alone does not make a database safe to use.**
+   `pg_dump --create` preserves database-level settings, so restoring such a
+   dump recreates the marker (under the original database name); any
+   database owner can also set it deliberately; and it says nothing about
+   the data inside the database. It is therefore only one of four
+   independent checks, and the guard refuses unless all four hold.
+4. **Fictional businesses only:** every Tenant is Mocha House (Tenant #1 under
+   its own slug) or a visibly-test `…7e57…` business; ambiguous identities
+   and more than 25 businesses are refused.
+
+Scratch databases may be created only next to a proven-disposable database,
+and dropped only by the process that created them, only with the scratch
+prefix and only while they still carry the run's marker. Cleanup helpers
+delete only test-only businesses (never Tenant #1). Refusals name the failed
+check and never include the connection string, user, password or host.
+
+CI creates and marks a fresh `mocha_ci` in every database job
+(`pnpm --filter @mocha-house/testing db:create-disposable`); the service
+container starts with only the maintenance database.
+
+## Tenant relationship integrity (Security 4C-1)
+
+`packages/database/src/integrity/relationship-inventory.ts` classifies all
+105 references between business-owned records (85 composite foreign-key
+candidates — 82 existing foreign keys and 3 plain columns — 8 historical
+snapshots, 5 polymorphic references, 6 JSON columns, 1 external id).
+`tenant-relationship-inventory.spec.ts` fails when the schema gains, loses or
+changes one without a classification.
+
+`pnpm --filter @mocha-house/database integrity:check` reports, read-only,
+references that point at another business, at nothing, or contradict their
+type. It runs in a `READ ONLY` transaction (SELECT privileges suffice),
+never repairs anything, prints counts by relationship type and primary keys
+only, and never the connection string. CI runs it on every freshly seeded
+database in the tenant isolation job.
+
+Severity rules:
+
+- A reference that resolves to **another business** is always a violation —
+  for live and historical rows alike.
+- A **missing** target is a violation for live references; it is a warning
+  only for history (snapshots, audit entries, processed / sent / failed
+  events). A row still being acted on — a `PENDING` outbox event or
+  notification delivery — with a missing target is a violation.
+- A polymorphic **type the inventory cannot resolve** is a violation and is
+  listed under **Not checkable** with its row count: its target is unknown,
+  so a cross-business link cannot be ruled out. Audit entries whose target
+  is not a record id are verified too — configuration audits must name
+  `company`, notification-recipient audits must name a purpose of the same
+  business.
+
+The report's **verdict** is `CLEAN` only with zero violations and zero rows
+that could not be evaluated (`INCOMPLETE` otherwise, `VIOLATIONS` when any
+violation exists). By-design exclusions (snapshot JSON, external ids) are
+listed under Not checkable without a row count. Exit codes: 0 clean,
+1 violations, 3 incomplete, 2 the check could not run.
+
 ## Running the same checks locally
 
 ```bash
 pnpm install --frozen-lockfile
-# build packages in the order listed above, then, with DATABASE_URL pointing
-# at a disposable database:
+# build packages in the order listed above, then create a NEW test database
+# (DATABASE_URL must name a database that does not exist yet):
+export NODE_ENV=test CENTERIVO_TEST_DATABASE=1 CENTERIVO_TEST_DB_TOKEN=<16+ chars>
+export DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/mocha_test?schema=public
+pnpm --filter @mocha-house/testing db:create-disposable
 pnpm --filter @mocha-house/database exec prisma migrate deploy
 pnpm --filter @mocha-house/database exec prisma db seed
+pnpm --filter @mocha-house/database integrity:check
 (cd apps/api && pnpm test)
 (cd apps/worker && pnpm test)
 (cd apps/web && pnpm test)

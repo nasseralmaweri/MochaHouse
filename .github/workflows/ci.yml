@@ -43,6 +43,12 @@ env:
   # Disposable service containers (see each job's `services`).
   DATABASE_URL: postgresql://mocha:mocha@localhost:5432/mocha_ci?schema=public
   REDIS_URL: redis://localhost:6379
+  # Security 4C-1 — test suites run only against a database this job
+  # created and marked disposable with this run's token (see
+  # packages/testing/src/disposable-database.ts). Not a secret: it binds the
+  # marker to this run, and is one of several independent checks.
+  CENTERIVO_TEST_DATABASE: '1'
+  CENTERIVO_TEST_DB_TOKEN: ci-run-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
   static:
@@ -80,7 +86,8 @@ jobs:
         env:
           POSTGRES_USER: mocha
           POSTGRES_PASSWORD: mocha
-          POSTGRES_DB: mocha_ci
+          # Only the maintenance database exists; the job creates mocha_ci.
+          POSTGRES_DB: postgres
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U mocha" --health-interval 5s
@@ -94,6 +101,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
+      - name: Create the disposable test database
+        run: pnpm --filter @mocha-house/testing db:create-disposable
+        env:
+          NODE_ENV: test
       - name: Migrate and seed the disposable database
         run: |
           pnpm --filter @mocha-house/database exec prisma migrate deploy
@@ -114,7 +125,8 @@ jobs:
         env:
           POSTGRES_USER: mocha
           POSTGRES_PASSWORD: mocha
-          POSTGRES_DB: mocha_ci
+          # Only the maintenance database exists; the job creates mocha_ci.
+          POSTGRES_DB: postgres
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U mocha" --health-interval 5s
@@ -128,10 +140,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
+      - name: Create the disposable test database
+        run: pnpm --filter @mocha-house/testing db:create-disposable
+        env:
+          NODE_ENV: test
       - name: Migrate and seed the disposable database
         run: |
           pnpm --filter @mocha-house/database exec prisma migrate deploy
           pnpm --filter @mocha-house/database exec prisma db seed
+      - name: Tenant relationship integrity (seeded database, read-only)
+        run: pnpm --filter @mocha-house/database integrity:check
       - name: Route inventory (every API route classified)
         working-directory: apps/api
         run: pnpm test --forceExit src/route-inventory/
@@ -152,7 +170,8 @@ jobs:
         env:
           POSTGRES_USER: mocha
           POSTGRES_PASSWORD: mocha
-          POSTGRES_DB: mocha_ci
+          # Only the maintenance database exists; the job creates mocha_ci.
+          POSTGRES_DB: postgres
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U mocha" --health-interval 5s
@@ -166,6 +185,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
+      - name: Create the disposable test database
+        run: pnpm --filter @mocha-house/testing db:create-disposable
+        env:
+          NODE_ENV: test
       - name: Migrate and seed the disposable database
         run: |
           pnpm --filter @mocha-house/database exec prisma migrate deploy

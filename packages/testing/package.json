@@ -6,7 +6,8 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:create-disposable": "node dist/cli/create-disposable-database.js"
   },
   "dependencies": {
     "@mocha-house/database": "workspace:*",

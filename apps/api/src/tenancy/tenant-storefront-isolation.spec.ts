@@ -171,11 +171,28 @@ describe('Public storefront tenant isolation (integration)', () => {
     };
   }
 
+  // Removes this suite's (fictional) job applications for the given job
+  // openings together with the outbox events and deliveries their
+  // submission created, so none is left pointing at nothing (Security 4C-1).
+  async function removeApplications(jobOpeningIds: string[]) {
+    const ids = (
+      await prisma.jobApplication.findMany({
+        where: { jobOpeningId: { in: jobOpeningIds } },
+        select: { id: true },
+      })
+    ).map((application) => application.id);
+    await prisma.notificationDelivery.deleteMany({
+      where: { aggregateType: 'JobApplication', aggregateId: { in: ids } },
+    });
+    await prisma.outboxEvent.deleteMany({
+      where: { aggregateType: 'JobApplication', aggregateId: { in: ids } },
+    });
+    await prisma.jobApplication.deleteMany({ where: { id: { in: ids } } });
+  }
+
   async function removeFixtures(f: Fixtures | undefined) {
     if (!f) return;
-    await prisma.jobApplication.deleteMany({
-      where: { jobOpeningId: f.jobId },
-    });
+    await removeApplications([f.jobId]);
     await prisma.jobOpening.deleteMany({ where: { id: f.jobId } });
     await prisma.productModifierGroup.deleteMany({
       where: {
@@ -265,9 +282,7 @@ describe('Public storefront tenant isolation (integration)', () => {
     try {
       await removeFixtures(A);
       await removeFixtures(B);
-      await prisma.jobApplication.deleteMany({
-        where: { jobOpeningId: { in: createdJobIds } },
-      });
+      await removeApplications(createdJobIds);
       await removeTestTenantB(prisma);
     } finally {
       await appB?.close();

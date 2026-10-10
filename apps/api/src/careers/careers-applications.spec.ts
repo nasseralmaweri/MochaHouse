@@ -252,22 +252,41 @@ describe('Careers / Applicants (integration)', () => {
   });
 
   afterAll(async () => {
+    // Every application this suite created — tracked ones AND those
+    // submitted through the public endpoint to this suite's own (fictional)
+    // job openings — so their outbox events and deliveries are removed with
+    // them instead of being left pointing at nothing (Security 4C-1).
+    const createdApplicationIds = (
+      await prisma.jobApplication.findMany({
+        where: {
+          OR: [
+            { id: { in: applicationIds } },
+            { jobOpeningId: { in: jobIds } },
+          ],
+        },
+        select: { id: true },
+      })
+    ).map((application) => application.id);
+    await prisma.notificationDelivery.deleteMany({
+      where: {
+        aggregateType: 'JobApplication',
+        aggregateId: { in: createdApplicationIds },
+      },
+    });
     await prisma.outboxEvent.deleteMany({
-      where: { aggregateType: 'JobApplication', aggregateId: { in: applicationIds } },
+      where: {
+        aggregateType: 'JobApplication',
+        aggregateId: { in: createdApplicationIds },
+      },
     });
     await prisma.internalAuditEvent.deleteMany({
       where: { actorInternalUserId: { in: userIds } },
     });
     await prisma.jobApplicationNote.deleteMany({
-      where: { jobApplicationId: { in: applicationIds } },
+      where: { jobApplicationId: { in: createdApplicationIds } },
     });
     await prisma.jobApplication.deleteMany({
-      where: {
-        OR: [
-          { id: { in: applicationIds } },
-          { jobOpeningId: { in: jobIds } },
-        ],
-      },
+      where: { id: { in: createdApplicationIds } },
     });
     await prisma.jobOpening.deleteMany({
       where: {
