@@ -154,6 +154,10 @@ model Location {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, slug])
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([tenantId])
 }
 
@@ -176,6 +180,10 @@ model Category {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, slug])
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([tenantId])
 }
 
@@ -209,6 +217,10 @@ model Product {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, slug])
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([categoryId])
   @@index([tenantId])
 }
@@ -232,6 +244,10 @@ model Menu {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, slug])
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([tenantId])
 }
 
@@ -254,6 +270,10 @@ model ModifierGroup {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([tenantId])
 }
 
@@ -445,6 +465,10 @@ model Customer {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([externalProvider, externalSubject])
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([tenantId])
 }
 
@@ -574,6 +598,10 @@ model PaymentAttempt {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([status])
   @@index([reconciliationRequired])
   @@index([tenantId])
@@ -666,6 +694,10 @@ model Order {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([locationId])
   @@index([customerId])
   @@index([tenantId])
@@ -755,6 +787,10 @@ model OutboxEvent {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([status])
   @@index([aggregateType, aggregateId])
   @@index([tenantId])
@@ -955,6 +991,10 @@ model InternalUser {
 
   @@unique([tenantId, externalProvider, externalSubject])
   @@unique([tenantId, email])
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([tenantId])
   // Milestone S0F — the identity -> memberships lookup runs BEFORE any
   // tenant is known, so it needs an index that does not lead with tenantId.
@@ -1055,6 +1095,10 @@ model InternalRole {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, key])
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([tenantId])
 }
 
@@ -1147,6 +1191,10 @@ model ChecklistTemplate {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, key])
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([tenantId])
 }
 
@@ -1208,6 +1256,10 @@ model ChecklistInstance {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([templateId, locationId, businessDate])
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([locationId, businessDate])
   @@index([tenantId])
 }
@@ -1361,6 +1413,10 @@ model CustomerLoyaltyAccount {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([tenantId])
 }
 
@@ -1497,6 +1553,10 @@ model LoyaltyReward {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([isActive, sortOrder])
   @@index([tenantId])
 }
@@ -1657,6 +1717,10 @@ model LoyaltyBonusPromotion {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([isActive])
   @@index([tenantId])
 }
@@ -1732,6 +1796,10 @@ model OrderLoyaltyBonus {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([tenantId])
 }
 
@@ -1882,6 +1950,10 @@ model Promotion {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, code])
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([kind, isActive])
   @@index([isActive])
   @@index([tenantId])
@@ -2107,6 +2179,10 @@ model GiftCard {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([status])
   @@index([tenantId])
 }
@@ -2320,6 +2396,10 @@ model GiftCardPurchase {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([customerId])
   @@index([status])
   @@index([tenantId])
@@ -2408,6 +2488,10 @@ model JobOpening {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([status])
   @@index([locationId])
   @@index([tenantId])
@@ -2453,6 +2537,10 @@ model JobApplication {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([jobOpeningId])
   @@index([status])
   @@index([createdAt])
@@ -2552,6 +2640,10 @@ model FranchiseInquiry {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([status])
   @@index([createdAt])
   @@index([tenantId])
@@ -2648,6 +2740,10 @@ model MediaAsset {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([isActive, createdAt])
   @@index([uploadedByInternalUserId])
   @@index([tenantId])
@@ -2700,6 +2796,10 @@ model Campaign {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  @@unique([tenantId, id])
   @@index([status])
   @@index([promotionId])
   @@index([loyaltyBonusPromotionId])

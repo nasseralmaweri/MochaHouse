@@ -128,6 +128,25 @@ violation exists). By-design exclusions (snapshot JSON, external ids) are
 listed under Not checkable without a row count. Exit codes: 0 clean,
 1 violations, 3 incomplete, 2 the check could not run.
 
+## Composite tenant keys (Security 4C-2)
+
+Every table another business-owned table references — the 25 targets of
+the composite foreign-key candidates in the relationship inventory — has a
+`UNIQUE ("tenantId", "id")` index (`@@unique([tenantId, id])`, migration
+`20261011090000_tenant_composite_keys`). Nothing references them yet:
+Security 4C-3 will replace single-column foreign keys with
+`FOREIGN KEY ("tenantId", col) REFERENCES parent ("tenantId", "id")`.
+
+- `tenant-composite-keys.spec.ts` fails if the schema, the migration or the
+  migrated test database loses (or gains) a key, and proves on a scratch
+  database that the migration changes nothing else.
+- The tenant isolation job also checks that `schema.prisma` is valid and
+  identical to the migrated database (`prisma migrate diff --exit-code`).
+- Rollback is never automatic: `prisma/rollbacks/20261011090000_tenant_composite_keys.down.sql`
+  drops exactly these indexes; ship it as a new forward migration together
+  with removing the `@@unique` lines, and only before any composite foreign
+  key depends on them.
+
 ## Running the same checks locally
 
 ```bash

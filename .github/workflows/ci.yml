@@ -148,6 +148,11 @@ jobs:
         run: |
           pnpm --filter @mocha-house/database exec prisma migrate deploy
           pnpm --filter @mocha-house/database exec prisma db seed
+      - name: Prisma schema is valid and matches the migrated database
+        working-directory: packages/database
+        run: |
+          pnpm exec prisma validate
+          pnpm exec prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
       - name: Tenant relationship integrity (seeded database, read-only)
         run: pnpm --filter @mocha-house/database integrity:check
       - name: Route inventory (every API route classified)
