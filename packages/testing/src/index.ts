@@ -11,6 +11,7 @@ export {
   TEST_TENANT_C_SLUG,
   createTestTenantC,
   removeTestTenantC,
+  removeTestTenant,
   tenantContextFor,
 } from "./tenants";
 export {
@@ -24,3 +25,20 @@ export {
   type ScratchDatabase,
 } from "./scratch-database";
 export { TENANT_ID_REQUIRED_MODELS } from './tenant-conversion';
+export {
+  DISPOSABLE_NAME_SETTING,
+  DISPOSABLE_TOKEN_SETTING,
+  DisposableDatabaseError,
+  SCRATCH_DATABASE_PREFIX,
+  TEST_DATABASE_FLAG_ENV,
+  TEST_DATABASE_TOKEN_ENV,
+  assertApprovedTestTenants,
+  assertDeletableTestTenantId,
+  assertDisposableDatabase,
+  assertTestEnvironment,
+  assertUnambiguousTestUrl,
+  createDisposableDatabase,
+  dropDisposableDatabase,
+  isTestDatabaseName,
+  type DisposableDatabaseIdentity,
+} from "./disposable-database";

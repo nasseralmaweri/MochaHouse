@@ -2,6 +2,12 @@ import { randomBytes } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "pg";
+import {
+  SCRATCH_DATABASE_PREFIX,
+  assertDisposableDatabase,
+  createDisposableDatabase,
+  dropDisposableDatabase,
+} from "./disposable-database";
 
 // TEST-ONLY throwaway databases (Milestone S0D-1).
 //
@@ -15,12 +21,6 @@ export interface ScratchDatabase {
   // A connection string for the scratch database (same user/host as base).
   readonly url: string;
   drop(): Promise<void>;
-}
-
-function withDatabase(baseUrl: string, database: string): string {
-  const url = new URL(baseUrl);
-  url.pathname = `/${database}`;
-  return url.toString();
 }
 
 async function withClient<T>(
@@ -39,26 +39,27 @@ async function withClient<T>(
 // Creates an empty scratch database on the server `baseUrl` points at.
 // `label` only makes the name recognisable; uniqueness comes from random
 // bytes, so parallel/aborted runs never collide.
+//
+// Security 4C-1 — only next to a database proven disposable (see
+// assertDisposableDatabase), and the scratch database is itself created
+// and marked disposable by this process; `drop()` removes only a database
+// this process created and that still carries this run's marker.
 export async function createScratchDatabase(
   baseUrl: string,
   label: string,
 ): Promise<ScratchDatabase> {
+  await assertDisposableDatabase(baseUrl);
   const safeLabel = label
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .slice(0, 24);
-  const name = `mh_scratch_${safeLabel}_${randomBytes(4).toString("hex")}`;
-  await withClient(baseUrl, (client) =>
-    client.query(`CREATE DATABASE "${name}"`),
-  );
+  const name = `${SCRATCH_DATABASE_PREFIX}${safeLabel}_${randomBytes(4).toString("hex")}`;
+  const url = await createDisposableDatabase(baseUrl, name);
 
   return {
     name,
-    url: withDatabase(baseUrl, name),
-    drop: () =>
-      withClient(baseUrl, (client) =>
-        client.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`),
-      ).then(() => undefined),
+    url,
+    drop: () => dropDisposableDatabase(baseUrl, name),
   };
 }
 
