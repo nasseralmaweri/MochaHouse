@@ -12,7 +12,7 @@ export function CenterivoMark({
       viewBox="0 0 32 32"
       fill="none"
       aria-hidden="true"
-      className={`shrink-0 text-accent ${className}`}
+      className={`shrink-0 text-text-primary ${className}`}
     >
       <circle
         cx="16"
@@ -38,7 +38,7 @@ export function CenterivoWordmark({ showText = true }: { showText?: boolean }) {
     <span className="flex items-center gap-2.5">
       <CenterivoMark />
       {showText ? (
-        <span className="text-[0.8125rem] font-semibold tracking-[0.22em] text-accent">
+        <span className="text-[0.8125rem] font-semibold tracking-[0.22em] text-text-primary">
           CENTERIVO
         </span>
       ) : (

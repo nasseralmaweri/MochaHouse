@@ -11,19 +11,16 @@ import type {
 import type { AdminNavItem } from "@/lib/admin/nav";
 import type { AdminCapabilities } from "@/lib/admin/capabilities";
 import {
-  CORPORATE_LOCATION_VALUE,
   locationContextValue,
   resolveLocationContext,
 } from "@/lib/admin/location-context";
 import { CenterivoMark } from "@/components/centerivo/Wordmark";
-import {
-  IconAllLocations,
-  IconChevronsUpDown,
-  IconMenuBars,
-} from "@/components/centerivo/Icons";
+import { IconMenuBars } from "@/components/centerivo/Icons";
 import { AdminContextProvider } from "./AdminContext";
 import { AdminSidebar } from "./AdminSidebar";
 import { MobileNav } from "./MobileNav";
+import { MobileTabBar } from "./MobileTabBar";
+import { ScopeSwitcher } from "./ContextSwitcher";
 
 const COLLAPSE_STORAGE_KEY = "centerivo.sidebar.collapsed";
 const COLLAPSE_EVENT = "centerivo:sidebar-preference";
@@ -71,11 +68,11 @@ function writeSidebarCollapsed(next: boolean) {
 // sidebar collapse) and the URL-dependent location-context resolution, and
 // provides AdminContext to every Admin page.
 //
-// Layout: a fixed-height sidebar (identity, Business -> Location context,
-// modules, account) beside a single scrolling content column. There is
-// deliberately NO desktop top bar — context lives in the sidebar, so the
-// page gets the full height. Below `lg` the sidebar becomes a drawer and a
-// slim top bar appears carrying the menu button and the current context.
+// Layout follows Business -> Scope -> Work: a deep-navy sidebar (identity,
+// business, modules, account) beside the workspace, whose compact header
+// names the business and carries the operating scope (Company-wide or one
+// location). Below `lg` the sidebar becomes a drawer opened from the header;
+// on phones a bottom tab bar adds the daily modules.
 export function AdminShell({
   user,
   business,
@@ -117,22 +114,8 @@ export function AdminShell({
     cookieLocationId,
   });
   const currentLocationValue = locationContextValue(locationContext);
-  const currentLocationLabel =
-    locationContext.kind === "corporate"
-      ? "Company-wide"
-      : locationContext.kind === "location"
-        ? locationContext.location.name
-        : null;
 
-  const sidebarProps = {
-    user,
-    business,
-    businesses,
-    locations,
-    isCorporate,
-    currentLocationValue,
-    navItems,
-  };
+  const sidebarProps = { user, business, businesses, navItems };
 
   return (
     <AdminContextProvider
@@ -152,7 +135,7 @@ export function AdminShell({
       <div className="centerivo cx-shell flex min-h-dvh">
         <aside
           aria-label="Workspace"
-          className={`sticky top-0 hidden h-dvh shrink-0 transition-[width] duration-200 ease-out lg:block ${
+          className={`cx-dark sticky top-0 hidden h-dvh shrink-0 transition-[width] duration-200 ease-out lg:block ${
             collapsed
               ? "w-[var(--cx-sidebar-width-collapsed)]"
               : "w-[var(--cx-sidebar-width)]"
@@ -165,57 +148,57 @@ export function AdminShell({
           />
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col lg:py-2 lg:pr-2">
-          <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border-default bg-surface-sidebar/90 px-3 backdrop-blur lg:hidden">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="sticky top-0 z-30 flex h-14 items-center gap-1.5 border-b border-border-default bg-surface-page/90 px-2 backdrop-blur sm:gap-2 sm:px-4 lg:h-16 lg:px-8">
             <button
               ref={menuButtonRef}
               type="button"
               onClick={() => setDrawerOpen(true)}
               aria-expanded={drawerOpen}
-              className="flex h-10 items-center gap-2 rounded-lg px-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-surface-subtle"
+              aria-haspopup="dialog"
+              aria-label="Open navigation"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-primary transition-colors hover:bg-surface-subtle lg:hidden"
             >
-              <IconMenuBars />
-              Menu
+              <IconMenuBars className="h-5 w-5" />
             </button>
             <Link
               href="/admin"
               aria-label="CENTERIVO home"
-              className="flex items-center rounded-lg px-1"
+              className="hidden h-11 w-9 shrink-0 items-center justify-center rounded-lg sm:flex lg:hidden"
             >
               <CenterivoMark className="h-6 w-6" />
             </Link>
-            <button
-              type="button"
-              onClick={() => setDrawerOpen(true)}
-              aria-label={`Business ${business.name}${
-                currentLocationLabel ? `, location ${currentLocationLabel}` : ""
-              }. Change in menu`}
-              className="ml-auto flex min-w-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-surface-subtle"
-            >
-              <span className="flex min-w-0 flex-col leading-tight">
-                <span className="truncate text-sm font-semibold text-text-primary">
-                  {business.name}
-                </span>
-                {currentLocationLabel ? (
-                  <span className="flex items-center gap-1 truncate text-xs text-text-muted">
-                    {currentLocationValue === CORPORATE_LOCATION_VALUE ? (
-                      <IconAllLocations className="h-3 w-3" />
-                    ) : null}
-                    {currentLocationLabel}
-                  </span>
-                ) : null}
+            <p className="flex min-w-0 items-center gap-2 text-sm">
+              <span className="sr-only">Business: </span>
+              <span className="truncate font-semibold text-text-primary">
+                {business.name}
               </span>
-              <IconChevronsUpDown className="h-4 w-4 text-text-muted" />
-            </button>
+              <span aria-hidden="true" className="text-text-muted">
+                /
+              </span>
+            </p>
+            <div className="flex min-w-0 max-w-[62%] items-center sm:max-w-none">
+              <ScopeSwitcher
+                locations={locations}
+                isCorporate={isCorporate}
+                currentLocationValue={currentLocationValue}
+              />
+            </div>
           </header>
 
           <main
             id="admin-content"
-            className="min-w-0 flex-1 bg-surface-page lg:rounded-2xl lg:border lg:border-border-default"
+            className="min-w-0 flex-1 bg-surface-page pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0"
           >
             {children}
           </main>
         </div>
+
+        <MobileTabBar
+          items={navItems}
+          menuOpen={drawerOpen}
+          onOpenMenu={() => setDrawerOpen(true)}
+        />
 
         {/* Inside .centerivo so the drawer inherits the platform tokens. */}
         <MobileNav
