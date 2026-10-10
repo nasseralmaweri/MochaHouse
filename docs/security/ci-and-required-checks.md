@@ -138,14 +138,47 @@ Security 4C-3 will replace single-column foreign keys with
 `FOREIGN KEY ("tenantId", col) REFERENCES parent ("tenantId", "id")`.
 
 - `tenant-composite-keys.spec.ts` fails if the schema, the migration or the
-  migrated test database loses (or gains) a key, and proves on a scratch
-  database that the migration changes nothing else.
+  migrated test database loses (or gains) a key; proves on a scratch
+  database that the migration changes nothing else; and runs the migration
+  with **real `prisma migrate deploy`** (success, late failure, retry,
+  recovery, lock timeout, rollback).
 - The tenant isolation job also checks that `schema.prisma` is valid and
   identical to the migrated database (`prisma migrate diff --exit-code`).
-- Rollback is never automatic: `prisma/rollbacks/20261011090000_tenant_composite_keys.down.sql`
-  drops exactly these indexes; ship it as a new forward migration together
-  with removing the `@@unique` lines, and only before any composite foreign
-  key depends on them.
+
+### How Prisma executes a migration (verified, Prisma 7.x on PostgreSQL)
+
+- A migration file containing **dollar-quoting** (`$`, e.g. a `DO` block) is
+  sent as **one** statement — one implicit transaction: any failure rolls
+  the whole file back.
+- **Any other file is split into separate statements, each committed on its
+  own**; a failure leaves the earlier statements applied.
+- Either way a failure is recorded (`P3018`) and later deploys refuse to run
+  (`P3009`) until it is resolved — it never silently counts as applied.
+
+Migrations that must be all-or-nothing are therefore written as one `DO`
+block (as 4C-2's is). `packages/testing`'s `applyMigrationSql` reproduces
+this behaviour for scratch-database tests.
+
+### If the 4C-2 migration fails
+
+It is atomic, so nothing was created. Remove the cause (or wait for a
+quieter moment — it fails after a 5-second `lock_timeout` rather than queue
+application writes), then:
+
+```bash
+pnpm --filter @mocha-house/database exec prisma migrate resolve --rolled-back 20261011090000_tenant_composite_keys
+pnpm --filter @mocha-house/database exec prisma migrate deploy
+```
+
+Never repair a failed migration automatically; resolve it deliberately per
+environment.
+
+### Rolling back 4C-2
+
+Never automatic. `prisma/rollbacks/20261011090000_tenant_composite_keys.down.sql`
+(one `DO` block) drops exactly these indexes: remove the `@@unique` lines and
+ship that SQL as a new forward migration — only before any composite foreign
+key depends on the indexes. Tested end to end with real Prisma.
 
 ## Running the same checks locally
 

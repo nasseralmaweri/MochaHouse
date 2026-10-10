@@ -80,36 +80,30 @@ export function listMigrations(migrationsDir: string): MigrationFile[] {
     }));
 }
 
-const ENUM_VALUE_ADDITION = /ALTER TYPE\s+"?\w+"?\s+ADD VALUE/i;
+// How Prisma Migrate (7.x, PostgreSQL) executes a migration script —
+// verified from the server's statement log (Security 4C-2):
+//   - a script that contains dollar-quoting (`$`, e.g. a DO block) is sent
+//     as ONE simple-protocol query, which Postgres runs as a single implicit
+//     transaction: any failing statement rolls back the whole file;
+//   - every other script is split into its individual statements, each sent
+//     and auto-committed on its own, stopping at the first failure: the
+//     statements before it STAY APPLIED.
+// applyMigrationSql reproduces exactly that, so scratch-database tests see
+// the same partial state a real deploy would. (Earlier versions sent every
+// dollar-free script as one query and so over-stated its atomicity.)
+export function isAppliedAtomically(sql: string): boolean {
+  return sql.includes("$") || splitSqlStatements(sql).length <= 1;
+}
 
-// Applies one migration script the way Prisma Migrate (7.x, PostgreSQL)
-// does — verified from the server's statement log during S0D-1:
-//   - normally the WHOLE file is sent as ONE simple-protocol query, which
-//     Postgres runs as a single implicit transaction: a failing statement
-//     (e.g. a RAISE EXCEPTION guard) rolls back every statement in the file;
-//   - a file containing `ALTER TYPE ... ADD VALUE` is instead sent one
-//     statement at a time (each autocommitted), because Postgres cannot use
-//     a new enum value inside the transaction that added it.
-// The split path supports only files without dollar-quoted bodies (true of
-// every enum-adding migration in this repository); anything else is
-// refused rather than split incorrectly.
 export async function applyMigrationSql(
   url: string,
   sql: string,
 ): Promise<void> {
-  if (!ENUM_VALUE_ADDITION.test(sql)) {
+  if (sql.includes("$")) {
     await withClient(url, (client) => client.query(sql));
     return;
   }
-  if (sql.includes("$")) {
-    throw new Error(
-      "applyMigrationSql cannot split an enum-adding migration that contains dollar-quoted SQL.",
-    );
-  }
-  const statements = sql
-    .split(/;\s*$/m)
-    .map((statement) => statement.trim())
-    .filter((statement) => statement.replace(/--.*$/gm, "").trim().length > 0);
+  const statements = splitSqlStatements(sql);
   await withClient(url, async (client) => {
     for (const statement of statements) {
       await client.query(statement);
@@ -117,9 +111,57 @@ export async function applyMigrationSql(
   });
 }
 
-// True when Prisma applies `sql` as one atomic unit (see applyMigrationSql).
-export function isAppliedAtomically(sql: string): boolean {
-  return !ENUM_VALUE_ADDITION.test(sql);
+// Splits a dollar-free SQL script into statements on top-level semicolons,
+// ignoring semicolons inside '...' strings, "..." identifiers and -- / /* */
+// comments. Comment-only fragments are dropped.
+export function splitSqlStatements(sql: string): string[] {
+  if (sql.includes("$")) {
+    throw new Error("splitSqlStatements does not handle dollar-quoted SQL.");
+  }
+  const statements: string[] = [];
+  let current = "";
+  let i = 0;
+  while (i < sql.length) {
+    const ch = sql[i];
+    const next = sql[i + 1];
+    if (ch === "-" && next === "-") {
+      const end = sql.indexOf("\n", i);
+      const stop = end === -1 ? sql.length : end;
+      current += sql.slice(i, stop);
+      i = stop;
+    } else if (ch === "/" && next === "*") {
+      const end = sql.indexOf("*/", i + 2);
+      const stop = end === -1 ? sql.length : end + 2;
+      current += sql.slice(i, stop);
+      i = stop;
+    } else if (ch === "'" || ch === '"') {
+      let j = i + 1;
+      while (j < sql.length) {
+        if (sql[j] === ch && sql[j + 1] === ch) j += 2;
+        else if (sql[j] === ch) break;
+        else j += 1;
+      }
+      current += sql.slice(i, j + 1);
+      i = j + 1;
+    } else if (ch === ";") {
+      statements.push(current);
+      current = "";
+      i += 1;
+    } else {
+      current += ch;
+      i += 1;
+    }
+  }
+  statements.push(current);
+  return statements
+    .map((statement) => statement.trim())
+    .filter(
+      (statement) =>
+        statement
+          .replace(/--.*$/gm, "")
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .trim().length > 0,
+    );
 }
 
 export async function applyMigrations(

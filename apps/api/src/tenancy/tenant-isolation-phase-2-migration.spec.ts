@@ -17,7 +17,9 @@ import {
 // 20261010120000_tenant_isolation_phase_2, on throwaway scratch databases
 // only (never an existing environment). Each scenario starts from the exact
 // schema before the migration, loads fictional legacy rows (tenantId NULL)
-// and runs the migration SQL exactly as Prisma would (one atomic batch).
+// and runs the migration SQL exactly as Prisma does: because the file
+// contains dollar-quoted DO blocks, Prisma sends it as ONE statement (one
+// implicit transaction), so any failure rolls back the whole file.
 //
 //   derivable   — every row reachable through a reliable relationship
 //   unresolved  — rows with no relationship that names a business

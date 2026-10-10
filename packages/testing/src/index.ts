@@ -20,6 +20,7 @@ export {
   createScratchDatabase,
   isAppliedAtomically,
   listMigrations,
+  splitSqlStatements,
   withScratchClient,
   type MigrationFile,
   type ScratchDatabase,
