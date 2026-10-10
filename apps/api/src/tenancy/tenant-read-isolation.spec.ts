@@ -24,6 +24,7 @@ import {
 } from '@mocha-house/testing';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
+import { resolveBusinessDate } from '../operations/application/business-date';
 import { RedisModule } from '../redis/redis.module';
 import { CustomerAuthModule } from '../customer-auth/customer-auth.module';
 import { InternalAuthModule } from '../internal-auth/internal-auth.module';
@@ -364,7 +365,10 @@ describe('Admin cross-tenant read isolation (integration)', () => {
   // supertest types every body as `any`; assertions read it through here.
   const bodyOf = <T>(res: { body: unknown }): T => res.body as T;
   const ids = (rows: Row[]) => rows.map((row) => row.id);
-  const today = new Date().toISOString().slice(0, 10);
+  // Reports bucket by the BUSINESS day (America/Detroit), not the UTC
+  // calendar day: near midnight UTC the two differ, and a "today" range in
+  // UTC would miss rows created just now.
+  const today = resolveBusinessDate(new Date());
   const range = `?startDate=${today}&endDate=${today}`;
 
   beforeAll(async () => {

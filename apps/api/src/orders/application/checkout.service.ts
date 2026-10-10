@@ -567,9 +567,13 @@ export class CheckoutService {
   async getStatus(
     orderId: string,
     accessToken: string,
+    tenant: TenantContext,
   ): Promise<OrderStatusResponse> {
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
+    // Security 4B — the storefront only ever reveals its OWN business's
+    // orders: another business's order, even with its valid accessToken,
+    // reads exactly like an unknown id.
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, tenantId: tenant.tenantId },
       include: { ...ORDER_INCLUDE, paymentAttempt: true },
     });
 

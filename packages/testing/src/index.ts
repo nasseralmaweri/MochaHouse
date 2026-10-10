@@ -6,6 +6,11 @@ export {
   TEST_TENANT_B_SLUG,
   createTestTenantB,
   removeTestTenantB,
+  TEST_TENANT_C_ID,
+  TEST_TENANT_C_NAME,
+  TEST_TENANT_C_SLUG,
+  createTestTenantC,
+  removeTestTenantC,
   tenantContextFor,
 } from "./tenants";
 export {

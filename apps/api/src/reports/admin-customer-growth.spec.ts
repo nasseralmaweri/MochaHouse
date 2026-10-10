@@ -420,7 +420,30 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
       const delta =
         body.registeredCustomersAsOfEndDate -
         baselineBody.registeredCustomersAsOfEndDate;
-      expect(delta).toBeGreaterThanOrEqual(9); // at least the 9 non-"afterEnd" fixture customers
+      // Exact, and independent of whatever else the shared database holds:
+      // the delta is every Tenant #1 customer created after the baseline
+      // day and before the exclusive end of the range…
+      expect(delta).toBe(
+        await prisma.customer.count({
+          where: {
+            tenantId: TENANT_1_MOCHA_HOUSE_ID,
+            createdAt: {
+              gte: businessDateStartInstant('2020-01-02'),
+              lt: rangeEndExclusive,
+            },
+          },
+        }),
+      );
+      // …and that window holds exactly the 8 fixture customers created on or
+      // before the end date (the 9th fixture, customerAfterEnd, is after it).
+      expect(
+        await prisma.customer.count({
+          where: {
+            id: { in: customerIds },
+            createdAt: { lt: rangeEndExclusive },
+          },
+        }),
+      ).toBe(8);
     });
 
     it('registeredCustomersAsOfEndDate excludes a customer created after the end date', async () => {

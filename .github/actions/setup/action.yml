@@ -1,0 +1,29 @@
+name: Set up workspace
+description: >-
+  Node.js, the repository's pinned pnpm (devEngines ^11.21.0), a frozen
+  install, Prisma client generation and the workspace packages built in
+  dependency order.
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 11.21.0
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: pnpm
+    - name: Install dependencies (frozen lockfile)
+      shell: bash
+      run: pnpm install --frozen-lockfile
+    - name: Build workspace packages (dependency order)
+      shell: bash
+      run: |
+        pnpm --filter @mocha-house/contracts build
+        pnpm --filter @mocha-house/database exec prisma generate
+        pnpm --filter @mocha-house/database build
+        pnpm --filter @mocha-house/domain build
+        pnpm --filter @mocha-house/integrations build
+        pnpm --filter @mocha-house/validation build
+        pnpm --filter @mocha-house/ui build
+        pnpm --filter @mocha-house/testing build

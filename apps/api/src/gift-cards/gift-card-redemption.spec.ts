@@ -791,6 +791,7 @@ describe('Gift card redemption at checkout (integration)', () => {
     const status = await checkoutService.getStatus(
       confirmation.orderId,
       confirmation.accessToken,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     expect(JSON.stringify(status)).not.toContain(canonical);
 

@@ -767,6 +767,7 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     const status = await checkoutService.getStatus(
       confirmation.orderId,
       confirmation.accessToken,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     expect(status.loyaltyReward?.rewardName).toBe(before.rewardName);
     expect(status.rewardDiscount).toBe(500);

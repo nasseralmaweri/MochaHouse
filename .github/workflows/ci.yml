@@ -1,0 +1,186 @@
+# Security 4B — continuous integration for every pull request.
+#
+# No production credentials, cloud secrets or business data: every job
+# uses disposable PostgreSQL / Redis service containers and fictional,
+# clearly non-secret values below. The workflow only reads the repository.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Fictional configuration for local-mode auth, payments, media and email.
+# None of these are credentials for any real system.
+env:
+  SINGLE_TENANT_ID: 01a0db02-f800-7000-8000-000000000001
+  TENANT_QUERY_AUDIT: report
+  AUTH_PROVIDER: dev
+  AUTH_DEV_JWT_SECRET: ci-customer-dev-secret-not-a-real-credential
+  INTERNAL_AUTH_PROVIDER: dev
+  INTERNAL_AUTH_DEV_JWT_SECRET: ci-internal-dev-secret-not-a-real-credential
+  GIFT_CARD_CODE_SECRET: ci-gift-card-code-secret-not-a-real-credential
+  GIFT_CARD_PURCHASE_CODE_KEK: '0000000000000000000000000000000000000000000000000000000000000001'
+  GIFT_CARD_PURCHASE_RECOVERY_SECRET: ci-gift-card-recovery-secret-not-a-real-credential
+  MEDIA_STORAGE_PROVIDER: local
+  MEDIA_PUBLIC_BASE_URL: http://localhost:3001/api/v1/media/objects
+  NOTIFICATIONS_EMAIL_PROVIDER: log
+  CAREERS_NOTIFICATION_EMAIL: careers@example.test
+  FRANCHISING_NOTIFICATION_EMAIL: franchising@example.test
+  PORT: '3001'
+  CORS_ORIGIN: http://localhost:3000
+  TRUSTED_PROXY_HOP_COUNT: '0'
+  API_URL: http://localhost:3001
+  NEXT_PUBLIC_API_URL: http://localhost:3001
+  # Disposable service containers (see each job's `services`).
+  DATABASE_URL: postgresql://mocha:mocha@localhost:5432/mocha_ci?schema=public
+  REDIS_URL: redis://localhost:6379
+
+jobs:
+  static:
+    name: Typecheck, lint and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - name: Typecheck API
+        run: pnpm --filter api exec tsc --noEmit -p tsconfig.json
+      - name: Typecheck worker
+        run: pnpm --filter worker exec tsc --noEmit -p tsconfig.json
+      - name: Build web (also generates its route types)
+        run: pnpm --filter web build
+      - name: Typecheck web
+        run: pnpm --filter web exec tsc --noEmit
+      - name: Build API and worker
+        run: |
+          pnpm --filter api build
+          pnpm --filter worker build
+      - name: No new lint or formatting findings in changed files
+        if: github.event_name == 'pull_request'
+        run: node scripts/ci/lint-changed.mjs origin/${{ github.base_ref }}
+
+  api-tests:
+    name: API tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mocha
+          POSTGRES_PASSWORD: mocha
+          POSTGRES_DB: mocha_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U mocha" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Migrate and seed the disposable database
+        run: |
+          pnpm --filter @mocha-house/database exec prisma migrate deploy
+          pnpm --filter @mocha-house/database exec prisma db seed
+      - name: API tests (all suites except tenant isolation and route inventory)
+        working-directory: apps/api
+        run: >-
+          pnpm test --forceExit
+          --testPathIgnorePatterns "/node_modules/" "src/tenancy/" "src/route-inventory/"
+
+  tenant-isolation:
+    name: Tenant isolation and route inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mocha
+          POSTGRES_PASSWORD: mocha
+          POSTGRES_DB: mocha_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U mocha" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Migrate and seed the disposable database
+        run: |
+          pnpm --filter @mocha-house/database exec prisma migrate deploy
+          pnpm --filter @mocha-house/database exec prisma db seed
+      - name: Route inventory (every API route classified)
+        working-directory: apps/api
+        run: pnpm test --forceExit src/route-inventory/
+      - name: Tenant isolation, checkout safety and migration regression suites
+        working-directory: apps/api
+        run: pnpm test --forceExit src/tenancy/
+      - name: Worker tenant isolation
+        working-directory: apps/worker
+        run: pnpm test --forceExit src/tenancy/
+
+  worker-tests:
+    name: Worker tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mocha
+          POSTGRES_PASSWORD: mocha
+          POSTGRES_DB: mocha_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U mocha" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Migrate and seed the disposable database
+        run: |
+          pnpm --filter @mocha-house/database exec prisma migrate deploy
+          pnpm --filter @mocha-house/database exec prisma db seed
+      - name: Worker tests
+        working-directory: apps/worker
+        run: pnpm test --forceExit
+
+  web-tests:
+    name: Web tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Web tests
+        working-directory: apps/web
+        run: pnpm test
