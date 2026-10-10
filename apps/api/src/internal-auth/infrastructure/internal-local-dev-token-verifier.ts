@@ -30,6 +30,7 @@ export class InternalLocalDevTokenVerifier {
         subject: claims.sub,
         email: claims.email,
         name: claims.name,
+        emailVerified: claims.email_verified === true,
       });
     } catch (error) {
       return Promise.reject(

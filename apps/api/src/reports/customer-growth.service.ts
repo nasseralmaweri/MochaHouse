@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { AdminCustomerGrowthReport } from '@mocha-house/contracts';
 import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../prisma/prisma.service';
+import { businessDisplayName } from '../tenancy/business-name';
 import type { AuthorizationContext } from '../internal-auth/authorization/authorization-context';
 import {
   businessDateRangeToUtcInstants,
@@ -114,8 +115,8 @@ export class CustomerGrowthReportService {
       guestOrders,
       source: {
         scope: 'CUSTOMER_PLATFORM',
-        scopeLabel:
-          'Customer accounts and digital-platform orders recorded in the Mocha House platform.',
+        // Security 4A — names the report's own business, never a brand.
+        scopeLabel: `Customer accounts and digital-platform orders recorded in the ${await businessDisplayName(this.prisma, tenant.tenantId)} platform.`,
         freshnessLabel: 'Live platform data',
       },
     };

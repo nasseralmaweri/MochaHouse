@@ -78,6 +78,9 @@ export class InternalUsersService {
     }
 
     const user = await this.recordSuccessfulAuthentication(candidate, identity);
+    if (!user) {
+      return { outcome: 'not-found' };
+    }
     return { outcome: 'active', user };
   }
 
@@ -94,7 +97,10 @@ export class InternalUsersService {
     identity: InternalIdentity,
     tenantId: string,
   ): Promise<InternalUserRow | null> {
-    if (!identity.email) {
+    // Security 4A — binding a login to an unbound row by email requires
+    // the identity provider to have verified that email. An unverified or
+    // absent claim never binds (the caller then reports "not-found").
+    if (!identity.email || identity.emailVerified !== true) {
       return null;
     }
     return this.prisma.internalUser.findFirst({
@@ -114,16 +120,29 @@ export class InternalUsersService {
   private async recordSuccessfulAuthentication(
     user: InternalUserRow,
     identity: InternalIdentity,
-  ): Promise<InternalUserRow> {
+  ): Promise<InternalUserRow | null> {
     const shouldBindSubject =
       !!identity.subject && user.externalSubject !== identity.subject;
 
+    // Security 4A — binding is compare-and-set: it only succeeds while the
+    // row is still unbound, so two logins racing for the same invitation
+    // can never overwrite one another's binding. The loser is "not-found".
+    if (shouldBindSubject) {
+      const bound = await this.prisma.internalUser.updateMany({
+        where: { id: user.id, externalSubject: null },
+        data: {
+          lastAuthenticatedAt: new Date(),
+          externalSubject: identity.subject,
+        },
+      });
+      return bound.count === 1
+        ? this.prisma.internalUser.findUniqueOrThrow({ where: { id: user.id } })
+        : null;
+    }
+
     return this.prisma.internalUser.update({
       where: { id: user.id },
-      data: {
-        lastAuthenticatedAt: new Date(),
-        ...(shouldBindSubject ? { externalSubject: identity.subject } : {}),
-      },
+      data: { lastAuthenticatedAt: new Date() },
     });
   }
 }

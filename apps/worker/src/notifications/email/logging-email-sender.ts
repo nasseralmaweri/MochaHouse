@@ -13,7 +13,9 @@ export class LoggingEmailSender implements EmailSender {
 
   async send(input: SendEmailInput): Promise<SendEmailResult> {
     this.sent.push(input);
-    this.logger.log(`email (logged, not sent): to=${input.to} subject="${input.subject}"`);
+    this.logger.log(
+      `email (logged, not sent): to=${input.to} from="${input.fromName ?? ''}" subject="${input.subject}"`,
+    );
     return { providerMessageId: `log-${this.sent.length}` };
   }
 

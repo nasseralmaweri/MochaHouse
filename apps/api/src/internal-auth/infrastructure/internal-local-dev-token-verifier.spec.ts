@@ -34,6 +34,7 @@ describe('InternalLocalDevTokenVerifier', () => {
       subject: 'internal-dev:admin@example.com',
       email: 'admin@example.com',
       name: null,
+      emailVerified: false,
     });
   });
 

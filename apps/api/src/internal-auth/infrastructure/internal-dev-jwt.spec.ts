@@ -19,7 +19,17 @@ describe('internal dev JWT codec', () => {
       sub: 'internal-dev:admin@example.com',
       email: 'admin@example.com',
       name: 'Admin',
+      email_verified: false,
     });
+  });
+
+  it('carries email_verified only when it is exactly true', () => {
+    const verified = signInternalDevJwt(
+      { sub: 's', email: 'a@example.com', name: null, email_verified: true },
+      secret,
+      3600,
+    );
+    expect(verifyInternalDevJwt(verified, secret).email_verified).toBe(true);
   });
 
   it('rejects a token signed with a different secret', () => {

@@ -13,9 +13,11 @@ import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import {
   CMS_PAGE_REGISTRY,
+  defaultContentFor,
   getRegistryEntry,
   type CmsPageRegistryEntry,
 } from '../registry/cms-page-registry';
+import { businessDisplayName } from '../../tenancy/business-name';
 
 type CmsPageRow = Prisma.CmsPageGetPayload<Record<string, never>>;
 
@@ -64,6 +66,9 @@ export class CmsPagesAdminService {
         tenantId_key: { tenantId: tenant.tenantId, key: entry.key },
       },
     });
+    if (!row) {
+      return this.toDetail(entry, null, await this.defaults(entry, tenant));
+    }
     return this.toDetail(entry, row);
   }
 
@@ -88,7 +93,7 @@ export class CmsPagesAdminService {
     });
     const previousDraft = existing
       ? (existing.draftContent as unknown as CmsPageContent)
-      : entry.defaultContent;
+      : await this.defaults(entry, tenant);
     const changedFieldKeys = entry.changedFieldKeys(previousDraft, content);
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -140,7 +145,7 @@ export class CmsPagesAdminService {
     // reference that became invalid, e.g. a media asset deactivated, or a
     // product deactivated, since the draft was last saved).
     const draft = entry.validate(
-      existing ? existing.draftContent : entry.defaultContent,
+      existing ? existing.draftContent : await this.defaults(entry, tenant),
     );
     if (entry.validateReferences) {
       await entry.validateReferences(draft, this.prisma, tenant.tenantId);
@@ -211,16 +216,34 @@ export class CmsPagesAdminService {
     };
   }
 
+  // Security 4A — a never-edited page's default content, filled in with
+  // THIS business's name (never another business's, never a hardcoded
+  // brand), so publishing an untouched default can't put another
+  // business's name on this business's storefront.
+  private async defaults(
+    entry: CmsPageRegistryEntry,
+    tenant: TenantContext,
+  ): Promise<CmsPageContent> {
+    return defaultContentFor(
+      entry,
+      await businessDisplayName(this.prisma, tenant.tenantId),
+    );
+  }
+
   private toDetail(
     entry: CmsPageRegistryEntry,
     row: CmsPageRow | null,
+    defaultContent?: CmsPageContent,
   ): AdminCmsPageDetail {
     if (!row) {
+      if (!defaultContent) {
+        throw new Error('Default content is required for a never-saved page.');
+      }
       return {
         key: entry.key,
         title: entry.title,
         status: 'DRAFT',
-        draftContent: entry.defaultContent,
+        draftContent: defaultContent,
         publishedContent: null,
         publishedAt: null,
         updatedAt: null,

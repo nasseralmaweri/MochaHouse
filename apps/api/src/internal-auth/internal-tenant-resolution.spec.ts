@@ -89,7 +89,14 @@ describe('S0F admin tenant resolution & business membership (integration)', () =
   const emailOf = (key: string) => `s0f-${key}-${suffix}@example.com`;
   const token = (key: string) =>
     signInternalDevJwt(
-      { sub: subjectOf(key), email: emailOf(key), name: null },
+      // Each key is a verified human (Security 4A: only a provider-verified
+      // email may find or bind an email-provisioned row).
+      {
+        sub: subjectOf(key),
+        email: emailOf(key),
+        name: null,
+        email_verified: true,
+      },
       internalSecret,
       3600,
     );
