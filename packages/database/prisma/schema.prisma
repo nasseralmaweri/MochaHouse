@@ -137,6 +137,7 @@ model Location {
   productPriceOverrides            LocationProductPriceOverride[]
   productAvailabilityOverrides     LocationProductAvailabilityOverride[]
   orders                           Order[]
+  paymentAttempts                  PaymentAttempt[]
   preferredByCustomers             CustomerPreferredLocation[]
   checklistInstances               ChecklistInstance[]
   operationsTasks                  OperationsTask[]
@@ -490,8 +491,8 @@ model CustomerPreferredLocation {
   locationId String
   createdAt  DateTime @default(now())
 
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+  location Location @relation(fields: [tenantId, locationId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
 
   // Milestone S0D-1 / S0D-2B-2 — the owning tenant. REQUIRED since
   // S0D-2B-2: copied from the tenant-validated parent Customer, and the
@@ -589,6 +590,11 @@ model PaymentAttempt {
   // insert OR update whose paymentAttemptId is already claimed by the other
   // table — declarative cross-table enforcement, not programmer convention.
   order            Order?
+  // Security 4C-3 — the checkout location, now a composite foreign key: a
+  // payment attempt can only name a Location of its own business. Locations
+  // are never deleted while a payment references them (Restrict, like
+  // Order.location); a gift-card purchase still leaves it null.
+  location         Location?         @relation(fields: [tenantId, locationId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   giftCardPurchase GiftCardPurchase?
 
   // Milestone S0D-1 / S0D-2C-1 — the owning tenant. REQUIRED since
@@ -622,7 +628,7 @@ model Order {
   status      OrderStatus @default(RECEIVED)
 
   locationId String
-  location   Location @relation(fields: [locationId], references: [id])
+  location   Location @relation(fields: [tenantId, locationId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   // Nullable: guest checkout (Milestone 3) never sets this. Populated only
   // when the checkout request carried a valid, verified customer session
@@ -633,10 +639,10 @@ model Order {
   // this slice) can never destroy this Order's own history — the order
   // simply reverts to looking like a guest order, never disappears.
   customerId String?
-  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customer   Customer? @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: SetNull, onUpdate: Restrict)
 
   paymentAttemptId String         @unique
-  paymentAttempt   PaymentAttempt @relation(fields: [paymentAttemptId], references: [id])
+  paymentAttempt   PaymentAttempt @relation(fields: [tenantId, paymentAttemptId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   // Guest contact snapshot, captured at checkout time regardless of whether
   // the order is also linked to a Customer above — never re-derived from a
@@ -698,6 +704,9 @@ model Order {
   // (tenantId, id) so the database itself can refuse a cross-business link
   // (composite foreign keys arrive in Security 4C-3).
   @@unique([tenantId, id])
+  // Security 4C-3 — the one-to-one payment link as a composite key (paymentAttemptId
+  // is already unique on its own, so this pair is too).
+  @@unique([tenantId, paymentAttemptId])
   @@index([locationId])
   @@index([customerId])
   @@index([tenantId])
@@ -712,7 +721,7 @@ model Order {
 model OrderLine {
   id      String @id @default(uuid(7))
   orderId String
-  order   Order  @relation(fields: [orderId], references: [id])
+  order   Order  @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   productId   String
   productName String
@@ -739,7 +748,7 @@ model OrderLine {
 model OrderStatusHistory {
   id      String @id @default(uuid(7))
   orderId String
-  order   Order  @relation(fields: [orderId], references: [id])
+  order   Order  @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   status    OrderStatus
   note      String?
@@ -2586,7 +2595,7 @@ model CustomerNote {
   body                 String
   createdAt            DateTime @default(now())
 
-  customer           Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer           Customer     @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
   authorInternalUser InternalUser @relation("CustomerNoteAuthor", fields: [authorInternalUserId], references: [id], onDelete: Restrict)
 
   // Milestone S0D-1 / S0D-2B-2 — the owning tenant. REQUIRED since

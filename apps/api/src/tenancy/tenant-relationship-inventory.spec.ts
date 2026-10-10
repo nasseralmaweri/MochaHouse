@@ -112,6 +112,21 @@ const byId = new Map(TENANT_RELATIONSHIPS.map((r) => [r.id, r]));
 const relationsBetweenBusinessRecords = tenantModels.flatMap((m) =>
   m.relations.filter((r) => r.target !== 'Tenant'),
 );
+// The column a relation references through: a plain single-column foreign
+// key ([col] -> [id]) or, since Security 4C-3, a tenant-enforced composite one
+// ([tenantId, col] -> [tenantId, id]). Anything else is unsupported (null).
+const referencingColumn = (r: Relation): string | null => {
+  if (r.fields.length === 1 && r.references.join() === 'id') return r.fields[0];
+  if (
+    r.fields.length === 2 &&
+    r.fields[0] === 'tenantId' &&
+    r.references.join() === 'tenantId,id'
+  ) {
+    return r.fields[1];
+  }
+  return null;
+};
+const isTenantEnforced = (r: Relation) => r.fields.length === 2;
 const relationColumns = (m: Model) =>
   new Set(m.relations.flatMap((r) => r.fields));
 const plainIdColumns = tenantModels.flatMap((m) =>
@@ -160,10 +175,10 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
     }
   });
 
-  it('has no multi-column relation the inventory cannot describe yet', () => {
+  it('every relation is a single-column or a (tenantId, column) composite foreign key', () => {
     expect(
       relationsBetweenBusinessRecords.filter(
-        (r) => r.fields.length !== 1 || r.references.join() !== 'id',
+        (r) => referencingColumn(r) === null,
       ),
     ).toEqual([]);
   });
@@ -172,7 +187,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
     const unclassified: string[] = [];
     const mismatched: string[] = [];
     for (const r of relationsBetweenBusinessRecords) {
-      const id = `${r.model}.${r.fields[0]}`;
+      const id = `${r.model}.${referencingColumn(r)}`;
       const entry = byId.get(id) as DirectReference | undefined;
       if (!entry) {
         unclassified.push(id);
@@ -184,6 +199,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
         nullable: r.optional,
         hasForeignKey: true,
         onDelete: effectiveOnDelete(r),
+        tenantEnforced: isTenantEnforced(r) || undefined,
       };
       const actual = {
         kind: entry.kind,
@@ -191,6 +207,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
         nullable: entry.nullable,
         hasForeignKey: entry.hasForeignKey,
         onDelete: entry.onDelete,
+        tenantEnforced: entry.tenantEnforced,
       };
       if (JSON.stringify(actual) !== JSON.stringify(expected)) {
         mismatched.push(`${id}: ${JSON.stringify({ expected, actual })}`);
@@ -200,7 +217,24 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(relationsBetweenBusinessRecords).toHaveLength(82);
+    expect(relationsBetweenBusinessRecords).toHaveLength(83);
+    // Security 4C-3: customers, orders and payments are tenant-enforced.
+    expect(
+      relationsBetweenBusinessRecords
+        .filter(isTenantEnforced)
+        .map((r) => `${r.model}.${referencingColumn(r)}`)
+        .sort(),
+    ).toEqual([
+      'CustomerNote.customerId',
+      'CustomerPreferredLocation.customerId',
+      'CustomerPreferredLocation.locationId',
+      'Order.customerId',
+      'Order.locationId',
+      'Order.paymentAttemptId',
+      'OrderLine.orderId',
+      'OrderStatusHistory.orderId',
+      'PaymentAttempt.locationId',
+    ]);
   });
 
   it('classifies every plain id column (no foreign key) on business-owned records', () => {
@@ -227,7 +261,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(plainIdColumns).toHaveLength(17);
+    expect(plainIdColumns).toHaveLength(16);
   });
 
   it('classifies every JSON column on business-owned records', () => {
@@ -328,8 +362,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       external: count((r) => r.kind === 'external-identifier'),
       total: TENANT_RELATIONSHIPS.length,
     }).toEqual({
-      compositeWithForeignKey: 82,
-      compositeWithoutForeignKey: 3,
+      compositeWithForeignKey: 83,
+      compositeWithoutForeignKey: 2,
       historicalSnapshot: 8,
       polymorphic: 5,
       json: 6,
@@ -342,7 +376,9 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
     );
     expect(optionalForeignKeys.length).toBeGreaterThan(0);
     for (const r of optionalForeignKeys) {
-      expect(byId.get(`${r.model}.${r.fields[0]}`)?.nullable).toBe(true);
+      expect(byId.get(`${r.model}.${referencingColumn(r)}`)?.nullable).toBe(
+        true,
+      );
     }
     expect(
       [
