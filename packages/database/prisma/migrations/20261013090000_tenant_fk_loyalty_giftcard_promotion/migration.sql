@@ -35,10 +35,11 @@
 -- pair is too); OrderPromotionRedemption.customerId gains an index for its
 -- SET NULL.
 --
--- Historical snapshots (no foreign key: the source may later be deleted)
--- may never name ANOTHER business's record when written (trigger
--- "<Table>_<column>_same_tenant", SQLSTATE 23503). A source that no longer
--- exists is allowed, as before:
+-- Historical snapshots (no foreign key: the source may later be deleted).
+-- A NEW or CHANGED value must name an existing source of the SAME business
+-- (trigger "<Table>_<column>_same_tenant", SQLSTATE 23503). A value stored
+-- while its source existed may stay unchanged after that source is deleted
+-- (the history is kept, never rewritten):
 --
 --   OrderLoyaltyRewardRedemption.sourceRewardId -> LoyaltyReward
 --   OrderLoyaltyRewardRedemption.freeItemProductId -> Product
@@ -47,6 +48,13 @@
 --   OrderPromotionRedemption.sourcePromotionId -> Promotion
 --   OrderPromotionRedemption.freeItemProductId -> Product
 --   OrderGiftCardRedemption.sourceGiftCardId  -> GiftCard
+--
+-- A deleted source's id can never be taken by ANOTHER business while a
+-- snapshot of the original business still names it (trigger
+-- "<Table>_id_not_reused", SQLSTATE 23505) on
+--   GiftCard, LoyaltyBonusPromotion, LoyaltyReward, Promotion,
+-- so a kept snapshot can never silently start naming another business's
+-- record. (Product snapshots get the same guard with the catalog, 4C-6.)
 --
 -- Ownership: these tables reject any change of "tenantId" on an existing
 -- row (trigger "<Table>_tenantId_immutable", SQLSTATE 23001), reusing
@@ -192,13 +200,20 @@ BEGIN
     ref text := to_jsonb(NEW) ->> TG_ARGV[0];
     owner text;
   BEGIN
-    IF ref IS NOT NULL THEN
-      EXECUTE format('SELECT "tenantId" FROM %I.%I WHERE "id" = $1', TG_TABLE_SCHEMA, TG_ARGV[1])
-        INTO owner USING ref;
-      IF owner IS NOT NULL AND owner <> NEW."tenantId" THEN
-        RAISE EXCEPTION '"%"."%" cannot name another business''s "%".', TG_TABLE_NAME, TG_ARGV[0], TG_ARGV[1]
-          USING ERRCODE = 'foreign_key_violation';
-      END IF;
+    -- No reference, or a value kept unchanged (its source may since have
+    -- been deleted): nothing new is being asserted.
+    IF ref IS NULL OR (TG_OP = 'UPDATE' AND ref IS NOT DISTINCT FROM to_jsonb(OLD) ->> TG_ARGV[0]) THEN
+      RETURN NEW;
+    END IF;
+    EXECUTE format('SELECT "tenantId" FROM %I.%I WHERE "id" = $1', TG_TABLE_SCHEMA, TG_ARGV[1])
+      INTO owner USING ref;
+    IF owner IS NULL THEN
+      RAISE EXCEPTION '"%"."%" must name an existing "%".', TG_TABLE_NAME, TG_ARGV[0], TG_ARGV[1]
+        USING ERRCODE = 'foreign_key_violation';
+    END IF;
+    IF owner <> NEW."tenantId" THEN
+      RAISE EXCEPTION '"%"."%" cannot name another business''s "%".', TG_TABLE_NAME, TG_ARGV[0], TG_ARGV[1]
+        USING ERRCODE = 'foreign_key_violation';
     END IF;
     RETURN NEW;
   END
@@ -217,6 +232,33 @@ BEGIN
     FOR EACH ROW EXECUTE FUNCTION "reject_cross_tenant_snapshot"('freeItemProductId', 'Product');
   CREATE TRIGGER "OrderGiftCardRedemption_sourceGiftCardId_same_tenant" BEFORE INSERT OR UPDATE OF "sourceGiftCardId" ON "OrderGiftCardRedemption"
     FOR EACH ROW EXECUTE FUNCTION "reject_cross_tenant_snapshot"('sourceGiftCardId', 'GiftCard');
+
+  CREATE FUNCTION "reject_reused_snapshot_source"() RETURNS trigger
+    LANGUAGE plpgsql AS $reject_reused_snapshot_source$
+  DECLARE
+    taken boolean;
+  BEGIN
+    IF TG_OP = 'UPDATE' AND NEW."id" = OLD."id" THEN
+      RETURN NEW;
+    END IF;
+    EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I.%I WHERE %I = $1 AND "tenantId" <> $2)',
+        TG_TABLE_SCHEMA, TG_ARGV[0], TG_ARGV[1])
+      INTO taken USING NEW."id", NEW."tenantId";
+    IF taken THEN
+      RAISE EXCEPTION '"%" id is still named by another business''s "%"."%".', TG_TABLE_NAME, TG_ARGV[0], TG_ARGV[1]
+        USING ERRCODE = 'unique_violation';
+    END IF;
+    RETURN NEW;
+  END
+  $reject_reused_snapshot_source$;
+  CREATE TRIGGER "GiftCard_id_not_reused" BEFORE INSERT OR UPDATE OF "id" ON "GiftCard"
+    FOR EACH ROW EXECUTE FUNCTION "reject_reused_snapshot_source"('OrderGiftCardRedemption', 'sourceGiftCardId');
+  CREATE TRIGGER "LoyaltyBonusPromotion_id_not_reused" BEFORE INSERT OR UPDATE OF "id" ON "LoyaltyBonusPromotion"
+    FOR EACH ROW EXECUTE FUNCTION "reject_reused_snapshot_source"('OrderLoyaltyBonusItem', 'sourcePromotionId');
+  CREATE TRIGGER "LoyaltyReward_id_not_reused" BEFORE INSERT OR UPDATE OF "id" ON "LoyaltyReward"
+    FOR EACH ROW EXECUTE FUNCTION "reject_reused_snapshot_source"('OrderLoyaltyRewardRedemption', 'sourceRewardId');
+  CREATE TRIGGER "Promotion_id_not_reused" BEFORE INSERT OR UPDATE OF "id" ON "Promotion"
+    FOR EACH ROW EXECUTE FUNCTION "reject_reused_snapshot_source"('OrderPromotionRedemption', 'sourcePromotionId');
 
   CREATE TRIGGER "CustomerLoyaltyAccount_tenantId_immutable" BEFORE UPDATE OF "tenantId" ON "CustomerLoyaltyAccount"
     FOR EACH ROW WHEN (OLD."tenantId" IS DISTINCT FROM NEW."tenantId")

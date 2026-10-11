@@ -31,8 +31,10 @@ import {
 //   - seventeen composite foreign keys ("tenantId", <column>) -> parent
 //     ("tenantId", "id") (sixteen replaced, OrderPromotionRedemption.customerId
 //     new), with every SET NULL clearing only its column;
-//   - seven historical snapshots that may never name another business's
-//     record when written (a source that no longer exists stays allowed);
+//   - seven historical snapshots: a new or changed value must name an
+//     existing record of the same business; a value kept unchanged may
+//     outlive its deleted source, whose id another business can then never
+//     take (gift card, promotion, reward and bonus-promotion sources);
 //   - fourteen tables whose rows can never move to another business.
 //
 // With three fictional businesses (A = Mocha House, B and C = test
@@ -367,15 +369,38 @@ const EXPECTED_SNAPSHOT_TRIGGERS = [...SNAPSHOTS]
     (s) =>
       `trigger: CREATE TRIGGER "${snapshotTrigger(s)}" BEFORE INSERT OR UPDATE OF "${s.column}" ON public."${s.child}" FOR EACH ROW EXECUTE FUNCTION reject_cross_tenant_snapshot('${s.column}', '${s.target}')`,
   );
+// Snapshot sources whose deleted id another business can never take while
+// a kept snapshot still names it (Product follows with the catalog, 4C-6).
+const REUSE_GUARDED = SNAPSHOTS.filter((s) => s.target !== 'Product');
+const EXPECTED_REUSE_TRIGGERS = [...REUSE_GUARDED]
+  .sort((x, y) => (x.target < y.target ? -1 : x.target > y.target ? 1 : 0))
+  .map(
+    (s) =>
+      `trigger: CREATE TRIGGER "${s.target}_id_not_reused" BEFORE INSERT OR UPDATE OF id ON public."${s.target}" FOR EACH ROW EXECUTE FUNCTION reject_reused_snapshot_source('${s.child}', '${s.column}')`,
+  );
 const EXPECTED_ENFORCEMENT = [
   ...EXPECTED_FOREIGN_KEYS,
   ...EXPECTED_IMMUTABILITY,
   ...EXPECTED_SNAPSHOT_TRIGGERS,
+  ...EXPECTED_REUSE_TRIGGERS,
 ];
 
+// A new source row of business `tag` with the given id, by direct SQL.
+const insertSource = (target: string, sourceId: string, tag: Tag) => {
+  const t = TENANTS[tag];
+  const columns: Record<string, string> = {
+    GiftCard: `("id", "tenantId", "codeHash", "last4", "originalValueMinorUnits", "updatedAt") VALUES ('${sourceId}', '${t}', 'reuse-${tag}-${sourceId}', '0000', 1, now())`,
+    LoyaltyReward: `("id", "tenantId", "name", "type", "beanCost", "updatedAt") VALUES ('${sourceId}', '${t}', 'Reused', 'FIXED_AMOUNT', 1, now())`,
+    LoyaltyBonusPromotion: `("id", "tenantId", "name", "type", "bonusValue", "updatedAt") VALUES ('${sourceId}', '${t}', 'Reused', 'EXTRA_BEANS', 1, now())`,
+    Promotion: `("id", "tenantId", "name", "kind", "discountType", "updatedAt") VALUES ('${sourceId}', '${t}', 'Reused', 'AUTOMATIC', 'PERCENTAGE_OFF', now())`,
+    Product: `("id", "tenantId", "name", "slug", "categoryId", "updatedAt") VALUES ('${sourceId}', '${t}', 'Reused', 'reuse-${tag}-${sourceId}', '${id(tag, 'category')}', now())`,
+  };
+  return `INSERT INTO "${target}" ${columns[target]}`;
+};
+
 // Every foreign key on the seventeen referencing columns, every ownership
-// trigger on the fourteen protected tables, then every snapshot trigger —
-// as PostgreSQL defines them. Exactly EXPECTED_ENFORCEMENT means: composite,
+// trigger on the fourteen protected tables, then every snapshot and id-reuse
+// trigger — as PostgreSQL defines them. Exactly EXPECTED_ENFORCEMENT means: composite,
 // on the right parent key, the right delete action, no single-column key
 // left behind, no row can move, and no snapshot can name another business.
 async function tenantEnforcement(client: Client): Promise<string[]> {
@@ -403,7 +428,13 @@ async function tenantEnforcement(client: Client): Promise<string[]> {
     );
   const immutable = await triggers('reject_tenant_reassignment');
   const snapshots = await triggers('reject_cross_tenant_snapshot');
-  return [...keys.rows, ...immutable.rows, ...snapshots.rows].map((r) => r.d);
+  const reuse = await triggers('reject_reused_snapshot_source');
+  return [
+    ...keys.rows,
+    ...immutable.rows,
+    ...snapshots.rows,
+    ...reuse.rows,
+  ].map((r) => r.d);
 }
 
 // Fictional data for one business: every relationship and snapshot in
@@ -731,7 +762,7 @@ async function dataChecksum(url: string): Promise<string> {
   });
 }
 
-// Balances and money/bean histories, for asserting nothing moved.
+// Balances, points ledgers and money histories, for asserting nothing moved.
 async function financialState(url: string): Promise<string> {
   return withScratchClient(url, async (client) => {
     const { rows } = await client.query<{ s: string }>(
@@ -757,6 +788,35 @@ async function attempt(client: Client, sql: string): Promise<string> {
   } catch (error) {
     const e = error as { code?: string; constraint?: string };
     return `${e.code}${e.constraint ? ` ${e.constraint}` : ''}`;
+  } finally {
+    await client.query('ROLLBACK');
+  }
+}
+
+// Runs `setup` (which must succeed), then each probe in its own savepoint,
+// all inside a transaction that is always rolled back; returns 'ok' or the
+// SQLSTATE per probe (a successful probe stays applied for the next one).
+async function scenario(
+  client: Client,
+  setup: readonly string[],
+  probes: readonly string[],
+): Promise<string[]> {
+  await client.query('BEGIN');
+  try {
+    for (const statement of setup) await client.query(statement);
+    const out: string[] = [];
+    for (const probe of probes) {
+      await client.query('SAVEPOINT probe');
+      try {
+        await client.query(probe);
+        await client.query('RELEASE SAVEPOINT probe');
+        out.push('ok');
+      } catch (error) {
+        await client.query('ROLLBACK TO SAVEPOINT probe');
+        out.push(String((error as { code?: string }).code));
+      }
+    }
+    return out;
   } finally {
     await client.query('ROLLBACK');
   }
@@ -889,6 +949,7 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
       'ADD CONSTRAINT',
       'CREATE FUNCTION "reject_cross_tenant_snapshot"()',
       'CREATE TRIGGER',
+      'CREATE FUNCTION "reject_reused_snapshot_source"()',
     ].map((s) => code.indexOf(s));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((x, y) => x - y)).toEqual(order);
@@ -909,7 +970,18 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
         `CREATE TRIGGER "${snapshotTrigger(s)}" BEFORE INSERT OR UPDATE OF "${s.column}" ON "${s.child}"`,
       );
     }
-    expect(code.match(/CREATE TRIGGER/g)).toHaveLength(14 + 7);
+    for (const s of REUSE_GUARDED) {
+      expect(code).toContain(
+        `CREATE TRIGGER "${s.target}_id_not_reused" BEFORE INSERT OR UPDATE OF "id" ON "${s.target}"`,
+      );
+    }
+    expect(code.match(/CREATE TRIGGER/g)).toHaveLength(14 + 7 + 4);
+    // A new or changed snapshot value needs an existing same-business
+    // source; an unchanged one is kept.
+    expect(code).toContain('must name an existing');
+    expect(code).toContain(
+      "TG_OP = 'UPDATE' AND ref IS NOT DISTINCT FROM to_jsonb(OLD) ->> TG_ARGV[0]",
+    );
     // It reuses 4C-3's function and never creates or drops it.
     expect(code).not.toMatch(
       /(CREATE|DROP) FUNCTION "reject_tenant_reassignment"/,
@@ -921,7 +993,7 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
 
   it('the rollback is ONE DO block that removes only what 4C-4 added and restores the sixteen original keys — keeping 4C-3’s function', () => {
     expect(isAppliedAtomically(rollbackSql)).toBe(true);
-    expect(rollbackSql.match(/DROP TRIGGER/g)).toHaveLength(14 + 7);
+    expect(rollbackSql.match(/DROP TRIGGER/g)).toHaveLength(14 + 7 + 4);
     for (const t of PROTECTED_TABLES) {
       expect(rollbackSql).toContain(
         `DROP TRIGGER "${t}_tenantId_immutable" ON "${t}";`,
@@ -933,6 +1005,9 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
     expect(rollbackSql.match(/ADD CONSTRAINT "\w+_fkey"/g)).toHaveLength(16);
     expect(rollbackSql).toContain(
       'DROP FUNCTION "reject_cross_tenant_snapshot"();',
+    );
+    expect(rollbackSql).toContain(
+      'DROP FUNCTION "reject_reused_snapshot_source"();',
     );
     expect(rollbackSql).not.toMatch(
       /DROP FUNCTION "reject_tenant_reassignment"/,
@@ -1058,43 +1133,50 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
       );
     });
 
-    it('a snapshot may name its own business’s record, a deleted one or none — never another business’s (INSERT and UPDATE, every pair)', async () => {
+    // A copy of a snapshot row (new id, own order-2 where the order is
+    // unique) with the snapshot column set to `value`.
+    const snapshotCopy = (s: Snapshot, x: Tag, value: string) =>
+      `INSERT INTO "${s.child}"
+         SELECT (jsonb_populate_record(NULL::"${s.child}", to_jsonb(t) || '${JSON.stringify(
+           {
+             id: `copy-${x}-${s.childRow}`,
+             [s.column]: value,
+             ...(s.child === 'OrderLoyaltyBonusItem'
+               ? {}
+               : { orderId: id(x, 'order-2') }),
+           },
+         )}'::jsonb)).*
+         FROM "${s.child}" t WHERE id = '${id(x, s.childRow)}'`;
+    const setSnapshot = (s: Snapshot, x: Tag, value: string | null) =>
+      `UPDATE "${s.child}" SET "${s.column}" = ${value === null ? 'NULL' : `'${value}'`} WHERE id = '${id(x, s.childRow)}'`;
+
+    it('a new or changed snapshot must name an existing record of the same business (INSERT and UPDATE, every business and pair)', async () => {
       const results = await sql(async (client) => {
         const out: string[] = [];
         for (const s of SNAPSHOTS) {
           for (const x of TAGS) {
-            const set = (value: string | null) =>
-              attempt(
-                client,
-                `UPDATE "${s.child}" SET "${s.column}" = ${value === null ? 'NULL' : `'${value}'`} WHERE id = '${id(x, s.childRow)}'`,
-              );
-            const own = await set(id(x, s.spareTarget));
-            const missing = await set('lg-missing');
-            const none = s.column === 'productId' ? 'ok' : await set(null);
-            if ([own, missing, none].some((o) => o !== 'ok')) {
-              out.push(
-                `${s.child}.${s.column} ${x}: ${own}/${missing}/${none}`,
-              );
+            const outcomes = [
+              await attempt(client, setSnapshot(s, x, id(x, s.spareTarget))),
+              await attempt(client, snapshotCopy(s, x, id(x, s.spareTarget))),
+              await attempt(client, setSnapshot(s, x, 'lg-missing')),
+              await attempt(client, snapshotCopy(s, x, 'lg-missing')),
+              s.column === 'productId'
+                ? 'ok'
+                : await attempt(client, setSnapshot(s, x, null)),
+            ];
+            const expected = ['ok', 'ok', '23503', '23503', 'ok'];
+            if (outcomes.join() !== expected.join()) {
+              out.push(`${s.child}.${s.column} ${x}: ${outcomes.join('/')}`);
             }
           }
           for (const [x, y] of PAIRS) {
             const update = await attempt(
               client,
-              `UPDATE "${s.child}" SET "${s.column}" = '${id(y, s.spareTarget)}' WHERE id = '${id(x, s.childRow)}'`,
+              setSnapshot(s, x, id(y, s.spareTarget)),
             );
             const insert = await attempt(
               client,
-              `INSERT INTO "${s.child}"
-                 SELECT (jsonb_populate_record(NULL::"${s.child}", to_jsonb(t) || '${JSON.stringify(
-                   {
-                     id: `copy-${x}-${s.childRow}`,
-                     [s.column]: id(y, s.spareTarget),
-                     ...(s.child === 'OrderLoyaltyBonusItem'
-                       ? {}
-                       : { orderId: id(x, 'order-2') }),
-                   },
-                 )}'::jsonb)).*
-                 FROM "${s.child}" t WHERE id = '${id(x, s.childRow)}'`,
+              snapshotCopy(s, x, id(y, s.spareTarget)),
             );
             if (update !== '23503' || insert !== '23503') {
               out.push(
@@ -1106,6 +1188,222 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
         return out;
       });
       expect(results).toEqual([]);
+    });
+
+    it('a snapshot kept unchanged outlives its deleted source; changing or re-pointing it does not', async () => {
+      const results = await sql(async (client) => {
+        const out: string[] = [];
+        for (const s of SNAPSHOTS) {
+          for (const [x, y] of PAIRS) {
+            const deleted = id(x, s.spareTarget);
+            const outcomes = await scenario(
+              client,
+              [
+                // A valid same-business snapshot, then its source deleted.
+                setSnapshot(s, x, deleted),
+                `DELETE FROM "${s.target}" WHERE id = '${deleted}'`,
+              ],
+              [
+                // Kept unchanged: rewriting the row or the same value.
+                `UPDATE "${s.child}" SET "tenantId" = "tenantId" WHERE id = '${id(x, s.childRow)}'`,
+                `UPDATE "${s.child}" SET "${s.column}" = "${s.column}" WHERE id = '${id(x, s.childRow)}'`,
+                // Changed: to another missing id, to another business.
+                setSnapshot(s, x, 'lg-missing'),
+                setSnapshot(s, x, id(y, s.spareTarget)),
+                // A new row naming the deleted source.
+                snapshotCopy(s, x, deleted),
+                // Cleared, then pointed back at the deleted source.
+                ...(s.column === 'productId'
+                  ? []
+                  : [setSnapshot(s, x, null), setSnapshot(s, x, deleted)]),
+              ],
+            );
+            const expected = [
+              'ok',
+              'ok',
+              '23503',
+              '23503',
+              '23503',
+              ...(s.column === 'productId' ? [] : ['ok', '23503']),
+            ];
+            if (outcomes.join() !== expected.join()) {
+              out.push(
+                `${s.child}.${s.column} ${x}/${y}: ${outcomes.join('/')}`,
+              );
+            }
+          }
+        }
+        return out;
+      });
+      expect(results).toEqual([]);
+      expect(await dataChecksum(scratch.url)).toBe(beforeData);
+    });
+
+    it('another business can never take a deleted source’s id while a kept snapshot names it (INSERT and id UPDATE); the same business can', async () => {
+      const results = await sql(async (client) => {
+        const out: string[] = [];
+        for (const s of REUSE_GUARDED) {
+          for (const [x, y] of PAIRS) {
+            const deleted = id(x, s.spareTarget);
+            const outcomes = await scenario(
+              client,
+              [
+                setSnapshot(s, x, deleted),
+                `DELETE FROM "${s.target}" WHERE id = '${deleted}'`,
+              ],
+              [
+                insertSource(s.target, deleted, y),
+                `UPDATE "${s.target}" SET id = '${deleted}' WHERE id = '${id(y, s.spareTarget)}'`,
+                insertSource(s.target, deleted, x),
+                `SELECT 1 FROM "${s.child}" c JOIN "${s.target}" p ON p.id = c."${s.column}"
+                  WHERE c.id = '${id(x, s.childRow)}' AND p."tenantId" = '${TENANTS[x]}'`,
+              ],
+            );
+            if (outcomes.join() !== '23505,23505,ok,ok') {
+              out.push(`${s.target} ${x}->${y}: ${outcomes.join('/')}`);
+            }
+          }
+          // An id no snapshot names is free to any business.
+          const free = await scenario(
+            client,
+            [
+              `DELETE FROM "${s.target}" WHERE id = '${id('a', s.spareTarget)}'`,
+            ],
+            [insertSource(s.target, id('a', s.spareTarget), 'b')],
+          );
+          if (free.join() !== 'ok')
+            out.push(`${s.target} free id: ${free.join()}`);
+        }
+        return out;
+      });
+      expect(results).toEqual([]);
+      expect(await dataChecksum(scratch.url)).toBe(beforeData);
+    });
+
+    it('Prisma writes naming a missing or foreign snapshot source are rejected, nested or not, and leave balances, ledgers, card transactions and usage counters unchanged', async () => {
+      const outcomes: Record<string, string> = {};
+      for (const [x, y] of PAIRS) {
+        const X = (name: string) => id(x, name);
+        const Y = (name: string) => id(y, name);
+        for (const [label, source] of [
+          ['missing', 'lg-missing'],
+          ['foreign', ''],
+        ] as const) {
+          const pick = (foreign: string) =>
+            label === 'missing' ? source : foreign;
+          const writes: Record<string, () => Promise<unknown>> = {
+            nestedPromotionRedemption: () =>
+              prisma.order.update({
+                where: { id: X('order-2') },
+                data: {
+                  promotionRedemption: {
+                    create: {
+                      sourcePromotionId: pick(Y('promo')),
+                      promotionName: 'x',
+                      promotionKind: 'COUPON',
+                      discountType: 'FIXED_AMOUNT',
+                      discountValue: 1,
+                      discountMinorUnits: 1,
+                    },
+                  },
+                },
+              }),
+            nestedBonusItem: () =>
+              prisma.orderLoyaltyBonus.create({
+                data: {
+                  tenantId: TENANTS[x],
+                  orderId: X('order-2'),
+                  totalBonusBeans: 1,
+                  items: {
+                    create: {
+                      sourcePromotionId: pick(Y('bonus-promo')),
+                      promotionName: 'x',
+                      promotionType: 'EXTRA_BEANS',
+                      bonusValue: 1,
+                      productId: X('product'),
+                      productName: 'x',
+                      qualifyingUnits: 1,
+                      qualifyingSpendMinorUnits: 1,
+                      standardBeansForItem: 1,
+                      bonusBeans: 1,
+                    },
+                  },
+                },
+              }),
+            nestedFreeItemProduct: () =>
+              prisma.order.update({
+                where: { id: X('order-2') },
+                data: {
+                  loyaltyRewardRedemption: {
+                    create: {
+                      sourceRewardId: X('reward'),
+                      freeItemProductId: pick(Y('product')),
+                      rewardName: 'x',
+                      rewardType: 'FREE_ITEM',
+                      beanCost: 1,
+                      discountMinorUnits: 1,
+                    },
+                  },
+                },
+              }),
+            giftCardRedemptionUpdate: () =>
+              prisma.orderGiftCardRedemption.update({
+                where: { id: X('gc-redemption') },
+                data: { sourceGiftCardId: pick(Y('card')) },
+              }),
+            // A whole points/gift-card movement in one transaction whose
+            // snapshot write fails: nothing of it may stay.
+            pointsAndCardMovement: () =>
+              prisma.$transaction(async (tx) => {
+                await tx.customerLoyaltyAccount.update({
+                  where: { id: X('loyalty') },
+                  data: {
+                    balance: { decrement: 100 },
+                    entries: { create: { type: 'REDEEM', amount: -100 } },
+                  },
+                });
+                await tx.giftCard.update({
+                  where: { id: X('card') },
+                  data: {
+                    balanceMinorUnits: { decrement: 300 },
+                    transactions: {
+                      create: {
+                        type: 'REDEMPTION',
+                        amountMinorUnits: -300,
+                        balanceAfterMinorUnits: 700,
+                        orderId: X('order-2'),
+                      },
+                    },
+                  },
+                });
+                await tx.promotionCustomerUsage.updateMany({
+                  where: { promotionId: X('promo'), customerId: X('customer') },
+                  data: { usedCount: { increment: 1 } },
+                });
+                await tx.orderGiftCardRedemption.create({
+                  data: {
+                    tenantId: TENANTS[x],
+                    orderId: X('order-2'),
+                    sourceGiftCardId: pick(Y('card')),
+                    last4: '1234',
+                    amountMinorUnits: 300,
+                    currency: 'USD',
+                  },
+                });
+              }),
+          };
+          for (const [name, write] of Object.entries(writes)) {
+            outcomes[`${name} ${label} ${x}->${y}`] =
+              await prismaOutcome(write());
+          }
+        }
+      }
+      expect(
+        Object.entries(outcomes).filter(([, o]) => o !== 'P2003/23503'),
+      ).toEqual([]);
+      expect(Object.keys(outcomes)).toHaveLength(5 * 2 * 6);
+      expect(await financialState(scratch.url)).toBe(beforeMoney);
+      expect(await dataChecksum(scratch.url)).toBe(beforeData);
     });
 
     it('rejects moving any row of the fourteen protected tables to another business (immutable tenantId), referenced or not', async () => {
@@ -1430,7 +1728,7 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
       );
       expect(accepted).toEqual([]);
       expect(Object.keys(outcomes)).toHaveLength(28 * 6);
-      // Nothing changed: rows, balances, bean ledgers, card transactions and
+      // Nothing changed: rows, balances, points ledgers, card transactions and
       // promotion usage counters.
       expect(await financialState(scratch.url)).toBe(beforeMoney);
       expect(await dataChecksum(scratch.url)).toBe(beforeData);
@@ -1564,7 +1862,7 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
       );
     });
 
-    it('deliberately removing ANY key or trigger is detected by the catalog guard, and lets the cross-business write it stopped through', async () => {
+    it('deliberately removing ANY key or trigger (foreign key, snapshot, id reuse, ownership) is detected by the catalog guard, and lets the cross-business write it stopped through', async () => {
       const a = (name: string) => id('a', name);
       const b = (name: string) => id('b', name);
       const removals: Array<{ drop: string; write: string; missing: string }> =
@@ -1583,6 +1881,16 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
               t.includes(`"${snapshotTrigger(s)}"`),
             )!,
           })),
+          ...REUSE_GUARDED.map((s) => ({
+            drop: `DROP TRIGGER "${s.target}_id_not_reused" ON "${s.target}"`,
+            // Keep a snapshot, delete its source, let B take the id.
+            write: `UPDATE "${s.child}" SET "${s.column}" = '${a(s.spareTarget)}' WHERE id = '${a(s.childRow)}';
+                    DELETE FROM "${s.target}" WHERE id = '${a(s.spareTarget)}';
+                    ${insertSource(s.target, a(s.spareTarget), 'b')}`,
+            missing: EXPECTED_REUSE_TRIGGERS.find((t) =>
+              t.includes(`"${s.target}_id_not_reused"`),
+            )!,
+          })),
           ...Object.entries(MOVES).map(([table, move]) => ({
             drop: `DROP TRIGGER "${table}_tenantId_immutable" ON "${table}"`,
             write: move(a, b, TENANTS.b),
@@ -1591,7 +1899,7 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
             )!,
           })),
         ];
-      expect(removals).toHaveLength(17 + 7 + 14);
+      expect(removals).toHaveLength(17 + 7 + 4 + 14);
       const results = await sql(async (client) => {
         const out: string[] = [];
         for (const { drop, write, missing } of removals) {
@@ -1936,6 +2244,29 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
       ]);
       expect(await enforcement(scratch.url)).toEqual(EXPECTED_ENFORCEMENT);
       expect(await noDrift(scratch.url)).toBe(0);
+    });
+
+    it('residual until Security 4C-6: a deleted PRODUCT id taken by another business is not prevented — but the integrity checker reports it', async () => {
+      const scratch = await beforeFourC4('fk_lgp_product_reuse');
+      expect((await prisma(scratch.url, ['migrate', 'deploy'])).code).toBe(0);
+      await run(
+        scratch.url,
+        `UPDATE "OrderLoyaltyBonusItem" SET "productId" = '${id('a', 'product-2')}' WHERE id = '${id('a', 'bonus-item')}';
+         DELETE FROM "Product" WHERE id = '${id('a', 'product-2')}';
+         ${insertSource('Product', id('a', 'product-2'), 'b')};`,
+      );
+      const report = await withScratchClient(scratch.url, (client) =>
+        checkTenantIntegrity(client),
+      );
+      expect(
+        report.findings.map(
+          (f) =>
+            `${f.severity} ${f.relationshipId} ${f.type} ${f.sampleKeys.join()}`,
+        ),
+      ).toEqual([
+        `violation OrderLoyaltyBonusItem.productId cross-tenant ${id('a', 'bonus-item')}`,
+      ]);
+      expect(report.verdict).toBe('violations');
     });
 
     it('refuses to run without Security 4C-3’s function, changing nothing', async () => {

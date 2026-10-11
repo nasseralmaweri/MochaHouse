@@ -295,11 +295,20 @@ relationships use a composite foreign key
   had no foreign key and was left pointing at nothing). The redemption
   snapshot itself is kept, like `Order.customerId`.
 - **Historical snapshots** keep no foreign key (their source may later be
-  deleted), but a value written to one may never name another business's
-  record (trigger `<Table>_<column>_same_tenant`, function
-  `reject_cross_tenant_snapshot()`, SQLSTATE `23503`): the reward, bonus
-  promotion, promotion, gift card and free-item / bonus product snapshots of
-  the four redemption tables. A source that no longer exists stays allowed.
+  deleted): the reward, bonus promotion, promotion, gift card and free-item
+  / bonus product snapshots of the four redemption tables. A **new or
+  changed** value must name an existing record of the **same** business
+  (trigger `<Table>_<column>_same_tenant`, function
+  `reject_cross_tenant_snapshot()`, SQLSTATE `23503`). A value stored while
+  its source existed may stay **unchanged** after that source is deleted —
+  history is kept, never rewritten.
+- **Deleted-id reuse:** while a kept snapshot still names a deleted gift
+  card, promotion, reward or bonus promotion, no other business can create
+  (or rename a row to) that id (trigger `<Table>_id_not_reused`, function
+  `reject_reused_snapshot_source()`, SQLSTATE `23505`); the same business
+  can. Product snapshots get this guard with the catalog (Security 4C-6);
+  until then a reused product id is reported by `integrity:check` as a
+  cross-tenant violation.
 - **Ownership:** fourteen tables reject any change of `tenantId` on an
   existing row (trigger `<Table>_tenantId_immutable`, SQLSTATE `23001`) —
   the ten referencing tables plus `GiftCard`, `Promotion`, `LoyaltyReward`
@@ -319,7 +328,7 @@ relationships use a composite foreign key
   fictional businesses: same-business writes accepted; every cross-business
   reference, snapshot and move rejected by PostgreSQL (direct SQL and Prisma
   nested connect / set / disconnect / connectOrCreate, upsert, updateMany)
-  with balances, bean ledgers, card transactions and usage counters
+  with balances, points ledgers, card transactions and usage counters
   unchanged; delete and SET NULL outcomes identical to a pre-4C-4 database
   except the one above; the integrity checker `CLEAN`; every removed key or
   trigger detected; and, with real `prisma migrate deploy`: success without
@@ -345,8 +354,8 @@ It takes the same 5-second `lock_timeout` as 4C-3.
 Never automatic. Revert the 4C-4 relations in `schema.prisma` and ship
 `prisma/rollbacks/20261013090000_tenant_fk_loyalty_giftcard_promotion.down.sql`
 (one `DO` block) as a new forward migration. It removes only what 4C-4 added
-(seventeen composite keys, eight indexes, fourteen ownership and seven
-snapshot triggers, and the snapshot function) and restores the sixteen
+(seventeen composite keys, eight indexes, fourteen ownership, seven
+snapshot and four id-reuse triggers, and their two functions) and restores the sixteen
 original single-column keys exactly; it keeps 4C-3's function. Roll back in
 reverse order: 4C-4, then 4C-3, then 4C-2.
 

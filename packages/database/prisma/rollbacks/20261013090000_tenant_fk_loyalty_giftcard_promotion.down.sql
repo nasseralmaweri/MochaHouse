@@ -8,9 +8,10 @@
 -- migration, so every environment's history stays linear.
 --
 -- It removes only what 4C-4 added — the 14 ownership triggers, the
--- 7 snapshot triggers and their function, the 17 composite foreign
--- keys and 8 indexes — and restores exactly the 16 single-column foreign
--- keys as they were before 4C-4 (including ON UPDATE CASCADE).
+-- 7 snapshot and 4 id-reuse triggers and their two functions,
+-- the 17 composite foreign keys and 8 indexes — and restores exactly
+-- the 16 single-column foreign keys as they were before 4C-4
+-- (including ON UPDATE CASCADE).
 -- OrderPromotionRedemption.customerId goes back to a plain column. Data is
 -- untouched. It keeps reject_tenant_reassignment(), which belongs to 4C-3.
 -- One DO block, so Prisma applies it atomically. Roll back 4C-4 before
@@ -41,7 +42,12 @@ BEGIN
   DROP TRIGGER "OrderPromotionRedemption_sourcePromotionId_same_tenant" ON "OrderPromotionRedemption";
   DROP TRIGGER "OrderPromotionRedemption_freeItemProductId_same_tenant" ON "OrderPromotionRedemption";
   DROP TRIGGER "OrderGiftCardRedemption_sourceGiftCardId_same_tenant" ON "OrderGiftCardRedemption";
+  DROP TRIGGER "GiftCard_id_not_reused" ON "GiftCard";
+  DROP TRIGGER "LoyaltyBonusPromotion_id_not_reused" ON "LoyaltyBonusPromotion";
+  DROP TRIGGER "LoyaltyReward_id_not_reused" ON "LoyaltyReward";
+  DROP TRIGGER "Promotion_id_not_reused" ON "Promotion";
   DROP FUNCTION "reject_cross_tenant_snapshot"();
+  DROP FUNCTION "reject_reused_snapshot_source"();
 
   ALTER TABLE "CustomerLoyaltyAccount" DROP CONSTRAINT "CustomerLoyaltyAccount_tenantId_customerId_fkey";
   ALTER TABLE "MochaBeanLedgerEntry" DROP CONSTRAINT "MochaBeanLedgerEntry_tenantId_loyaltyAccountId_fkey";
