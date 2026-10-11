@@ -306,9 +306,8 @@ relationships use a composite foreign key
   card, promotion, reward or bonus promotion, no other business can create
   (or rename a row to) that id (trigger `<Table>_id_not_reused`, function
   `reject_reused_snapshot_source()`, SQLSTATE `23505`); the same business
-  can. Product snapshots get this guard with the catalog (Security 4C-6);
-  until then a reused product id is reported by `integrity:check` as a
-  cross-tenant violation.
+  can. Product snapshots are **not** protected against id reuse yet — see
+  the open security finding below.
 - **Ownership:** fourteen tables reject any change of `tenantId` on an
   existing row (trigger `<Table>_tenantId_immutable`, SQLSTATE `23001`) —
   the ten referencing tables plus `GiftCard`, `Promotion`, `LoyaltyReward`
@@ -334,6 +333,35 @@ relationships use a composite foreign key
   trigger detected; and, with real `prisma migrate deploy`: success without
   drift, preflight abort, missing-4C-3 refusal, late failure, lock timeout,
   recovery, rollback, and the refused out-of-order 4C-3 rollback.
+
+### OPEN SECURITY FINDING — MANDATORY SECURITY 4C-6 DELIVERABLE
+
+**Product snapshots remain vulnerable to deleted-id reuse across tenants.**
+The three product-snapshot references —
+`OrderLoyaltyRewardRedemption.freeItemProductId`,
+`OrderLoyaltyBonusItem.productId` and
+`OrderPromotionRedemption.freeItemProductId` — are validated when written
+(an existing product of the same business), but once that product is
+deleted another business can create a product with the same id, and the
+kept snapshot then names another business's record.
+
+- **Status:** open. Deferral to Security 4C-6 approved; this is a
+  **mandatory 4C-6 deliverable**, not an optional enhancement. Product
+  snapshot isolation is **not** fully enforced until it is closed.
+- **Required in 4C-6:** an index on each of the three columns and the
+  corresponding deleted-id reuse guard on `Product` (the same
+  `reject_reused_snapshot_source()` pattern used for gift cards,
+  promotions, rewards and bonus promotions).
+- **Detection only, until then:** `integrity:check` reports such a row as a
+  cross-tenant violation; it does not prevent it.
+- **Regression test:** `tenant-fk-loyalty-giftcard-promotion.spec.ts`
+  ("residual until Security 4C-6 …") demonstrates the limitation today. It
+  must stay in place and be turned into a passing prevention test (the
+  reuse rejected) when the guard is added — never removed.
+- **Closure:** only by implementation, adversarial tests and an independent
+  review. This finding must be closed before multi-tenant production
+  readiness can be approved; Security 4C-4 alone does not authorize
+  deployment or a second production tenant.
 
 ### If the 4C-4 migration fails
 
