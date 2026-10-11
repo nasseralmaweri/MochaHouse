@@ -41,6 +41,7 @@ import {
   type GiftCardTenderPlan,
 } from '../../gift-cards/application/gift-card-redemption.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
+import { assertValidCheckoutLines } from './validate-checkout-lines';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import {
   generateOrderAccessToken,
@@ -359,6 +360,7 @@ export class CheckoutService {
     if (!Array.isArray(request?.lines) || request.lines.length === 0) {
       throw new BadRequestException('Cart is empty.');
     }
+    assertValidCheckoutLines(request.lines);
 
     const customer = await this.customersService.resolveOrCreateFromIdentity(
       customerIdentity,
@@ -412,6 +414,7 @@ export class CheckoutService {
     if (!Array.isArray(request?.lines) || request.lines.length === 0) {
       throw new BadRequestException('Cart is empty.');
     }
+    assertValidCheckoutLines(request.lines);
 
     const customerId = await this.resolveCustomerId(customerIdentity, tenant);
 
@@ -698,6 +701,7 @@ export class CheckoutService {
     if (!Array.isArray(request.lines) || request.lines.length === 0) {
       throw new BadRequestException('Cart is empty.');
     }
+    assertValidCheckoutLines(request.lines);
     if (
       request.loyaltyRewardId !== undefined &&
       request.loyaltyRewardId !== null &&
