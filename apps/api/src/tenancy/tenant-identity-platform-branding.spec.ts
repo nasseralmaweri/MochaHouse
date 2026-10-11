@@ -76,7 +76,6 @@ describe('Security 4A: identity, platform data and branding (integration)', () =
         permissions: {
           create: permissions.map((permissionKey) => ({
             permissionKey,
-            tenantId,
           })),
         },
       },

@@ -130,7 +130,6 @@ describe('S0F admin tenant resolution & business membership (integration)', () =
           permissions: {
             create: opts.permissions.map((permissionKey) => ({
               permissionKey,
-              tenantId,
             })),
           },
         },

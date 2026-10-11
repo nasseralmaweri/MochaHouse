@@ -68,7 +68,7 @@ describe('Media Library (integration)', () => {
         key: `media-spec-${suffix}-${randomUUID()}`,
         displayName: name,
         permissions: {
-          create: keys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: keys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });

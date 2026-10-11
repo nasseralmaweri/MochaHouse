@@ -68,7 +68,7 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
         key: `settings-spec-${suffix}-${randomUUID()}`,
         displayName: 'Settings Spec Role',
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });

@@ -65,6 +65,9 @@ describe('S0D-2D careers & franchising tenant ownership (integration)', () => {
   });
 
   let actorId: string;
+  // Tenant B's own staff row: since Security 4C-5 a note's author must be
+  // staff of the note's business (composite foreign key).
+  let actorIdB: string;
   const locationIds: string[] = [];
   const jobIds: string[] = [];
   const applicationIds: string[] = [];
@@ -202,6 +205,18 @@ describe('S0D-2D careers & franchising tenant ownership (integration)', () => {
       },
     });
     actorId = user.id;
+    const userB = await prisma.internalUser.create({
+      data: {
+        tenantId: TEST_TENANT_B_ID,
+        externalProvider: 'internal-dev',
+        externalSubject: `internal-dev:s0d2d-b-${suffix}`,
+        email: `s0d2d-b-${suffix}@example.com`,
+        displayName: 'S0D2D Tenant B Actor',
+        status: 'ACTIVE',
+        activatedAt: new Date(),
+      },
+    });
+    actorIdB = userB.id;
   });
 
   afterAll(async () => {
@@ -225,7 +240,7 @@ describe('S0D-2D careers & franchising tenant ownership (integration)', () => {
         },
       });
       await prisma.internalAuditEvent.deleteMany({
-        where: { actorInternalUserId: actorId },
+        where: { actorInternalUserId: { in: [actorId, actorIdB] } },
       });
       await prisma.jobApplicationNote.deleteMany({
         where: { jobApplicationId: { in: applicationIds } },
@@ -245,7 +260,9 @@ describe('S0D-2D careers & franchising tenant ownership (integration)', () => {
       await prisma.franchiseInquiry.deleteMany({
         where: { id: { in: inquiryIds } },
       });
-      await prisma.internalUser.deleteMany({ where: { id: actorId } });
+      await prisma.internalUser.deleteMany({
+        where: { id: { in: [actorId, actorIdB] } },
+      });
       await prisma.location.deleteMany({ where: { id: { in: locationIds } } });
       await removeTestTenantB(prisma);
     } finally {
@@ -488,7 +505,7 @@ describe('S0D-2D careers & franchising tenant ownership (integration)', () => {
       await applicationNotes.addNote(
         appB.id,
         'owned note',
-        actorId,
+        actorIdB,
         applicantsManage,
         tenantB,
       );
@@ -578,7 +595,7 @@ describe('S0D-2D careers & franchising tenant ownership (integration)', () => {
       await inquiryNotes.addNote(
         inquiryB.id,
         'owned note',
-        actorId,
+        actorIdB,
         franchisingManage,
         tenantB,
       );

@@ -67,7 +67,7 @@ describe('GET /api/v1/internal/me — authorization summary (integration)', () =
         key: `internal-me-${suffix}-${randomUUID()}`,
         displayName: 'internal-me spec role',
         permissions: {
-          create: permissions.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissions.map((permissionKey) => ({ permissionKey })),
         },
       },
     });

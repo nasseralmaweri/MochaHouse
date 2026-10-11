@@ -221,7 +221,7 @@ describe('S0D-2A explicit tenant writes — catalog & store operations (integrat
             'operations.view',
             'operations.tasks.complete',
             'catalog.overrides.manage',
-          ].map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          ].map((permissionKey) => ({ permissionKey })),
         },
       },
     });

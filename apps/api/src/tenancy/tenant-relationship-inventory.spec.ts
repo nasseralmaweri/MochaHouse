@@ -217,27 +217,45 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(relationsBetweenBusinessRecords).toHaveLength(84);
+    expect(relationsBetweenBusinessRecords).toHaveLength(85);
     // Security 4C-3: customers, orders and payments; Security 4C-4:
-    // loyalty, gift cards and promotions — tenant-enforced.
+    // loyalty, gift cards and promotions; Security 4C-5: staff identities,
+    // roles, role assignments and staff actors — tenant-enforced.
     expect(
       relationsBetweenBusinessRecords
         .filter(isTenantEnforced)
         .map((r) => `${r.model}.${referencingColumn(r)}`)
         .sort(),
     ).toEqual([
+      'ApprovalRequest.decidedByInternalUserId',
+      'ApprovalRequest.requestedByInternalUserId',
+      'ChecklistInstanceItem.completedByInternalUserId',
+      'ChecklistInstanceItem.exceptionByInternalUserId',
       'CustomerLoyaltyAccount.customerId',
+      'CustomerNote.authorInternalUserId',
       'CustomerNote.customerId',
       'CustomerPreferredLocation.customerId',
       'CustomerPreferredLocation.locationId',
+      'FranchiseInquiryNote.authorInternalUserId',
       'GiftCardPurchase.customerId',
       'GiftCardPurchase.giftCardId',
       'GiftCardPurchase.paymentAttemptId',
+      'GiftCardTransaction.actorInternalUserId',
       'GiftCardTransaction.giftCardId',
       'GiftCardTransaction.giftCardPurchaseId',
       'GiftCardTransaction.orderId',
+      'InternalAuditEvent.actorInternalUserId',
+      'InternalRolePermission.roleId',
+      'InternalUserRoleAssignment.internalUserId',
+      'InternalUserRoleAssignment.roleId',
+      'InternalUserRoleAssignment.scopeId',
+      'JobApplicationNote.authorInternalUserId',
+      'MediaAsset.uploadedByInternalUserId',
+      'MochaBeanLedgerEntry.actorInternalUserId',
       'MochaBeanLedgerEntry.loyaltyAccountId',
       'MochaBeanLedgerEntry.orderId',
+      'OperationsTask.completedByInternalUserId',
+      'OperationsTask.createdByInternalUserId',
       'Order.customerId',
       'Order.locationId',
       'Order.paymentAttemptId',
@@ -279,7 +297,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(plainIdColumns).toHaveLength(15);
+    expect(plainIdColumns).toHaveLength(14);
   });
 
   it('classifies every JSON column on business-owned records', () => {
@@ -380,10 +398,10 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       external: count((r) => r.kind === 'external-identifier'),
       total: TENANT_RELATIONSHIPS.length,
     }).toEqual({
-      compositeWithForeignKey: 84,
+      compositeWithForeignKey: 85,
       compositeWithoutForeignKey: 1,
       historicalSnapshot: 8,
-      polymorphic: 5,
+      polymorphic: 4,
       json: 6,
       external: 1,
       total: 105,
@@ -482,16 +500,22 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       expect(used.filter((t) => !known.has(t))).toEqual([]);
     });
 
-    it('the staff scope types match the InternalScopeType enum', () => {
+    it('the staff scope is no longer polymorphic: LOCATION is the only scope with an id, enforced by a composite foreign key', () => {
       const values = /enum InternalScopeType \{([^}]*)\}/
         .exec(schema)![1]
         .split('\n')
         .map((s) => s.trim())
         .filter(Boolean)
         .sort();
-      expect(
-        [...resolvable('InternalUserRoleAssignment.scopeId')].sort(),
-      ).toEqual(values);
+      // CORPORATE carries no id; LOCATION references a Location of the same
+      // business. A new scope type needs a new foreign key (and this test).
+      expect(values).toEqual(['CORPORATE', 'LOCATION']);
+      expect(byId.get('InternalUserRoleAssignment.scopeId')).toMatchObject({
+        kind: 'composite-fk-candidate',
+        target: 'Location',
+        hasForeignKey: true,
+        tenantEnforced: true,
+      });
     });
   });
 });
