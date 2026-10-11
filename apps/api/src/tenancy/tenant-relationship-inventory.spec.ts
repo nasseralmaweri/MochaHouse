@@ -217,23 +217,41 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(relationsBetweenBusinessRecords).toHaveLength(83);
-    // Security 4C-3: customers, orders and payments are tenant-enforced.
+    expect(relationsBetweenBusinessRecords).toHaveLength(84);
+    // Security 4C-3: customers, orders and payments; Security 4C-4:
+    // loyalty, gift cards and promotions — tenant-enforced.
     expect(
       relationsBetweenBusinessRecords
         .filter(isTenantEnforced)
         .map((r) => `${r.model}.${referencingColumn(r)}`)
         .sort(),
     ).toEqual([
+      'CustomerLoyaltyAccount.customerId',
       'CustomerNote.customerId',
       'CustomerPreferredLocation.customerId',
       'CustomerPreferredLocation.locationId',
+      'GiftCardPurchase.customerId',
+      'GiftCardPurchase.giftCardId',
+      'GiftCardPurchase.paymentAttemptId',
+      'GiftCardTransaction.giftCardId',
+      'GiftCardTransaction.giftCardPurchaseId',
+      'GiftCardTransaction.orderId',
+      'MochaBeanLedgerEntry.loyaltyAccountId',
+      'MochaBeanLedgerEntry.orderId',
       'Order.customerId',
       'Order.locationId',
       'Order.paymentAttemptId',
+      'OrderGiftCardRedemption.orderId',
       'OrderLine.orderId',
+      'OrderLoyaltyBonus.orderId',
+      'OrderLoyaltyBonusItem.orderLoyaltyBonusId',
+      'OrderLoyaltyRewardRedemption.orderId',
+      'OrderPromotionRedemption.customerId',
+      'OrderPromotionRedemption.orderId',
       'OrderStatusHistory.orderId',
       'PaymentAttempt.locationId',
+      'PromotionCustomerUsage.customerId',
+      'PromotionCustomerUsage.promotionId',
     ]);
   });
 
@@ -261,7 +279,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(plainIdColumns).toHaveLength(16);
+    expect(plainIdColumns).toHaveLength(15);
   });
 
   it('classifies every JSON column on business-owned records', () => {
@@ -362,8 +380,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       external: count((r) => r.kind === 'external-identifier'),
       total: TENANT_RELATIONSHIPS.length,
     }).toEqual({
-      compositeWithForeignKey: 83,
-      compositeWithoutForeignKey: 2,
+      compositeWithForeignKey: 84,
+      compositeWithoutForeignKey: 1,
       historicalSnapshot: 8,
       polymorphic: 5,
       json: 6,

@@ -448,6 +448,7 @@ model Customer {
   preferredLocations  CustomerPreferredLocation[]
   loyaltyAccount      CustomerLoyaltyAccount?
   promotionUsage      PromotionCustomerUsage[]
+  promoRedemptions    OrderPromotionRedemption[]
   // Milestone 7H — gift cards this customer bought while signed in. Guest
   // purchases have customerId null and never appear here. onDelete: SetNull
   // (see GiftCardPurchase) keeps the purchase + its financial history intact
@@ -1413,7 +1414,7 @@ model CustomerLoyaltyAccount {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  customer Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer Customer               @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
   entries  MochaBeanLedgerEntry[]
   // No @@index([customerId]) — `customerId @unique` above already indexes it.
 
@@ -1428,6 +1429,9 @@ model CustomerLoyaltyAccount {
   // (tenantId, id) so the database itself can refuse a cross-business link
   // (composite foreign keys arrive in Security 4C-3).
   @@unique([tenantId, id])
+  // Security 4C-4 — the one-to-one composite relation needs its key
+  // unique together with tenantId (the column alone already is).
+  @@unique([tenantId, customerId])
   @@index([tenantId])
 }
 
@@ -1468,8 +1472,8 @@ model MochaBeanLedgerEntry {
   operationKey        String?
   createdAt           DateTime           @default(now())
 
-  loyaltyAccount    CustomerLoyaltyAccount @relation(fields: [loyaltyAccountId], references: [id], onDelete: Cascade)
-  order             Order?                 @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  loyaltyAccount    CustomerLoyaltyAccount @relation(fields: [tenantId, loyaltyAccountId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+  order             Order?                 @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: SetNull, onUpdate: Restrict)
   actorInternalUser InternalUser?          @relation("MochaBeanLedgerActor", fields: [actorInternalUserId], references: [id], onDelete: Restrict)
 
   // Milestone S0D-1 — the owning tenant. REQUIRED since tenant isolation
@@ -1637,7 +1641,7 @@ model LoyaltyRewardCategory {
 model OrderLoyaltyRewardRedemption {
   id      String @id @default(uuid(7))
   orderId String @unique
-  order   Order  @relation(fields: [orderId], references: [id])
+  order   Order  @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   // Plain reference to the reward this came from. Nullable and un-joined on
   // purpose — the snapshot below is authoritative.
@@ -1668,6 +1672,9 @@ model OrderLoyaltyRewardRedemption {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-4 — the one-to-one composite relation needs its key
+  // unique together with tenantId (the column alone already is).
+  @@unique([tenantId, orderId])
   @@index([sourceRewardId])
   @@index([tenantId])
 }
@@ -1793,7 +1800,7 @@ model LoyaltyBonusPromotionLocation {
 model OrderLoyaltyBonus {
   id              String   @id @default(uuid(7))
   orderId         String   @unique
-  order           Order    @relation(fields: [orderId], references: [id])
+  order           Order    @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   // Sum of every item's bonusBeans — equals the BONUS_EARN ledger amount.
   totalBonusBeans Int
   createdAt       DateTime @default(now())
@@ -1811,6 +1818,9 @@ model OrderLoyaltyBonus {
   // (tenantId, id) so the database itself can refuse a cross-business link
   // (composite foreign keys arrive in Security 4C-3).
   @@unique([tenantId, id])
+  // Security 4C-4 — the one-to-one composite relation needs its key
+  // unique together with tenantId (the column alone already is).
+  @@unique([tenantId, orderId])
   @@index([tenantId])
 }
 
@@ -1822,7 +1832,7 @@ model OrderLoyaltyBonus {
 model OrderLoyaltyBonusItem {
   id                  String            @id @default(uuid(7))
   orderLoyaltyBonusId String
-  orderLoyaltyBonus   OrderLoyaltyBonus @relation(fields: [orderLoyaltyBonusId], references: [id], onDelete: Cascade)
+  orderLoyaltyBonus   OrderLoyaltyBonus @relation(fields: [tenantId, orderLoyaltyBonusId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
 
   // Plain reference to the promotion this came from — nullable and
   // un-joined on purpose (mirrors OrderLoyaltyRewardRedemption.sourceRewardId).
@@ -2042,8 +2052,8 @@ model PromotionCustomerUsage {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
-  customer  Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  promotion Promotion @relation(fields: [tenantId, promotionId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+  customer  Customer  @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
 
   // Milestone S0D-1 — the owning tenant. REQUIRED since tenant isolation
   // phase 2: every write supplies it explicitly (root writes from the
@@ -2074,7 +2084,7 @@ model PromotionCustomerUsage {
 model OrderPromotionRedemption {
   id      String @id @default(uuid(7))
   orderId String @unique
-  order   Order  @relation(fields: [orderId], references: [id])
+  order   Order  @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   sourcePromotionId String?
 
@@ -2095,6 +2105,10 @@ model OrderPromotionRedemption {
   // The customer this redemption counts against for a per-customer limit,
   // or null (guest, or the promotion has no per-customer limit).
   customerId          String?
+  // Security 4C-4 — now a composite foreign key: only a customer of this
+  // order's business. SET NULL clears only customerId if the customer is
+  // deleted; the redemption snapshot itself is kept.
+  customer            Customer?             @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: SetNull, onUpdate: Restrict)
   createdAt           DateTime              @default(now())
 
   // Milestone S0D-1 — the owning tenant. REQUIRED since tenant isolation
@@ -2104,7 +2118,11 @@ model OrderPromotionRedemption {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-4 — the one-to-one composite relation needs its key
+  // unique together with tenantId (the column alone already is).
+  @@unique([tenantId, orderId])
   @@index([sourcePromotionId])
+  @@index([customerId])
   @@index([tenantId])
 }
 
@@ -2254,10 +2272,10 @@ model GiftCardTransaction {
   giftCardPurchaseId     String?
   createdAt              DateTime                @default(now())
 
-  giftCard          GiftCard          @relation(fields: [giftCardId], references: [id], onDelete: Restrict)
+  giftCard          GiftCard          @relation(fields: [tenantId, giftCardId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   actorInternalUser InternalUser?     @relation("GiftCardTransactionActor", fields: [actorInternalUserId], references: [id], onDelete: Restrict)
-  order             Order?            @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  giftCardPurchase  GiftCardPurchase? @relation(fields: [giftCardPurchaseId], references: [id], onDelete: SetNull)
+  order             Order?            @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: SetNull, onUpdate: Restrict)
+  giftCardPurchase  GiftCardPurchase? @relation(fields: [tenantId, giftCardPurchaseId], references: [tenantId, id], onDelete: SetNull, onUpdate: Restrict)
 
   // Milestone S0D-1 — the owning tenant. REQUIRED since tenant isolation
   // phase 2: every write supplies it explicitly (root writes from the
@@ -2291,7 +2309,7 @@ model GiftCardTransaction {
 model OrderGiftCardRedemption {
   id      String @id @default(uuid(7))
   orderId String @unique
-  order   Order  @relation(fields: [orderId], references: [id])
+  order   Order  @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   // Plain reference to the gift card this came from. Nullable and un-joined
   // on purpose — the snapshot below is authoritative.
@@ -2312,6 +2330,9 @@ model OrderGiftCardRedemption {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  // Security 4C-4 — the one-to-one composite relation needs its key
+  // unique together with tenantId (the column alone already is).
+  @@unique([tenantId, orderId])
   @@index([sourceGiftCardId])
   @@index([tenantId])
 }
@@ -2359,18 +2380,18 @@ model GiftCardPurchase {
   // 1:1 with the payment. PaymentAttempt.idempotencyKey is the logical
   // purchase key — this row needs no separate one.
   paymentAttemptId String         @unique
-  paymentAttempt   PaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+  paymentAttempt   PaymentAttempt @relation(fields: [tenantId, paymentAttemptId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   // Set once the card is issued; null while PENDING and forever if the
   // purchase ends in RECONCILIATION_REQUIRED.
   giftCardId String?   @unique
-  giftCard   GiftCard? @relation(fields: [giftCardId], references: [id], onDelete: Restrict)
+  giftCard   GiftCard? @relation(fields: [tenantId, giftCardId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   // Buyer. Signed-in -> customerId; guest -> null. `purchaserEmail` is the
   // BUYER's own contact for support / a future receipt — it is NOT a
   // recipient-delivery field (7H issues the code on screen only).
   customerId     String?
-  customer       Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customer       Customer? @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: SetNull, onUpdate: Restrict)
   purchaserEmail String
   purchaserName  String?
 
@@ -2411,6 +2432,10 @@ model GiftCardPurchase {
   // (tenantId, id) so the database itself can refuse a cross-business link
   // (composite foreign keys arrive in Security 4C-3).
   @@unique([tenantId, id])
+  // Security 4C-4 — the one-to-one composite relation needs its key
+  // unique together with tenantId (the column alone already is).
+  @@unique([tenantId, paymentAttemptId])
+  @@unique([tenantId, giftCardId])
   @@index([customerId])
   @@index([status])
   @@index([tenantId])

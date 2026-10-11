@@ -159,9 +159,11 @@ export class LoyaltyBonusService {
         tenantId,
         orderId,
         totalBonusBeans: result.totalBonusBeans,
+        // Security 4C-4 — items take their tenantId from this bonus through
+        // the composite (tenantId, orderLoyaltyBonusId) key; Prisma does not
+        // accept one in a nested create.
         items: {
           create: result.items.map((item) => ({
-            tenantId,
             sourcePromotionId: item.sourcePromotionId,
             promotionName: item.promotionName,
             promotionType: item.promotionType,

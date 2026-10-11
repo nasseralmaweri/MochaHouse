@@ -469,12 +469,14 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
       // Composite-FK candidates with a real foreign key (required and
       // optional), including a join table with a composite primary key.
       // Relationships PostgreSQL already enforces per business (Security
-      // 4C-3) can only hold such rows from before enforcement: plant them
-      // with foreign-key triggers suspended, as legacy data would be.
+      // 4C-3 / 4C-4, including historical snapshots) can only hold such rows
+      // from before enforcement: plant them with foreign-key and other
+      // triggers suspended, as legacy data would be.
       await plantBypassingForeignKeys(
         `UPDATE "Order" SET "locationId" = '${b.location}', "customerId" = '${b.customer}' WHERE "id" = '${a.order}';
          UPDATE "PaymentAttempt" SET "locationId" = '${b.location}' WHERE "id" = '${a.payment}';
-         UPDATE "PaymentAttempt" SET "locationId" = '${missingId}' WHERE "id" = '${b.payment}';`,
+         UPDATE "PaymentAttempt" SET "locationId" = '${missingId}' WHERE "id" = '${b.payment}';
+         UPDATE "OrderPromotionRedemption" SET "customerId" = '${b.customer}', "sourcePromotionId" = '${b.promotion}' WHERE "id" = '${a.redemption}';`,
       );
       await prisma.menuProduct.update({
         where: { menuId_productId: { menuId: a.menu, productId: a.product } },
@@ -484,10 +486,6 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
       await prisma.campaign.update({
         where: { id: a.campaign },
         data: { mediaAssetId: b.media },
-      });
-      await prisma.orderPromotionRedemption.update({
-        where: { id: a.redemption },
-        data: { customerId: b.customer, sourcePromotionId: b.promotion },
       });
       // Historical snapshots: cross (violation) and missing (warning).
       await prisma.orderLine.update({
