@@ -118,12 +118,33 @@ Prisma connects (`packages/database/src/testing/prisma-command-guard.ts`):
 - **Not affected:** ordinary development and real deployments — no test
   declaration and a database not named like a test database.
 
-**Boundary (what is not covered).** A Prisma run given a different
-`--config` file that lacks the guard; a run that declares nothing and targets
-a non-test-named database (by design: that is how real environments are
-migrated, so such a run must never be pointed at a database it should not
-change); and tools other than Prisma (`psql`, `pg_restore`, `createdb`).
+**Boundary (what is not covered).** Confirmed by the independent PR #17
+review:
+
+- A Prisma run given a **different, unguarded `--config` file** bypasses the
+  guard (verified: it creates and migrates the database).
+- A run that **declares nothing and targets a non-test-named database** is
+  not guarded — by design, that is how real environments are migrated, so
+  such a run must never be pointed at a database it should not change. The
+  real protection there is least-privilege credentials (T-2 below).
+- **Tools other than Prisma** (`psql`, `pg_restore`, `createdb`, scripts
+  using their own connection) are outside the guard.
+- **`prisma migrate dev` shadow database:** `migrate dev` creates and drops
+  its own temporary shadow database, outside the guard (the guard checks only
+  the database `DATABASE_URL` names). `migrate dev` is a development command
+  and is not used by any test workflow.
+
 Regression tests: `apps/api/src/tenancy/prisma-command-guard.spec.ts`.
+
+**Migration-runner compatibility (deployment prerequisite).**
+`prisma.config.ts` loads the guard from TypeScript **source**
+(`packages/database/src/testing/`) every time Prisma starts, including real
+deployments where it returns immediately. A migration runner must therefore
+ship `packages/database/src` together with `prisma/` and its
+`node_modules` (`pg`); an image that ships only the compiled `dist/` cannot
+load the config and every Prisma command fails. Real environments must also
+never set `NODE_ENV=test` or any `CENTERIVO_TEST_*` variable: Prisma then
+refuses to touch the database (fails safe, but blocks the deploy).
 
 ## Tenant relationship integrity (Security 4C-1)
 
@@ -559,6 +580,11 @@ re-run the same way.
 - After 8 lost races the request fails with a generic 503 ("could not be
   completed because of other changes made at the same time") and changes
   nothing. No response ever contains a database error.
+- **Future observability (optional, not required):** retries and exhaustion
+  are not logged today, and the 503 does not keep the underlying error. A
+  server-side warning on exhaustion (with the SQLSTATE, never sent to the
+  client) would make persistent contention visible to operators; an optional
+  `Retry-After` header could accompany the 503.
 - `apps/api/src/internal-users/admin-internal-user-concurrency.spec.ts`
   races 12 identical grants, overlapping location grants, 12 identical
   removals, grants against removals, and two administrators removing each
