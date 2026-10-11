@@ -157,11 +157,11 @@ export class LoyaltyRewardsService {
           beanCost,
           fixedAmountMinorUnits,
           sortOrder,
+          // Nested rows take tenantId from the parent (composite key, Security 4C-6).
           eligibleProducts:
             productIds.length > 0
               ? {
                   create: productIds.map((productId) => ({
-                    tenantId: tenant.tenantId,
                     productId,
                   })),
                 }
@@ -170,7 +170,6 @@ export class LoyaltyRewardsService {
             categoryIds.length > 0
               ? {
                   create: categoryIds.map((categoryId) => ({
-                    tenantId: tenant.tenantId,
                     categoryId,
                   })),
                 }

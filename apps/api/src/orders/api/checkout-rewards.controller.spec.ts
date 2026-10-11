@@ -145,7 +145,7 @@ describe('POST /api/v1/orders/reward-eligibility (integration)', () => {
         beanCost: 150,
         sortOrder: 2,
         eligibleProducts: {
-          create: [{ tenantId: TENANT_1_MOCHA_HOUSE_ID, productId: latteId }],
+          create: [{ productId: latteId }],
         },
       },
     });

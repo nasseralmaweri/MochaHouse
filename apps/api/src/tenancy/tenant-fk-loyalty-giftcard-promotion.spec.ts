@@ -2252,27 +2252,37 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
       expect(await noDrift(scratch.url)).toBe(0);
     });
 
-    it('residual until Security 4C-6: a deleted PRODUCT id taken by another business is not prevented — but the integrity checker reports it', async () => {
+    // This was the residual of Security 4C-4 (detection only). Security 4C-6
+    // closes it: `migrate deploy` now applies 4C-6 as well, and PostgreSQL
+    // refuses to give the deleted product's id to another business.
+    it('closed by Security 4C-6: a deleted PRODUCT id cannot be taken by another business, and the integrity checker reports no violation', async () => {
       const scratch = await beforeFourC4('fk_lgp_product_reuse');
       expect((await prisma(scratch.url, ['migrate', 'deploy'])).code).toBe(0);
       await run(
         scratch.url,
         `UPDATE "OrderLoyaltyBonusItem" SET "productId" = '${id('a', 'product-2')}' WHERE id = '${id('a', 'bonus-item')}';
-         DELETE FROM "Product" WHERE id = '${id('a', 'product-2')}';
-         ${insertSource('Product', id('a', 'product-2'), 'b')};`,
+         DELETE FROM "Product" WHERE id = '${id('a', 'product-2')}';`,
       );
+      const data = await dataChecksum(scratch.url);
+      const outcome = await withScratchClient(scratch.url, (client) =>
+        attempt(client, insertSource('Product', id('a', 'product-2'), 'b')),
+      );
+      expect(outcome).toBe('23505');
+      expect(await dataChecksum(scratch.url)).toBe(data);
       const report = await withScratchClient(scratch.url, (client) =>
         checkTenantIntegrity(client),
       );
+      // The kept snapshot outlives its product (history): a warning, never
+      // a cross-business violation.
       expect(
         report.findings.map(
           (f) =>
             `${f.severity} ${f.relationshipId} ${f.type} ${f.sampleKeys.join()}`,
         ),
       ).toEqual([
-        `violation OrderLoyaltyBonusItem.productId cross-tenant ${id('a', 'bonus-item')}`,
+        `warning OrderLoyaltyBonusItem.productId missing-target ${id('a', 'bonus-item')}`,
       ]);
-      expect(report.verdict).toBe('violations');
+      expect(report.violations).toBe(0);
     });
 
     it('refuses to run without Security 4C-3’s function, changing nothing', async () => {

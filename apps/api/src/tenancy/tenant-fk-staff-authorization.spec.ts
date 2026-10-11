@@ -739,7 +739,11 @@ describe('Tenant-enforced staff authorization (Security 4C-5)', () => {
   it('the migration is ONE DO block: version and 4C-3 checks, read-only preflight of every relationship, scope shape and duplicate grant, lock_timeout, then the keys, CHECK, index and triggers', () => {
     expect(targetIndex).toBeGreaterThan(0);
     expect(migrations[targetIndex - 1].name).toBe(PREVIOUS);
-    expect(targetIndex).toBe(migrations.length - 1);
+    // Security 4C-6 is the only migration after it (its rollback must come
+    // first; see the rollback tests).
+    expect(migrations[targetIndex + 1]?.name).toBe(
+      '20261015090000_tenant_fk_catalog_offers_snapshots',
+    );
     const sql = target.sql;
     expect(isAppliedAtomically(sql)).toBe(true);
     const code = sql
@@ -1429,8 +1433,6 @@ describe('Tenant-enforced staff authorization (Security 4C-5)', () => {
         );
       expect(disconnects.sort()).toEqual([
         'apps/api/src/careers/application/job-openings-admin.service.ts', // JobOpening.location
-        'apps/api/src/marketing/application/campaigns-admin.service.ts', // Campaign.promotion
-        'apps/api/src/marketing/application/campaigns-admin.service.ts', // Campaign.loyaltyBonusPromotion
       ]);
     });
 
@@ -2004,7 +2006,11 @@ describe('Tenant-enforced staff authorization (Security 4C-5)', () => {
     const projects: MigrationProject[] = [];
     const scratches: ScratchDatabase[] = [];
     const beforeNames = migrations.slice(0, targetIndex).map((m) => m.name);
-    const allNames = migrations.map((m) => m.name);
+    // Up to and including 4C-5: the rollback tests below start from 4C-5,
+    // not from a later migration that depends on it (Security 4C-6).
+    const throughNames = migrations
+      .slice(0, targetIndex + 1)
+      .map((m) => m.name);
 
     afterAll(async () => {
       for (const scratch of scratches) await scratch.drop();
@@ -2217,7 +2223,15 @@ describe('Tenant-enforced staff authorization (Security 4C-5)', () => {
 
     it('while 4C-5 is applied, rolling back 4C-3 is refused atomically (its function is still in use) — even after 4C-4 is rolled back', async () => {
       const scratch = await beforeFourC5('fk_staff_order');
-      expect((await prisma(scratch.url, ['migrate', 'deploy'])).code).toBe(0);
+      expect(
+        (
+          await prisma(
+            scratch.url,
+            ['migrate', 'deploy'],
+            project(throughNames),
+          )
+        ).code,
+      ).toBe(0);
       const rollback4 = {
         name: '20261015090000_rollback_tenant_fk_loyalty_giftcard_promotion',
         sql: rollbackOf(PREVIOUS),
@@ -2227,7 +2241,7 @@ describe('Tenant-enforced staff authorization (Security 4C-5)', () => {
           await prisma(
             scratch.url,
             ['migrate', 'deploy'],
-            project(allNames, rollback4),
+            project(throughNames, rollback4),
           )
         ).code,
       ).toBe(0);
@@ -2236,7 +2250,7 @@ describe('Tenant-enforced staff authorization (Security 4C-5)', () => {
       const failed = await prisma(
         scratch.url,
         ['migrate', 'deploy'],
-        project(allNames, [rollback4, { name, sql: rollbackOf(FOUR_C_3) }]),
+        project(throughNames, [rollback4, { name, sql: rollbackOf(FOUR_C_3) }]),
       );
       expect(failed.code).not.toBe(0);
       expect(failed.out).toMatch(/depend/);
@@ -2247,7 +2261,15 @@ describe('Tenant-enforced staff authorization (Security 4C-5)', () => {
     it('the documented rollback — shipped as a new forward migration — restores the pre-4C-5 catalog exactly, keeps the data, and 4C-5 re-applies; then 4C-4 and 4C-3 roll back in order to the pre-4C-3 catalog', async () => {
       const scratch = await beforeFourC5('fk_staff_rollback');
       const data = await dataChecksum(scratch.url);
-      expect((await prisma(scratch.url, ['migrate', 'deploy'])).code).toBe(0);
+      expect(
+        (
+          await prisma(
+            scratch.url,
+            ['migrate', 'deploy'],
+            project(throughNames),
+          )
+        ).code,
+      ).toBe(0);
       const rollback = {
         name: '20261015090000_rollback_tenant_fk_staff_authorization',
         sql: rollbackSql,
@@ -2257,7 +2279,7 @@ describe('Tenant-enforced staff authorization (Security 4C-5)', () => {
           await prisma(
             scratch.url,
             ['migrate', 'deploy'],
-            project(allNames, rollback),
+            project(throughNames, rollback),
           )
         ).code,
       ).toBe(0);
@@ -2284,7 +2306,7 @@ describe('Tenant-enforced staff authorization (Security 4C-5)', () => {
           await prisma(
             scratch.url,
             ['migrate', 'deploy'],
-            project(allNames, [rollback, reapply]),
+            project(throughNames, [rollback, reapply]),
           )
         ).code,
       ).toBe(0);
@@ -2295,7 +2317,10 @@ describe('Tenant-enforced staff authorization (Security 4C-5)', () => {
       // then 4C-3 — each shipped as a forward migration.
       const chain = await beforeFourC5('fk_staff_chain');
       const chainData = await dataChecksum(chain.url);
-      expect((await prisma(chain.url, ['migrate', 'deploy'])).code).toBe(0);
+      expect(
+        (await prisma(chain.url, ['migrate', 'deploy'], project(throughNames)))
+          .code,
+      ).toBe(0);
       const steps = [
         rollback,
         {
@@ -2312,7 +2337,7 @@ describe('Tenant-enforced staff authorization (Security 4C-5)', () => {
           await prisma(
             chain.url,
             ['migrate', 'deploy'],
-            project(allNames, steps),
+            project(throughNames, steps),
           )
         ).code,
       ).toBe(0);

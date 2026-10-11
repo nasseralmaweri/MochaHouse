@@ -469,7 +469,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
       // Composite-FK candidates with a real foreign key (required and
       // optional), including a join table with a composite primary key.
       // Relationships PostgreSQL already enforces per business (Security
-      // 4C-3 / 4C-4, including historical snapshots) can only hold such rows
+      // 4C-3 to 4C-6, including historical snapshots) can only hold such rows
       // from before enforcement: plant them with foreign-key and other
       // triggers suspended, as legacy data would be.
       await plantBypassingForeignKeys(
@@ -477,26 +477,13 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
          UPDATE "PaymentAttempt" SET "locationId" = '${b.location}' WHERE "id" = '${a.payment}';
          UPDATE "PaymentAttempt" SET "locationId" = '${missingId}' WHERE "id" = '${b.payment}';
          UPDATE "OrderPromotionRedemption" SET "customerId" = '${b.customer}', "sourcePromotionId" = '${b.promotion}' WHERE "id" = '${a.redemption}';
-         UPDATE "InternalUserRoleAssignment" SET "scopeId" = '${b.location}' WHERE "id" = '${a.assignment}';`,
+         UPDATE "InternalUserRoleAssignment" SET "scopeId" = '${b.location}' WHERE "id" = '${a.assignment}';
+         UPDATE "MenuProduct" SET "productId" = '${b.product}' WHERE "menuId" = '${a.menu}' AND "productId" = '${a.product}';
+         UPDATE "Campaign" SET "mediaAssetId" = '${b.media}' WHERE "id" = '${a.campaign}';
+         -- Historical snapshots: cross (violation) and missing (warning).
+         UPDATE "OrderLine" SET "productId" = '${b.product}' WHERE "id" = '${a.line}';
+         UPDATE "OrderLine" SET "productId" = '${missingId}' WHERE "id" = '${b.line}';`,
       );
-      await prisma.menuProduct.update({
-        where: { menuId_productId: { menuId: a.menu, productId: a.product } },
-        data: { productId: b.product },
-      });
-      // Composite-FK candidates without a foreign key.
-      await prisma.campaign.update({
-        where: { id: a.campaign },
-        data: { mediaAssetId: b.media },
-      });
-      // Historical snapshots: cross (violation) and missing (warning).
-      await prisma.orderLine.update({
-        where: { id: a.line },
-        data: { productId: b.product },
-      });
-      await prisma.orderLine.update({
-        where: { id: b.line },
-        data: { productId: missingId },
-      });
       // Polymorphic: audit target (cross, unknown type), approval target,
       // outbox aggregate. (The staff scope is a composite foreign key since
       // Security 4C-5, planted above; its shape is a CHECK constraint that
