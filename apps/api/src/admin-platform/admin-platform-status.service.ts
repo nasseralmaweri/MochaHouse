@@ -61,7 +61,7 @@ export class AdminPlatformStatusService {
         customerLabel: authenticationModeLabel(isDevCustomerAuthEnabled()),
       },
       payments: {
-        providerLabel: paymentProviderLabel(paymentsIsDevelopmentStandIn),
+        providerLabel: paymentProviderLabel(this.payments),
         isDevelopmentStandIn: paymentsIsDevelopmentStandIn,
       },
       locations: {

@@ -1,15 +1,38 @@
-import { Module } from '@nestjs/common';
-import { FakePaymentProvider } from '@mocha-house/integrations';
+import { Logger, Module } from '@nestjs/common';
+import {
+  FakePaymentProvider,
+  UnavailablePaymentProvider,
+  type PaymentProvider,
+} from '@mocha-house/integrations';
 import { PAYMENT_PROVIDER } from './payment-provider.token';
+import { resolvePaymentProviderMode } from './payment-provider-mode';
 
 // The single binding of the payment boundary (Milestone 7H). CheckoutService
 // (food orders) and GiftCardPurchaseService (gift-card purchases) both depend
 // only on the PaymentProvider interface via PAYMENT_PROVIDER; keeping the
 // binding in its own module lets both consume it without OrdersModule and
-// GiftCardsModule importing each other. Swapping in a real processor is a
-// one-line change here, nowhere else.
+// GiftCardsModule importing each other.
+//
+// Payment safety — the provider is chosen from configuration at startup
+// (payment-provider-mode.ts): the simulated provider only when explicitly
+// requested outside production; otherwise online payment is unavailable.
+// An invalid configuration stops the process from starting.
+export function createPaymentProvider(
+  env: Record<string, string | undefined> = process.env,
+): PaymentProvider {
+  if (resolvePaymentProviderMode(env) === 'fake') {
+    return new FakePaymentProvider();
+  }
+  new Logger('PaymentModule').warn(
+    'No payment provider is configured: online payment is disabled.',
+  );
+  return new UnavailablePaymentProvider();
+}
+
 @Module({
-  providers: [{ provide: PAYMENT_PROVIDER, useClass: FakePaymentProvider }],
+  providers: [
+    { provide: PAYMENT_PROVIDER, useFactory: () => createPaymentProvider() },
+  ],
   exports: [PAYMENT_PROVIDER],
 })
 export class PaymentModule {}

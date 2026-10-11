@@ -7,6 +7,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import type {
   CheckoutQuoteRequest,
@@ -41,6 +42,7 @@ import {
   type GiftCardTenderPlan,
 } from '../../gift-cards/application/gift-card-redemption.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
+import { assertValidCheckoutLines } from './validate-checkout-lines';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import {
   generateOrderAccessToken,
@@ -244,6 +246,17 @@ export class CheckoutService {
     // payment.
     const chargeAmount = amountOwed - giftCardTender;
 
+    // Payment safety — an external charge is needed but no payment provider
+    // can take it (none configured, or production with the simulated one):
+    // refuse BEFORE recording a payment attempt, an order or a gift-card
+    // redemption. A reward or gift card covering everything needs no
+    // provider and continues.
+    if (chargeAmount > 0 && !this.paymentProvider.acceptsPayments) {
+      throw new ServiceUnavailableException(
+        'Online payment is not available right now.',
+      );
+    }
+
     const created = await this.createPaymentAttempt(
       request.idempotencyKey,
       request.locationId,
@@ -359,6 +372,7 @@ export class CheckoutService {
     if (!Array.isArray(request?.lines) || request.lines.length === 0) {
       throw new BadRequestException('Cart is empty.');
     }
+    assertValidCheckoutLines(request.lines);
 
     const customer = await this.customersService.resolveOrCreateFromIdentity(
       customerIdentity,
@@ -412,6 +426,7 @@ export class CheckoutService {
     if (!Array.isArray(request?.lines) || request.lines.length === 0) {
       throw new BadRequestException('Cart is empty.');
     }
+    assertValidCheckoutLines(request.lines);
 
     const customerId = await this.resolveCustomerId(customerIdentity, tenant);
 
@@ -698,6 +713,7 @@ export class CheckoutService {
     if (!Array.isArray(request.lines) || request.lines.length === 0) {
       throw new BadRequestException('Cart is empty.');
     }
+    assertValidCheckoutLines(request.lines);
     if (
       request.loyaltyRewardId !== undefined &&
       request.loyaltyRewardId !== null &&
@@ -823,7 +839,9 @@ export class CheckoutService {
         data: {
           tenantId,
           idempotencyKey,
-          provider: 'fake',
+          // The provider actually bound (audit: a simulated payment is
+          // always recorded as such).
+          provider: this.paymentProvider.name,
           locationId,
           amount,
           currency,

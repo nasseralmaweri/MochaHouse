@@ -27,6 +27,10 @@ export type ChargeResult =
 
 export interface PaymentProvider {
   readonly name: string;
+  // False when this provider can never take a payment (no processor is
+  // configured). Callers check it BEFORE recording anything, so a request
+  // that needs an external charge is refused without side effects.
+  readonly acceptsPayments: boolean;
   charge(request: ChargeRequest): Promise<ChargeResult>;
 }
 
@@ -44,7 +48,18 @@ export class FakePaymentProvider implements PaymentProvider {
 
   readonly name = "fake";
 
+  // Never in production, checked on every call (see `charge`).
+  get acceptsPayments(): boolean {
+    return process.env.NODE_ENV !== "production";
+  }
+
   async charge(request: ChargeRequest): Promise<ChargeResult> {
+    // Payment safety — a simulated payment must never count as paid in
+    // production, whatever bound this provider there. Checked on every call
+    // (never cached), the same floor the development auth providers use.
+    if (process.env.NODE_ENV === "production") {
+      return { outcome: "failed", reason: "Online payment is not available." };
+    }
     if (!Number.isInteger(request.amount) || request.amount <= 0) {
       return { outcome: "failed", reason: "Amount must be greater than zero." };
     }
@@ -57,5 +72,18 @@ export class FakePaymentProvider implements PaymentProvider {
     }
 
     return { outcome: "succeeded", providerReference: `fake_${randomUUID()}` };
+  }
+}
+
+// Payment safety — bound when no payment processor is configured (and the
+// only choice in production until a live processor is integrated). It never
+// takes a payment: callers see `acceptsPayments === false` and refuse the
+// request before recording anything; `charge` fails as a last resort.
+export class UnavailablePaymentProvider implements PaymentProvider {
+  readonly name = "unavailable";
+  readonly acceptsPayments = false;
+
+  async charge(_request: ChargeRequest): Promise<ChargeResult> {
+    return { outcome: "failed", reason: "Online payment is not available." };
   }
 }

@@ -76,6 +76,9 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "globalSetup": "<rootDir>/../test/disposable-database.global-setup.ts",
+    "setupFiles": [
+      "<rootDir>/../test/payment-provider.jest-setup.ts"
+    ],
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
