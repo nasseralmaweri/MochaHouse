@@ -16,6 +16,7 @@ import type { Prisma, TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
+import { hasNulCharacter } from './catalog-create-input';
 import type {
   AddMenuProductInput,
   CreateCategoryInput,
@@ -167,6 +168,11 @@ export class CatalogCreationService {
     authorization.assertCorporate('catalog.menu.manage');
     const tenantId = tenant.tenantId;
 
+    // A menu id from the URL path: a NUL character cannot match any menu (and
+    // would otherwise reach the database), so it reads as a missing menu.
+    if (hasNulCharacter(menuId)) {
+      throw new NotFoundException('Menu not found.');
+    }
     const menu = await this.prisma.menu.findFirst({
       where: { id: menuId, tenantId },
       select: { id: true },

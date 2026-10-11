@@ -614,6 +614,86 @@ describe('S1 Admin catalog creation (integration)', () => {
     });
   });
 
+  describe('NUL characters in text', () => {
+    // PostgreSQL text cannot hold NUL; it must be a 400 at the request
+    // boundary, never a 500, and must write nothing.
+    const counts = async () => ({
+      categories: await prisma.category.count({ where: { tenantId: T1 } }),
+      products: await prisma.product.count({ where: { tenantId: T1 } }),
+      placements: await prisma.menuProduct.count({ where: { tenantId: T1 } }),
+      audit: await prisma.internalAuditEvent.count({
+        where: {
+          tenantId: T1,
+          action: {
+            in: [
+              'catalog.category_created',
+              'catalog.product_created',
+              'catalog.menu_product_added',
+            ],
+          },
+        },
+      }),
+    });
+
+    it.each<[string, string, (v: string) => Record<string, unknown>]>([
+      ['category name', '/categories', (v) => ({ name: `Bad${v}` })],
+      ['category name only NUL', '/categories', (v) => ({ name: v })],
+      ['category slug', '/categories', (v) => ({ name: 'Ok', slug: `a${v}b` })],
+      ['product name', '/products', (v) => ({ name: `Bad${v}` })],
+      ['product description', '/products', (v) => ({ description: `a${v}b` })],
+      ['product slug', '/products', (v) => ({ slug: `a${v}b` })],
+      ['product categoryId', '/products', (v) => ({ categoryId: `a${v}b` })],
+    ])(
+      'rejects NUL in %s with 400 and writes nothing',
+      async (_l, path, build) => {
+        const before = await counts();
+        const body = {
+          name: unique('Nul'),
+          categoryId: existingCategoryId,
+          basePrice: 100,
+          ...build('\u0000'),
+        };
+        await post(path)
+          .set('Content-Type', 'application/json')
+          .send(JSON.stringify(body))
+          .expect(400);
+        expect(await counts()).toEqual(before);
+      },
+    );
+
+    it('rejects NUL in the menu placement productId with 400 and writes nothing', async () => {
+      const before = await counts();
+      await post(`/menus/${menuId}/products`)
+        .set('Content-Type', 'application/json')
+        .send(JSON.stringify({ productId: 'a\u0000b' }))
+        .expect(400);
+      expect(await counts()).toEqual(before);
+    });
+
+    it('treats a NUL in the menu id path as a missing menu (404) and writes nothing', async () => {
+      const product = await newProduct();
+      const before = await counts();
+      await post(`/menus/a%00b/products`)
+        .send({ productId: product.id })
+        .expect(404);
+      expect(await counts()).toEqual(before);
+    });
+
+    it('still accepts ordinary punctuation, accents, quotes and emoji', async () => {
+      const name = `Crème brûlée 12" – “Chef’s” 🍮 ${sfx}`;
+      const res = await post('/products')
+        .send({
+          name,
+          slug: `s1-punct-${sfx}`,
+          categoryId: existingCategoryId,
+          basePrice: 100,
+          description: 'Line one\nLine two\t(tabbed) — “quoted”',
+        })
+        .expect(201);
+      expect((res.body as AdminProductDetail).name).toBe(name);
+    });
+  });
+
   describe('concurrency', () => {
     it('parallel adds of the same placement create exactly one row and one audit event', async () => {
       const product = await newProduct();
@@ -752,6 +832,80 @@ describe('S1 Admin catalog creation (integration)', () => {
         .send({ isAvailable: false })
         .expect(200);
       await checkout().expect(400);
+    });
+  });
+
+  describe('zero-dollar products', () => {
+    it('can be created, shown and ordered through the existing no-charge path with no financial side effects', async () => {
+      const product = await newProduct({ basePrice: 0 });
+      expect(product.basePrice).toBe(0);
+      await post(`/menus/${menuId}/products`)
+        .send({ productId: product.id, isActive: true })
+        .expect(201);
+
+      const menuProduct = (
+        (
+          await request(app.getHttpServer())
+            .get(`/api/v1/locations/${locationId}/menu`)
+            .expect(200)
+        ).body as LocationMenuResponse
+      ).menu.products.find((p) => p.product.id === product.id);
+      expect(menuProduct).toMatchObject({ effectivePrice: 0 });
+
+      const ledgerBefore = {
+        giftCardTx: await prisma.giftCardTransaction.count(),
+        giftCardRedemptions: await prisma.orderGiftCardRedemption.count(),
+        beans: await prisma.mochaBeanLedgerEntry.count(),
+      };
+      const idempotencyKey = `s1_${randomUUID()}`;
+      const placed = (
+        await request(app.getHttpServer())
+          .post('/api/v1/orders')
+          .send({
+            idempotencyKey,
+            locationId,
+            guest: { name: 'S1 Guest', phone: '5551234567' },
+            lines: [{ productId: product.id, quantity: 3, selections: [] }],
+          })
+          .expect(201)
+      ).body as OrderConfirmation;
+
+      expect(placed).toMatchObject({
+        subtotal: 0,
+        total: 0,
+        promotionDiscount: 0,
+        rewardDiscount: 0,
+        giftCardTenderMinorUnits: 0,
+        externalPaymentMinorUnits: 0,
+      });
+      // The attempt is the existing no-charge attempt: nothing was charged
+      // through a provider.
+      const order = await prisma.order.findUniqueOrThrow({
+        where: { id: placed.orderId },
+        include: { paymentAttempt: true },
+      });
+      expect(order.tenantId).toBe(T1);
+      expect(order.paymentAttempt).toMatchObject({
+        amount: 0,
+        status: 'SUCCEEDED',
+        providerReference: 'no-charge',
+      });
+      expect({
+        giftCardTx: await prisma.giftCardTransaction.count(),
+        giftCardRedemptions: await prisma.orderGiftCardRedemption.count(),
+        beans: await prisma.mochaBeanLedgerEntry.count(),
+      }).toEqual(ledgerBefore);
+
+      // Replaying the same idempotency key returns the same order.
+      const replay = await request(app.getHttpServer())
+        .post('/api/v1/orders')
+        .send({
+          idempotencyKey,
+          locationId,
+          guest: { name: 'S1 Guest', phone: '5551234567' },
+          lines: [{ productId: product.id, quantity: 3, selections: [] }],
+        });
+      expect(replay.body).toMatchObject({ orderId: placed.orderId });
     });
   });
 

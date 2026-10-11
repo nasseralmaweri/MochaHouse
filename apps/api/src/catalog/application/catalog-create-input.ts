@@ -70,9 +70,20 @@ function requireObject(body: unknown): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
+// PostgreSQL text cannot hold a NUL character; left alone it reaches the
+// database and surfaces as an unhandled 500. It is rejected at the request
+// boundary, and nothing else is restricted, so real names and descriptions
+// (accents, quotes, emoji, punctuation) are unaffected.
+export function hasNulCharacter(value: string): boolean {
+  return value.includes('\u0000');
+}
+
 function parseName(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new BadRequestException(`${label} name is required.`);
+  }
+  if (hasNulCharacter(value)) {
+    throw new BadRequestException(`${label} name contains invalid characters.`);
   }
   const name = value.trim();
   if (name.length > CATALOG_NAME_MAX_LENGTH) {
@@ -84,7 +95,11 @@ function parseName(value: unknown, label: string): string {
 }
 
 function parseId(value: unknown, message: string): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
+  if (
+    typeof value !== 'string' ||
+    value.trim().length === 0 ||
+    hasNulCharacter(value)
+  ) {
     throw new BadRequestException(message);
   }
   return value.trim();
@@ -96,6 +111,9 @@ function parseDescription(value: unknown): string | null {
   }
   if (typeof value !== 'string') {
     throw new BadRequestException('Description must be text.');
+  }
+  if (hasNulCharacter(value)) {
+    throw new BadRequestException('Description contains invalid characters.');
   }
   const description = value.trim();
   if (description.length > CATALOG_DESCRIPTION_MAX_LENGTH) {
@@ -129,6 +147,9 @@ function parseOptionalSlug(value: unknown): string | null {
   }
   if (typeof value !== 'string') {
     throw new BadRequestException('Web address must be text.');
+  }
+  if (hasNulCharacter(value)) {
+    throw new BadRequestException('Web address contains invalid characters.');
   }
   const slug = value.trim();
   if (slug.length === 0) {
