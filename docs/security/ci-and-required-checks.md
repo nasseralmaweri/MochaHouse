@@ -389,12 +389,18 @@ relationships use a composite foreign key
   drift, preflight abort, missing-4C-3 refusal, late failure, lock timeout,
   recovery, rollback, and the refused out-of-order 4C-3 rollback.
 
-### SECURITY FINDING (4C-4) — CLOSED BY SECURITY 4C-6, PENDING REVIEW
+### SECURITY FINDING (4C-4) — RESOLVED BY THE PROPOSED SECURITY 4C-6 CODE, CONTINGENT ON MERGE
 
-*Closed by Security 4C-6 (see "Product snapshots (closes the 4C-4
-finding)"): the guard, indexes and a passing prevention test are in place;
-final closure requires the independent 4C-6 review. The original record
-follows unchanged.*
+*Resolved by the proposed Security 4C-6 code (see "Product snapshots
+(closes the 4C-4 finding)"): the reuse guard, the indexes and a passing
+prevention test, confirmed by the independent 4C-6 review on fresh
+disposable databases. The resolution takes effect in the codebase only
+when 4C-6 is merged, and protects a persistent environment only once the
+4C-6 migration has actually been applied there and verified — until then
+no persistent environment may be described as protected. The regression
+tests stay in place. A database owner or superuser can still bypass the
+guard (disable triggers, drop keys); that remains open under T-2. The
+original record follows unchanged.*
 
 **Product snapshots remain vulnerable to deleted-id reuse across tenants.**
 The three product-snapshot references —
@@ -632,8 +638,13 @@ have no foreign key (a product may be deleted; the snapshot stays). Now:
    locks the product row (`FOR KEY SHARE`) until the writing transaction
    ends: a concurrent delete waits (or times out) instead. This applies to
    all eight snapshot triggers (4C-4's seven and the new one). `FOR KEY
-   SHARE` conflicts only with a delete or an id change — ordinary product
-   edits (price, name, availability) do not wait.
+   SHARE` conflicts with a delete and with any *key* update: a change to
+   the id or to any other column in a unique index. Edits of price, name,
+   availability or category do not wait; a change of a product's `slug`
+   (unique per business, `Product_tenantId_slug_key`) — and any other
+   unique-index key update on a snapshot source — **does** wait until open
+   snapshot-writing transactions on that row end (or fails on its own
+   `lock_timeout`). The application does not change slugs today.
 
 The 4C-4 regression test ("residual until Security 4C-6 …") is now a
 prevention test: the reuse is rejected, and the integrity checker reports
@@ -712,20 +723,70 @@ Before any persistent environment:
 - **Preflight read-only first:** run `integrity:check` (read-only role) and
   resolve every reported row by a human decision. The migration's own
   preflight aborts on the same rows, without repairing.
-- **Lock window:** adding 33 foreign keys validates every row under
-  `SHARE ROW EXCLUSIVE` locks on catalog, offer, campaign and order-history
-  tables; checkout writes wait. Run it in a maintenance window. The
-  5-second `lock_timeout` makes it fail fast (and atomically) instead of
-  queueing behind long transactions; retry after `migrate resolve
-  --rolled-back`.
-- **Database roles:** migrations run as the table owner. The snapshot
-  triggers run as the writing role, and `FOR KEY SHARE` requires `UPDATE`
-  privilege on `Product` (and on each snapshot's source table) for any
-  role that writes order snapshots — keep this in mind for the future
-  least-privilege role (T-2).
+- **Locks (observed in the independent review):** the migration acquires
+  **`ACCESS EXCLUSIVE`** locks on several catalog-related tables —
+  including `Product`, `Location`, `Category`, `Menu`, `MenuProduct`,
+  `Promotion` and `Campaign` (replacing a foreign key locks both tables) —
+  plus `SHARE ROW EXCLUSIVE` and `SHARE` locks on the order-history
+  snapshot tables (trigger creation and index builds). Locks are held until
+  the single migration transaction commits or rolls back. `ACCESS
+  EXCLUSIVE` blocks **reads as well as writes**: storefront and menu
+  requests, checkout and admin catalog screens wait for the whole
+  migration.
+- **`lock_timeout` is not a duration limit.** The 5-second `lock_timeout`
+  only limits how long the migration *waits to acquire* each lock (it then
+  fails fast and atomically; retry after `migrate resolve --rolled-back`).
+  It does not bound how long an acquired lock is held: that is the time
+  needed to validate every existing row and build the indexes.
+- **Timing:** the durations seen on small synthetic databases do not
+  predict production duration, which depends on data volume, hardware and
+  concurrent load.
+- **Approval required:** a persistent-environment migration needs a
+  separately approved maintenance window, a backup, the integrity
+  preflight, a rollback / recovery plan and a customer-impact assessment
+  (storefront and checkout unavailable for the duration). None of this has
+  been done.
+- **Database roles:** see "Least-privilege considerations (T-2)" below.
 - **Migration runner:** must ship `packages/database/src` with
   `prisma.config.ts` (the F-1 guard), as for every migration since F-1.
 - **Order:** 4C-3, 4C-4 and 4C-5 must already be applied (enforced).
+
+### Least-privilege considerations (T-2)
+
+The snapshot functions (`reject_cross_tenant_snapshot()`,
+`reject_reused_snapshot_source()`) are ordinary (`SECURITY INVOKER`)
+functions: they run with the privileges of the role writing the row.
+Observed on a disposable database with a non-owner role:
+
+- A role that **writes snapshots** (checkout, redemptions) needs `SELECT`
+  on the source table and `UPDATE` on at least one of its columns, because
+  `SELECT … FOR KEY SHARE` requires it. Since 4C-6 this applies to
+  `Product` **and** to the existing 4C-4 snapshot sources (`Promotion`,
+  `LoyaltyReward`, `LoyaltyBonusPromotion`, `GiftCard`), which 4C-4 only
+  read. Without it the write fails with "permission denied".
+- A role that **inserts a source row or changes its id** (for example
+  catalog administration creating a product) needs `SELECT` on every
+  snapshot table that may name it (for `Product`: `OrderLine`,
+  `OrderLoyaltyBonusItem`, `OrderLoyaltyRewardRedemption`,
+  `OrderPromotionRedemption`).
+- A non-owner role could not bypass the guards (no `DISABLE TRIGGER`,
+  `session_replication_role`, constraint drop, function replacement or
+  `TRUNCATE`); a temporary table shadowing a snapshot table does not hide
+  history (the functions name the schema). The **owner / superuser
+  bypass remains** and is what T-2 closes.
+
+Before deploying with a non-owner runtime role, validate these permissions
+for `Product`, the existing snapshot source tables and the referencing
+snapshot tables on a disposable database. Two approaches to weigh during
+T-2 (neither is implemented now):
+
+- **Explicit privileges** — grant the runtime role the `SELECT` / `UPDATE`
+  (column-level `UPDATE` is enough) the functions need. Simple and
+  transparent, but it widens what the runtime role may do directly.
+- **Carefully audited `SECURITY DEFINER` functions** — owned by the
+  migration role with a pinned `search_path`, so the runtime role needs no
+  extra table privileges. Narrower runtime grants, but the functions then
+  run with owner rights and must be reviewed as privileged code.
 
 ### Design notes
 
@@ -791,15 +852,15 @@ review.
 | --- | --- | --- | --- |
 | F-1 | **Harden disposable-database test commands.** — *Resolved by the F-1/F-2 change: Prisma commands are guarded (see "Prisma commands are guarded too"); pending review.* | The local command sequence under "Running the same checks locally" (and any ad-hoc script) runs the next command even when `db:create-disposable` refuses the database; `prisma migrate deploy` then **creates and migrates an unguarded database**. Observed during the 4C-5 review on a local, disposable server (database dropped unused). CI is not affected: each step is a separate job step and a failure stops the job. | The documented sequence stops on the first failure (for example `set -euo pipefail` or one script that exits on a refused guard), and `migrate deploy` / `db seed` in test tooling refuse a database the guard has not approved. |
 | F-2 | **Map concurrent role-assignment conflicts to controlled API responses.** — *Resolved by the F-1/F-2 change: Serializable access changes re-run lost races (see "Concurrent access changes"); pending review.* | Under concurrent identical assignments the database keeps exactly one grant (Serializable transaction + `InternalUserRoleAssignment_corporate_grant_key`), but a losing request can surface an unmapped Prisma `P2034` (serialization failure) as HTTP 500 instead of 409. Integrity is not affected. | Serialization failures and unique violations on assignment return the same 409 as a sequential duplicate, with a test. |
-| F-3 | **Security 4C-6 product-snapshot finding** (see "SECURITY FINDING (4C-4)" above). — *Resolved by Security 4C-6 (reuse guard on all four product snapshots, locked validation, prevention test); pending review.* | Deleted product ids can be reused by another business while a kept snapshot names them. | Closed by 4C-6 as stated in that finding. It is the next security milestone's mandatory deliverable. |
+| F-3 | **Security 4C-6 product-snapshot finding** (see "SECURITY FINDING (4C-4)" above). — *Resolved by the proposed Security 4C-6 code (reuse guard on all four product snapshots, locked validation, prevention test; confirmed by independent review), contingent on merge; persistent environments are protected only after the migration is applied and verified there.* | Deleted product ids can be reused by another business while a kept snapshot names them. | Closed by 4C-6 as stated in that finding. It is the next security milestone's mandatory deliverable. |
 
 ### Prerequisites for onboarding a second production business
 
 | # | Follow-up | Why | Done when |
 | --- | --- | --- | --- |
 | T-1 | **Tenant-bound staff authentication** (separate identity milestone; approved direction). | Today one verified login may hold an `InternalUser` row in several businesses and switch between them with `X-Tenant-Id` (membership is re-validated on every request, so this is not an exploit, but it contradicts the approved single-tenant staff login policy). An ACTIVE, not-yet-bound `InternalUser` row in another business carrying a person's verified email **automatically attaches that person's existing login** to that business. | Each staff login belongs to exactly one business, carried as a trusted, server-set claim and checked against `InternalUser.tenantId`; cross-business switching (`X-Tenant-Id`, business chooser) and automatic cross-tenant email binding are removed; invitations are single-use and tenant-bound; recovery and deactivation are tenant-scoped; CENTERIVO platform administrators use a separate identity and authorization domain. |
-| T-2 | **Non-owner, least-privilege application database role.** | The runtime role owns the tables. Verified in review: a non-superuser **owner** cannot use `session_replication_role` or disable foreign-key system triggers, but **can** disable the ownership triggers (`ALTER TABLE … DISABLE TRIGGER USER`) and drop the composite foreign keys. | Migrations run as a dedicated owner role; the application runs as a NOSUPERUSER, non-owner role with DML privileges only (no DDL, no `TRUNCATE`); the integrity checker uses a read-only role; verified on a disposable database. |
-| T-3 | **F-3 closed** (Security 4C-6). — *Implemented; pending the 4C-6 review.* | As above. | As above. |
+| T-2 | **Non-owner, least-privilege application database role.** | The runtime role owns the tables. Verified in review: a non-superuser **owner** cannot use `session_replication_role` or disable foreign-key system triggers, but **can** disable the ownership triggers (`ALTER TABLE … DISABLE TRIGGER USER`) and drop the composite foreign keys — including the 4C-6 product-snapshot guards. The snapshot functions also need specific runtime privileges (see "Least-privilege considerations (T-2)"). | Migrations run as a dedicated owner role; the application runs as a NOSUPERUSER, non-owner role with DML privileges only (no DDL, no `TRUNCATE`); the integrity checker uses a read-only role; verified on a disposable database. |
+| T-3 | **F-3 closed** (Security 4C-6). — *Resolved by the proposed 4C-6 code, contingent on merge and on applying and verifying the migration in the environment concerned.* | As above. | As above. |
 
 ### Product decision (not a tenant-isolation prerequisite)
 
