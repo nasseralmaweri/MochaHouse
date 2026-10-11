@@ -651,9 +651,9 @@ const MOVES: Record<string, (x: Tag, y: Tag) => string> = {
   ApprovalRequest: (x, y) =>
     `UPDATE "ApprovalRequest" SET "tenantId" = '${TENANTS[y]}', "requestedByInternalUserId" = '${id(y, 'staff')}', "decidedByInternalUserId" = '${id(y, 'staff-2')}' WHERE id = '${id(x, 'approval')}'`,
   ChecklistInstanceItem: (x, y) =>
-    `UPDATE "ChecklistInstanceItem" SET "tenantId" = '${TENANTS[y]}', "completedByInternalUserId" = '${id(y, 'staff')}', "exceptionByInternalUserId" = '${id(y, 'staff-2')}' WHERE id = '${id(x, 'item')}'`,
+    `UPDATE "ChecklistInstanceItem" SET "tenantId" = '${TENANTS[y]}', "checklistInstanceId" = '${id(y, 'instance')}', "completedByInternalUserId" = '${id(y, 'staff')}', "exceptionByInternalUserId" = '${id(y, 'staff-2')}' WHERE id = '${id(x, 'item')}'`,
   FranchiseInquiryNote: (x, y) =>
-    `UPDATE "FranchiseInquiryNote" SET "tenantId" = '${TENANTS[y]}', "authorInternalUserId" = '${id(y, 'staff')}' WHERE id = '${id(x, 'inquiry-note')}'`,
+    `UPDATE "FranchiseInquiryNote" SET "tenantId" = '${TENANTS[y]}', "franchiseInquiryId" = '${id(y, 'inquiry')}', "authorInternalUserId" = '${id(y, 'staff')}' WHERE id = '${id(x, 'inquiry-note')}'`,
   InternalAuditEvent: (x, y) =>
     `UPDATE "InternalAuditEvent" SET "tenantId" = '${TENANTS[y]}', "actorInternalUserId" = '${id(y, 'staff')}' WHERE id = '${id(x, 'audit')}'`,
   InternalRole: (x, y) =>
@@ -665,11 +665,11 @@ const MOVES: Record<string, (x: Tag, y: Tag) => string> = {
   InternalUserRoleAssignment: (x, y) =>
     `UPDATE "InternalUserRoleAssignment" SET "tenantId" = '${TENANTS[y]}', "internalUserId" = '${id(y, 'staff-spare')}', "roleId" = '${id(y, 'role-spare')}', "scopeId" = '${id(y, 'location-spare')}' WHERE id = '${id(x, 'grant-loc')}'`,
   JobApplicationNote: (x, y) =>
-    `UPDATE "JobApplicationNote" SET "tenantId" = '${TENANTS[y]}', "authorInternalUserId" = '${id(y, 'staff')}' WHERE id = '${id(x, 'app-note')}'`,
+    `UPDATE "JobApplicationNote" SET "tenantId" = '${TENANTS[y]}', "jobApplicationId" = '${id(y, 'app')}', "authorInternalUserId" = '${id(y, 'staff')}' WHERE id = '${id(x, 'app-note')}'`,
   MediaAsset: (x, y) =>
     `UPDATE "MediaAsset" SET "tenantId" = '${TENANTS[y]}', "uploadedByInternalUserId" = '${id(y, 'staff')}' WHERE id = '${id(x, 'media')}'`,
   OperationsTask: (x, y) =>
-    `UPDATE "OperationsTask" SET "tenantId" = '${TENANTS[y]}', "createdByInternalUserId" = '${id(y, 'staff')}', "completedByInternalUserId" = '${id(y, 'staff-2')}' WHERE id = '${id(x, 'task')}'`,
+    `UPDATE "OperationsTask" SET "tenantId" = '${TENANTS[y]}', "locationId" = '${id(y, 'location')}', "createdByInternalUserId" = '${id(y, 'staff')}', "completedByInternalUserId" = '${id(y, 'staff-2')}' WHERE id = '${id(x, 'task')}'`,
 };
 
 describe('Tenant-enforced staff authorization (Security 4C-5)', () => {
@@ -1431,9 +1431,9 @@ describe('Tenant-enforced staff authorization (Security 4C-5)', () => {
             .filter((line) => /disconnect:\s*true/.test(line))
             .map(() => file.slice(repoRoot.length + 1)),
         );
-      expect(disconnects.sort()).toEqual([
-        'apps/api/src/careers/application/job-openings-admin.service.ts', // JobOpening.location
-      ]);
+      // Since Security 4C-7 every relation between business records is
+      // composite, so application code may use none.
+      expect(disconnects.sort()).toEqual([]);
     });
 
     it('the integrity checker reports CLEAN with zero unchecked rows', async () => {

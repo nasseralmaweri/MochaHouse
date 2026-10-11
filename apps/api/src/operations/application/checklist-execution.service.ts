@@ -352,9 +352,10 @@ export class ChecklistExecutionService {
             locationId,
             businessDate,
             items: {
-              // Each snapshot item belongs to its instance's tenant.
+              // Each snapshot item belongs to its instance's tenant: Prisma
+              // takes tenantId from the instance (composite relation,
+              // Security 4C-7).
               create: activeItems.map((item) => ({
-                tenantId,
                 section: item.section,
                 label: item.label,
                 sortOrder: item.sortOrder,

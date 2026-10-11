@@ -413,6 +413,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'InternalAuditEvent.actorInternalUserId',
@@ -479,6 +480,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'ChecklistInstance.templateId',
@@ -489,6 +491,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'ChecklistInstance.locationId',
@@ -499,6 +502,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'ChecklistInstanceItem.checklistInstanceId',
@@ -509,6 +513,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'ChecklistInstanceItem.completedByInternalUserId',
@@ -541,6 +546,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'OperationsTask.createdByInternalUserId',
@@ -925,6 +931,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'JobApplication.jobOpeningId',
@@ -935,6 +942,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'JobApplicationNote.jobApplicationId',
@@ -945,6 +953,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'JobApplicationNote.authorInternalUserId',
@@ -988,6 +997,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'FranchiseInquiryNote.authorInternalUserId',

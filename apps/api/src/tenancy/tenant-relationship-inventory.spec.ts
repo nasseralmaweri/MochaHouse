@@ -218,10 +218,18 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       mismatched: [],
     });
     expect(relationsBetweenBusinessRecords).toHaveLength(86);
+    expect(
+      relationsBetweenBusinessRecords
+        .filter((r) => !isTenantEnforced(r))
+        .map((r) => `${r.model}.${referencingColumn(r)}`),
+    ).toEqual([]);
     // Security 4C-3: customers, orders and payments; Security 4C-4:
     // loyalty, gift cards and promotions; Security 4C-5: staff identities,
     // roles, role assignments and staff actors; Security 4C-6: catalog,
-    // menus, offer definitions and campaigns — tenant-enforced.
+    // menus, offer definitions and campaigns; Security 4C-7: operations,
+    // careers, franchising and notifications — tenant-enforced. Since 4C-7
+    // that is every relation between business records: a new one must be
+    // composite too (or be classified deliberately as something else).
     expect(
       relationsBetweenBusinessRecords
         .filter(isTenantEnforced)
@@ -235,14 +243,19 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'Campaign.promotionId',
       'CampaignProduct.campaignId',
       'CampaignProduct.productId',
+      'ChecklistInstance.locationId',
+      'ChecklistInstance.templateId',
+      'ChecklistInstanceItem.checklistInstanceId',
       'ChecklistInstanceItem.completedByInternalUserId',
       'ChecklistInstanceItem.exceptionByInternalUserId',
+      'ChecklistTemplateItem.templateId',
       'CustomerLoyaltyAccount.customerId',
       'CustomerNote.authorInternalUserId',
       'CustomerNote.customerId',
       'CustomerPreferredLocation.customerId',
       'CustomerPreferredLocation.locationId',
       'FranchiseInquiryNote.authorInternalUserId',
+      'FranchiseInquiryNote.franchiseInquiryId',
       'GiftCardPurchase.customerId',
       'GiftCardPurchase.giftCardId',
       'GiftCardPurchase.paymentAttemptId',
@@ -255,7 +268,10 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'InternalUserRoleAssignment.internalUserId',
       'InternalUserRoleAssignment.roleId',
       'InternalUserRoleAssignment.scopeId',
+      'JobApplication.jobOpeningId',
       'JobApplicationNote.authorInternalUserId',
+      'JobApplicationNote.jobApplicationId',
+      'JobOpening.locationId',
       'LocationMenu.locationId',
       'LocationMenu.menuId',
       'LocationProductAvailabilityOverride.locationId',
@@ -279,8 +295,10 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'MochaBeanLedgerEntry.loyaltyAccountId',
       'MochaBeanLedgerEntry.orderId',
       'ModifierOption.modifierGroupId',
+      'NotificationDelivery.outboxEventId',
       'OperationsTask.completedByInternalUserId',
       'OperationsTask.createdByInternalUserId',
+      'OperationsTask.locationId',
       'Order.customerId',
       'Order.locationId',
       'Order.paymentAttemptId',

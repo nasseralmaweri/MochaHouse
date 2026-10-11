@@ -165,7 +165,11 @@ export class JobOpeningsAdminService {
       );
     }
 
-    const data: Prisma.JobOpeningUpdateInput = {};
+    // Security 4C-7 — unchecked (scalar) input: the location is a composite
+    // (tenantId, id) relation, so it is set and cleared by its own column. A
+    // relation `connect` would also rewrite tenantId, and `disconnect` would
+    // clear it.
+    const data: Prisma.JobOpeningUncheckedUpdateInput = {};
     if (request?.title !== undefined) {
       data.title = this.validateShort(
         request.title,
@@ -203,9 +207,7 @@ export class JobOpeningsAdminService {
         request.locationId,
         tenant,
       );
-      data.location = locationId
-        ? { connect: { id: locationId } }
-        : { disconnect: true };
+      data.locationId = locationId;
     }
 
     if (Object.keys(data).length === 0) {

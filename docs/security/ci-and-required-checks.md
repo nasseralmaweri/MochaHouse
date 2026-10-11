@@ -150,8 +150,8 @@ refuses to touch the database (fails safe, but blocks the deploy).
 
 `packages/database/src/integrity/relationship-inventory.ts` classifies all
 105 references between business-owned records (86 composite foreign-key
-candidates, all with a foreign key, 76 of them tenant-enforced since
-Security 4C-3 / 4C-4 / 4C-5 / 4C-6 — 8 historical
+candidates, all with a foreign key and — since Security 4C-7 — all 86
+tenant-enforced (4C-3 … 4C-7) — 8 historical
 snapshots, 4 polymorphic references, 6 JSON columns, 1 external id).
 `tenant-relationship-inventory.spec.ts` fails when the schema gains, loses or
 changes one without a classification.
@@ -389,13 +389,12 @@ relationships use a composite foreign key
   drift, preflight abort, missing-4C-3 refusal, late failure, lock timeout,
   recovery, rollback, and the refused out-of-order 4C-3 rollback.
 
-### SECURITY FINDING (4C-4) — RESOLVED BY THE PROPOSED SECURITY 4C-6 CODE, CONTINGENT ON MERGE
+### SECURITY FINDING (4C-4) — RESOLVED IN CODE BY SECURITY 4C-6 (MERGED); NOT YET APPLIED TO A PERSISTENT ENVIRONMENT
 
-*Resolved by the proposed Security 4C-6 code (see "Product snapshots
-(closes the 4C-4 finding)"): the reuse guard, the indexes and a passing
-prevention test, confirmed by the independent 4C-6 review on fresh
-disposable databases. The resolution takes effect in the codebase only
-when 4C-6 is merged, and protects a persistent environment only once the
+*Resolved in code by Security 4C-6, merged to `main` (see "Product
+snapshots (closes the 4C-4 finding)"): the reuse guard, the indexes and a
+passing prevention test, confirmed by the independent 4C-6 review on fresh
+disposable databases. It protects a persistent environment only once the
 4C-6 migration has actually been applied there and verified — until then
 no persistent environment may be described as protected. The regression
 tests stay in place. A database owner or superuser can still bypass the
@@ -451,8 +450,8 @@ Never automatic. Revert the 4C-4 relations in `schema.prisma` and ship
 (seventeen composite keys, eight indexes, fourteen ownership, seven
 snapshot and four id-reuse triggers, and their two functions) and restores the sixteen
 original single-column keys exactly; it keeps 4C-3's function. Roll back in
-reverse order: 4C-6, then 4C-5, then 4C-4, then 4C-3, then 4C-2 (PostgreSQL
-refuses this rollback while 4C-6 is applied).
+reverse order: 4C-7, then 4C-6, then 4C-5, then 4C-4, then 4C-3, then 4C-2
+(PostgreSQL refuses this rollback while 4C-6 is applied).
 
 ## Tenant-enforced staff authorization (Security 4C-5)
 
@@ -516,8 +515,8 @@ foreign key `("tenantId", col) -> parent ("tenantId", "id")`:
 - Not included: the operations records' own links
   (`ChecklistInstance.locationId` / `templateId`,
   `ChecklistInstanceItem.checklistInstanceId`, `OperationsTask.locationId`)
-  stay single-column for a later milestone, and the catalog/offer links are
-  Security 4C-6's; audit and approval *targets* stay polymorphic (checked
+  became composite in Security 4C-7, and the catalog/offer links in
+  Security 4C-6; audit and approval *targets* stay polymorphic (checked
   by the integrity checker).
 - `tenant-fk-staff-authorization.spec.ts` proves, with three fictional
   businesses: same-business onboarding, role change, location grant,
@@ -562,7 +561,7 @@ single-column relations; remove `InternalUserRoleAssignment.location` and
 added (seventeen composite keys, the scope CHECK, the CORPORATE-grant index
 and eleven ownership triggers) and restores the sixteen original
 single-column keys exactly; it keeps 4C-3's function. Roll back in reverse
-order: 4C-6, then 4C-5, then 4C-4, then 4C-3, then 4C-2. (PostgreSQL itself refuses a
+order: 4C-7, then 4C-6, then 4C-5, then 4C-4, then 4C-3, then 4C-2. (PostgreSQL itself refuses a
 4C-3 rollback while 4C-5 is applied; a 4C-4 rollback shares no object with
 4C-5 and is not refused, so the order is a procedure — follow it.)
 
@@ -610,8 +609,7 @@ composite foreign key `("tenantId", col) -> parent ("tenantId", "id")`,
   (it refuses to run without them) and drops none of them.
 - Not included: `NotificationDelivery.outboxEventId`, the operations
   records' own links (checklists, tasks) and the careers / franchising
-  links stay single-column for a later milestone (10 relationships, listed
-  as not tenant-enforced in the inventory).
+  links (10 relationships) — tenant-enforced since Security 4C-7.
 
 ### Product snapshots (closes the 4C-4 finding)
 
@@ -710,9 +708,9 @@ added (33 composite keys, five indexes, nineteen ownership triggers, the
 product reuse guard and the `OrderLine` snapshot trigger), restores the 32
 original single-column keys exactly, and restores the two snapshot
 functions to their 4C-4 definitions (which re-opens the race above). Roll
-back in reverse order: **4C-6, then 4C-5, then 4C-4, then 4C-3, then 4C-2.**
-PostgreSQL refuses a 4C-4 or 4C-3 rollback while 4C-6 is applied (their
-functions are still in use).
+back in reverse order: **4C-7, then 4C-6, then 4C-5, then 4C-4, then 4C-3,
+then 4C-2.** PostgreSQL refuses a 4C-4 or 4C-3 rollback while 4C-6 is
+applied (their functions are still in use).
 
 ### Before applying 4C-6 to a persistent database (not done here)
 
@@ -803,6 +801,182 @@ T-2 (neither is implemented now):
   composite relations. TypeScript catches the first only outside
   `.map()` object literals; the runtime tests catch the rest.
 
+## Tenant-enforced operations, careers, franchising and notifications (Security 4C-7)
+
+Migration `20261016090000_tenant_fk_operations_careers_notifications` is the
+last planned composite-foreign-key milestone. It replaces the last ten
+single-column foreign keys between business-owned records with composite
+ones, `("tenantId", col) -> parent ("tenantId", "id")`, `ON UPDATE
+RESTRICT`:
+
+| Relationship | Parent | On delete |
+| --- | --- | --- |
+| `ChecklistTemplateItem.templateId` | ChecklistTemplate | CASCADE |
+| `ChecklistInstance.templateId` | ChecklistTemplate | RESTRICT |
+| `ChecklistInstance.locationId` | Location | RESTRICT |
+| `ChecklistInstanceItem.checklistInstanceId` | ChecklistInstance | CASCADE |
+| `OperationsTask.locationId` | Location | RESTRICT |
+| `JobOpening.locationId` (optional) | Location | RESTRICT |
+| `JobApplication.jobOpeningId` | JobOpening | RESTRICT |
+| `JobApplicationNote.jobApplicationId` | JobApplication | CASCADE |
+| `FranchiseInquiryNote.franchiseInquiryId` | FranchiseInquiry | CASCADE |
+| `NotificationDelivery.outboxEventId` | OutboxEvent | RESTRICT |
+
+- **Delete behaviour is unchanged** (no intended exception this time);
+  `ON UPDATE` became RESTRICT (was CASCADE): ids never change. Every child
+  column was already indexed, so no index is added.
+- **Ownership:** the last twelve business-owned tables without it now
+  reject any change of `tenantId` (`<Table>_tenantId_immutable`, SQLSTATE
+  `23001`): `ChecklistTemplate`, `ChecklistTemplateItem`,
+  `ChecklistInstance`, `JobOpening`, `JobApplication`, `FranchiseInquiry`,
+  `OutboxEvent`, `NotificationDelivery`, `NotificationRecipient`,
+  `CmsPage`, `GiftCardConfiguration` and `LoyaltyConfiguration`. After
+  4C-7 **every table with a `tenantId` column (64) carries the trigger**,
+  and **no single-column foreign key between business-owned tables is
+  left**; a test asserts both against the live catalog, so a future table
+  or relation that skips them fails CI.
+- **Requires** 4C-3's `reject_tenant_reassignment()` (it refuses to run
+  without it) and drops nothing of earlier milestones.
+- **Application changes:** job-opening editing sets and clears the location
+  through the `locationId` column (a relation `disconnect` would clear
+  `tenantId` and is refused); the checklist-instance nested item create no
+  longer passes `tenantId` (Prisma takes it from the instance). Application
+  code now contains no relation `disconnect` at all (tripwire test).
+- **Considered and not done:** making `NotificationDelivery`'s copy of the
+  event's aggregate (`aggregateType` / `aggregateId`) provably equal to its
+  event's — possible with a wider composite key on `OutboxEvent`, but it
+  adds a unique index on the busiest write table to guard a value the worker
+  copies from the event it was handed; the delivery is now tied to an event
+  of its own business, and the integrity checker verifies the copy. Revisit
+  if deliveries are ever written from anything but the event.
+- `tenant-fk-operations-careers-notifications.spec.ts` proves, with three
+  fictional businesses: same-business writes accepted for all ten
+  relationships; every cross-business reference rejected on the exact
+  constraint (direct SQL, six business pairs, insert and update); every
+  move of the twelve tables rejected (one row or all rows); 31 Prisma write
+  shapes × 6 pairs (checked and unchecked, nested create / connect from
+  either side, upsert, updateMany) refused with the data unchanged; the
+  operational workflows (nested checklist items, tasks, job openings with
+  location set and cleared, applications, notes, outbox events and
+  deliveries); concurrency (a child in flight share-locks its parent
+  against delete and move; twelve parallel inserts — only the six
+  same-business ones succeed); delete outcomes identical to a pre-4C-7
+  database; the integrity checker `CLEAN`; every removed key or trigger
+  detected by both the per-object and the whole-database guard; and, with
+  real `prisma migrate deploy`: success without drift, preflight abort with
+  separate "another business" / "missing" counts and recovery, missing-4C-3
+  refusal, late failure, lock timeout, the refused 4C-3 rollback, rollback
+  and re-apply, and the full 4C-7 → 4C-6 → 4C-5 → 4C-4 → 4C-3 chain.
+
+### If the 4C-7 migration fails
+
+It is one `DO` block: nothing was changed. Its preflight lists, per
+relationship, how many rows name another business's record and how many
+name a missing one. It never repairs, deletes or reassigns anything.
+Correct each reported row deliberately, then:
+
+```bash
+pnpm --filter @mocha-house/database exec prisma migrate resolve --rolled-back 20261016090000_tenant_fk_operations_careers_notifications
+pnpm --filter @mocha-house/database exec prisma migrate deploy
+```
+
+### Rolling back 4C-7
+
+Never automatic. Revert the 4C-7 relations in `schema.prisma` and ship
+`prisma/rollbacks/20261016090000_tenant_fk_operations_careers_notifications.down.sql`
+(one `DO` block) as a new forward migration. It removes only what 4C-7
+added (ten composite keys, twelve ownership triggers) and restores the ten
+original single-column keys exactly (including `ON UPDATE CASCADE`); it
+keeps 4C-3's function. Roll back in reverse order: **4C-7, then 4C-6, then
+4C-5, then 4C-4, then 4C-3, then 4C-2.** PostgreSQL refuses a 4C-3 rollback
+while 4C-7 is applied; a 4C-6 / 4C-5 / 4C-4 rollback shares no object with
+4C-7 and is not refused, so the order is a procedure — follow it.
+
+### Before applying 4C-7 to a persistent database (not done here)
+
+The same rules as 4C-6 ("Before applying 4C-6 to a persistent database")
+apply — backup, read-only integrity preflight, rollback / recovery plan,
+customer-impact assessment, a separately approved maintenance window — and
+4C-6 must be applied first. Observed locks: **`ACCESS EXCLUSIVE`** on
+`Location`, `OutboxEvent`, `ChecklistTemplate`, `ChecklistTemplateItem`,
+`ChecklistInstance`, `ChecklistInstanceItem`, `OperationsTask`,
+`JobOpening`, `JobApplication`, `JobApplicationNote`, `FranchiseInquiry`,
+`FranchiseInquiryNote` and `NotificationDelivery`, plus `SHARE ROW
+EXCLUSIVE` on the configuration tables, all held until the migration
+commits. `Location` and `OutboxEvent` make this an outage for **reads and
+writes**: storefront location and menu requests, checkout (every order
+writes an outbox event) and the notification worker wait for the whole
+migration. The 5-second `lock_timeout` limits only the wait to acquire a
+lock. Synthetic timings do not predict production. For a large persistent
+database, a staged variant (add the new keys `NOT VALID`, validate them in
+a separate transaction under `SHARE UPDATE EXCLUSIVE`, then drop the old
+keys) would shorten the exclusive window; it is a deployment decision, not
+implemented.
+
+### Remaining tenant references after 4C-7 (complete inventory)
+
+All 105 references between business-owned records in
+`relationship-inventory.ts`:
+
+| Kind | Count | Protection |
+| --- | --- | --- |
+| Composite foreign key | 86 | **All tenant-enforced by PostgreSQL** (4C-3 … 4C-7). |
+| Historical snapshot | 8 | No foreign key by design (history outlives its source). New or changed values must name a same-business source, validated under a row lock; a deleted source id cannot be reused by another business while history names it: `OrderLine.productId`, `OrderLoyaltyBonusItem.productId`, `OrderLoyaltyRewardRedemption.freeItemProductId`, `OrderPromotionRedemption.freeItemProductId` (4C-6); `OrderLoyaltyRewardRedemption.sourceRewardId`, `OrderLoyaltyBonusItem.sourcePromotionId`, `OrderPromotionRedemption.sourcePromotionId`, `OrderGiftCardRedemption.sourceGiftCardId` (4C-4). |
+| Polymorphic | 4 | Not database-enforced (the target table depends on a type column): `InternalAuditEvent.targetId`, `ApprovalRequest.targetId`, `OutboxEvent.aggregateId`, `NotificationDelivery.aggregateId`. Written only by server code from tenant-scoped records; verified by `integrity:check` (unknown types are violations). |
+| JSON reference | 6 | Not database-enforced: `CmsPage.draftContent` / `publishedContent` (hero image — checked by `integrity:check` and validated on write), and snapshots never joined: `OrderLine.selections`, `OutboxEvent.payload`, `InternalAuditEvent.beforeData` / `afterData`. |
+| External identifier | 1 | `NotificationDelivery.providerMessageId` — a provider's id, never a business record. |
+
+**What this does not mean.** Every *relationship* is now tenant-safe in
+PostgreSQL, but tenant isolation is not complete:
+
+- **Reads are not database-enforced.** Which business's rows a query
+  *returns* is decided by application code (tenant-scoped Prisma queries).
+  The tenant query audit (`TENANT_QUERY_AUDIT`) only *reports* queries
+  without a tenant predicate; it never blocks one. A missing `where:
+  { tenantId }` in a new read path is caught only by tests and review.
+- **Raw SQL:** six `$queryRaw` row locks (`SELECT … FOR UPDATE` by id on
+  `CustomerLoyaltyAccount`, `GiftCard`, `ChecklistTemplate`,
+  `ChecklistInstance`) take ids that tenant-scoped queries returned just
+  before; they lock, never return data. No other raw SQL in application
+  code.
+- **Owner bypass (T-2):** the runtime role owns the tables and could
+  disable the triggers or drop the keys.
+- **Polymorphic and JSON references** above are verified after the fact,
+  not prevented.
+- **Staff identity (T-1):** one login can still span businesses.
+
+### Post-4C security roadmap (proposal, not implemented)
+
+Recommended order — each step small, independently shippable, and chosen
+to get back to product work quickly without weakening isolation:
+
+1. **Persistent-environment rollout of 4C-3 … 4C-7** (deployment, not
+   code): one approved maintenance window, backup, `integrity:check`
+   preflight, apply, verify, smoke-test. Until then production is protected
+   by application checks only.
+2. **T-2 — least-privilege runtime role.** Migrations as the owner; the API
+   and worker as a non-owner DML-only role; the integrity checker read-only.
+   This turns every database guard of 4C-3 … 4C-7 from "honest-mistake
+   proof" into "compromised-app proof". Includes the snapshot-function
+   privileges (explicit grants vs audited `SECURITY DEFINER`). Small code
+   change, mostly configuration and a CI job running the suite as that
+   role.
+3. **T-1 — one staff login per business** (approved direction): removes
+   cross-business switching and automatic email binding. The largest
+   remaining *authorization* risk.
+4. **Read isolation in the database — Row-Level Security**, enabled
+   table by table as defence in depth, keyed on a per-transaction
+   `app.tenant_id` set by the Prisma tenant context. Only meaningful after
+   T-2 (the owner bypasses RLS) and after the query audit shows no
+   un-scoped queries. In the meantime, switch the tenant query audit from
+   *report* to *enforce* model by model (cheaper, catches the same bug
+   class in the application).
+5. **Independent penetration and tenant-isolation test** once 1–3 are in
+   place, against a staging environment with several fictional businesses.
+
+Product work can resume after step 1 alongside steps 2–3; steps 4–5 can run
+in parallel with feature development.
+
 ## Concurrent access changes (Security follow-up F-2)
 
 Access changes — assigning access, removing one assignment, changing a
@@ -852,15 +1026,15 @@ review.
 | --- | --- | --- | --- |
 | F-1 | **Harden disposable-database test commands.** — *Resolved by the F-1/F-2 change: Prisma commands are guarded (see "Prisma commands are guarded too"); pending review.* | The local command sequence under "Running the same checks locally" (and any ad-hoc script) runs the next command even when `db:create-disposable` refuses the database; `prisma migrate deploy` then **creates and migrates an unguarded database**. Observed during the 4C-5 review on a local, disposable server (database dropped unused). CI is not affected: each step is a separate job step and a failure stops the job. | The documented sequence stops on the first failure (for example `set -euo pipefail` or one script that exits on a refused guard), and `migrate deploy` / `db seed` in test tooling refuse a database the guard has not approved. |
 | F-2 | **Map concurrent role-assignment conflicts to controlled API responses.** — *Resolved by the F-1/F-2 change: Serializable access changes re-run lost races (see "Concurrent access changes"); pending review.* | Under concurrent identical assignments the database keeps exactly one grant (Serializable transaction + `InternalUserRoleAssignment_corporate_grant_key`), but a losing request can surface an unmapped Prisma `P2034` (serialization failure) as HTTP 500 instead of 409. Integrity is not affected. | Serialization failures and unique violations on assignment return the same 409 as a sequential duplicate, with a test. |
-| F-3 | **Security 4C-6 product-snapshot finding** (see "SECURITY FINDING (4C-4)" above). — *Resolved by the proposed Security 4C-6 code (reuse guard on all four product snapshots, locked validation, prevention test; confirmed by independent review), contingent on merge; persistent environments are protected only after the migration is applied and verified there.* | Deleted product ids can be reused by another business while a kept snapshot names them. | Closed by 4C-6 as stated in that finding. It is the next security milestone's mandatory deliverable. |
+| F-3 | **Security 4C-6 product-snapshot finding** (see "SECURITY FINDING (4C-4)" above). — *Resolved in code by Security 4C-6 (merged): reuse guard on all four product snapshots, locked validation, prevention test, confirmed by independent review. Persistent environments are protected only after the migration is applied and verified there.* | Deleted product ids can be reused by another business while a kept snapshot names them. | Closed by 4C-6 as stated in that finding. It is the next security milestone's mandatory deliverable. |
 
 ### Prerequisites for onboarding a second production business
 
 | # | Follow-up | Why | Done when |
 | --- | --- | --- | --- |
 | T-1 | **Tenant-bound staff authentication** (separate identity milestone; approved direction). | Today one verified login may hold an `InternalUser` row in several businesses and switch between them with `X-Tenant-Id` (membership is re-validated on every request, so this is not an exploit, but it contradicts the approved single-tenant staff login policy). An ACTIVE, not-yet-bound `InternalUser` row in another business carrying a person's verified email **automatically attaches that person's existing login** to that business. | Each staff login belongs to exactly one business, carried as a trusted, server-set claim and checked against `InternalUser.tenantId`; cross-business switching (`X-Tenant-Id`, business chooser) and automatic cross-tenant email binding are removed; invitations are single-use and tenant-bound; recovery and deactivation are tenant-scoped; CENTERIVO platform administrators use a separate identity and authorization domain. |
-| T-2 | **Non-owner, least-privilege application database role.** | The runtime role owns the tables. Verified in review: a non-superuser **owner** cannot use `session_replication_role` or disable foreign-key system triggers, but **can** disable the ownership triggers (`ALTER TABLE … DISABLE TRIGGER USER`) and drop the composite foreign keys — including the 4C-6 product-snapshot guards. The snapshot functions also need specific runtime privileges (see "Least-privilege considerations (T-2)"). | Migrations run as a dedicated owner role; the application runs as a NOSUPERUSER, non-owner role with DML privileges only (no DDL, no `TRUNCATE`); the integrity checker uses a read-only role; verified on a disposable database. |
-| T-3 | **F-3 closed** (Security 4C-6). — *Resolved by the proposed 4C-6 code, contingent on merge and on applying and verifying the migration in the environment concerned.* | As above. | As above. |
+| T-2 | **Non-owner, least-privilege application database role.** | The runtime role owns the tables. Verified in review: a non-superuser **owner** cannot use `session_replication_role` or disable foreign-key system triggers, but **can** disable the ownership triggers (`ALTER TABLE … DISABLE TRIGGER USER`) and drop the composite foreign keys — including the 4C-6 product-snapshot guards and every 4C-7 key and trigger. The snapshot functions also need specific runtime privileges (see "Least-privilege considerations (T-2)"). | Migrations run as a dedicated owner role; the application runs as a NOSUPERUSER, non-owner role with DML privileges only (no DDL, no `TRUNCATE`); the integrity checker uses a read-only role; verified on a disposable database. |
+| T-3 | **F-3 closed** (Security 4C-6). — *Resolved in code (4C-6 merged); pending applying and verifying the migration in the environment concerned.* | As above. | As above. |
 
 ### Product decision (not a tenant-isolation prerequisite)
 

@@ -825,7 +825,7 @@ model OutboxEvent {
 model NotificationDelivery {
   id                String                     @id @default(uuid(7))
   outboxEventId     String
-  outboxEvent       OutboxEvent                @relation(fields: [outboxEventId], references: [id])
+  outboxEvent       OutboxEvent                @relation(fields: [tenantId, outboxEventId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   channel           NotificationChannel
   recipient         String
   templateKey       String
@@ -1233,7 +1233,7 @@ model ChecklistTemplateItem {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  template ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  template ChecklistTemplate @relation(fields: [tenantId, templateId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
 
   // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
   // every write supplies it explicitly (root writes from the request's
@@ -1266,8 +1266,8 @@ model ChecklistInstance {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  template ChecklistTemplate       @relation(fields: [templateId], references: [id], onDelete: Restrict)
-  location Location                @relation(fields: [locationId], references: [id])
+  template ChecklistTemplate       @relation(fields: [tenantId, templateId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  location Location                @relation(fields: [tenantId, locationId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   items    ChecklistInstanceItem[]
 
   // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
@@ -1316,7 +1316,7 @@ model ChecklistInstanceItem {
   exceptionAt               DateTime?
   createdAt                 DateTime  @default(now())
 
-  checklistInstance ChecklistInstance @relation(fields: [checklistInstanceId], references: [id], onDelete: Cascade)
+  checklistInstance ChecklistInstance @relation(fields: [tenantId, checklistInstanceId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
   completedBy       InternalUser?     @relation("ChecklistItemCompletedBy", fields: [tenantId, completedByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   exceptionBy       InternalUser?     @relation("ChecklistItemExceptionBy", fields: [tenantId, exceptionByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
@@ -1356,7 +1356,7 @@ model OperationsTask {
   createdAt                 DateTime  @default(now())
   updatedAt                 DateTime  @updatedAt
 
-  location    Location      @relation(fields: [locationId], references: [id])
+  location    Location      @relation(fields: [tenantId, locationId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   createdBy   InternalUser  @relation("OperationsTaskCreatedBy", fields: [tenantId, createdByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   completedBy InternalUser? @relation("OperationsTaskCompletedBy", fields: [tenantId, completedByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
@@ -2519,7 +2519,7 @@ model JobOpening {
   employmentType   JobEmploymentType
   // null => a corporate / HQ role. Set => a specific Mocha House location.
   locationId       String?
-  location         Location?         @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  location         Location?         @relation(fields: [tenantId, locationId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   // Short teaser shown in the public list. Plain text.
   summary          String
   // The full body / responsibilities / qualifications — plain multiline
@@ -2569,7 +2569,7 @@ enum JobApplicationStatus {
 model JobApplication {
   id               String               @id @default(uuid(7))
   jobOpeningId     String
-  jobOpening       JobOpening           @relation(fields: [jobOpeningId], references: [id], onDelete: Restrict)
+  jobOpening       JobOpening           @relation(fields: [tenantId, jobOpeningId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   jobTitleSnapshot String
   firstName        String
   lastName         String
@@ -2608,7 +2608,7 @@ model JobApplication {
 model JobApplicationNote {
   id                   String         @id @default(uuid(7))
   jobApplicationId     String
-  jobApplication       JobApplication @relation(fields: [jobApplicationId], references: [id], onDelete: Cascade)
+  jobApplication       JobApplication @relation(fields: [tenantId, jobApplicationId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
   authorInternalUserId String
   authorInternalUser   InternalUser   @relation("JobApplicationNoteAuthor", fields: [tenantId, authorInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   body                 String
@@ -2711,7 +2711,7 @@ model FranchiseInquiry {
 model FranchiseInquiryNote {
   id                   String           @id @default(uuid(7))
   franchiseInquiryId   String
-  franchiseInquiry     FranchiseInquiry @relation(fields: [franchiseInquiryId], references: [id], onDelete: Cascade)
+  franchiseInquiry     FranchiseInquiry @relation(fields: [tenantId, franchiseInquiryId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
   authorInternalUserId String
   authorInternalUser   InternalUser     @relation("FranchiseInquiryNoteAuthor", fields: [tenantId, authorInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   body                 String
