@@ -499,6 +499,35 @@ order: 4C-5, then 4C-4, then 4C-3, then 4C-2. (PostgreSQL itself refuses a
 4C-3 rollback while 4C-5 is applied; a 4C-4 rollback shares no object with
 4C-5 and is not refused, so the order is a procedure — follow it.)
 
+## Tracked security follow-ups (Security 4C-5 review)
+
+Recorded by the independent Security 4C-5 review. None of these blocks
+merging Security 4C-5; each has an owner milestone and a deadline below.
+They are tracked here until each is closed by implementation, tests and
+review.
+
+### Prerequisites for the next development milestone
+
+| # | Follow-up | Why | Done when |
+| --- | --- | --- | --- |
+| F-1 | **Harden disposable-database test commands.** | The local command sequence under "Running the same checks locally" (and any ad-hoc script) runs the next command even when `db:create-disposable` refuses the database; `prisma migrate deploy` then **creates and migrates an unguarded database**. Observed during the 4C-5 review on a local, disposable server (database dropped unused). CI is not affected: each step is a separate job step and a failure stops the job. | The documented sequence stops on the first failure (for example `set -euo pipefail` or one script that exits on a refused guard), and `migrate deploy` / `db seed` in test tooling refuse a database the guard has not approved. |
+| F-2 | **Map concurrent role-assignment conflicts to controlled API responses.** | Under concurrent identical assignments the database keeps exactly one grant (Serializable transaction + `InternalUserRoleAssignment_corporate_grant_key`), but a losing request can surface an unmapped Prisma `P2034` (serialization failure) as HTTP 500 instead of 409. Integrity is not affected. | Serialization failures and unique violations on assignment return the same 409 as a sequential duplicate, with a test. |
+| F-3 | **Security 4C-6 product-snapshot finding** (see "OPEN SECURITY FINDING — MANDATORY SECURITY 4C-6 DELIVERABLE" above). | Deleted product ids can be reused by another business while a kept snapshot names them. | Closed by 4C-6 as stated in that finding. It is the next security milestone's mandatory deliverable. |
+
+### Prerequisites for onboarding a second production business
+
+| # | Follow-up | Why | Done when |
+| --- | --- | --- | --- |
+| T-1 | **Tenant-bound staff authentication** (separate identity milestone; approved direction). | Today one verified login may hold an `InternalUser` row in several businesses and switch between them with `X-Tenant-Id` (membership is re-validated on every request, so this is not an exploit, but it contradicts the approved single-tenant staff login policy). An ACTIVE, not-yet-bound `InternalUser` row in another business carrying a person's verified email **automatically attaches that person's existing login** to that business. | Each staff login belongs to exactly one business, carried as a trusted, server-set claim and checked against `InternalUser.tenantId`; cross-business switching (`X-Tenant-Id`, business chooser) and automatic cross-tenant email binding are removed; invitations are single-use and tenant-bound; recovery and deactivation are tenant-scoped; CENTERIVO platform administrators use a separate identity and authorization domain. |
+| T-2 | **Non-owner, least-privilege application database role.** | The runtime role owns the tables. Verified in review: a non-superuser **owner** cannot use `session_replication_role` or disable foreign-key system triggers, but **can** disable the ownership triggers (`ALTER TABLE … DISABLE TRIGGER USER`) and drop the composite foreign keys. | Migrations run as a dedicated owner role; the application runs as a NOSUPERUSER, non-owner role with DML privileges only (no DDL, no `TRUNCATE`); the integrity checker uses a read-only role; verified on a disposable database. |
+| T-3 | **F-3 closed** (Security 4C-6). | As above. | As above. |
+
+### Product decision (not a tenant-isolation prerequisite)
+
+| # | Follow-up | Why | Done when |
+| --- | --- | --- | --- |
+| P-1 | **Inactive-location authorization policy.** | A LOCATION grant on a **deactivated** location still authorizes actions at that location and appears in the person's access summary (`AuthorizationService` loads every location of the business, active or not). This stays inside one business; it is a product question, not a cross-tenant risk. | Product decides whether grants on inactive locations stay effective, become read-only, or are ignored; the decision is implemented with tests, at the latest with the custom roles / location groups work. |
+
 ## Running the same checks locally
 
 ```bash
