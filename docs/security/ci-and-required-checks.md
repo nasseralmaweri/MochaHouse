@@ -52,7 +52,8 @@ the isolation tests.
 
 API and worker test runs (Jest `globalSetup`), scratch-database helpers and
 the shared tenant cleanup helpers call `assertDisposableDatabase()`
-(`packages/testing/src/disposable-database.ts`). It proceeds only when ALL of
+(`packages/database/src/testing/disposable-database.ts`, re-exported by
+`@mocha-house/testing`). It proceeds only when ALL of
 these hold — no single one is trusted alone:
 
 1. **Declared test run:** `NODE_ENV=test`, `CENTERIVO_TEST_DATABASE=1`, a
@@ -90,6 +91,60 @@ check and never include the connection string, user, password or host.
 CI creates and marks a fresh `mocha_ci` in every database job
 (`pnpm --filter @mocha-house/testing db:create-disposable`); the service
 container starts with only the maintenance database.
+
+### Prisma commands are guarded too (Security follow-up F-1)
+
+`prisma migrate deploy` (also `migrate dev` / `reset`, `db push`) **creates**
+the database its URL names when it does not exist. A refused
+`db:create-disposable` followed in the same shell by `migrate deploy` could
+therefore create and migrate an unguarded database (observed in the Security
+4C-5 review). The guard is now enforced by Prisma's own configuration, before
+Prisma connects (`packages/database/src/testing/prisma-command-guard.ts`):
+
+- **Where:** `packages/database/prisma.config.ts` (every Prisma CLI command of
+  the repository), the configs of throwaway migration projects
+  (`createMigrationProject`, used by the migration regression suites), and
+  `prisma/seed.ts` when run directly.
+- **When:** any Prisma command that touches a database (`migrate …`, `db …`,
+  `studio`) in a run that declares itself a test in any way
+  (`NODE_ENV=test`, `CENTERIVO_TEST_DATABASE` or `CENTERIVO_TEST_DB_TOKEN`
+  set), or aimed at a database named like a test database (a `test` / `ci`
+  segment or the scratch prefix, any case).
+- **What:** the database must already exist and pass checks 1–3 above
+  (declared test run, unambiguous URL, this run's marker). Otherwise the
+  command stops with the guard's message and nothing is created, migrated or
+  seeded — whatever ran before it in the shell. `generate`, `validate` and
+  `format` never connect and are not affected.
+- **Not affected:** ordinary development and real deployments — no test
+  declaration and a database not named like a test database.
+
+**Boundary (what is not covered).** Confirmed by the independent PR #17
+review:
+
+- A Prisma run given a **different, unguarded `--config` file** bypasses the
+  guard (verified: it creates and migrates the database).
+- A run that **declares nothing and targets a non-test-named database** is
+  not guarded — by design, that is how real environments are migrated, so
+  such a run must never be pointed at a database it should not change. The
+  real protection there is least-privilege credentials (T-2 below).
+- **Tools other than Prisma** (`psql`, `pg_restore`, `createdb`, scripts
+  using their own connection) are outside the guard.
+- **`prisma migrate dev` shadow database:** `migrate dev` creates and drops
+  its own temporary shadow database, outside the guard (the guard checks only
+  the database `DATABASE_URL` names). `migrate dev` is a development command
+  and is not used by any test workflow.
+
+Regression tests: `apps/api/src/tenancy/prisma-command-guard.spec.ts`.
+
+**Migration-runner compatibility (deployment prerequisite).**
+`prisma.config.ts` loads the guard from TypeScript **source**
+(`packages/database/src/testing/`) every time Prisma starts, including real
+deployments where it returns immediately. A migration runner must therefore
+ship `packages/database/src` together with `prisma/` and its
+`node_modules` (`pg`); an image that ships only the compiled `dist/` cannot
+load the config and every Prisma command fails. Real environments must also
+never set `NODE_ENV=test` or any `CENTERIVO_TEST_*` variable: Prisma then
+refuses to touch the database (fails safe, but blocks the deploy).
 
 ## Tenant relationship integrity (Security 4C-1)
 
@@ -499,6 +554,42 @@ order: 4C-5, then 4C-4, then 4C-3, then 4C-2. (PostgreSQL itself refuses a
 4C-3 rollback while 4C-5 is applied; a 4C-4 rollback shares no object with
 4C-5 and is not refused, so the order is a procedure — follow it.)
 
+## Concurrent access changes (Security follow-up F-2)
+
+Access changes — assigning access, removing one assignment, changing a
+person's status — run in one SERIALIZABLE transaction, so simultaneous
+requests can never produce a state no sequential order could (duplicate
+grants, a business left without an administrator). PostgreSQL resolves such
+races by aborting all but one transaction (serialization failure 40001, or a
+deadlock 40P01); previously the loser surfaced as HTTP 500.
+`runSerializable` (`apps/api/src/prisma/serializable-transaction.ts`) now
+re-runs a transaction that lost a race from a fresh snapshot (bounded:
+8 attempts, jittered backoff capped at 250 ms), so each request gets the
+answer it would get on its own: 201 for the grant that is created, the
+ordinary 409 "already has that access" for identical ones, the ordinary 404
+for a removal of an already-removed assignment. A unique violation on the
+assignment keys while assigning means "re-decide from fresh data" and is
+re-run the same way.
+
+- Serialization failures arrive in three shapes with Prisma 7 and the pg
+  adapter, all recognised: P2034 (a statement), a bare `DriverAdapterError`
+  of kind `TransactionWriteConflict` (at COMMIT, no Prisma code at all), and
+  a raw SQLSTATE 40001 / 40P01 on the driver error.
+- Business decisions (409, 404, 403 …) are never retried, and no other
+  database error is converted: P2034 is **not** a 409.
+- After 8 lost races the request fails with a generic 503 ("could not be
+  completed because of other changes made at the same time") and changes
+  nothing. No response ever contains a database error.
+- **Future observability (optional, not required):** retries and exhaustion
+  are not logged today, and the 503 does not keep the underlying error. A
+  server-side warning on exhaustion (with the SQLSTATE, never sent to the
+  client) would make persistent contention visible to operators; an optional
+  `Retry-After` header could accompany the 503.
+- `apps/api/src/internal-users/admin-internal-user-concurrency.spec.ts`
+  races 12 identical grants, overlapping location grants, 12 identical
+  removals, grants against removals, and two administrators removing each
+  other's last administrator access.
+
 ## Tracked security follow-ups (Security 4C-5 review)
 
 Recorded by the independent Security 4C-5 review. None of these blocks
@@ -510,8 +601,8 @@ review.
 
 | # | Follow-up | Why | Done when |
 | --- | --- | --- | --- |
-| F-1 | **Harden disposable-database test commands.** | The local command sequence under "Running the same checks locally" (and any ad-hoc script) runs the next command even when `db:create-disposable` refuses the database; `prisma migrate deploy` then **creates and migrates an unguarded database**. Observed during the 4C-5 review on a local, disposable server (database dropped unused). CI is not affected: each step is a separate job step and a failure stops the job. | The documented sequence stops on the first failure (for example `set -euo pipefail` or one script that exits on a refused guard), and `migrate deploy` / `db seed` in test tooling refuse a database the guard has not approved. |
-| F-2 | **Map concurrent role-assignment conflicts to controlled API responses.** | Under concurrent identical assignments the database keeps exactly one grant (Serializable transaction + `InternalUserRoleAssignment_corporate_grant_key`), but a losing request can surface an unmapped Prisma `P2034` (serialization failure) as HTTP 500 instead of 409. Integrity is not affected. | Serialization failures and unique violations on assignment return the same 409 as a sequential duplicate, with a test. |
+| F-1 | **Harden disposable-database test commands.** — *Resolved by the F-1/F-2 change: Prisma commands are guarded (see "Prisma commands are guarded too"); pending review.* | The local command sequence under "Running the same checks locally" (and any ad-hoc script) runs the next command even when `db:create-disposable` refuses the database; `prisma migrate deploy` then **creates and migrates an unguarded database**. Observed during the 4C-5 review on a local, disposable server (database dropped unused). CI is not affected: each step is a separate job step and a failure stops the job. | The documented sequence stops on the first failure (for example `set -euo pipefail` or one script that exits on a refused guard), and `migrate deploy` / `db seed` in test tooling refuse a database the guard has not approved. |
+| F-2 | **Map concurrent role-assignment conflicts to controlled API responses.** — *Resolved by the F-1/F-2 change: Serializable access changes re-run lost races (see "Concurrent access changes"); pending review.* | Under concurrent identical assignments the database keeps exactly one grant (Serializable transaction + `InternalUserRoleAssignment_corporate_grant_key`), but a losing request can surface an unmapped Prisma `P2034` (serialization failure) as HTTP 500 instead of 409. Integrity is not affected. | Serialization failures and unique violations on assignment return the same 409 as a sequential duplicate, with a test. |
 | F-3 | **Security 4C-6 product-snapshot finding** (see "OPEN SECURITY FINDING — MANDATORY SECURITY 4C-6 DELIVERABLE" above). | Deleted product ids can be reused by another business while a kept snapshot names them. | Closed by 4C-6 as stated in that finding. It is the next security milestone's mandatory deliverable. |
 
 ### Prerequisites for onboarding a second production business
@@ -531,9 +622,12 @@ review.
 ## Running the same checks locally
 
 ```bash
+set -euo pipefail   # stop at the first failure
 pnpm install --frozen-lockfile
 # build packages in the order listed above, then create a NEW test database
-# (DATABASE_URL must name a database that does not exist yet):
+# (DATABASE_URL must name a database that does not exist yet). Even without
+# `set -e`, migrate / seed refuse a database the guard has not approved
+# (Security F-1):
 export NODE_ENV=test CENTERIVO_TEST_DATABASE=1 CENTERIVO_TEST_DB_TOKEN=<16+ chars>
 export DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/mocha_test?schema=public
 pnpm --filter @mocha-house/testing db:create-disposable

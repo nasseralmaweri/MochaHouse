@@ -36,6 +36,7 @@ export {
   assertApprovedTestTenants,
   assertDeletableTestTenantId,
   assertDisposableDatabase,
+  assertMarkedDisposableDatabase,
   assertTestEnvironment,
   assertUnambiguousTestUrl,
   createDisposableDatabase,
@@ -43,6 +44,14 @@ export {
   isTestDatabaseName,
   type DisposableDatabaseIdentity,
 } from "./disposable-database";
+export {
+  declaresTestRun,
+  guardDatabaseScript,
+  guardPrismaCommand,
+  prismaCommandTouchesDatabase,
+  requiresDisposableDatabase,
+  targetsTestNamedDatabase,
+} from "@mocha-house/database/dist/testing/prisma-command-guard";
 export {
   MINIMAL_PRISMA_SCHEMA,
   createMigrationProject,

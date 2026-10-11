@@ -22,6 +22,10 @@ export interface PrismaResult {
   readonly out: string;
 }
 
+// The compiled Prisma command guard of @mocha-house/database (F-1).
+const PRISMA_COMMAND_GUARD =
+  require.resolve("@mocha-house/database/dist/testing/prisma-command-guard");
+
 // A datasource-only schema: enough for `migrate deploy` / `resolve`, which
 // only read the migrations folder. Schema-vs-database comparisons use the
 // repository's own schema, or a catalog comparison between databases.
@@ -89,9 +93,13 @@ export function createMigrationProject(
   }
   writeFileSync(join(dir, "schema.prisma"), schema);
   const config = join(dir, "prisma.config.ts");
+  // Security follow-up F-1 — the same Prisma command guard as the
+  // repository's own prisma.config.ts, so a throwaway project can never
+  // create or migrate a database that is not a marked disposable one.
   writeFileSync(
     config,
-    `export default { schema: ${JSON.stringify(join(dir, "schema.prisma"))}, migrations: { path: ${JSON.stringify(target)} }, datasource: { url: process.env["DATABASE_URL"] } };\n`,
+    `const { guardPrismaCommand } = require(${JSON.stringify(PRISMA_COMMAND_GUARD)});\n` +
+      `export default guardPrismaCommand().then(() => ({ schema: ${JSON.stringify(join(dir, "schema.prisma"))}, migrations: { path: ${JSON.stringify(target)} }, datasource: { url: process.env["DATABASE_URL"] } }));\n`,
   );
   return {
     config,
