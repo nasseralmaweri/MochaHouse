@@ -313,9 +313,7 @@ describe('Internal admin authorization matrix (integration)', () => {
         currency: 'USD',
         subtotal: 500,
         status: 'RECEIVED',
-        statusHistory: {
-          create: { tenantId: TENANT_1_MOCHA_HOUSE_ID, status: 'RECEIVED' },
-        },
+        statusHistory: { create: { status: 'RECEIVED' } },
       },
     });
     orderIdA = order.id;

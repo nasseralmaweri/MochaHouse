@@ -43,3 +43,13 @@ export {
   isTestDatabaseName,
   type DisposableDatabaseIdentity,
 } from "./disposable-database";
+export {
+  MINIMAL_PRISMA_SCHEMA,
+  createMigrationProject,
+  databaseCatalog,
+  prismaCli,
+  type DatabaseCatalog,
+  type ExtraMigration,
+  type MigrationProject,
+  type PrismaResult,
+} from "./prisma-migrations";

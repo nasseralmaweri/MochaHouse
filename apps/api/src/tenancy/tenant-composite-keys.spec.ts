@@ -1,16 +1,6 @@
 import 'dotenv/config';
-import { execFile } from 'node:child_process';
-import {
-  copyFileSync,
-  cpSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import {
   TENANT_1_MOCHA_HOUSE_ID,
   TENANT_RELATIONSHIPS,
@@ -20,10 +10,14 @@ import {
   TEST_TENANT_B_ID,
   applyMigrationSql,
   applyMigrations,
+  createMigrationProject,
   createScratchDatabase,
+  databaseCatalog,
   isAppliedAtomically,
   listMigrations,
+  prismaCli,
   withScratchClient,
+  type MigrationProject,
   type ScratchDatabase,
 } from '@mocha-house/testing';
 
@@ -91,19 +85,6 @@ function doBlockStatements(sql: string, tag: string): string[] | null {
     : null;
 }
 
-// The pre-4C-2 schema: the same file without the 25 composite keys (and
-// their three comment lines).
-const KEY_LINES = new Set([
-  '  // Security 4C-2 — composite tenant key: lets child tables reference',
-  '  // (tenantId, id) so the database itself can refuse a cross-business link',
-  '  // (composite foreign keys arrive in Security 4C-3).',
-  '  @@unique([tenantId, id])',
-]);
-const schemaWithoutKeys = schema
-  .split('\n')
-  .filter((line) => !KEY_LINES.has(line))
-  .join('\n');
-
 async function query<T extends object>(url: string, sql: string) {
   return withScratchClient(url, async (client) => {
     const { rows } = await client.query<T>(sql);
@@ -132,22 +113,7 @@ async function tablesWithCompositeKey(url: string): Promise<string[]> {
 }
 
 // Every index and constraint definition in the public schema.
-async function catalog(url: string) {
-  const indexes = await query<{ d: string }>(
-    url,
-    `SELECT indexdef AS d FROM pg_indexes WHERE schemaname = 'public' ORDER BY 1`,
-  );
-  const constraints = await query<{ d: string }>(
-    url,
-    `SELECT c.conrelid::regclass::text || ' ' || c.conname || ' ' || pg_get_constraintdef(c.oid) AS d
-       FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
-      WHERE n.nspname = 'public' ORDER BY 1`,
-  );
-  return {
-    indexes: indexes.map((r) => r.d),
-    constraints: constraints.map((r) => r.d),
-  };
-}
+const catalog = databaseCatalog;
 
 // A checksum of every row of every table (excluding Prisma's own history).
 async function dataChecksum(url: string): Promise<string> {
@@ -202,7 +168,8 @@ describe('Composite tenant keys (Security 4C-2)', () => {
   });
 
   it('the migration is ONE DO block that only sets a local lock_timeout and creates those 25 indexes', () => {
-    expect(targetIndex).toBe(migrations.length - 1);
+    // Later migrations (Security 4C-3's composite foreign keys) build on it.
+    expect(targetIndex).toBeGreaterThanOrEqual(0);
     // A dollar-quoted file is the only shape Prisma sends as one statement.
     expect(isAppliedAtomically(target.sql)).toBe(true);
     expect(doBlockStatements(target.sql, 'tenant_composite_keys')).toEqual([
@@ -222,13 +189,6 @@ describe('Composite tenant keys (Security 4C-2)', () => {
       "PERFORM set_config('lock_timeout', '5s', true)",
       ...PARENTS.map((t) => `DROP INDEX IF EXISTS "${t}_tenantId_id_key"`),
     ]);
-  });
-
-  it('the pre-4C-2 schema used by the Prisma tests differs only by those keys', () => {
-    expect(schemaWithoutKeys).not.toContain('@@unique([tenantId, id])');
-    expect(
-      schema.split('\n').length - schemaWithoutKeys.split('\n').length,
-    ).toBe(25 * KEY_LINES.size);
   });
 
   it('the migrated test database carries every composite key (catalog regression guard)', async () => {
@@ -368,74 +328,25 @@ describe('Composite tenant keys (Security 4C-2)', () => {
   // schema and a plain config) stands in for "the migrations before 4C-2".
   describe('applied by real prisma migrate deploy', () => {
     const databaseDir = join(repoRoot, 'packages/database');
-    const prismaBin = join(databaseDir, 'node_modules/.bin/prisma');
     const migrationsDir = join(databaseDir, 'prisma/migrations');
-    const tempDirs: string[] = [];
+    const prisma = prismaCli(databaseDir);
+    const projects: MigrationProject[] = [];
     const scratches: ScratchDatabase[] = [];
 
     afterAll(async () => {
       for (const scratch of scratches) await scratch.drop();
-      for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+      for (const p of projects) p.remove();
     });
 
-    // A Prisma project with the given migrations (+ an optional extra one)
-    // and schema; returns its config path.
+    // A Prisma project with the given migrations (+ an optional extra one);
+    // returns its config path.
     function project(
       names: string[],
-      schemaText: string,
       extra?: { name: string; sql: string },
     ): string {
-      const dir = mkdtempSync(join(tmpdir(), 'mh-4c2-prisma-'));
-      tempDirs.push(dir);
-      for (const name of names) {
-        cpSync(join(migrationsDir, name), join(dir, 'migrations', name), {
-          recursive: true,
-        });
-      }
-      copyFileSync(
-        join(migrationsDir, 'migration_lock.toml'),
-        join(dir, 'migrations', 'migration_lock.toml'),
-      );
-      if (extra) {
-        cpSync(
-          join(migrationsDir, names[0]),
-          join(dir, 'migrations', extra.name),
-          {
-            recursive: true,
-          },
-        );
-        writeFileSync(
-          join(dir, 'migrations', extra.name, 'migration.sql'),
-          extra.sql,
-        );
-      }
-      writeFileSync(join(dir, 'schema.prisma'), schemaText);
-      const config = join(dir, 'prisma.config.ts');
-      writeFileSync(
-        config,
-        `export default { schema: ${JSON.stringify(join(dir, 'schema.prisma'))}, migrations: { path: ${JSON.stringify(join(dir, 'migrations'))} }, datasource: { url: process.env["DATABASE_URL"] } };\n`,
-      );
-      return config;
-    }
-
-    // Runs the Prisma CLI; without `config` it uses the repository's own.
-    async function prisma(url: string, args: string[], config?: string) {
-      const run = promisify(execFile);
-      return run(
-        prismaBin,
-        [...args, ...(config ? ['--config', config] : [])],
-        {
-          cwd: databaseDir,
-          env: { ...process.env, DATABASE_URL: url },
-          timeout: 180_000,
-        },
-      ).then(
-        (r) => ({ code: 0, out: `${r.stdout}${r.stderr}` }),
-        (e: { code?: number; stdout?: string; stderr?: string }) => ({
-          code: e.code ?? 1,
-          out: `${e.stdout ?? ''}${e.stderr ?? ''}`,
-        }),
-      );
+      const created = createMigrationProject(migrationsDir, names, extra);
+      projects.push(created);
+      return created.config;
     }
 
     const beforeNames = migrations.slice(0, targetIndex).map((m) => m.name);
@@ -449,7 +360,7 @@ describe('Composite tenant keys (Security 4C-2)', () => {
       const result = await prisma(
         scratch.url,
         ['migrate', 'deploy'],
-        project(beforeNames, schemaWithoutKeys),
+        project(beforeNames),
       );
       expect(result.code).toBe(0);
       expect(await tablesWithCompositeKey(scratch.url)).toEqual([]);
@@ -467,22 +378,16 @@ describe('Composite tenant keys (Security 4C-2)', () => {
         (r) =>
           `${r.finished ? 'finished' : 'unfinished'}${r.rolled_back ? '+rolled-back' : ''}`,
       );
-    const noDrift = async (url: string, config?: string) =>
+    const noDrift = async (url: string) =>
       (
-        await prisma(
-          url,
-          [
-            'migrate',
-            'diff',
-            '--from-config-datasource',
-            '--to-schema',
-            config
-              ? join(config, '..', 'schema.prisma')
-              : 'prisma/schema.prisma',
-            '--exit-code',
-          ],
-          config,
-        )
+        await prisma(url, [
+          'migrate',
+          'diff',
+          '--from-config-datasource',
+          '--to-schema',
+          'prisma/schema.prisma',
+          '--exit-code',
+        ])
       ).code;
 
     it('a successful deploy creates exactly the 25 keys, and schema and database stay identical', async () => {
@@ -557,23 +462,26 @@ describe('Composite tenant keys (Security 4C-2)', () => {
       expect(await migrationRow(scratch.url)).toEqual(['unfinished']);
     });
 
-    it('the documented rollback — shipped as a new forward migration with the schema reverted — restores the pre-4C-2 schema exactly', async () => {
+    it('the documented rollback — shipped as a new forward migration — restores the pre-4C-2 catalog exactly', async () => {
+      // Security 4C-3's composite foreign keys depend on these keys, so this
+      // rollback runs only after 4C-3's own rollback: here, on a database
+      // migrated up to 4C-2.
+      const upTo = migrations.slice(0, targetIndex + 1).map((m) => m.name);
       const scratch = await fresh('prisma_rollback');
-      expect((await prisma(scratch.url, ['migrate', 'deploy'])).code).toBe(0);
+      expect(
+        (await prisma(scratch.url, ['migrate', 'deploy'], project(upTo))).code,
+      ).toBe(0);
       expect(await tablesWithCompositeKey(scratch.url)).toEqual(PARENTS);
-      const config = project(
-        migrations.map((m) => m.name),
-        schemaWithoutKeys,
-        {
-          name: '20261011100000_rollback_tenant_composite_keys',
-          sql: rollbackSql,
-        },
-      );
+      const config = project(upTo, {
+        name: '20261011100000_rollback_tenant_composite_keys',
+        sql: rollbackSql,
+      });
       expect(
         (await prisma(scratch.url, ['migrate', 'deploy'], config)).code,
       ).toBe(0);
       expect(await tablesWithCompositeKey(scratch.url)).toEqual([]);
-      expect(await noDrift(scratch.url, config)).toBe(0);
+      const previous = await atPreviousMigration('prisma_rollback_ref');
+      expect(await catalog(scratch.url)).toEqual(await catalog(previous.url));
     });
   });
 });

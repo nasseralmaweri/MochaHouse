@@ -49,6 +49,10 @@ export interface DirectReference extends RelationshipBase {
   readonly hasForeignKey: boolean;
   // The effective ON DELETE action of the existing foreign key.
   readonly onDelete?: ReferentialAction;
+  // Security 4C-3+ — the foreign key is composite, ("tenantId", column) ->
+  // target ("tenantId", "id"), so PostgreSQL itself rejects a reference to
+  // another business's row.
+  readonly tenantEnforced?: boolean;
 }
 
 export interface PolymorphicReference extends RelationshipBase {
@@ -318,6 +322,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'CustomerPreferredLocation.locationId',
@@ -328,6 +333,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'Order.locationId',
@@ -338,6 +344,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'Order.customerId',
@@ -348,6 +355,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'SetNull',
+    tenantEnforced: true,
   },
   {
     id: 'Order.paymentAttemptId',
@@ -358,6 +366,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'OrderLine.orderId',
@@ -368,6 +377,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'OrderStatusHistory.orderId',
@@ -378,6 +388,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'NotificationDelivery.outboxEventId',
@@ -888,6 +899,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'CustomerNote.authorInternalUserId',
@@ -996,8 +1008,10 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     column: 'locationId',
     target: 'Location',
     nullable: true,
-    hasForeignKey: false,
-    note: 'Food-order checkout sets it; a gift-card purchase leaves it null. No foreign key yet.',
+    hasForeignKey: true,
+    onDelete: 'Restrict',
+    note: 'Food-order checkout sets it; a gift-card purchase leaves it null. Composite foreign key since Security 4C-3.',
+    tenantEnforced: true,
   },
   {
     id: 'OrderPromotionRedemption.customerId',

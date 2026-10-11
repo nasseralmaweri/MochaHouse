@@ -978,9 +978,11 @@ export class CheckoutService {
           rewardDiscountMinorUnits: rewardDiscount,
           giftCardTenderMinorUnits: giftCardTender,
           status: 'RECEIVED',
+          // Security 4C-3 — nested lines and history take their tenantId
+          // from this Order through the composite (tenantId, orderId) key, so
+          // they can never belong to another business.
           lines: {
             create: priced.lines.map((line) => ({
-              tenantId,
               productId: line.productId,
               productName: line.productName,
               unitPrice: line.unitPrice,
@@ -991,7 +993,7 @@ export class CheckoutService {
             })),
           },
           statusHistory: {
-            create: { tenantId, status: 'RECEIVED' },
+            create: { status: 'RECEIVED' },
           },
         },
         include: { location: true },

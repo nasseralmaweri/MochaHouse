@@ -95,7 +95,8 @@ container starts with only the maintenance database.
 
 `packages/database/src/integrity/relationship-inventory.ts` classifies all
 105 references between business-owned records (85 composite foreign-key
-candidates — 82 existing foreign keys and 3 plain columns — 8 historical
+candidates — 83 existing foreign keys, 9 of them tenant-enforced since
+Security 4C-3, and 2 plain columns — 8 historical
 snapshots, 5 polymorphic references, 6 JSON columns, 1 external id).
 `tenant-relationship-inventory.spec.ts` fails when the schema gains, loses or
 changes one without a classification.
@@ -133,9 +134,9 @@ listed under Not checkable without a row count. Exit codes: 0 clean,
 Every table another business-owned table references — the 25 targets of
 the composite foreign-key candidates in the relationship inventory — has a
 `UNIQUE ("tenantId", "id")` index (`@@unique([tenantId, id])`, migration
-`20261011090000_tenant_composite_keys`). Nothing references them yet:
-Security 4C-3 will replace single-column foreign keys with
-`FOREIGN KEY ("tenantId", col) REFERENCES parent ("tenantId", "id")`.
+`20261011090000_tenant_composite_keys`). Composite foreign keys
+`FOREIGN KEY ("tenantId", col) REFERENCES parent ("tenantId", "id")` build
+on them (Security 4C-3 onwards).
 
 - `tenant-composite-keys.spec.ts` fails if the schema, the migration or the
   migrated test database loses (or gains) a key; proves on a scratch
@@ -177,8 +178,88 @@ environment.
 
 Never automatic. `prisma/rollbacks/20261011090000_tenant_composite_keys.down.sql`
 (one `DO` block) drops exactly these indexes: remove the `@@unique` lines and
-ship that SQL as a new forward migration — only before any composite foreign
-key depends on the indexes. Tested end to end with real Prisma.
+ship that SQL as a new forward migration — only after rolling back every
+composite foreign key that depends on the indexes (4C-3 first). Tested end
+to end with real Prisma.
+
+## Tenant-enforced foreign keys: customers, orders, payments (Security 4C-3)
+
+Migration `20261012090000_tenant_fk_customer_order_payment` makes
+PostgreSQL itself refuse a customer, order or payment row that references
+another business's record. Nine relationships use a composite foreign key
+`("tenantId", col) -> parent ("tenantId", "id")`:
+
+| Relationship | Parent | On delete |
+| --- | --- | --- |
+| `CustomerPreferredLocation.customerId` | Customer | CASCADE |
+| `CustomerPreferredLocation.locationId` | Location | CASCADE |
+| `CustomerNote.customerId` | Customer | CASCADE |
+| `Order.locationId` | Location | RESTRICT |
+| `Order.customerId` (optional) | Customer | SET NULL (`customerId` only) |
+| `Order.paymentAttemptId` | PaymentAttempt | RESTRICT |
+| `OrderLine.orderId` | Order | RESTRICT |
+| `OrderStatusHistory.orderId` | Order | RESTRICT |
+| `PaymentAttempt.locationId` (optional, new) | Location | RESTRICT |
+
+- Delete behaviour is unchanged, except that the previously unconstrained
+  `PaymentAttempt.locationId` now prevents deleting a location a payment
+  attempt references. **Intended behaviour (approved):** payment history is
+  financial audit data, so a location with payment history is never
+  hard-deleted — it is deactivated (`isActive = false`). Any future
+  retention or business-offboarding process must handle payment records
+  explicitly first. No application path deletes locations.
+  `Order.customerId` keeps `SET NULL` for that column only
+  (`ON DELETE SET NULL ("customerId")`, **PostgreSQL 15+**; the migration
+  refuses to run on older servers).
+- `ON UPDATE RESTRICT` (was `CASCADE`): ids never change.
+- A composite key cannot stop a row from moving to another business
+  together with its reference — which is exactly what a Prisma nested
+  `connect` to another business's record does (Prisma writes `tenantId` with
+  the reference). The six referencing tables and the `Customer` and
+  `Location` parents therefore reject any change of `tenantId` on an
+  existing row (trigger `<Table>_tenantId_immutable`, SQLSTATE `23001`),
+  whether or not anything references the row — by SQL `UPDATE`, `MERGE`,
+  `INSERT … ON CONFLICT DO UPDATE`, or any Prisma update, upsert,
+  `updateMany` or nested connect / set / connectOrCreate.
+- Prisma: nested creates under an `Order` take `tenantId` from the order (do
+  not pass it). Clear an optional composite reference by setting the column
+  to `null` (`customerId: null`), never with a relation `disconnect`, which
+  would null `tenantId` too and is refused.
+- `tenant-fk-customer-order-payment.spec.ts` proves, with three fictional
+  businesses: same-business references accepted; every cross-business
+  reference (each relationship x each ordered business pair, direct SQL
+  INSERT and UPDATE, moving either side, Prisma nested connects) rejected;
+  optional NULLs allowed; delete outcomes identical to a pre-4C-3 database;
+  rejected writes change nothing; the integrity checker reports `CLEAN`; a
+  removed key or trigger is detected; and, with real `prisma migrate
+  deploy`: success with no drift, preflight abort, late failure, lock
+  timeout, recovery and rollback.
+
+### If the 4C-3 migration fails
+
+It is one `DO` block: nothing was changed. Before changing anything it
+counts, per relationship, rows whose reference points at another business
+or at nothing, and aborts listing them. **It never reassigns ownership.**
+Investigate each reported row with `integrity:check`, correct it
+deliberately, then:
+
+```bash
+pnpm --filter @mocha-house/database exec prisma migrate resolve --rolled-back 20261012090000_tenant_fk_customer_order_payment
+pnpm --filter @mocha-house/database exec prisma migrate deploy
+```
+
+It takes a 5-second `lock_timeout`: dropping and adding foreign keys locks
+the child and parent tables until commit, so run it at a quiet moment.
+
+### Rolling back 4C-3
+
+Never automatic. Revert the composite relations in `schema.prisma` and ship
+`prisma/rollbacks/20261012090000_tenant_fk_customer_order_payment.down.sql`
+(one `DO` block) as a new forward migration. It restores the eight original
+single-column foreign keys exactly and removes the nine composite keys, the
+`Order ("tenantId", "paymentAttemptId")` key and the eight triggers; data is
+untouched. Tested end to end with real Prisma (catalog identical to a
+pre-4C-3 database).
 
 ## Running the same checks locally
 

@@ -290,6 +290,13 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
   let a: Ids;
   let b: Ids;
 
+  const plantBypassingForeignKeys = (sql: string) =>
+    withScratchClient(scratch.url, (client) =>
+      client.query(
+        `SET session_replication_role = replica; ${sql} SET session_replication_role = origin;`,
+      ),
+    );
+
   const check = (options: Parameters<typeof checkTenantIntegrity>[1] = {}) =>
     withScratchClient(scratch.url, (client) =>
       checkTenantIntegrity(client, options),
@@ -321,7 +328,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     await scratch?.drop();
   });
 
-  it('every existing foreign key in the migrated schema matches the inventory (name, columns, delete rule)', async () => {
+  it('every existing foreign key in the migrated schema matches the inventory (name, columns, delete rule, tenant enforcement)', async () => {
     const actions: Record<string, string> = {
       a: 'NoAction',
       r: 'Restrict',
@@ -335,23 +342,54 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
         (
           await client.query<{
             child: string;
-            col: string;
+            cols: string[];
             parent: string;
+            parentCols: string[];
             action: string;
+            setNullCols: string[] | null;
           }>(
-            `SELECT cl.relname AS child, a.attname AS col, pcl.relname AS parent,
-                  c.confdeltype AS action
+            `SELECT cl.relname AS child, pcl.relname AS parent,
+                    c.confdeltype AS action,
+                    ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(n, o)
+                            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.n
+                           ORDER BY k.o) AS cols,
+                    ARRAY(SELECT a.attname::text FROM unnest(c.confkey) WITH ORDINALITY k(n, o)
+                            JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.n
+                           ORDER BY k.o) AS "parentCols",
+                    CASE WHEN c.confdelsetcols IS NULL THEN NULL ELSE
+                      ARRAY(SELECT a.attname::text FROM unnest(c.confdelsetcols) k(n)
+                              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.n)
+                    END AS "setNullCols"
              FROM pg_constraint c
              JOIN pg_class cl ON cl.oid = c.conrelid
              JOIN pg_class pcl ON pcl.oid = c.confrelid
-             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
             WHERE c.contype = 'f' AND pcl.relname <> 'Tenant'
               AND cl.relnamespace = 'public'::regnamespace`,
           )
         ).rows,
     );
+    // A foreign key is either single-column (col -> id) or tenant-enforced
+    // (tenantId, col) -> (tenantId, id) (Security 4C-3); a tenant-enforced
+    // SET NULL must clear only the referencing column, never tenantId.
     const inDatabase = rows
-      .map((r) => `${r.child}.${r.col}->${r.parent} ${actions[r.action]}`)
+      .map((r) => {
+        const enforced = r.cols.length === 2 && r.cols[0] === 'tenantId';
+        const col = enforced ? r.cols[1] : r.cols.join(',');
+        const shape = enforced
+          ? r.parentCols.join(',') === 'tenantId,id'
+            ? ' tenant'
+            : ` bad-parent-key(${r.parentCols.join(',')})`
+          : r.parentCols.join(',') === 'id'
+            ? ''
+            : ` bad-parent-key(${r.parentCols.join(',')})`;
+        const setNull =
+          enforced && r.action === 'n'
+            ? (r.setNullCols ?? []).join(',') === col
+              ? ''
+              : ` sets-null(${(r.setNullCols ?? ['ALL']).join(',')})`
+            : '';
+        return `${r.child}.${col}->${r.parent} ${actions[r.action]}${shape}${setNull}`;
+      })
       .sort();
     const inInventory = TENANT_RELATIONSHIPS.filter(
       (r): r is DirectReference =>
@@ -359,7 +397,10 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
           r.kind === 'historical-snapshot') &&
         r.hasForeignKey,
     )
-      .map((r) => `${r.id}->${r.target} ${r.onDelete}`)
+      .map(
+        (r) =>
+          `${r.id}->${r.target} ${r.onDelete}${r.tenantEnforced ? ' tenant' : ''}`,
+      )
       .sort();
     expect(inDatabase).toEqual(inInventory);
   });
@@ -427,23 +468,19 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     beforeAll(async () => {
       // Composite-FK candidates with a real foreign key (required and
       // optional), including a join table with a composite primary key.
-      await prisma.order.update({
-        where: { id: a.order },
-        data: { locationId: b.location, customerId: b.customer },
-      });
+      // Relationships PostgreSQL already enforces per business (Security
+      // 4C-3) can only hold such rows from before enforcement: plant them
+      // with foreign-key triggers suspended, as legacy data would be.
+      await plantBypassingForeignKeys(
+        `UPDATE "Order" SET "locationId" = '${b.location}', "customerId" = '${b.customer}' WHERE "id" = '${a.order}';
+         UPDATE "PaymentAttempt" SET "locationId" = '${b.location}' WHERE "id" = '${a.payment}';
+         UPDATE "PaymentAttempt" SET "locationId" = '${missingId}' WHERE "id" = '${b.payment}';`,
+      );
       await prisma.menuProduct.update({
         where: { menuId_productId: { menuId: a.menu, productId: a.product } },
         data: { productId: b.product },
       });
-      // Composite-FK candidates without a foreign key: cross and missing.
-      await prisma.paymentAttempt.update({
-        where: { id: a.payment },
-        data: { locationId: b.location },
-      });
-      await prisma.paymentAttempt.update({
-        where: { id: b.payment },
-        data: { locationId: missingId },
-      });
+      // Composite-FK candidates without a foreign key.
       await prisma.campaign.update({
         where: { id: a.campaign },
         data: { mediaAssetId: b.media },
