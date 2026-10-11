@@ -9,6 +9,7 @@ import {
   ensureTenantOne,
   runWithTenantContext,
 } from '../src/tenancy';
+import { guardDatabaseScript } from '../src/testing/prisma-command-guard';
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL!,
@@ -23,6 +24,10 @@ const prisma = new PrismaClient({ adapter });
 // The business rows below are Mocha House data; they gain their tenantId
 // column in S0D, not here.
 async function main() {
+  // Security follow-up F-1 — when run directly (not through `prisma db seed`,
+  // whose config already checked), a test run may only seed a database
+  // proven disposable. Ordinary development seeding is unaffected.
+  await guardDatabaseScript();
   const tenantId = await ensureTenantOne(prisma);
   if (tenantId !== TENANT_1_MOCHA_HOUSE_ID) {
     throw new Error('Seed resolved an unexpected Tenant #1 id.');

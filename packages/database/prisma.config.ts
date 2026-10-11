@@ -2,14 +2,23 @@
 // npm install --save-dev prisma dotenv
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
+import { guardPrismaCommand } from "./src/testing/prisma-command-guard";
 
-export default defineConfig({
-  schema: "prisma/schema.prisma",
-  migrations: {
-    path: "prisma/migrations",
-    seed: "tsx prisma/seed.ts",
-  },
-  datasource: {
-    url: process.env["DATABASE_URL"],
-  },
-});
+// Security follow-up F-1 — every Prisma command that touches a database is
+// checked first: in a declared test run, or against a test-named database,
+// the database must already exist and carry this run's disposable marker, or
+// the command stops here — before Prisma connects, creates, migrates or seeds
+// anything. Ordinary development and real deployments are unaffected. See
+// src/testing/prisma-command-guard.ts.
+export default guardPrismaCommand().then(() =>
+  defineConfig({
+    schema: "prisma/schema.prisma",
+    migrations: {
+      path: "prisma/migrations",
+      seed: "tsx prisma/seed.ts",
+    },
+    datasource: {
+      url: process.env["DATABASE_URL"],
+    },
+  }),
+);

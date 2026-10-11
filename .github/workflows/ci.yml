@@ -109,6 +109,11 @@ jobs:
         run: |
           pnpm --filter @mocha-house/database exec prisma migrate deploy
           pnpm --filter @mocha-house/database exec prisma db seed
+        env:
+          # Security F-1 — prisma.config.ts refuses any database command in a
+          # test run unless the run is fully declared and the database carries
+          # this run's disposable marker.
+          NODE_ENV: test
       - name: API tests (all suites except tenant isolation and route inventory)
         working-directory: apps/api
         run: >-
@@ -148,11 +153,18 @@ jobs:
         run: |
           pnpm --filter @mocha-house/database exec prisma migrate deploy
           pnpm --filter @mocha-house/database exec prisma db seed
+        env:
+          # Security F-1 — prisma.config.ts refuses any database command in a
+          # test run unless the run is fully declared and the database carries
+          # this run's disposable marker.
+          NODE_ENV: test
       - name: Prisma schema is valid and matches the migrated database
         working-directory: packages/database
         run: |
           pnpm exec prisma validate
           pnpm exec prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+        env:
+          NODE_ENV: test
       - name: Tenant relationship integrity (seeded database, read-only)
         run: pnpm --filter @mocha-house/database integrity:check
       - name: Route inventory (every API route classified)
@@ -198,6 +210,11 @@ jobs:
         run: |
           pnpm --filter @mocha-house/database exec prisma migrate deploy
           pnpm --filter @mocha-house/database exec prisma db seed
+        env:
+          # Security F-1 — prisma.config.ts refuses any database command in a
+          # test run unless the run is fully declared and the database carries
+          # this run's disposable marker.
+          NODE_ENV: test
       - name: Worker tests
         working-directory: apps/worker
         run: pnpm test --forceExit

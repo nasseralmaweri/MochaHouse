@@ -26,6 +26,7 @@ import {
   type InternalPermissionKey,
 } from '../../internal-auth/authorization/permission-catalog';
 import { InternalAuditService } from '../../audit/internal-audit.service';
+import { runSerializable } from '../../prisma/serializable-transaction';
 import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 import {
   describeAccessLevelCapabilities,
@@ -143,85 +144,79 @@ export class AdminInternalUsersService {
     // by checkStatusTransition below, so an unknown/INVITED value is a 400.
     const requestedStatus = String(request?.status) as InternalUserStatus;
 
-    await this.prisma.$transaction(
-      async (tx) => {
-        const target = await tx.internalUser.findUnique({
-          where: { id: internalUserId },
-          select: { id: true, status: true, tenantId: true },
-        });
-        requireTenantOwnership(target, tenant, 'Internal user not found.');
-        // requireTenantOwnership throws above if target is missing/foreign
-        // — narrow it for TypeScript the same way every S0D-2 write path
-        // does.
-        if (!target) {
-          throw new NotFoundException('Internal user not found.');
-        }
+    await runSerializable(this.prisma, async (tx) => {
+      const target = await tx.internalUser.findUnique({
+        where: { id: internalUserId },
+        select: { id: true, status: true, tenantId: true },
+      });
+      requireTenantOwnership(target, tenant, 'Internal user not found.');
+      // requireTenantOwnership throws above if target is missing/foreign
+      // — narrow it for TypeScript the same way every S0D-2 write path
+      // does.
+      if (!target) {
+        throw new NotFoundException('Internal user not found.');
+      }
 
-        const transition = checkStatusTransition(
-          target.status,
-          requestedStatus,
-        );
-        if (!transition.ok) {
-          throw transition.kind === 'no-op'
-            ? new ConflictException(transition.message)
-            : new BadRequestException(transition.message);
-        }
-        // checkStatusTransition({ ok: true }) guarantees this is a real,
-        // settable status (ACTIVE / SUSPENDED / DISABLED).
-        const nextStatus = requestedStatus;
+      const transition = checkStatusTransition(target.status, requestedStatus);
+      if (!transition.ok) {
+        throw transition.kind === 'no-op'
+          ? new ConflictException(transition.message)
+          : new BadRequestException(transition.message);
+      }
+      // checkStatusTransition({ ok: true }) guarantees this is a real,
+      // settable status (ACTIVE / SUSPENDED / DISABLED).
+      const nextStatus = requestedStatus;
 
-        if (removesActiveAccess(target.status, nextStatus)) {
-          // Protected-administrator definition is shared with the 5E-4
-          // assignment-removal path (see protected-admin.ts): ACTIVE and
-          // holding BOTH users.manage_status AND users.manage_roles at
-          // CORPORATE. Milestone 5E-3 originally checked only
-          // users.manage_status; unifying the two paths tightened this, but
-          // the only shipped role granting either key grants both.
-          const protectedAdmin = protectedAdminWhere(tenant.tenantId);
-          const targetIsProtectedAdmin =
-            (await tx.internalUser.count({
-              where: { id: target.id, ...protectedAdmin },
-            })) > 0;
+      if (removesActiveAccess(target.status, nextStatus)) {
+        // Protected-administrator definition is shared with the 5E-4
+        // assignment-removal path (see protected-admin.ts): ACTIVE and
+        // holding BOTH users.manage_status AND users.manage_roles at
+        // CORPORATE. Milestone 5E-3 originally checked only
+        // users.manage_status; unifying the two paths tightened this, but
+        // the only shipped role granting either key grants both.
+        const protectedAdmin = protectedAdminWhere(tenant.tenantId);
+        const targetIsProtectedAdmin =
+          (await tx.internalUser.count({
+            where: { id: target.id, ...protectedAdmin },
+          })) > 0;
 
-          if (targetIsProtectedAdmin) {
-            // Require an INDEPENDENT administrator to remain — one who is
-            // neither the target nor the acting administrator. The actor is
-            // excluded deliberately: an administrator must not be able to
-            // demote another administrator down to where the actor is the
-            // sole remaining point of administrative control. This is
-            // stricter than "never reach zero admins" and is what keeps a
-            // spare in place after every demotion.
-            const independentProtectedAdmins = await tx.internalUser.count({
-              where: {
-                id: { notIn: [target.id, actorInternalUserId] },
-                ...protectedAdmin,
-              },
-            });
-            if (independentProtectedAdmins === 0) {
-              throw new ConflictException(
-                'At least one other active Platform Administrator is required before this person can be suspended or disabled.',
-              );
-            }
+        if (targetIsProtectedAdmin) {
+          // Require an INDEPENDENT administrator to remain — one who is
+          // neither the target nor the acting administrator. The actor is
+          // excluded deliberately: an administrator must not be able to
+          // demote another administrator down to where the actor is the
+          // sole remaining point of administrative control. This is
+          // stricter than "never reach zero admins" and is what keeps a
+          // spare in place after every demotion.
+          const independentProtectedAdmins = await tx.internalUser.count({
+            where: {
+              id: { notIn: [target.id, actorInternalUserId] },
+              ...protectedAdmin,
+            },
+          });
+          if (independentProtectedAdmins === 0) {
+            throw new ConflictException(
+              'At least one other active Platform Administrator is required before this person can be suspended or disabled.',
+            );
           }
         }
+      }
 
-        await tx.internalUser.update({
-          where: { id: target.id },
-          data: { status: nextStatus },
-        });
+      await tx.internalUser.update({
+        where: { id: target.id },
+        data: { status: nextStatus },
+      });
 
-        // Same transaction — the status change and its audit record commit
-        // or roll back together.
-        await this.audit.recordUserStatusChanged(tx, {
-          actorInternalUserId,
-          targetInternalUserId: target.id,
-          before: target.status,
-          after: nextStatus,
-          reason,
-        });
-      },
-      { isolationLevel: 'Serializable' },
-    );
+      // Same transaction — the status change and its audit record commit
+      // or roll back together.
+      await this.audit.recordUserStatusChanged(tx, {
+        actorInternalUserId,
+        targetInternalUserId: target.id,
+        before: target.status,
+        after: nextStatus,
+        reason,
+      });
+    });
 
     return this.buildUserDetail(internalUserId, tenant);
   }
@@ -322,7 +317,8 @@ export class AdminInternalUsersService {
     }
     const scope = parseAssignmentScope(request?.scope);
 
-    await this.prisma.$transaction(
+    await runSerializable(
+      this.prisma,
       async (tx) => {
         const target = await tx.internalUser.findUnique({
           where: { id: internalUserId },
@@ -490,7 +486,10 @@ export class AdminInternalUsersService {
           });
         }
       },
-      { isolationLevel: 'Serializable' },
+      // A unique violation on the grant keys means another request created
+      // the same grant between this attempt's check and its insert: re-run
+      // and answer from fresh data ("already has that access").
+      { retryIf: isGrantUniqueViolation },
     );
 
     return this.buildUserDetail(internalUserId, tenant);
@@ -515,95 +514,91 @@ export class AdminInternalUsersService {
 
     const reason = this.validateReason(request?.reason);
 
-    await this.prisma.$transaction(
-      async (tx) => {
-        const assignment = await tx.internalUserRoleAssignment.findUnique({
-          where: { id: assignmentId },
-          select: {
-            id: true,
-            internalUserId: true,
-            tenantId: true,
-            scopeType: true,
-            scopeId: true,
-            role: {
-              select: {
-                id: true,
-                displayName: true,
-                permissions: { select: { permissionKey: true } },
-              },
+    await runSerializable(this.prisma, async (tx) => {
+      const assignment = await tx.internalUserRoleAssignment.findUnique({
+        where: { id: assignmentId },
+        select: {
+          id: true,
+          internalUserId: true,
+          tenantId: true,
+          scopeType: true,
+          scopeId: true,
+          role: {
+            select: {
+              id: true,
+              displayName: true,
+              permissions: { select: { permissionKey: true } },
             },
           },
+        },
+      });
+      // Milestone S0D-2E — tenantId added to the check: a Tenant B
+      // assignment id is reported identically to a missing one, even if
+      // it happens to name a real Tenant A internalUserId.
+      if (
+        !assignment ||
+        assignment.internalUserId !== internalUserId ||
+        assignment.tenantId !== tenant.tenantId
+      ) {
+        throw new NotFoundException('Access assignment not found.');
+      }
+
+      let locationName: string | null = null;
+      if (assignment.scopeType === 'LOCATION' && assignment.scopeId) {
+        const location = await tx.location.findUnique({
+          where: { id: assignment.scopeId },
+          select: { name: true },
         });
-        // Milestone S0D-2E — tenantId added to the check: a Tenant B
-        // assignment id is reported identically to a missing one, even if
-        // it happens to name a real Tenant A internalUserId.
-        if (
-          !assignment ||
-          assignment.internalUserId !== internalUserId ||
-          assignment.tenantId !== tenant.tenantId
-        ) {
-          throw new NotFoundException('Access assignment not found.');
-        }
+        locationName = location?.name ?? null;
+      }
 
-        let locationName: string | null = null;
-        if (assignment.scopeType === 'LOCATION' && assignment.scopeId) {
-          const location = await tx.location.findUnique({
-            where: { id: assignment.scopeId },
-            select: { name: true },
-          });
-          locationName = location?.name ?? null;
-        }
+      const protectedAdmin = protectedAdminWhere(tenant.tenantId);
+      const removalStripsProtectedCapability =
+        assignmentCarriesProtectedAdminCapability(assignment);
+      const targetWasProtectedAdmin =
+        removalStripsProtectedCapability &&
+        (await tx.internalUser.count({
+          where: { id: internalUserId, ...protectedAdmin },
+        })) > 0;
 
-        const protectedAdmin = protectedAdminWhere(tenant.tenantId);
-        const removalStripsProtectedCapability =
-          assignmentCarriesProtectedAdminCapability(assignment);
-        const targetWasProtectedAdmin =
-          removalStripsProtectedCapability &&
+      await tx.internalUserRoleAssignment.delete({
+        where: { id: assignment.id },
+      });
+
+      if (targetWasProtectedAdmin) {
+        // Re-check AFTER the delete (same transaction — a throw here rolls
+        // it back). If the person is still a protected administrator
+        // through some other corporate grant, the removal is fine.
+        const targetStillProtectedAdmin =
           (await tx.internalUser.count({
             where: { id: internalUserId, ...protectedAdmin },
           })) > 0;
-
-        await tx.internalUserRoleAssignment.delete({
-          where: { id: assignment.id },
-        });
-
-        if (targetWasProtectedAdmin) {
-          // Re-check AFTER the delete (same transaction — a throw here rolls
-          // it back). If the person is still a protected administrator
-          // through some other corporate grant, the removal is fine.
-          const targetStillProtectedAdmin =
-            (await tx.internalUser.count({
-              where: { id: internalUserId, ...protectedAdmin },
-            })) > 0;
-          if (!targetStillProtectedAdmin) {
-            const independentProtectedAdmins = await tx.internalUser.count({
-              where: {
-                id: { notIn: [internalUserId, actorInternalUserId] },
-                ...protectedAdmin,
-              },
-            });
-            if (independentProtectedAdmins === 0) {
-              throw new ConflictException(
-                'At least one other active Platform Administrator is required before this access can be removed.',
-              );
-            }
+        if (!targetStillProtectedAdmin) {
+          const independentProtectedAdmins = await tx.internalUser.count({
+            where: {
+              id: { notIn: [internalUserId, actorInternalUserId] },
+              ...protectedAdmin,
+            },
+          });
+          if (independentProtectedAdmins === 0) {
+            throw new ConflictException(
+              'At least one other active Platform Administrator is required before this access can be removed.',
+            );
           }
         }
+      }
 
-        await this.audit.recordRoleRemoved(tx, {
-          actorInternalUserId,
-          targetInternalUserId: internalUserId,
-          roleId: assignment.role.id,
-          roleDisplayName: assignment.role.displayName,
-          scope:
-            assignment.scopeType === 'CORPORATE' ? 'CORPORATE' : 'LOCATION',
-          locationId: assignment.scopeId,
-          locationName,
-          reason,
-        });
-      },
-      { isolationLevel: 'Serializable' },
-    );
+      await this.audit.recordRoleRemoved(tx, {
+        actorInternalUserId,
+        targetInternalUserId: internalUserId,
+        roleId: assignment.role.id,
+        roleDisplayName: assignment.role.displayName,
+        scope: assignment.scopeType === 'CORPORATE' ? 'CORPORATE' : 'LOCATION',
+        locationId: assignment.scopeId,
+        locationName,
+        reason,
+      });
+    });
 
     return this.buildUserDetail(internalUserId, tenant);
   }
@@ -835,5 +830,17 @@ function compareSummaries(
     aKey.localeCompare(bKey) ||
     a.email.toLowerCase().localeCompare(b.email.toLowerCase()) ||
     a.id.localeCompare(b.id)
+  );
+}
+
+// A unique violation on InternalUserRoleAssignment — the existing
+// (user, role, scope type, scope) key or the CORPORATE-grant index (Security
+// 4C-5). Checked structurally, like isUniqueConstraintViolation in the
+// loyalty service.
+function isGrantUniqueViolation(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const e = error as { code?: unknown; meta?: { modelName?: unknown } };
+  return (
+    e.code === 'P2002' && e.meta?.modelName === 'InternalUserRoleAssignment'
   );
 }
