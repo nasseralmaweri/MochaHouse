@@ -19,7 +19,9 @@
 -- A composite key alone cannot stop a row from MOVING to another business:
 -- changing "tenantId" together with the reference (which is exactly what a
 -- Prisma nested `connect` to another business's record does) keeps the pair
--- consistent. So the six referencing tables also reject any change of
+-- consistent. So the six referencing tables, and the Customer and Location
+-- parents (which could otherwise move whenever nothing in scope references
+-- them, e.g. a customer with only a loyalty account), reject any change of
 -- "tenantId" on an existing row (trigger "<Table>_tenantId_immutable",
 -- SQLSTATE 23001 restrict_violation). Rows are created with their business
 -- and never change it; no application path updates "tenantId".
@@ -117,10 +119,16 @@ BEGIN
       USING ERRCODE = 'restrict_violation';
   END
   $reject_tenant_reassignment$;
+  CREATE TRIGGER "Customer_tenantId_immutable" BEFORE UPDATE OF "tenantId" ON "Customer"
+    FOR EACH ROW WHEN (OLD."tenantId" IS DISTINCT FROM NEW."tenantId")
+    EXECUTE FUNCTION "reject_tenant_reassignment"();
   CREATE TRIGGER "CustomerNote_tenantId_immutable" BEFORE UPDATE OF "tenantId" ON "CustomerNote"
     FOR EACH ROW WHEN (OLD."tenantId" IS DISTINCT FROM NEW."tenantId")
     EXECUTE FUNCTION "reject_tenant_reassignment"();
   CREATE TRIGGER "CustomerPreferredLocation_tenantId_immutable" BEFORE UPDATE OF "tenantId" ON "CustomerPreferredLocation"
+    FOR EACH ROW WHEN (OLD."tenantId" IS DISTINCT FROM NEW."tenantId")
+    EXECUTE FUNCTION "reject_tenant_reassignment"();
+  CREATE TRIGGER "Location_tenantId_immutable" BEFORE UPDATE OF "tenantId" ON "Location"
     FOR EACH ROW WHEN (OLD."tenantId" IS DISTINCT FROM NEW."tenantId")
     EXECUTE FUNCTION "reject_tenant_reassignment"();
   CREATE TRIGGER "Order_tenantId_immutable" BEFORE UPDATE OF "tenantId" ON "Order"

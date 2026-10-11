@@ -9,7 +9,7 @@
 --
 -- It restores exactly the eight single-column foreign keys as they were
 -- before 4C-3 (including ON UPDATE CASCADE), drops the nine composite ones,
--- the composite payment key and the six tenantId-immutability triggers
+-- the composite payment key and the eight tenantId-immutability triggers
 -- (and their function). PaymentAttempt.locationId goes back to a plain
 -- column. Data is untouched. One DO block, so Prisma applies it atomically.
 -- After a rollback, cross-business references are again possible at the
@@ -19,8 +19,10 @@ DO $tenant_fk_customer_order_payment_rollback$
 BEGIN
   PERFORM set_config('lock_timeout', '5s', true);
 
+  DROP TRIGGER "Customer_tenantId_immutable" ON "Customer";
   DROP TRIGGER "CustomerNote_tenantId_immutable" ON "CustomerNote";
   DROP TRIGGER "CustomerPreferredLocation_tenantId_immutable" ON "CustomerPreferredLocation";
+  DROP TRIGGER "Location_tenantId_immutable" ON "Location";
   DROP TRIGGER "Order_tenantId_immutable" ON "Order";
   DROP TRIGGER "OrderLine_tenantId_immutable" ON "OrderLine";
   DROP TRIGGER "OrderStatusHistory_tenantId_immutable" ON "OrderStatusHistory";

@@ -203,7 +203,11 @@ another business's record. Nine relationships use a composite foreign key
 
 - Delete behaviour is unchanged, except that the previously unconstrained
   `PaymentAttempt.locationId` now prevents deleting a location a payment
-  attempt references (no application path deletes locations).
+  attempt references. **Intended behaviour (approved):** payment history is
+  financial audit data, so a location with payment history is never
+  hard-deleted — it is deactivated (`isActive = false`). Any future
+  retention or business-offboarding process must handle payment records
+  explicitly first. No application path deletes locations.
   `Order.customerId` keeps `SET NULL` for that column only
   (`ON DELETE SET NULL ("customerId")`, **PostgreSQL 15+**; the migration
   refuses to run on older servers).
@@ -211,9 +215,12 @@ another business's record. Nine relationships use a composite foreign key
 - A composite key cannot stop a row from moving to another business
   together with its reference — which is exactly what a Prisma nested
   `connect` to another business's record does (Prisma writes `tenantId` with
-  the reference). The six referencing tables therefore reject any change of
-  `tenantId` on an existing row (trigger `<Table>_tenantId_immutable`,
-  SQLSTATE `23001`).
+  the reference). The six referencing tables and the `Customer` and
+  `Location` parents therefore reject any change of `tenantId` on an
+  existing row (trigger `<Table>_tenantId_immutable`, SQLSTATE `23001`),
+  whether or not anything references the row — by SQL `UPDATE`, `MERGE`,
+  `INSERT … ON CONFLICT DO UPDATE`, or any Prisma update, upsert,
+  `updateMany` or nested connect / set / connectOrCreate.
 - Prisma: nested creates under an `Order` take `tenantId` from the order (do
   not pass it). Clear an optional composite reference by setting the column
   to `null` (`customerId: null`), never with a relation `disconnect`, which
@@ -250,7 +257,7 @@ Never automatic. Revert the composite relations in `schema.prisma` and ship
 `prisma/rollbacks/20261012090000_tenant_fk_customer_order_payment.down.sql`
 (one `DO` block) as a new forward migration. It restores the eight original
 single-column foreign keys exactly and removes the nine composite keys, the
-`Order ("tenantId", "paymentAttemptId")` key and the six triggers; data is
+`Order ("tenantId", "paymentAttemptId")` key and the eight triggers; data is
 untouched. Tested end to end with real Prisma (catalog identical to a
 pre-4C-3 database).
 

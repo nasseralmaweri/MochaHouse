@@ -43,7 +43,8 @@ import {
 //   - deletion behaviour is unchanged (including SET NULL of only
 //     Order.customerId), except the intentional new PaymentAttempt.locationId
 //     RESTRICT;
-//   - no row of the six referencing tables can move to another business
+//   - no row of the six referencing tables, and no customer or location
+//     (referenced or not), can move to another business
 //     (a composite key alone cannot stop a row whose tenantId changes
 //     together with its reference — which is what a Prisma nested connect
 //     to another business's record does), so such connects are rejected;
@@ -202,17 +203,18 @@ const EXPECTED_FOREIGN_KEYS = RELATIONSHIPS.map(
     `${constraintName(r)}: FOREIGN KEY ("tenantId", "${r.column}") REFERENCES "${r.parent}"("tenantId", id) ON UPDATE RESTRICT ON DELETE ${r.onDelete}`,
 ).sort();
 
-// The six tables holding the references: an existing row never changes
-// business.
+// The six tables holding the references, plus the Customer and Location
+// parents: an existing row never changes business.
 const CHILD_TABLES = [...new Set(RELATIONSHIPS.map((r) => r.child))].sort();
-const EXPECTED_TRIGGERS = CHILD_TABLES.map(
+const PROTECTED_TABLES = [...CHILD_TABLES, 'Customer', 'Location'].sort();
+const EXPECTED_TRIGGERS = PROTECTED_TABLES.map(
   (t) =>
     `trigger: CREATE TRIGGER "${t}_tenantId_immutable" BEFORE UPDATE OF "tenantId" ON public."${t}" FOR EACH ROW WHEN ((old."tenantId" IS DISTINCT FROM new."tenantId")) EXECUTE FUNCTION reject_tenant_reassignment()`,
 );
 const EXPECTED_ENFORCEMENT = [...EXPECTED_FOREIGN_KEYS, ...EXPECTED_TRIGGERS];
 
 // Every foreign key on the nine referencing columns, as PostgreSQL defines
-// it, then every trigger on "tenantId" of the six tables. Exactly
+// it, then every trigger on "tenantId" of the eight protected tables. Exactly
 // EXPECTED_ENFORCEMENT means: composite, on the right parent key, the right
 // delete action, no single-column key left behind, and no row can move.
 async function tenantEnforcement(client: Client): Promise<string[]> {
@@ -233,7 +235,7 @@ async function tenantEnforcement(client: Client): Promise<string[]> {
     `SELECT 'trigger: ' || pg_get_triggerdef(t.oid) AS d
        FROM pg_trigger t
       WHERE NOT t.tgisinternal
-        AND t.tgrelid::regclass::text IN (${CHILD_TABLES.map((t) => `'"${t}"'`).join(', ')})
+        AND t.tgrelid::regclass::text IN (${PROTECTED_TABLES.map((t) => `'"${t}"'`).join(', ')})
         AND EXISTS (
           SELECT 1 FROM unnest(t.tgattr::int2[]) k(n)
             JOIN pg_attribute a ON a.attrelid = t.tgrelid AND a.attnum = k.n
@@ -257,7 +259,13 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
       email: `${tag}.fk.staff@example.test`,
     },
   });
-  for (const name of ['location', 'location-spare', 'location-pref']) {
+  // location-bare: a location nothing references.
+  for (const name of [
+    'location',
+    'location-spare',
+    'location-pref',
+    'location-bare',
+  ]) {
     await prisma.location.create({
       data: { id: id(tag, name), tenantId, name, slug: id(tag, name) },
     });
@@ -280,7 +288,12 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
       categoryId: id(tag, 'category'),
     },
   });
-  for (const name of ['customer', 'customer-spare']) {
+  for (const name of [
+    'customer',
+    'customer-spare',
+    'customer-loyal',
+    'customer-bare',
+  ]) {
     await prisma.customer.create({
       data: {
         id: id(tag, name),
@@ -290,6 +303,16 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
       },
     });
   }
+  // customer-loyal: referenced only by its loyalty account (out of 4C-3's
+  // foreign keys); customer-bare: referenced by nothing.
+  await prisma.customerLoyaltyAccount.create({
+    data: {
+      id: id(tag, 'loyalty'),
+      tenantId,
+      customerId: id(tag, 'customer-loyal'),
+    },
+  });
+
   const payments: Array<[string, string]> = [
     ['payment', 'location'],
     ['payment-2', 'location'],
@@ -548,21 +571,22 @@ describe('Tenant-enforced foreign keys: customers, orders, payments (Security 4C
         `ADD CONSTRAINT "${constraintName(r)}" FOREIGN KEY ("tenantId", "${r.column}") REFERENCES "${r.parent}"("tenantId", "id") ON DELETE ${r.onDelete} ON UPDATE RESTRICT;`,
       );
     }
-    for (const t of CHILD_TABLES) {
+    for (const t of PROTECTED_TABLES) {
       expect(code).toContain(
         `CREATE TRIGGER "${t}_tenantId_immutable" BEFORE UPDATE OF "tenantId" ON "${t}"`,
       );
     }
-    expect(code.match(/CREATE TRIGGER/g)).toHaveLength(6);
+    expect(code.match(/CREATE TRIGGER/g)).toHaveLength(8);
     expect(code).toContain("USING ERRCODE = 'restrict_violation'");
     expect(code).not.toMatch(
       /\bUPDATE\s+"|\bDELETE\s+FROM\b|\bINSERT\s+INTO\b|\bTRUNCATE\b/i,
     );
   });
 
-  it('the rollback is ONE DO block that restores the eight original keys and drops the nine composite ones and the six triggers', () => {
+  it('the rollback is ONE DO block that restores the eight original keys and drops only what 4C-3 added: nine composite keys and eight triggers', () => {
     expect(isAppliedAtomically(rollbackSql)).toBe(true);
-    for (const t of CHILD_TABLES) {
+    expect(rollbackSql.match(/DROP TRIGGER/g)).toHaveLength(8);
+    for (const t of PROTECTED_TABLES) {
       expect(rollbackSql).toContain(
         `DROP TRIGGER "${t}_tenantId_immutable" ON "${t}";`,
       );
@@ -693,19 +717,27 @@ describe('Tenant-enforced foreign keys: customers, orders, payments (Security 4C
       expect(results).toEqual([]);
     });
 
-    it('rejects moving a referenced parent to another business (ON UPDATE RESTRICT, or immutable tenantId)', async () => {
+    it('rejects moving any customer, location, payment attempt or order to another business — referenced or not (immutable tenantId)', async () => {
       const parents = [
         ['Customer', 'customer'],
+        // Referenced only by its loyalty account / by nothing at all.
+        ['Customer', 'customer-loyal'],
+        ['Customer', 'customer-bare'],
         ['Location', 'location'],
+        ['Location', 'location-spare'],
+        // Referenced by nothing at all.
+        ['Location', 'location-bare'],
         ['PaymentAttempt', 'payment'],
+        ['PaymentAttempt', 'payment-spare'],
         ['Order', 'order'],
+        ['Order', 'order-2'],
       ];
       const results = await sql(async (client) => {
         const out: string[] = [];
         for (const [table, name] of parents) {
           for (const [x, y] of PAIRS) {
             out.push(
-              `${table} ${x}->${y}: ${
+              `${table} ${name} ${x}->${y}: ${
                 (
                   await attempt(
                     client,
@@ -718,17 +750,246 @@ describe('Tenant-enforced foreign keys: customers, orders, payments (Security 4C
         }
         return out;
       });
-      // Customers and locations: the referencing keys' ON UPDATE RESTRICT;
-      // payment attempts and orders: their own immutable tenantId.
+      expect(results.filter((r) => !r.endsWith(': 23001'))).toEqual([]);
+      expect(results).toHaveLength(60);
+      expect(await dataChecksum(scratch.url)).toBe(beforeData);
+    });
+
+    it('Prisma cannot change a customer’s or location’s business — scalar, relation, upsert, updateMany, parent-side connect/set, connectOrCreate — for any pair of businesses', async () => {
+      const outcomes: Record<string, string> = {};
+      for (const [x, y] of PAIRS) {
+        const X = (name: string) => id(x, name);
+        const Y = (name: string) => id(y, name);
+        const writes: Record<string, () => Promise<unknown>> = {
+          customerScalar: () =>
+            prisma.customer.update({
+              where: { id: X('customer-loyal') },
+              data: { tenantId: TENANTS[y] },
+            }),
+          customerTenantConnect: () =>
+            prisma.customer.update({
+              where: { id: X('customer-bare') },
+              data: { tenant: { connect: { id: TENANTS[y] } } },
+            }),
+          customerUpsertUpdate: () =>
+            prisma.customer.upsert({
+              where: { id: X('customer-loyal') },
+              create: {
+                tenantId: TENANTS[x],
+                externalProvider: 'dev',
+                externalSubject: `upsert-${x}`,
+              },
+              update: { tenantId: TENANTS[y] },
+            }),
+          customerUpdateMany: () =>
+            prisma.customer.updateMany({
+              where: { id: { in: [X('customer-loyal'), X('customer-bare')] } },
+              data: { tenantId: TENANTS[y] },
+            }),
+          locationScalar: () =>
+            prisma.location.update({
+              where: { id: X('location-bare') },
+              data: { tenantId: TENANTS[y] },
+            }),
+          locationTenantConnect: () =>
+            prisma.location.update({
+              where: { id: X('location-bare') },
+              data: { tenant: { connect: { id: TENANTS[y] } } },
+            }),
+          locationUpsertUpdate: () =>
+            prisma.location.upsert({
+              where: { id: X('location-bare') },
+              create: {
+                tenantId: TENANTS[x],
+                name: 'x',
+                slug: `upsert-${x}`,
+              },
+              update: { tenantId: TENANTS[y] },
+            }),
+          locationUpdateMany: () =>
+            prisma.location.updateMany({
+              where: { id: X('location-bare') },
+              data: { tenantId: TENANTS[y] },
+            }),
+          // Parent-side: Y's parent claims X's children.
+          customerNotesConnect: () =>
+            prisma.customer.update({
+              where: { id: Y('customer-spare') },
+              data: { crmNotes: { connect: { id: X('note') } } },
+            }),
+          customerPreferredLocationsConnect: () =>
+            prisma.customer.update({
+              where: { id: Y('customer-spare') },
+              data: { preferredLocations: { connect: { id: X('pref') } } },
+            }),
+          customerOrdersSet: () =>
+            prisma.customer.update({
+              where: { id: Y('customer-spare') },
+              data: { orders: { set: [{ id: X('order') }] } },
+            }),
+          locationOrdersConnect: () =>
+            prisma.location.update({
+              where: { id: Y('location-bare') },
+              data: { orders: { connect: { id: X('order-2') } } },
+            }),
+          locationPaymentsConnect: () =>
+            prisma.location.update({
+              where: { id: Y('location-bare') },
+              data: {
+                paymentAttempts: { connect: { id: X('payment-spare') } },
+              },
+            }),
+          locationPreferredByConnect: () =>
+            prisma.location.update({
+              where: { id: Y('location-bare') },
+              data: { preferredByCustomers: { connect: { id: X('pref') } } },
+            }),
+          orderLinesConnect: () =>
+            prisma.order.update({
+              where: { id: Y('order-2') },
+              data: { lines: { connect: { id: X('line') } } },
+            }),
+          orderHistorySet: () =>
+            prisma.order.update({
+              where: { id: Y('order-2') },
+              data: { statusHistory: { set: [{ id: X('history') }] } },
+            }),
+          // connectOrCreate naming an existing row of the other business.
+          noteCustomerConnectOrCreate: () =>
+            prisma.customerNote.update({
+              where: { id: X('note') },
+              data: {
+                customer: {
+                  connectOrCreate: {
+                    where: { id: Y('customer-spare') },
+                    create: {
+                      tenantId: TENANTS[y],
+                      externalProvider: 'dev',
+                      externalSubject: `coc-${x}${y}`,
+                    },
+                  },
+                },
+              },
+            }),
+          customerNotesConnectOrCreate: () =>
+            prisma.customer.update({
+              where: { id: Y('customer-spare') },
+              data: {
+                crmNotes: {
+                  connectOrCreate: {
+                    where: { id: X('note') },
+                    create: {
+                      authorInternalUserId: Y('staff'),
+                      body: 'x',
+                    },
+                  },
+                },
+              },
+            }),
+          noteUpsertUpdate: () =>
+            prisma.customerNote.upsert({
+              where: { id: X('note') },
+              create: {
+                tenantId: TENANTS[x],
+                customerId: X('customer'),
+                authorInternalUserId: X('staff'),
+                body: 'x',
+              },
+              update: { customer: { connect: { id: Y('customer-spare') } } },
+            }),
+          orderUpdateMany: () =>
+            prisma.order.updateMany({
+              where: { id: X('order-2') },
+              data: { tenantId: TENANTS[y] },
+            }),
+        };
+        for (const [name, write] of Object.entries(writes)) {
+          const key = `${name} ${x}->${y}`;
+          outcomes[key] = await prismaOutcome(write());
+        }
+      }
+      // Every shape is refused by the immutable tenantId, for every pair.
       expect(
-        results.filter(
-          (s) =>
-            !s.endsWith(
-              /^(Customer|Location) /.test(s) ? ': 23503' : ': 23001',
-            ),
-        ),
+        Object.entries(outcomes).filter(([, o]) => o !== 'P2039/23001'),
       ).toEqual([]);
-      expect(results).toHaveLength(24);
+      expect(Object.keys(outcomes)).toHaveLength(20 * 6);
+      expect(await dataChecksum(scratch.url)).toBe(beforeData);
+    });
+
+    it('same-business customer and location operations keep working', async () => {
+      await prisma
+        .$transaction(async (tx) => {
+          for (const x of TAGS) {
+            const tenantId = TENANTS[x];
+            const customer = await tx.customer.create({
+              data: {
+                tenantId,
+                externalProvider: 'dev',
+                externalSubject: `same-${x}`,
+              },
+            });
+            await tx.customer.update({
+              where: { id: customer.id },
+              data: { displayName: 'Renamed', tenantId },
+            });
+            await tx.customer.upsert({
+              where: { id: id(x, 'customer-bare') },
+              create: {
+                tenantId,
+                externalProvider: 'dev',
+                externalSubject: 'u',
+              },
+              update: {
+                displayName: 'Upserted',
+                tenant: { connect: { id: tenantId } },
+              },
+            });
+            await tx.customer.updateMany({
+              where: { tenantId, id: id(x, 'customer-loyal') },
+              data: { marketingEmailOptIn: true },
+            });
+            const location = await tx.location.create({
+              data: { tenantId, name: 'New', slug: `same-${x}` },
+            });
+            await tx.location.update({
+              where: { id: location.id },
+              data: { name: 'Renamed', isActive: false },
+            });
+            // Deactivating a location with payment history (never deleting).
+            await tx.location.update({
+              where: { id: id(x, 'location-spare') },
+              data: { isActive: false },
+            });
+            // Same-business parent-side connect still works.
+            await tx.customer.update({
+              where: { id: id(x, 'customer-bare') },
+              data: { crmNotes: { connect: { id: id(x, 'note') } } },
+            });
+            await tx.location.update({
+              where: { id: id(x, 'location-bare') },
+              data: {
+                paymentAttempts: { connect: { id: id(x, 'payment-spare') } },
+              },
+            });
+            const moved = await tx.customerNote.findUniqueOrThrow({
+              where: { id: id(x, 'note') },
+            });
+            expect([moved.tenantId, moved.customerId]).toEqual([
+              tenantId,
+              id(x, 'customer-bare'),
+            ]);
+            const named = await tx.customer.findUniqueOrThrow({
+              where: { id: id(x, 'customer-bare') },
+            });
+            expect([named.tenantId, named.displayName]).toEqual([
+              tenantId,
+              'Upserted',
+            ]);
+          }
+          throw new Error('roll back');
+        })
+        .catch((e: Error) => expect(e.message).toBe('roll back'));
+      expect(await dataChecksum(scratch.url)).toBe(beforeData);
     });
 
     it('optional references may be NULL; required ones still may not', async () => {
@@ -964,26 +1225,67 @@ describe('Tenant-enforced foreign keys: customers, orders, payments (Security 4C
       expect(await dataChecksum(scratch.url)).toBe(beforeData);
     });
 
-    it('a deliberately removed immutability trigger is detected, and would let a row move to another business', async () => {
-      const outcome = await sql(async (client) => {
-        await client.query('BEGIN');
-        try {
-          await client.query(
-            `DROP TRIGGER "CustomerNote_tenantId_immutable" ON "CustomerNote"`,
-          );
-          const enforcement = await tenantEnforcement(client);
-          // What a nested connect to B's customer does to A's note.
-          await client.query(
-            `UPDATE "CustomerNote" SET "tenantId" = '${TENANTS.b}', "customerId" = '${id('b', 'customer-spare')}' WHERE id = '${id('a', 'note')}'`,
-          );
-          return enforcement;
-        } finally {
-          await client.query('ROLLBACK');
+    it('deliberately removing ANY ownership trigger is detected, and would let a row of that table move to another business', async () => {
+      const a = (name: string) => id('a', name);
+      const b = (name: string) => id('b', name);
+      // Per table: a move the foreign keys alone would allow.
+      const moves: Record<string, string> = {
+        Customer: `UPDATE "Customer" SET "tenantId" = '${TENANTS.b}' WHERE id = '${a('customer-loyal')}'`,
+        CustomerNote: `UPDATE "CustomerNote" SET "tenantId" = '${TENANTS.b}', "customerId" = '${b('customer-spare')}' WHERE id = '${a('note')}'`,
+        CustomerPreferredLocation: `UPDATE "CustomerPreferredLocation" SET "tenantId" = '${TENANTS.b}', "customerId" = '${b('customer-spare')}', "locationId" = '${b('location-bare')}' WHERE id = '${a('pref')}'`,
+        Location: `UPDATE "Location" SET "tenantId" = '${TENANTS.b}' WHERE id = '${a('location-bare')}'`,
+        Order: `UPDATE "Order" SET "tenantId" = '${TENANTS.b}', "locationId" = '${b('location-spare')}', "paymentAttemptId" = '${b('payment-spare')}' WHERE id = '${a('order-2')}'`,
+        OrderLine: `UPDATE "OrderLine" SET "tenantId" = '${TENANTS.b}', "orderId" = '${b('order-2')}' WHERE id = '${a('line')}'`,
+        OrderStatusHistory: `UPDATE "OrderStatusHistory" SET "tenantId" = '${TENANTS.b}', "orderId" = '${b('order-2')}' WHERE id = '${a('history')}'`,
+        PaymentAttempt: `UPDATE "PaymentAttempt" SET "tenantId" = '${TENANTS.b}', "locationId" = '${b('location-spare')}' WHERE id = '${a('payment-spare')}'`,
+      };
+      expect(Object.keys(moves).sort()).toEqual(PROTECTED_TABLES);
+      const results = await sql(async (client) => {
+        const out: Record<
+          string,
+          { missing: string[]; withTrigger: string; without: string }
+        > = {};
+        for (const table of PROTECTED_TABLES) {
+          const withTrigger = await attempt(client, moves[table]);
+          await client.query('BEGIN');
+          try {
+            await client.query(
+              `DROP TRIGGER "${table}_tenantId_immutable" ON "${table}"`,
+            );
+            const enforcement = await tenantEnforcement(client);
+            let without = 'ok';
+            await client.query('SAVEPOINT move');
+            try {
+              await client.query(moves[table]);
+            } catch (error) {
+              without = String((error as { code?: string }).code);
+              await client.query('ROLLBACK TO SAVEPOINT move');
+            }
+            out[table] = {
+              missing: EXPECTED_ENFORCEMENT.filter(
+                (k) => !enforcement.includes(k),
+              ),
+              withTrigger: withTrigger.split(' ')[0],
+              without,
+            };
+          } finally {
+            await client.query('ROLLBACK');
+          }
         }
+        return out;
       });
-      expect(EXPECTED_ENFORCEMENT.filter((k) => !outcome.includes(k))).toEqual([
-        EXPECTED_TRIGGERS[0],
-      ]);
+      for (const table of PROTECTED_TABLES) {
+        expect([table, results[table]]).toEqual([
+          table,
+          {
+            // The guard reports exactly the removed trigger…
+            missing: [EXPECTED_TRIGGERS[PROTECTED_TABLES.indexOf(table)]],
+            // …which alone stood between the row and another business.
+            withTrigger: '23001',
+            without: 'ok',
+          },
+        ]);
+      }
       expect(await sql(tenantEnforcement)).toEqual(EXPECTED_ENFORCEMENT);
       expect(await dataChecksum(scratch.url)).toBe(beforeData);
     });
@@ -1084,6 +1386,15 @@ describe('Tenant-enforced foreign keys: customers, orders, payments (Security 4C
       [
         `order lines ${tag}`,
         `DELETE FROM "OrderLine" WHERE "orderId" = '${id(tag, 'order')}'`,
+      ],
+      // CASCADE to its loyalty account; nothing in 4C-3 references it.
+      [
+        `loyal customer ${tag}`,
+        `DELETE FROM "Customer" WHERE id = '${id(tag, 'customer-loyal')}'`,
+      ],
+      [
+        `unreferenced location ${tag}`,
+        `DELETE FROM "Location" WHERE id = '${id(tag, 'location-bare')}'`,
       ],
     ]);
 
@@ -1285,7 +1596,7 @@ describe('Tenant-enforced foreign keys: customers, orders, payments (Security 4C
       const scratch = await beforeFourC3('fk_cop_late');
       // Occupy the name of the last trigger it creates, so only its very
       // last statement fails — after the preflight, the eight drops, the
-      // index, the nine keys, the function and five triggers.
+      // index, the nine keys, the function and seven triggers.
       await run(
         scratch.url,
         `CREATE TRIGGER "PaymentAttempt_tenantId_immutable" BEFORE UPDATE ON "PaymentAttempt"

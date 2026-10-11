@@ -593,7 +593,9 @@ model PaymentAttempt {
   // Security 4C-3 — the checkout location, now a composite foreign key: a
   // payment attempt can only name a Location of its own business. Locations
   // are never deleted while a payment references them (Restrict, like
-  // Order.location); a gift-card purchase still leaves it null.
+  // Order.location): payment history is audit data, so such a location is
+  // deactivated (isActive = false), never hard-deleted. A gift-card purchase
+  // still leaves it null.
   location         Location?         @relation(fields: [tenantId, locationId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   giftCardPurchase GiftCardPurchase?
 
