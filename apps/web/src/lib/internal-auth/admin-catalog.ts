@@ -1,5 +1,6 @@
 import "server-only";
 import type {
+  AdminCategorySummary,
   AdminLocationMenuResponse,
   AdminMenuDetail,
   AdminMenuSummary,
@@ -152,6 +153,14 @@ async function adminCatalogGet<T>(
   }
 
   return { outcome: "success", data: (await response.json()) as T };
+}
+
+// S1 — every category of the business, inactive included (the "New
+// product" form picks one). `catalog.view`, CORPORATE-only.
+export function getAdminCategories(): Promise<
+  AdminReadResult<AdminCategorySummary[]>
+> {
+  return adminCatalogGet<AdminCategorySummary[]>("/admin/catalog/categories");
 }
 
 export function getAdminMenus(): Promise<AdminReadResult<AdminMenuSummary[]>> {

@@ -1,6 +1,10 @@
 import { redirect } from "next/navigation";
 import { getInternalSession } from "@/lib/internal-auth/session";
-import { getAdminMenu } from "@/lib/internal-auth/admin-catalog";
+import {
+  getAdminMenu,
+  getAdminProducts,
+} from "@/lib/internal-auth/admin-catalog";
+import { productsNotOnMenu } from "@/lib/admin/catalog-create";
 import { can } from "@/lib/admin/capabilities";
 import { formatPrice } from "@/lib/money";
 import { AdminPage, AdminSection } from "@/components/admin/AdminPage";
@@ -13,6 +17,7 @@ import {
 } from "@/components/admin/states";
 import { StatusBadge } from "@/components/admin/StatusBadge";
 import { MenuProductToggle } from "@/components/admin/MenuProductToggle";
+import { AddMenuProductForm } from "@/components/admin/AddMenuProductForm";
 import { BackLink } from "@/components/BackLink";
 import { Card } from "@/components/Card";
 
@@ -87,6 +92,8 @@ export default async function AdminMenuDetailPage({
 
   const menu = result.data;
   const canManage = can(capabilities, "catalog.menu.manage");
+  // Only someone who can change the menu needs the list of products to add.
+  const addable = canManage ? await getAdminProducts() : null;
 
   return (
     <AdminPage>
@@ -157,6 +164,22 @@ export default async function AdminMenuDetailPage({
           </ul>
         )}
       </AdminSection>
+
+      {canManage && addable ? (
+        <AdminSection
+          title="Add a product"
+          description="Added products go to the end of this menu and stay hidden until you show them."
+        >
+          {addable.outcome === "success" ? (
+            <AddMenuProductForm
+              menuId={menu.id}
+              products={productsNotOnMenu(addable.products, menu)}
+            />
+          ) : (
+            <AdminErrorState description="Couldn't load products just now. Please try again." />
+          )}
+        </AdminSection>
+      ) : null}
 
       <BackLink href="/admin/menu/menus">Back to menus</BackLink>
     </AdminPage>

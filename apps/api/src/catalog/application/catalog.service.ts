@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  AdminCategorySummary,
   AdminLocationMenuProduct,
   AdminLocationMenuResponse,
   AdminMenuDetail,
@@ -189,6 +190,33 @@ export class CatalogService {
     });
 
     return products.map(toAdminProductDetail);
+  }
+
+  // S1 — every category of the active business, inactive included (an
+  // Admin picks one when creating a product). `catalog.view` is
+  // CORPORATE-only.
+  async listAdminCategories(
+    authorization: AuthorizationContext,
+    tenant: TenantContext,
+  ): Promise<AdminCategorySummary[]> {
+    authorization.assertCorporate('catalog.view');
+
+    const categories = await this.prisma.category.findMany({
+      where: { tenantId: tenant.tenantId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        displayOrder: true,
+        isActive: true,
+        _count: { select: { products: true } },
+      },
+      orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }, { id: 'asc' }],
+    });
+    return categories.map(({ _count, ...category }) => ({
+      ...category,
+      productCount: _count.products,
+    }));
   }
 
   async getAdminProductDetail(
