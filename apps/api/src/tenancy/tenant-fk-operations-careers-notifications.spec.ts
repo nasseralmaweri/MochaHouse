@@ -572,9 +572,7 @@ describe('Tenant-enforced operations, careers, franchising and notifications (Se
     // Final milestone: every composite-foreign-key candidate is enforced.
     expect(
       TENANT_RELATIONSHIPS.filter(
-        (r) =>
-          r.kind === 'composite-fk-candidate' &&
-          !(r as DirectReference).tenantEnforced,
+        (r) => r.kind === 'composite-fk-candidate' && !r.tenantEnforced,
       ).map((r) => r.id),
     ).toEqual([]);
   });
@@ -1278,8 +1276,8 @@ describe('Tenant-enforced operations, careers, franchising and notifications (Se
           }),
         );
         expect(results).toEqual([
-          ...Array(6).fill('ok'),
-          ...Array(6).fill('23503'),
+          ...Array<string>(6).fill('ok'),
+          ...Array<string>(6).fill('23503'),
         ]);
         await withScratchClient(scratch.url, (c) =>
           c.query(`DELETE FROM "FranchiseInquiryNote" WHERE id LIKE 'par-%'`),
