@@ -17,9 +17,13 @@ export function authenticationModeLabel(isLocalDevelopment: boolean): string {
 }
 
 // The payment integration posture. The development stand-in never moves
-// real money; a real processor would report its own business name.
-export function paymentProviderLabel(isDevelopmentStandIn: boolean): string {
-  return isDevelopmentStandIn
-    ? 'Development payment provider'
-    : 'Live payment provider';
+// real money; with no provider configured, online payment is disabled
+// (payment safety); only an available, non-simulated provider is "live".
+export function paymentProviderLabel(provider: {
+  readonly name: string;
+  readonly acceptsPayments: boolean;
+}): string {
+  if (provider.name === 'fake') return 'Development payment provider';
+  if (!provider.acceptsPayments) return 'Online payment disabled';
+  return 'Live payment provider';
 }

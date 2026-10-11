@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { assertValidCheckoutLines } from './validate-checkout-lines';
+import { malformedLineCases } from './validate-checkout-lines.fixtures';
 
 describe('assertValidCheckoutLines', () => {
   const validLine = {
@@ -17,36 +18,23 @@ describe('assertValidCheckoutLines', () => {
     ).not.toThrow();
   });
 
-  it.each([
-    ['non-array lines', 'nope'],
-    ['null line', [null]],
-    ['array line', [[]]],
-    ['missing productId', [{ quantity: 1, selections: [] }]],
-    ['empty productId', [{ productId: '', quantity: 1, selections: [] }]],
-    ['non-integer quantity', [{ ...validLine, quantity: 1.5 }]],
-    ['string quantity', [{ ...validLine, quantity: '1' }]],
-    ['missing selections', [{ productId: 'p', quantity: 1 }]],
-    ['null selection', [{ ...validLine, selections: [null] }]],
-    [
-      'non-string groupId',
-      [{ ...validLine, selections: [{ groupId: 1, optionIds: [] }] }],
-    ],
-    [
-      'non-array optionIds',
-      [{ ...validLine, selections: [{ groupId: 'g', optionIds: 'o1' }] }],
-    ],
-    [
-      'non-string optionId',
-      [{ ...validLine, selections: [{ groupId: 'g', optionIds: [1] }] }],
-    ],
-  ])('rejects %s with a 400', (_name, lines) => {
-    let error: unknown;
-    try {
-      assertValidCheckoutLines(lines);
-    } catch (e) {
-      error = e;
-    }
-    expect(error).toBeInstanceOf(BadRequestException);
-    expect((error as BadRequestException).getStatus()).toBe(400);
+  it('treats a line with no selections key as having no selections', () => {
+    const lines: unknown[] = [{ productId: 'p3', quantity: 1 }];
+    expect(() => assertValidCheckoutLines(lines)).not.toThrow();
+    expect(lines[0]).toEqual({ productId: 'p3', quantity: 1, selections: [] });
   });
+
+  it.each(malformedLineCases(validLine))(
+    'rejects %s with a 400',
+    (_name, lines) => {
+      let error: unknown;
+      try {
+        assertValidCheckoutLines(lines);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getStatus()).toBe(400);
+    },
+  );
 });

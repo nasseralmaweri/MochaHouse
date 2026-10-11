@@ -4,7 +4,10 @@ import { BadRequestException } from '@nestjs/common';
 // are interfaces, so Nest cannot validate them at the framework layer and
 // malformed nested data would otherwise reach priceCart as a 500. This checks
 // shape only: unknown keys are ignored, duplicate optionIds are allowed, and
-// business rules (unknown products, quantity limits) stay in priceCart.
+// business rules (unknown products, quantity limits, required modifier
+// groups) stay in priceCart. A line with no `selections` key (a product
+// without modifiers, as clients have always been able to send) is
+// normalized to an empty array in place, so priceCart never sees undefined.
 // Callers run it after their own "Cart is empty." check.
 export function assertValidCheckoutLines(lines: unknown): void {
   if (!Array.isArray(lines)) {
@@ -20,6 +23,9 @@ export function assertValidCheckoutLines(lines: unknown): void {
     }
     if (!Number.isInteger(line.quantity)) {
       throw new BadRequestException(`${at}.quantity must be an integer.`);
+    }
+    if (line.selections === undefined) {
+      line.selections = [];
     }
     if (!Array.isArray(line.selections)) {
       throw new BadRequestException(`${at}.selections must be an array.`);

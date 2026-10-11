@@ -7,6 +7,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import type {
   CheckoutQuoteRequest,
@@ -244,6 +245,17 @@ export class CheckoutService {
     // whatever the gift card covers. Gift card applies BEFORE external
     // payment.
     const chargeAmount = amountOwed - giftCardTender;
+
+    // Payment safety — an external charge is needed but no payment provider
+    // can take it (none configured, or production with the simulated one):
+    // refuse BEFORE recording a payment attempt, an order or a gift-card
+    // redemption. A reward or gift card covering everything needs no
+    // provider and continues.
+    if (chargeAmount > 0 && !this.paymentProvider.acceptsPayments) {
+      throw new ServiceUnavailableException(
+        'Online payment is not available right now.',
+      );
+    }
 
     const created = await this.createPaymentAttempt(
       request.idempotencyKey,
@@ -827,7 +839,9 @@ export class CheckoutService {
         data: {
           tenantId,
           idempotencyKey,
-          provider: 'fake',
+          // The provider actually bound (audit: a simulated payment is
+          // always recorded as such).
+          provider: this.paymentProvider.name,
           locationId,
           amount,
           currency,
