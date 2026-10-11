@@ -217,10 +217,11 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(relationsBetweenBusinessRecords).toHaveLength(85);
+    expect(relationsBetweenBusinessRecords).toHaveLength(86);
     // Security 4C-3: customers, orders and payments; Security 4C-4:
     // loyalty, gift cards and promotions; Security 4C-5: staff identities,
-    // roles, role assignments and staff actors — tenant-enforced.
+    // roles, role assignments and staff actors; Security 4C-6: catalog,
+    // menus, offer definitions and campaigns — tenant-enforced.
     expect(
       relationsBetweenBusinessRecords
         .filter(isTenantEnforced)
@@ -229,6 +230,11 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
     ).toEqual([
       'ApprovalRequest.decidedByInternalUserId',
       'ApprovalRequest.requestedByInternalUserId',
+      'Campaign.loyaltyBonusPromotionId',
+      'Campaign.mediaAssetId',
+      'Campaign.promotionId',
+      'CampaignProduct.campaignId',
+      'CampaignProduct.productId',
       'ChecklistInstanceItem.completedByInternalUserId',
       'ChecklistInstanceItem.exceptionByInternalUserId',
       'CustomerLoyaltyAccount.customerId',
@@ -250,10 +256,29 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'InternalUserRoleAssignment.roleId',
       'InternalUserRoleAssignment.scopeId',
       'JobApplicationNote.authorInternalUserId',
+      'LocationMenu.locationId',
+      'LocationMenu.menuId',
+      'LocationProductAvailabilityOverride.locationId',
+      'LocationProductAvailabilityOverride.menuId',
+      'LocationProductAvailabilityOverride.productId',
+      'LocationProductPriceOverride.locationId',
+      'LocationProductPriceOverride.menuId',
+      'LocationProductPriceOverride.productId',
+      'LoyaltyBonusPromotionLocation.locationId',
+      'LoyaltyBonusPromotionLocation.promotionId',
+      'LoyaltyBonusPromotionProduct.productId',
+      'LoyaltyBonusPromotionProduct.promotionId',
+      'LoyaltyRewardCategory.categoryId',
+      'LoyaltyRewardCategory.rewardId',
+      'LoyaltyRewardProduct.productId',
+      'LoyaltyRewardProduct.rewardId',
       'MediaAsset.uploadedByInternalUserId',
+      'MenuProduct.menuId',
+      'MenuProduct.productId',
       'MochaBeanLedgerEntry.actorInternalUserId',
       'MochaBeanLedgerEntry.loyaltyAccountId',
       'MochaBeanLedgerEntry.orderId',
+      'ModifierOption.modifierGroupId',
       'OperationsTask.completedByInternalUserId',
       'OperationsTask.createdByInternalUserId',
       'Order.customerId',
@@ -268,8 +293,17 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'OrderPromotionRedemption.orderId',
       'OrderStatusHistory.orderId',
       'PaymentAttempt.locationId',
+      'Product.categoryId',
+      'ProductModifierGroup.modifierGroupId',
+      'ProductModifierGroup.productId',
+      'PromotionCategory.categoryId',
+      'PromotionCategory.promotionId',
       'PromotionCustomerUsage.customerId',
       'PromotionCustomerUsage.promotionId',
+      'PromotionLocation.locationId',
+      'PromotionLocation.promotionId',
+      'PromotionProduct.productId',
+      'PromotionProduct.promotionId',
     ]);
   });
 
@@ -297,7 +331,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(plainIdColumns).toHaveLength(14);
+    expect(plainIdColumns).toHaveLength(13);
   });
 
   it('classifies every JSON column on business-owned records', () => {
@@ -398,8 +432,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       external: count((r) => r.kind === 'external-identifier'),
       total: TENANT_RELATIONSHIPS.length,
     }).toEqual({
-      compositeWithForeignKey: 85,
-      compositeWithoutForeignKey: 1,
+      compositeWithForeignKey: 86,
+      compositeWithoutForeignKey: 0,
       historicalSnapshot: 8,
       polymorphic: 4,
       json: 6,

@@ -313,7 +313,6 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
         eligibleProducts: opts.productIds
           ? {
               create: opts.productIds.map((productId) => ({
-                tenantId: TENANT_1_MOCHA_HOUSE_ID,
                 productId,
               })),
             }
@@ -321,7 +320,6 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
         eligibleCategories: opts.categoryIds
           ? {
               create: opts.categoryIds.map((categoryId) => ({
-                tenantId: TENANT_1_MOCHA_HOUSE_ID,
                 categoryId,
               })),
             }

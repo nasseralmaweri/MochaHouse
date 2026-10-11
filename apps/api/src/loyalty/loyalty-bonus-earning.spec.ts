@@ -320,14 +320,12 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
         endsAt: opts.endsAt ?? null,
         eligibleProducts: {
           create: opts.productIds.map((productId) => ({
-            tenantId: TENANT_1_MOCHA_HOUSE_ID,
             productId,
           })),
         },
         eligibleLocations: opts.locationIds
           ? {
               create: opts.locationIds.map((locId) => ({
-                tenantId: TENANT_1_MOCHA_HOUSE_ID,
                 locationId: locId,
               })),
             }
@@ -350,7 +348,6 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
         beanCost,
         eligibleProducts: {
           create: productIds.map((productId) => ({
-            tenantId: TENANT_1_MOCHA_HOUSE_ID,
             productId,
           })),
         },

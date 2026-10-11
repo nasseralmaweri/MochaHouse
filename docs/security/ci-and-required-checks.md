@@ -150,8 +150,8 @@ refuses to touch the database (fails safe, but blocks the deploy).
 
 `packages/database/src/integrity/relationship-inventory.ts` classifies all
 105 references between business-owned records (86 composite foreign-key
-candidates — 85 existing foreign keys, 43 of them tenant-enforced since
-Security 4C-3 / 4C-4 / 4C-5, and 1 plain column — 8 historical
+candidates, all with a foreign key, 76 of them tenant-enforced since
+Security 4C-3 / 4C-4 / 4C-5 / 4C-6 — 8 historical
 snapshots, 4 polymorphic references, 6 JSON columns, 1 external id).
 `tenant-relationship-inventory.spec.ts` fails when the schema gains, loses or
 changes one without a classification.
@@ -377,7 +377,7 @@ relationships use a composite foreign key
   join tables' links (`LoyaltyRewardProduct/Category.rewardId`,
   `LoyaltyBonusPromotionProduct/Location.promotionId`,
   `PromotionProduct/Category/Location.promotionId`) and `Campaign`'s
-  promotion links; staff actor links stay in 4C-5.
+  promotion links — enforced since 4C-6; staff actor links stay in 4C-5.
 - `tenant-fk-loyalty-giftcard-promotion.spec.ts` proves, with three
   fictional businesses: same-business writes accepted; every cross-business
   reference, snapshot and move rejected by PostgreSQL (direct SQL and Prisma
@@ -389,7 +389,18 @@ relationships use a composite foreign key
   drift, preflight abort, missing-4C-3 refusal, late failure, lock timeout,
   recovery, rollback, and the refused out-of-order 4C-3 rollback.
 
-### OPEN SECURITY FINDING — MANDATORY SECURITY 4C-6 DELIVERABLE
+### SECURITY FINDING (4C-4) — RESOLVED BY THE PROPOSED SECURITY 4C-6 CODE, CONTINGENT ON MERGE
+
+*Resolved by the proposed Security 4C-6 code (see "Product snapshots
+(closes the 4C-4 finding)"): the reuse guard, the indexes and a passing
+prevention test, confirmed by the independent 4C-6 review on fresh
+disposable databases. The resolution takes effect in the codebase only
+when 4C-6 is merged, and protects a persistent environment only once the
+4C-6 migration has actually been applied there and verified — until then
+no persistent environment may be described as protected. The regression
+tests stay in place. A database owner or superuser can still bypass the
+guard (disable triggers, drop keys); that remains open under T-2. The
+original record follows unchanged.*
 
 **Product snapshots remain vulnerable to deleted-id reuse across tenants.**
 The three product-snapshot references —
@@ -440,7 +451,8 @@ Never automatic. Revert the 4C-4 relations in `schema.prisma` and ship
 (seventeen composite keys, eight indexes, fourteen ownership, seven
 snapshot and four id-reuse triggers, and their two functions) and restores the sixteen
 original single-column keys exactly; it keeps 4C-3's function. Roll back in
-reverse order: 4C-5, then 4C-4, then 4C-3, then 4C-2.
+reverse order: 4C-6, then 4C-5, then 4C-4, then 4C-3, then 4C-2 (PostgreSQL
+refuses this rollback while 4C-6 is applied).
 
 ## Tenant-enforced staff authorization (Security 4C-5)
 
@@ -504,8 +516,8 @@ foreign key `("tenantId", col) -> parent ("tenantId", "id")`:
 - Not included: the operations records' own links
   (`ChecklistInstance.locationId` / `templateId`,
   `ChecklistInstanceItem.checklistInstanceId`, `OperationsTask.locationId`)
-  stay single-column for a later milestone, and the catalog/offer links stay
-  in Security 4C-6; audit and approval *targets* stay polymorphic (checked
+  stay single-column for a later milestone, and the catalog/offer links are
+  Security 4C-6's; audit and approval *targets* stay polymorphic (checked
   by the integrity checker).
 - `tenant-fk-staff-authorization.spec.ts` proves, with three fictional
   businesses: same-business onboarding, role change, location grant,
@@ -550,9 +562,246 @@ single-column relations; remove `InternalUserRoleAssignment.location` and
 added (seventeen composite keys, the scope CHECK, the CORPORATE-grant index
 and eleven ownership triggers) and restores the sixteen original
 single-column keys exactly; it keeps 4C-3's function. Roll back in reverse
-order: 4C-5, then 4C-4, then 4C-3, then 4C-2. (PostgreSQL itself refuses a
+order: 4C-6, then 4C-5, then 4C-4, then 4C-3, then 4C-2. (PostgreSQL itself refuses a
 4C-3 rollback while 4C-5 is applied; a 4C-4 rollback shares no object with
 4C-5 and is not refused, so the order is a procedure — follow it.)
+
+## Tenant-enforced catalog, offers and product snapshots (Security 4C-6)
+
+Migration `20261015090000_tenant_fk_catalog_offers_snapshots` makes
+PostgreSQL enforce that the catalog (categories, products, modifiers,
+menus, location menus, price and availability overrides), the offer
+definitions (reward, bonus-promotion and promotion product / category /
+location rules) and campaigns stay inside one business, and closes the
+product-snapshot finding recorded in 4C-4. Thirty-three relationships use a
+composite foreign key `("tenantId", col) -> parent ("tenantId", "id")`,
+`ON UPDATE RESTRICT`:
+
+| Relationships | Parent | On delete |
+| --- | --- | --- |
+| `Product.categoryId`, `LoyaltyRewardCategory.categoryId`, `PromotionCategory.categoryId` | Category | RESTRICT |
+| `ModifierOption.modifierGroupId`, `ProductModifierGroup.modifierGroupId` | ModifierGroup | RESTRICT |
+| `ProductModifierGroup.productId`, `MenuProduct.productId`, `LocationProductPriceOverride.productId`, `LocationProductAvailabilityOverride.productId`, `LoyaltyRewardProduct.productId`, `LoyaltyBonusPromotionProduct.productId`, `PromotionProduct.productId`, `CampaignProduct.productId` | Product | RESTRICT |
+| `MenuProduct.menuId`, `LocationMenu.menuId`, `LocationProductPriceOverride.menuId`, `LocationProductAvailabilityOverride.menuId` | Menu | RESTRICT |
+| `LocationMenu.locationId`, `LocationProductPriceOverride.locationId`, `LocationProductAvailabilityOverride.locationId`, `LoyaltyBonusPromotionLocation.locationId`, `PromotionLocation.locationId` | Location | RESTRICT |
+| `LoyaltyRewardProduct.rewardId`, `LoyaltyRewardCategory.rewardId` | LoyaltyReward | CASCADE |
+| `LoyaltyBonusPromotionProduct.promotionId`, `LoyaltyBonusPromotionLocation.promotionId` | LoyaltyBonusPromotion | CASCADE |
+| `PromotionProduct.promotionId`, `PromotionCategory.promotionId`, `PromotionLocation.promotionId` | Promotion | CASCADE |
+| `Campaign.promotionId` (optional) | Promotion | RESTRICT |
+| `Campaign.loyaltyBonusPromotionId` (optional) | LoyaltyBonusPromotion | RESTRICT |
+| `CampaignProduct.campaignId` | Campaign | CASCADE |
+| `Campaign.mediaAssetId` (optional, **new FK**) | MediaAsset | RESTRICT |
+
+- Delete behaviour is unchanged, with one intended exception: a media asset
+  that a campaign shows can no longer be deleted (the campaign used to be
+  left pointing at nothing). The application deactivates media assets and
+  never deletes them. `ON UPDATE` became RESTRICT (was CASCADE): ids never
+  change.
+- **Ownership:** nineteen more tables reject any change of `tenantId` on an
+  existing row (`<Table>_tenantId_immutable`, SQLSTATE `23001`): `Category`,
+  `Product`, `ModifierGroup`, `ModifierOption`, `ProductModifierGroup`,
+  `Menu`, `MenuProduct`, `LocationMenu`, `LocationProductPriceOverride`,
+  `LocationProductAvailabilityOverride`, `LoyaltyRewardProduct`,
+  `LoyaltyRewardCategory`, `LoyaltyBonusPromotionProduct`,
+  `LoyaltyBonusPromotionLocation`, `PromotionProduct`, `PromotionCategory`,
+  `PromotionLocation`, `Campaign` and `CampaignProduct`.
+- **Requires** 4C-3's `reject_tenant_reassignment()` and 4C-4's
+  `reject_cross_tenant_snapshot()` / `reject_reused_snapshot_source()`
+  (it refuses to run without them) and drops none of them.
+- Not included: `NotificationDelivery.outboxEventId`, the operations
+  records' own links (checklists, tasks) and the careers / franchising
+  links stay single-column for a later milestone (10 relationships, listed
+  as not tenant-enforced in the inventory).
+
+### Product snapshots (closes the 4C-4 finding)
+
+Four columns keep the id of the product an order line, free item or bonus
+item was about: `OrderLine.productId`, `OrderLoyaltyBonusItem.productId`,
+`OrderLoyaltyRewardRedemption.freeItemProductId` and
+`OrderPromotionRedemption.freeItemProductId`. They are history, so they
+have no foreign key (a product may be deleted; the snapshot stays). Now:
+
+1. **A new or changed snapshot must name an existing product of the same
+   business** (SQLSTATE `23503`). The three 4C-4 snapshots already were;
+   `OrderLine.productId` was not checked at all and now is
+   (`OrderLine_productId_same_tenant`). An unchanged value may outlive its
+   product.
+2. **A deleted product's id can never be taken by another business** while a
+   snapshot of the original business names it: `Product_id_not_reused`
+   refuses the insert or id change (SQLSTATE `23505`). The original
+   business may re-create it. One trigger checks all four columns (4C-4's
+   `reject_reused_snapshot_source()` now takes several table / column
+   pairs); each column is indexed so the check is an index lookup.
+3. **Race closed.** 4C-4's validation read the product without a lock, so a
+   product could be deleted, and its id re-created by another business,
+   between the snapshot's validation and its commit. The validation now
+   locks the product row (`FOR KEY SHARE`) until the writing transaction
+   ends: a concurrent delete waits (or times out) instead. This applies to
+   all eight snapshot triggers (4C-4's seven and the new one). `FOR KEY
+   SHARE` conflicts with a delete and with any *key* update: a change to
+   the id or to any other column in a unique index. Edits of price, name,
+   availability or category do not wait; a change of a product's `slug`
+   (unique per business, `Product_tenantId_slug_key`) — and any other
+   unique-index key update on a snapshot source — **does** wait until open
+   snapshot-writing transactions on that row end (or fails on its own
+   `lock_timeout`). The application does not change slugs today.
+
+The 4C-4 regression test ("residual until Security 4C-6 …") is now a
+prevention test: the reuse is rejected, and the integrity checker reports
+no violation (only the kept snapshot's missing product, as a history
+warning).
+
+### Application changes
+
+- Nested creates under a reward, bonus promotion, promotion or campaign no
+  longer pass `tenantId` (Prisma takes it from the parent of a composite
+  relation and refuses the argument). Three admin services and their tests
+  were updated; the create endpoints for rewards, bonus promotions and
+  promotions would otherwise fail.
+- Campaign editing clears and sets its promotion links through the scalar
+  columns (`promotionId: null`) instead of `connect` / `disconnect`: a
+  relation `disconnect` on a composite relation would also clear `tenantId`
+  and is refused. The tripwire test now lists one remaining `disconnect`
+  (`JobOpening.location`, not tenant-enforced yet).
+
+### Tests
+
+`tenant-fk-catalog-offers.spec.ts` proves, with three fictional businesses:
+same-business writes accepted for all 33 relationships; every cross-business
+reference rejected on the exact constraint (direct SQL, six business pairs,
+insert and update) and every move rejected by the ownership triggers;
+32 Prisma shapes × 6 pairs (nested create / connect / set, upsert,
+updateMany, moves) rejected with prices, menus, overrides and snapshots
+unchanged; the application's catalog, offer and campaign workflows; the
+snapshot rules (cross, missing, kept after delete, reuse by INSERT and id
+UPDATE per snapshot, same-business re-creation) and the three-session race
+— which **reproduces** the cross-business snapshot with the 4C-4 function
+and is closed with the new one; delete outcomes identical to a pre-4C-6
+database except the media asset above; the integrity checker `CLEAN`;
+every removed key, trigger or snapshot guard detected; and, with real
+`prisma migrate deploy`: success without drift, preflight abort with
+counts and recovery, refusal without the 4C-3 or 4C-4 functions, late
+failure, lock timeout, rollback and re-apply, the refused out-of-order
+4C-4 / 4C-3 rollbacks, and the full 4C-6 → 4C-5 → 4C-4 → 4C-3 chain.
+
+### If the 4C-6 migration fails
+
+It is one `DO` block: nothing was changed. Its preflight lists, per
+relationship, rows pointing at another business's (or a missing) record,
+and product snapshots naming another business's product. It never repairs,
+deletes or reassigns anything. Correct each reported row deliberately,
+then:
+
+```bash
+pnpm --filter @mocha-house/database exec prisma migrate resolve --rolled-back 20261015090000_tenant_fk_catalog_offers_snapshots
+pnpm --filter @mocha-house/database exec prisma migrate deploy
+```
+
+It takes the same 5-second `lock_timeout` as 4C-3 to 4C-5.
+
+### Rolling back 4C-6
+
+Never automatic. Revert the 4C-6 relations in `schema.prisma` (back to
+single-column relations; remove `Campaign.mediaAsset`, `MediaAsset.campaigns`
+and the four snapshot indexes) and ship
+`prisma/rollbacks/20261015090000_tenant_fk_catalog_offers_snapshots.down.sql`
+(one `DO` block) as a new forward migration. It removes only what 4C-6
+added (33 composite keys, five indexes, nineteen ownership triggers, the
+product reuse guard and the `OrderLine` snapshot trigger), restores the 32
+original single-column keys exactly, and restores the two snapshot
+functions to their 4C-4 definitions (which re-opens the race above). Roll
+back in reverse order: **4C-6, then 4C-5, then 4C-4, then 4C-3, then 4C-2.**
+PostgreSQL refuses a 4C-4 or 4C-3 rollback while 4C-6 is applied (their
+functions are still in use).
+
+### Before applying 4C-6 to a persistent database (not done here)
+
+This milestone was validated on fresh, guarded, disposable databases only.
+Before any persistent environment:
+
+- **Backup** taken and restore-tested; the rollback migration prepared.
+- **Preflight read-only first:** run `integrity:check` (read-only role) and
+  resolve every reported row by a human decision. The migration's own
+  preflight aborts on the same rows, without repairing.
+- **Locks (observed in the independent review):** the migration acquires
+  **`ACCESS EXCLUSIVE`** locks on several catalog-related tables —
+  including `Product`, `Location`, `Category`, `Menu`, `MenuProduct`,
+  `Promotion` and `Campaign` (replacing a foreign key locks both tables) —
+  plus `SHARE ROW EXCLUSIVE` and `SHARE` locks on the order-history
+  snapshot tables (trigger creation and index builds). Locks are held until
+  the single migration transaction commits or rolls back. `ACCESS
+  EXCLUSIVE` blocks **reads as well as writes**: storefront and menu
+  requests, checkout and admin catalog screens wait for the whole
+  migration.
+- **`lock_timeout` is not a duration limit.** The 5-second `lock_timeout`
+  only limits how long the migration *waits to acquire* each lock (it then
+  fails fast and atomically; retry after `migrate resolve --rolled-back`).
+  It does not bound how long an acquired lock is held: that is the time
+  needed to validate every existing row and build the indexes.
+- **Timing:** the durations seen on small synthetic databases do not
+  predict production duration, which depends on data volume, hardware and
+  concurrent load.
+- **Approval required:** a persistent-environment migration needs a
+  separately approved maintenance window, a backup, the integrity
+  preflight, a rollback / recovery plan and a customer-impact assessment
+  (storefront and checkout unavailable for the duration). None of this has
+  been done.
+- **Database roles:** see "Least-privilege considerations (T-2)" below.
+- **Migration runner:** must ship `packages/database/src` with
+  `prisma.config.ts` (the F-1 guard), as for every migration since F-1.
+- **Order:** 4C-3, 4C-4 and 4C-5 must already be applied (enforced).
+
+### Least-privilege considerations (T-2)
+
+The snapshot functions (`reject_cross_tenant_snapshot()`,
+`reject_reused_snapshot_source()`) are ordinary (`SECURITY INVOKER`)
+functions: they run with the privileges of the role writing the row.
+Observed on a disposable database with a non-owner role:
+
+- A role that **writes snapshots** (checkout, redemptions) needs `SELECT`
+  on the source table and `UPDATE` on at least one of its columns, because
+  `SELECT … FOR KEY SHARE` requires it. Since 4C-6 this applies to
+  `Product` **and** to the existing 4C-4 snapshot sources (`Promotion`,
+  `LoyaltyReward`, `LoyaltyBonusPromotion`, `GiftCard`), which 4C-4 only
+  read. Without it the write fails with "permission denied".
+- A role that **inserts a source row or changes its id** (for example
+  catalog administration creating a product) needs `SELECT` on every
+  snapshot table that may name it (for `Product`: `OrderLine`,
+  `OrderLoyaltyBonusItem`, `OrderLoyaltyRewardRedemption`,
+  `OrderPromotionRedemption`).
+- A non-owner role could not bypass the guards (no `DISABLE TRIGGER`,
+  `session_replication_role`, constraint drop, function replacement or
+  `TRUNCATE`); a temporary table shadowing a snapshot table does not hide
+  history (the functions name the schema). The **owner / superuser
+  bypass remains** and is what T-2 closes.
+
+Before deploying with a non-owner runtime role, validate these permissions
+for `Product`, the existing snapshot source tables and the referencing
+snapshot tables on a disposable database. Two approaches to weigh during
+T-2 (neither is implemented now):
+
+- **Explicit privileges** — grant the runtime role the `SELECT` / `UPDATE`
+  (column-level `UPDATE` is enough) the functions need. Simple and
+  transparent, but it widens what the runtime role may do directly.
+- **Carefully audited `SECURITY DEFINER` functions** — owned by the
+  migration role with a pinned `search_path`, so the runtime role needs no
+  extra table privileges. Narrower runtime grants, but the functions then
+  run with owner rights and must be reviewed as privileged code.
+
+### Design notes
+
+- **Snapshots stay foreign-key-free on purpose.** A foreign key would block
+  deleting a product with order history, or erase the history. The
+  combination "validated on write + id never reused by another business +
+  validated under lock" gives the isolation guarantee of a key while
+  keeping history.
+- **One guard per source table.** The reuse guard takes several
+  (table, column) pairs, so a fifth product snapshot is one more argument
+  and one more index, not a new trigger.
+- **Composite relations change Prisma's write surface.** Nested creates
+  must not carry `tenantId`, and `disconnect` is unusable on optional
+  composite relations. TypeScript catches the first only outside
+  `.map()` object literals; the runtime tests catch the rest.
 
 ## Concurrent access changes (Security follow-up F-2)
 
@@ -603,15 +852,15 @@ review.
 | --- | --- | --- | --- |
 | F-1 | **Harden disposable-database test commands.** — *Resolved by the F-1/F-2 change: Prisma commands are guarded (see "Prisma commands are guarded too"); pending review.* | The local command sequence under "Running the same checks locally" (and any ad-hoc script) runs the next command even when `db:create-disposable` refuses the database; `prisma migrate deploy` then **creates and migrates an unguarded database**. Observed during the 4C-5 review on a local, disposable server (database dropped unused). CI is not affected: each step is a separate job step and a failure stops the job. | The documented sequence stops on the first failure (for example `set -euo pipefail` or one script that exits on a refused guard), and `migrate deploy` / `db seed` in test tooling refuse a database the guard has not approved. |
 | F-2 | **Map concurrent role-assignment conflicts to controlled API responses.** — *Resolved by the F-1/F-2 change: Serializable access changes re-run lost races (see "Concurrent access changes"); pending review.* | Under concurrent identical assignments the database keeps exactly one grant (Serializable transaction + `InternalUserRoleAssignment_corporate_grant_key`), but a losing request can surface an unmapped Prisma `P2034` (serialization failure) as HTTP 500 instead of 409. Integrity is not affected. | Serialization failures and unique violations on assignment return the same 409 as a sequential duplicate, with a test. |
-| F-3 | **Security 4C-6 product-snapshot finding** (see "OPEN SECURITY FINDING — MANDATORY SECURITY 4C-6 DELIVERABLE" above). | Deleted product ids can be reused by another business while a kept snapshot names them. | Closed by 4C-6 as stated in that finding. It is the next security milestone's mandatory deliverable. |
+| F-3 | **Security 4C-6 product-snapshot finding** (see "SECURITY FINDING (4C-4)" above). — *Resolved by the proposed Security 4C-6 code (reuse guard on all four product snapshots, locked validation, prevention test; confirmed by independent review), contingent on merge; persistent environments are protected only after the migration is applied and verified there.* | Deleted product ids can be reused by another business while a kept snapshot names them. | Closed by 4C-6 as stated in that finding. It is the next security milestone's mandatory deliverable. |
 
 ### Prerequisites for onboarding a second production business
 
 | # | Follow-up | Why | Done when |
 | --- | --- | --- | --- |
 | T-1 | **Tenant-bound staff authentication** (separate identity milestone; approved direction). | Today one verified login may hold an `InternalUser` row in several businesses and switch between them with `X-Tenant-Id` (membership is re-validated on every request, so this is not an exploit, but it contradicts the approved single-tenant staff login policy). An ACTIVE, not-yet-bound `InternalUser` row in another business carrying a person's verified email **automatically attaches that person's existing login** to that business. | Each staff login belongs to exactly one business, carried as a trusted, server-set claim and checked against `InternalUser.tenantId`; cross-business switching (`X-Tenant-Id`, business chooser) and automatic cross-tenant email binding are removed; invitations are single-use and tenant-bound; recovery and deactivation are tenant-scoped; CENTERIVO platform administrators use a separate identity and authorization domain. |
-| T-2 | **Non-owner, least-privilege application database role.** | The runtime role owns the tables. Verified in review: a non-superuser **owner** cannot use `session_replication_role` or disable foreign-key system triggers, but **can** disable the ownership triggers (`ALTER TABLE … DISABLE TRIGGER USER`) and drop the composite foreign keys. | Migrations run as a dedicated owner role; the application runs as a NOSUPERUSER, non-owner role with DML privileges only (no DDL, no `TRUNCATE`); the integrity checker uses a read-only role; verified on a disposable database. |
-| T-3 | **F-3 closed** (Security 4C-6). | As above. | As above. |
+| T-2 | **Non-owner, least-privilege application database role.** | The runtime role owns the tables. Verified in review: a non-superuser **owner** cannot use `session_replication_role` or disable foreign-key system triggers, but **can** disable the ownership triggers (`ALTER TABLE … DISABLE TRIGGER USER`) and drop the composite foreign keys — including the 4C-6 product-snapshot guards. The snapshot functions also need specific runtime privileges (see "Least-privilege considerations (T-2)"). | Migrations run as a dedicated owner role; the application runs as a NOSUPERUSER, non-owner role with DML privileges only (no DDL, no `TRUNCATE`); the integrity checker uses a read-only role; verified on a disposable database. |
+| T-3 | **F-3 closed** (Security 4C-6). — *Resolved by the proposed 4C-6 code, contingent on merge and on applying and verifying the migration in the environment concerned.* | As above. | As above. |
 
 ### Product decision (not a tenant-isolation prerequisite)
 

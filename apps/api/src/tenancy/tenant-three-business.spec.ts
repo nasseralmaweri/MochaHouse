@@ -501,6 +501,12 @@ describe('Three-business tenant isolation (integration)', () => {
           select: { id: true },
         })
       ).map((u) => u.id);
+      // A campaign keeps its image (composite foreign key, RESTRICT since
+      // Security 4C-6): unlink images uploaded by this suite's staff first.
+      await prisma.campaign.updateMany({
+        where: { mediaAsset: { uploadedByInternalUserId: { in: staff } } },
+        data: { mediaAssetId: null },
+      });
       for (const [model, field] of [
         ['customerNote', 'authorInternalUserId'],
         ['jobApplicationNote', 'authorInternalUserId'],

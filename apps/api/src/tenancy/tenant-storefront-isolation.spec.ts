@@ -358,24 +358,37 @@ describe('Public storefront tenant isolation (integration)', () => {
 
   it('(4b) a menu never includes another business’s rows, even if a cross-business link exists in the database', async () => {
     // Links that no API path can create (every write validates
-    // ownership) — injected directly to prove the read path does not
-    // depend on that alone.
-    await prisma.menuProduct.create({
-      data: { tenantId: TENANT_A, menuId: A.menuId, productId: B.productId },
-    });
-    await prisma.productModifierGroup.create({
-      data: {
-        tenantId: TENANT_A,
-        productId: A.productId,
-        modifierGroupId: B.modifierGroupId,
-      },
-    });
-    await prisma.modifierOption.create({
-      data: {
-        tenantId: TENANT_B,
-        modifierGroupId: A.modifierGroupId,
-        name: `TSI foreign option ${suffix}`,
-      },
+    // ownership), and that PostgreSQL itself refuses since Security 4C-6
+    // (composite foreign keys) ...
+    await expect(
+      prisma.menuProduct.create({
+        data: { tenantId: TENANT_A, menuId: A.menuId, productId: B.productId },
+      }),
+    ).rejects.toMatchObject({ code: 'P2003' });
+    // ... injected anyway, as legacy data from before enforcement would be
+    // (foreign-key and other triggers suspended for this transaction only),
+    // to prove the read path does not depend on either.
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        'SET LOCAL session_replication_role = replica',
+      );
+      await tx.menuProduct.create({
+        data: { tenantId: TENANT_A, menuId: A.menuId, productId: B.productId },
+      });
+      await tx.productModifierGroup.create({
+        data: {
+          tenantId: TENANT_A,
+          productId: A.productId,
+          modifierGroupId: B.modifierGroupId,
+        },
+      });
+      await tx.modifierOption.create({
+        data: {
+          tenantId: TENANT_B,
+          modifierGroupId: A.modifierGroupId,
+          name: `TSI foreign option ${suffix}`,
+        },
+      });
     });
     try {
       const res = await get(appA, `/locations/${A.locationId}/menu`).expect(

@@ -182,6 +182,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'ModifierOption.modifierGroupId',
@@ -192,6 +193,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'ProductModifierGroup.productId',
@@ -202,6 +204,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'ProductModifierGroup.modifierGroupId',
@@ -212,6 +215,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'MenuProduct.menuId',
@@ -222,6 +226,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'MenuProduct.productId',
@@ -232,6 +237,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'LocationMenu.locationId',
@@ -242,6 +248,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'LocationMenu.menuId',
@@ -252,6 +259,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'LocationProductPriceOverride.locationId',
@@ -262,6 +270,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'LocationProductPriceOverride.menuId',
@@ -272,6 +281,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'LocationProductPriceOverride.productId',
@@ -282,6 +292,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'LocationProductAvailabilityOverride.locationId',
@@ -292,6 +303,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'LocationProductAvailabilityOverride.menuId',
@@ -302,6 +314,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'LocationProductAvailabilityOverride.productId',
@@ -312,6 +325,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'CustomerPreferredLocation.customerId',
@@ -603,6 +617,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'LoyaltyRewardProduct.productId',
@@ -613,6 +628,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'LoyaltyRewardCategory.rewardId',
@@ -623,6 +639,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'LoyaltyRewardCategory.categoryId',
@@ -633,6 +650,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'OrderLoyaltyRewardRedemption.orderId',
@@ -654,6 +672,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'LoyaltyBonusPromotionProduct.productId',
@@ -664,6 +683,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'LoyaltyBonusPromotionLocation.promotionId',
@@ -674,6 +694,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'LoyaltyBonusPromotionLocation.locationId',
@@ -684,6 +705,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'OrderLoyaltyBonus.orderId',
@@ -716,6 +738,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'PromotionProduct.productId',
@@ -726,6 +749,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'PromotionCategory.promotionId',
@@ -736,6 +760,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'PromotionCategory.categoryId',
@@ -746,6 +771,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'PromotionLocation.promotionId',
@@ -756,6 +782,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'PromotionLocation.locationId',
@@ -766,6 +793,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'PromotionCustomerUsage.promotionId',
@@ -992,6 +1020,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'Campaign.loyaltyBonusPromotionId',
@@ -1002,6 +1031,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'CampaignProduct.campaignId',
@@ -1012,6 +1042,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'CampaignProduct.productId',
@@ -1022,6 +1053,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'ApprovalRequest.requestedByInternalUserId',
@@ -1076,8 +1108,10 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     column: 'mediaAssetId',
     target: 'MediaAsset',
     nullable: true,
-    hasForeignKey: false,
-    note: 'Plain media reference (see media-reference-check.ts). No foreign key yet.',
+    hasForeignKey: true,
+    onDelete: 'Restrict',
+    tenantEnforced: true,
+    note: 'Campaign image. A composite foreign key since Security 4C-6 (media assets are deactivated, never deleted).',
   },
   {
     id: 'OrderLine.productId',

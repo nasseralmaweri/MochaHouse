@@ -198,8 +198,8 @@ export class CampaignsAdminService {
           featuredProducts:
             featuredProductIds.length > 0
               ? {
+                  // tenantId comes from the campaign (composite relation).
                   create: featuredProductIds.map((productId, index) => ({
-                    tenantId: tenant.tenantId,
                     productId,
                     displayOrder: index,
                   })),
@@ -262,7 +262,11 @@ export class CampaignsAdminService {
       );
     }
 
-    const data: Prisma.CampaignUpdateInput = {};
+    // Security 4C-6 — unchecked (scalar) input: the campaign's promotion,
+    // bonus promotion and media asset are composite (tenantId, id) relations,
+    // so they are set and cleared by their own column. A relation `connect`
+    // would also rewrite tenantId, and `disconnect` would clear it.
+    const data: Prisma.CampaignUncheckedUpdateInput = {};
 
     if (request?.name !== undefined) {
       data.name = this.validateName(request.name);
@@ -293,9 +297,7 @@ export class CampaignsAdminService {
         request.promotionId,
         tenant,
       );
-      data.promotion = promotionId
-        ? { connect: { id: promotionId } }
-        : { disconnect: true };
+      data.promotionId = promotionId;
     }
     if (request?.loyaltyBonusPromotionId !== undefined) {
       const loyaltyBonusPromotionId =
@@ -303,9 +305,7 @@ export class CampaignsAdminService {
           request.loyaltyBonusPromotionId,
           tenant,
         );
-      data.loyaltyBonusPromotion = loyaltyBonusPromotionId
-        ? { connect: { id: loyaltyBonusPromotionId } }
-        : { disconnect: true };
+      data.loyaltyBonusPromotionId = loyaltyBonusPromotionId;
     }
 
     let nextFeaturedProductIds: string[] | null = null;

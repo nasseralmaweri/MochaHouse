@@ -413,7 +413,6 @@ describe('Promotions & Coupons at checkout (integration)', () => {
         eligibleProducts: opts.productIds
           ? {
               create: opts.productIds.map((productId) => ({
-                tenantId: TENANT_1_MOCHA_HOUSE_ID,
                 productId,
               })),
             }
@@ -421,7 +420,6 @@ describe('Promotions & Coupons at checkout (integration)', () => {
         eligibleCategories: opts.categoryIds
           ? {
               create: opts.categoryIds.map((categoryId) => ({
-                tenantId: TENANT_1_MOCHA_HOUSE_ID,
                 categoryId,
               })),
             }
@@ -429,7 +427,6 @@ describe('Promotions & Coupons at checkout (integration)', () => {
         eligibleLocations: opts.locationIds
           ? {
               create: opts.locationIds.map((locId) => ({
-                tenantId: TENANT_1_MOCHA_HOUSE_ID,
                 locationId: locId,
               })),
             }
@@ -468,7 +465,6 @@ describe('Promotions & Coupons at checkout (integration)', () => {
         beanCost,
         eligibleProducts: {
           create: productIds.map((productId) => ({
-            tenantId: TENANT_1_MOCHA_HOUSE_ID,
             productId,
           })),
         },
@@ -817,7 +813,7 @@ describe('Promotions & Coupons at checkout (integration)', () => {
         isActive: true,
         appliesToAllLocations: true,
         eligibleProducts: {
-          create: [{ tenantId: TENANT_1_MOCHA_HOUSE_ID, productId: latteId }],
+          create: [{ productId: latteId }],
         },
       },
     });
@@ -866,7 +862,7 @@ describe('Promotions & Coupons at checkout (integration)', () => {
         isActive: true,
         appliesToAllLocations: true,
         eligibleProducts: {
-          create: [{ tenantId: TENANT_1_MOCHA_HOUSE_ID, productId: muffinId }],
+          create: [{ productId: muffinId }],
         },
       },
     });
@@ -919,7 +915,7 @@ describe('Promotions & Coupons at checkout (integration)', () => {
         isActive: true,
         appliesToAllLocations: true,
         eligibleProducts: {
-          create: [{ tenantId: TENANT_1_MOCHA_HOUSE_ID, productId: latteId }],
+          create: [{ productId: latteId }],
         },
       },
     });
@@ -968,7 +964,7 @@ describe('Promotions & Coupons at checkout (integration)', () => {
         isActive: true,
         appliesToAllLocations: true,
         eligibleProducts: {
-          create: [{ tenantId: TENANT_1_MOCHA_HOUSE_ID, productId: latteId }],
+          create: [{ productId: latteId }],
         },
       },
     });

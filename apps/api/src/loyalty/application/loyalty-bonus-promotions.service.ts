@@ -140,9 +140,9 @@ export class LoyaltyBonusPromotionsService {
           appliesToAllLocations,
           startsAt,
           endsAt,
+          // Nested rows take tenantId from the parent (composite key, Security 4C-6).
           eligibleProducts: {
             create: productIds.map((productId) => ({
-              tenantId: tenant.tenantId,
               productId,
             })),
           },
@@ -150,7 +150,6 @@ export class LoyaltyBonusPromotionsService {
             locationIds.length > 0
               ? {
                   create: locationIds.map((locationId) => ({
-                    tenantId: tenant.tenantId,
                     locationId,
                   })),
                 }
