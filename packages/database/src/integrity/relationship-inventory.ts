@@ -539,6 +539,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'MochaBeanLedgerEntry.loyaltyAccountId',
@@ -549,6 +550,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'MochaBeanLedgerEntry.orderId',
@@ -559,6 +561,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'SetNull',
+    tenantEnforced: true,
   },
   {
     id: 'MochaBeanLedgerEntry.actorInternalUserId',
@@ -619,6 +622,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'LoyaltyBonusPromotionProduct.promotionId',
@@ -669,6 +673,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'OrderLoyaltyBonusItem.orderLoyaltyBonusId',
@@ -679,6 +684,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'PromotionProduct.promotionId',
@@ -749,6 +755,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'PromotionCustomerUsage.customerId',
@@ -759,6 +766,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'OrderPromotionRedemption.orderId',
@@ -769,6 +777,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'GiftCardTransaction.giftCardId',
@@ -779,6 +788,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'GiftCardTransaction.actorInternalUserId',
@@ -799,6 +809,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'SetNull',
+    tenantEnforced: true,
   },
   {
     id: 'GiftCardTransaction.giftCardPurchaseId',
@@ -809,6 +820,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'SetNull',
+    tenantEnforced: true,
   },
   {
     id: 'OrderGiftCardRedemption.orderId',
@@ -819,6 +831,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'GiftCardPurchase.paymentAttemptId',
@@ -829,6 +842,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'GiftCardPurchase.giftCardId',
@@ -839,6 +853,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'GiftCardPurchase.customerId',
@@ -849,6 +864,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'SetNull',
+    tenantEnforced: true,
   },
   {
     id: 'JobOpening.locationId',
@@ -1020,8 +1036,10 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     column: 'customerId',
     target: 'Customer',
     nullable: true,
-    hasForeignKey: false,
-    note: 'The customer a per-customer promotion limit counts against. No foreign key yet.',
+    hasForeignKey: true,
+    onDelete: 'SetNull',
+    tenantEnforced: true,
+    note: 'The customer a per-customer promotion limit counts against. Composite foreign key since Security 4C-4.',
   },
   {
     id: 'Campaign.mediaAssetId',

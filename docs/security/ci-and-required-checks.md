@@ -95,8 +95,8 @@ container starts with only the maintenance database.
 
 `packages/database/src/integrity/relationship-inventory.ts` classifies all
 105 references between business-owned records (85 composite foreign-key
-candidates — 83 existing foreign keys, 9 of them tenant-enforced since
-Security 4C-3, and 2 plain columns — 8 historical
+candidates — 84 existing foreign keys, 26 of them tenant-enforced since
+Security 4C-3 / 4C-4, and 1 plain column — 8 historical
 snapshots, 5 polymorphic references, 6 JSON columns, 1 external id).
 `tenant-relationship-inventory.spec.ts` fails when the schema gains, loses or
 changes one without a classification.
@@ -258,8 +258,134 @@ Never automatic. Revert the composite relations in `schema.prisma` and ship
 (one `DO` block) as a new forward migration. It restores the eight original
 single-column foreign keys exactly and removes the nine composite keys, the
 `Order ("tenantId", "paymentAttemptId")` key and the eight triggers; data is
-untouched. Tested end to end with real Prisma (catalog identical to a
-pre-4C-3 database).
+untouched. Roll back 4C-4 first: its triggers use 4C-3's
+`reject_tenant_reassignment()` function, so a 4C-3 rollback is refused (and
+changes nothing) while 4C-4 is applied. Tested end to end with real Prisma
+(catalog identical to a pre-4C-3 database).
+
+## Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)
+
+Migration `20261013090000_tenant_fk_loyalty_giftcard_promotion` extends the
+4C-3 protections to the loyalty, gift-card and promotion records. Seventeen
+relationships use a composite foreign key
+`("tenantId", col) -> parent ("tenantId", "id")`:
+
+| Relationship | Parent | On delete |
+| --- | --- | --- |
+| `CustomerLoyaltyAccount.customerId` | Customer | CASCADE |
+| `MochaBeanLedgerEntry.loyaltyAccountId` | CustomerLoyaltyAccount | CASCADE |
+| `MochaBeanLedgerEntry.orderId` (optional) | Order | SET NULL (`orderId` only) |
+| `OrderLoyaltyRewardRedemption.orderId` | Order | RESTRICT |
+| `OrderLoyaltyBonus.orderId` | Order | RESTRICT |
+| `OrderLoyaltyBonusItem.orderLoyaltyBonusId` | OrderLoyaltyBonus | CASCADE |
+| `PromotionCustomerUsage.promotionId` | Promotion | CASCADE |
+| `PromotionCustomerUsage.customerId` | Customer | CASCADE |
+| `OrderPromotionRedemption.orderId` | Order | RESTRICT |
+| `OrderPromotionRedemption.customerId` (optional, **new FK**) | Customer | SET NULL (`customerId` only) |
+| `GiftCardTransaction.giftCardId` | GiftCard | RESTRICT |
+| `GiftCardTransaction.orderId` (optional) | Order | SET NULL (`orderId` only) |
+| `GiftCardTransaction.giftCardPurchaseId` (optional) | GiftCardPurchase | SET NULL (`giftCardPurchaseId` only) |
+| `OrderGiftCardRedemption.orderId` | Order | RESTRICT |
+| `GiftCardPurchase.paymentAttemptId` | PaymentAttempt | RESTRICT |
+| `GiftCardPurchase.giftCardId` (optional) | GiftCard | RESTRICT |
+| `GiftCardPurchase.customerId` (optional) | Customer | SET NULL (`customerId` only) |
+
+- Delete behaviour is unchanged, with one intended exception: deleting a
+  customer now clears `OrderPromotionRedemption.customerId` (it previously
+  had no foreign key and was left pointing at nothing). The redemption
+  snapshot itself is kept, like `Order.customerId`.
+- **Historical snapshots** keep no foreign key (their source may later be
+  deleted): the reward, bonus promotion, promotion, gift card and free-item
+  / bonus product snapshots of the four redemption tables. A **new or
+  changed** value must name an existing record of the **same** business
+  (trigger `<Table>_<column>_same_tenant`, function
+  `reject_cross_tenant_snapshot()`, SQLSTATE `23503`). A value stored while
+  its source existed may stay **unchanged** after that source is deleted —
+  history is kept, never rewritten.
+- **Deleted-id reuse:** while a kept snapshot still names a deleted gift
+  card, promotion, reward or bonus promotion, no other business can create
+  (or rename a row to) that id (trigger `<Table>_id_not_reused`, function
+  `reject_reused_snapshot_source()`, SQLSTATE `23505`); the same business
+  can. Product snapshots are **not** protected against id reuse yet — see
+  the open security finding below.
+- **Ownership:** fourteen tables reject any change of `tenantId` on an
+  existing row (trigger `<Table>_tenantId_immutable`, SQLSTATE `23001`) —
+  the ten referencing tables plus `GiftCard`, `Promotion`, `LoyaltyReward`
+  and `LoyaltyBonusPromotion` — reusing 4C-3's
+  `reject_tenant_reassignment()`. 4C-4 requires that function (the migration
+  refuses to run without it) and never drops it.
+- Prisma: nested creates under an `OrderLoyaltyBonus` or `GiftCard` take
+  `tenantId` from the parent (do not pass it). Clear an optional composite
+  reference by setting the column to `null`, never with a relation
+  `disconnect`.
+- Not included (Security 4C-6, catalog and offers): the offer-definition
+  join tables' links (`LoyaltyRewardProduct/Category.rewardId`,
+  `LoyaltyBonusPromotionProduct/Location.promotionId`,
+  `PromotionProduct/Category/Location.promotionId`) and `Campaign`'s
+  promotion links; staff actor links stay in 4C-5.
+- `tenant-fk-loyalty-giftcard-promotion.spec.ts` proves, with three
+  fictional businesses: same-business writes accepted; every cross-business
+  reference, snapshot and move rejected by PostgreSQL (direct SQL and Prisma
+  nested connect / set / disconnect / connectOrCreate, upsert, updateMany)
+  with balances, points ledgers, card transactions and usage counters
+  unchanged; delete and SET NULL outcomes identical to a pre-4C-4 database
+  except the one above; the integrity checker `CLEAN`; every removed key or
+  trigger detected; and, with real `prisma migrate deploy`: success without
+  drift, preflight abort, missing-4C-3 refusal, late failure, lock timeout,
+  recovery, rollback, and the refused out-of-order 4C-3 rollback.
+
+### OPEN SECURITY FINDING — MANDATORY SECURITY 4C-6 DELIVERABLE
+
+**Product snapshots remain vulnerable to deleted-id reuse across tenants.**
+The three product-snapshot references —
+`OrderLoyaltyRewardRedemption.freeItemProductId`,
+`OrderLoyaltyBonusItem.productId` and
+`OrderPromotionRedemption.freeItemProductId` — are validated when written
+(an existing product of the same business), but once that product is
+deleted another business can create a product with the same id, and the
+kept snapshot then names another business's record.
+
+- **Status:** open. Deferral to Security 4C-6 approved; this is a
+  **mandatory 4C-6 deliverable**, not an optional enhancement. Product
+  snapshot isolation is **not** fully enforced until it is closed.
+- **Required in 4C-6:** an index on each of the three columns and the
+  corresponding deleted-id reuse guard on `Product` (the same
+  `reject_reused_snapshot_source()` pattern used for gift cards,
+  promotions, rewards and bonus promotions).
+- **Detection only, until then:** `integrity:check` reports such a row as a
+  cross-tenant violation; it does not prevent it.
+- **Regression test:** `tenant-fk-loyalty-giftcard-promotion.spec.ts`
+  ("residual until Security 4C-6 …") demonstrates the limitation today. It
+  must stay in place and be turned into a passing prevention test (the
+  reuse rejected) when the guard is added — never removed.
+- **Closure:** only by implementation, adversarial tests and an independent
+  review. This finding must be closed before multi-tenant production
+  readiness can be approved; Security 4C-4 alone does not authorize
+  deployment or a second production tenant.
+
+### If the 4C-4 migration fails
+
+It is one `DO` block: nothing was changed. Its preflight lists, per
+relationship, rows pointing at another business or at nothing, and
+snapshots naming another business's record; it never repairs or reassigns
+anything. Correct each reported row deliberately, then:
+
+```bash
+pnpm --filter @mocha-house/database exec prisma migrate resolve --rolled-back 20261013090000_tenant_fk_loyalty_giftcard_promotion
+pnpm --filter @mocha-house/database exec prisma migrate deploy
+```
+
+It takes the same 5-second `lock_timeout` as 4C-3.
+
+### Rolling back 4C-4
+
+Never automatic. Revert the 4C-4 relations in `schema.prisma` and ship
+`prisma/rollbacks/20261013090000_tenant_fk_loyalty_giftcard_promotion.down.sql`
+(one `DO` block) as a new forward migration. It removes only what 4C-4 added
+(seventeen composite keys, eight indexes, fourteen ownership, seven
+snapshot and four id-reuse triggers, and their two functions) and restores the sixteen
+original single-column keys exactly; it keeps 4C-3's function. Roll back in
+reverse order: 4C-4, then 4C-3, then 4C-2.
 
 ## Running the same checks locally
 

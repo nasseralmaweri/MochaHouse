@@ -494,10 +494,13 @@ const insertCopy = (r: Relationship, from: Tag, parentId: string | null) => {
 };
 
 describe('Tenant-enforced foreign keys: customers, orders, payments (Security 4C-3)', () => {
-  it('the inventory marks exactly these nine relationships as tenant-enforced, with matching delete rules', () => {
+  it('the inventory marks these nine relationships as tenant-enforced, with matching delete rules', () => {
+    // Later phases (Security 4C-4 onwards) enforce further relationships;
+    // their own specs assert those.
+    const ids = new Set(RELATIONSHIPS.map(relationshipId));
     const enforced = TENANT_RELATIONSHIPS.filter(
       (r): r is DirectReference =>
-        'tenantEnforced' in r && r.tenantEnforced === true,
+        'tenantEnforced' in r && r.tenantEnforced === true && ids.has(r.id),
     );
     const rule = { CASCADE: 'Cascade', RESTRICT: 'Restrict' } as const;
     expect(
@@ -1230,7 +1233,7 @@ describe('Tenant-enforced foreign keys: customers, orders, payments (Security 4C
       const b = (name: string) => id('b', name);
       // Per table: a move the foreign keys alone would allow.
       const moves: Record<string, string> = {
-        Customer: `UPDATE "Customer" SET "tenantId" = '${TENANTS.b}' WHERE id = '${a('customer-loyal')}'`,
+        Customer: `UPDATE "Customer" SET "tenantId" = '${TENANTS.b}' WHERE id = '${a('customer-bare')}'`,
         CustomerNote: `UPDATE "CustomerNote" SET "tenantId" = '${TENANTS.b}', "customerId" = '${b('customer-spare')}' WHERE id = '${a('note')}'`,
         CustomerPreferredLocation: `UPDATE "CustomerPreferredLocation" SET "tenantId" = '${TENANTS.b}', "customerId" = '${b('customer-spare')}', "locationId" = '${b('location-bare')}' WHERE id = '${a('pref')}'`,
         Location: `UPDATE "Location" SET "tenantId" = '${TENANTS.b}' WHERE id = '${a('location-bare')}'`,
@@ -1633,10 +1636,15 @@ describe('Tenant-enforced foreign keys: customers, orders, payments (Security 4C
     });
 
     it('the documented rollback — shipped as a new forward migration — restores the pre-4C-3 catalog exactly, keeps the data, and 4C-3 re-applies', async () => {
+      // Security 4C-4's triggers use 4C-3's function, so this rollback runs
+      // only after 4C-4's own rollback: here, on a database migrated up to
+      // 4C-3.
       const scratch = await beforeFourC3('fk_cop_rollback');
       const data = await dataChecksum(scratch.url);
-      expect((await prisma(scratch.url, ['migrate', 'deploy'])).code).toBe(0);
-      const all = migrations.map((m) => m.name);
+      const all = migrations.slice(0, targetIndex + 1).map((m) => m.name);
+      expect(
+        (await prisma(scratch.url, ['migrate', 'deploy'], project(all))).code,
+      ).toBe(0);
       const rollback = {
         name: '20261012100000_rollback_tenant_fk_customer_order_payment',
         sql: rollbackSql,

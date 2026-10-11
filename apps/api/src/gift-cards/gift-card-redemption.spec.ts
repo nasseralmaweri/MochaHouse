@@ -210,7 +210,6 @@ describe('Gift card redemption at checkout (integration)', () => {
         currency: opts.currency ?? 'USD',
         transactions: {
           create: {
-            tenantId: TENANT_1_MOCHA_HOUSE_ID,
             type: 'ISSUANCE',
             amountMinorUnits: balanceMinorUnits,
             balanceAfterMinorUnits: balanceMinorUnits,
