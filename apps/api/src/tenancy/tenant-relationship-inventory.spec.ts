@@ -149,6 +149,15 @@ const jsonColumns = tenantModels.flatMap((m) =>
 const effectiveOnDelete = (r: Relation) =>
   r.onDelete ?? (r.optional ? 'SetNull' : 'Restrict');
 
+// Security 4C-7 review — the only Prisma models allowed WITHOUT a tenantId
+// (MODEL_TENANCY 'platform'). Every other model belongs to exactly one
+// business and so falls under every tenant guard: the inventory, composite
+// foreign keys and the ownership trigger. A model without a tenantId falls
+// under none of them, so this list is pinned HERE, in a security test: a new
+// global model fails CI until it is reviewed and added on purpose. A global
+// model may never hold a reference to a business record.
+const APPROVED_GLOBAL_MODELS = ['Tenant'];
+
 describe('Tenant relationship inventory (Security 4C-1)', () => {
   it('parses every relation and model in schema.prisma (no silent omissions)', () => {
     const declared = (schema.match(/@relation\([^)]*fields:/g) ?? []).length;
@@ -172,6 +181,42 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
           .filter((r) => r.target === 'Tenant')
           .map((r) => r.fields.join(',')),
       ).toEqual(['tenantId']);
+    }
+  });
+
+  it('every Prisma model declares tenantId, except the approved global models — which hold no reference to a business record', () => {
+    // MODEL_TENANCY must classify every model (a type error otherwise), and
+    // a 'tenant' model without tenantId fails the test above. This closes the
+    // other way out: a model classified 'platform', or simply left without a
+    // tenantId. To fix a failure, give the model a tenantId (with composite
+    // relations and the ownership trigger); only genuinely global data, after
+    // security review, belongs in APPROVED_GLOBAL_MODELS.
+    expect({
+      modelsWithoutTenantId: [...models.values()]
+        .filter((m) => !m.fields.has('tenantId'))
+        .map((m) => m.name)
+        .sort(),
+      platformModels: Object.entries(MODEL_TENANCY)
+        .filter(([, tenancy]) => tenancy === 'platform')
+        .map(([name]) => name)
+        .sort(),
+    }).toEqual({
+      modelsWithoutTenantId: [...APPROVED_GLOBAL_MODELS].sort(),
+      platformModels: [...APPROVED_GLOBAL_MODELS].sort(),
+    });
+    for (const name of APPROVED_GLOBAL_MODELS) {
+      const model = models.get(name)!;
+      expect({
+        model: name,
+        // Foreign-key relations from the global model, and plain …Id
+        // columns that could name a record without one.
+        references: [
+          ...model.relations.map((r) => `${r.field} -> ${r.target}`),
+          ...[...model.fields.values()]
+            .filter((f) => /Id$/.test(f.name) && f.name !== 'id')
+            .map((f) => f.name),
+        ],
+      }).toEqual({ model: name, references: [] });
     }
   });
 

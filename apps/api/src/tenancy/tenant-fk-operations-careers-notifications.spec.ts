@@ -218,8 +218,17 @@ async function tenantEnforcement(client: Client): Promise<string[]> {
   return [...keys.rows.map((r) => r.d), ...immutable.rows.map((r) => r.d)];
 }
 
-// Business-owned tables (a "tenantId" column) without the ownership
-// trigger, and single-column foreign keys between business-owned tables.
+// Tables allowed WITHOUT a "tenantId" column: the approved global models
+// (pinned in tenant-relationship-inventory.spec.ts as APPROVED_GLOBAL_MODELS)
+// and Prisma's own migration history, which is not an application model.
+const GLOBAL_TABLES = ['Tenant', '_prisma_migrations'];
+
+// The whole-database guard (Security 4C-7 and its review), against the live
+// catalog: business-owned tables (a "tenantId" column) without the
+// ownership trigger; single-column foreign keys between business-owned
+// tables; any other table without a "tenantId" (created by a migration or by
+// raw SQL, outside the approved globals); and any foreign key from a table
+// without a "tenantId" into a business-owned table.
 async function remainingGaps(client: Client) {
   const unprotected = await client.query<{ t: string }>(
     `SELECT c.relname AS t FROM pg_class c
@@ -240,11 +249,35 @@ async function remainingGaps(client: Client) {
                          WHERE a.attname = 'tenantId')
       ORDER BY 1`,
   );
+  const withoutTenantId = await client.query<{ t: string }>(
+    `SELECT c.relname AS t FROM pg_class c
+      WHERE c.relkind IN ('r', 'p') AND c.relnamespace = 'public'::regnamespace
+        AND c.relname <> ALL ($1::text[])
+        AND NOT EXISTS (SELECT 1 FROM pg_attribute a
+                         WHERE a.attrelid = c.oid AND a.attname = 'tenantId' AND NOT a.attisdropped)
+      ORDER BY 1`,
+    [GLOBAL_TABLES],
+  );
+  const untenantedReferences = await client.query<{ k: string }>(
+    `SELECT c.conname AS k FROM pg_constraint c
+      WHERE c.contype = 'f' AND c.connamespace = 'public'::regnamespace
+        AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attname = 'tenantId')
+        AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.confrelid AND a.attname = 'tenantId')
+      ORDER BY 1`,
+  );
   return {
     unprotected: unprotected.rows.map((r) => r.t),
     singleColumn: singleColumn.rows.map((r) => r.k),
+    withoutTenantId: withoutTenantId.rows.map((r) => r.t),
+    untenantedReferences: untenantedReferences.rows.map((r) => r.k),
   };
 }
+const NO_GAPS = {
+  unprotected: [],
+  singleColumn: [],
+  withoutTenantId: [],
+  untenantedReferences: [],
+};
 
 // Fictional operational data for one business: every relationship in use,
 // plus unused "spare" parents.
@@ -667,12 +700,12 @@ describe('Tenant-enforced operations, careers, franchising and notifications (Se
     );
   });
 
-  it('the migrated test database enforces every relationship and ownership — and no business-owned table or relation is left unprotected (catalog regression guard)', async () => {
+  it('the migrated test database enforces every relationship and ownership — and no business-owned table or relation is left unprotected, and no table outside the approved globals lacks a tenantId (catalog regression guard)', async () => {
     const [enforcement, gaps] = await withScratchClient(baseUrl, (client) =>
       Promise.all([tenantEnforcement(client), remainingGaps(client)]),
     );
     expect(enforcement).toEqual(EXPECTED_ENFORCEMENT);
-    expect(gaps).toEqual({ unprotected: [], singleColumn: [] });
+    expect(gaps).toEqual(NO_GAPS);
   });
 
   describe('on a scratch database with three fictional businesses', () => {
@@ -699,10 +732,7 @@ describe('Tenant-enforced operations, careers, franchising and notifications (Se
 
     it('carries exactly the expected keys and triggers', async () => {
       expect(await sql(tenantEnforcement)).toEqual(EXPECTED_ENFORCEMENT);
-      expect(await sql(remainingGaps)).toEqual({
-        unprotected: [],
-        singleColumn: [],
-      });
+      expect(await sql(remainingGaps)).toEqual(NO_GAPS);
     });
 
     it('accepts same-business references, by UPDATE and by INSERT, for every relationship and business', async () => {
@@ -1325,7 +1355,7 @@ describe('Tenant-enforced operations, careers, franchising and notifications (Se
           missing: string[];
           withIt: string;
           without: string;
-          gaps: { unprotected: string[]; singleColumn: string[] };
+          gaps: Awaited<ReturnType<typeof remainingGaps>>;
         }> = [];
         for (const m of mutations) {
           const withIt = (await attempt(client, m.write)).split(' ')[0];
@@ -1364,10 +1394,10 @@ describe('Tenant-enforced operations, careers, franchising and notifications (Se
           // The whole-database guard notices too.
           gaps:
             n < RELATIONSHIPS.length
-              ? { unprotected: [], singleColumn: [] }
+              ? NO_GAPS
               : {
+                  ...NO_GAPS,
                   unprotected: [PROTECTED_TABLES[n - RELATIONSHIPS.length]],
-                  singleColumn: [],
                 },
         })),
       );
@@ -1520,10 +1550,9 @@ describe('Tenant-enforced operations, careers, franchising and notifications (Se
       expect((await deploy(scratch.url)).code).toBe(0);
       expect(await migrationRow(scratch.url)).toEqual(['finished']);
       expect(await enforcement(scratch.url)).toEqual(EXPECTED_ENFORCEMENT);
-      expect(await withScratchClient(scratch.url, remainingGaps)).toEqual({
-        unprotected: [],
-        singleColumn: [],
-      });
+      expect(await withScratchClient(scratch.url, remainingGaps)).toEqual(
+        NO_GAPS,
+      );
       expect(await dataChecksum(scratch.url)).toBe(data);
       expect(await noDrift(scratch.url)).toBe(0);
       const report = await withScratchClient(scratch.url, (client) =>

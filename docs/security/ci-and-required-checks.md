@@ -833,8 +833,8 @@ RESTRICT`:
   `CmsPage`, `GiftCardConfiguration` and `LoyaltyConfiguration`. After
   4C-7 **every table with a `tenantId` column (64) carries the trigger**,
   and **no single-column foreign key between business-owned tables is
-  left**; a test asserts both against the live catalog, so a future table
-  or relation that skips them fails CI.
+  left**. What CI now detects is listed under "What CI detects after
+  4C-7" below.
 - **Requires** 4C-3's `reject_tenant_reassignment()` (it refuses to run
   without it) and drops nothing of earlier milestones.
 - **Application changes:** job-opening editing sets and clears the location
@@ -926,6 +926,46 @@ All 105 references between business-owned records in
 | JSON reference | 6 | Not database-enforced: `CmsPage.draftContent` / `publishedContent` (hero image — checked by `integrity:check` and validated on write), and snapshots never joined: `OrderLine.selections`, `OutboxEvent.payload`, `InternalAuditEvent.beforeData` / `afterData`. |
 | External identifier | 1 | `NotificationDelivery.providerMessageId` — a provider's id, never a business record. |
 
+### What CI detects after 4C-7
+
+Two layers, each proven to fail on purpose-built mutations (Security 4C-7
+review: scratch copies of the schema and fresh guarded disposable
+databases):
+
+- **Schema (`tenant-relationship-inventory.spec.ts`):**
+  - every Prisma model must declare `tenantId`, except the approved global
+    models pinned in the test (`APPROVED_GLOBAL_MODELS`, today only
+    `Tenant`), and `MODEL_TENANCY`'s `platform` set must equal that list —
+    so a new global model cannot enter silently, whichever way it is
+    classified (`MODEL_TENANCY` is a `Record` over every model, so an
+    unclassified model is already a type error);
+  - an approved global model may hold no reference to a business record
+    (no relation, no `…Id` column);
+  - every relation or `…Id` column between business-owned models must be
+    classified, and every foreign-key relation must be a `(tenantId,
+    column)` composite.
+- **Live database catalog (`tenant-fk-operations-careers-notifications.spec.ts`,
+  against the migrated CI database):**
+  - every table with a `tenantId` has its ownership trigger;
+  - no foreign key between business-owned tables omits `tenantId`;
+  - no table lacks a `tenantId` except `Tenant` and Prisma's internal
+    `_prisma_migrations` history table (so a table created by a migration
+    or raw SQL outside Prisma is caught too);
+  - no table without a `tenantId` references a business-owned table.
+
+Mutations that fail CI: a new model without `tenantId`; a model without
+`tenantId` that references `Location`; `Tenant` gaining a `…Id` column; a
+new single-column relation between business models; a table without
+`tenantId` (with or without a foreign key into a business table); a
+business table without the ownership trigger; a business table with a
+single-column foreign key. The unmodified schema and database pass.
+
+**Not detected by these guards:** what queries *read* (see below);
+references that are not foreign keys or `…Id` columns of a model (for
+example ids inside JSON or text fields added later, or values sent to an
+external system); objects outside the `public` schema; and anything done
+with owner rights (disabling triggers, dropping keys — T-2).
+
 **What this does not mean.** Every *relationship* is now tenant-safe in
 PostgreSQL, but tenant isolation is not complete:
 
@@ -943,7 +983,20 @@ PostgreSQL, but tenant isolation is not complete:
   disable the triggers or drop the keys.
 - **Polymorphic and JSON references** above are verified after the fact,
   not prevented.
+- **Polymorphic deleted-id reuse (found in the 4C-7 review):** if a
+  record named by a polymorphic reference (for example the
+  `FranchiseInquiry` an `OutboxEvent` or audit entry names) were deleted
+  and its id re-inserted for another business, the old reference would
+  name the other business's record — the polymorphic counterpart of the
+  4C-4 snapshot finding. Not reachable through the application today
+  (these records are never deleted, ids are server-generated, and every
+  worker lookup also filters by the event's own `tenantId`); the integrity
+  checker reports it. A reuse guard like 4C-6's is possible if deletion of
+  these records is ever introduced.
 - **Staff identity (T-1):** one login can still span businesses.
+- **Persistent environments:** none of 4C-3 … 4C-7 protects an
+  environment until it is applied there and verified (see the persistent
+  migration prerequisites above).
 
 ### Post-4C security roadmap (proposal, not implemented)
 
