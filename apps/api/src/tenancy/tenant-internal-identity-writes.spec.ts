@@ -82,7 +82,7 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
         key: `s0d2e-corp-${label}-${suffix}`,
         displayName: `S0D2E Corporate ${label}`,
         permissions: {
-          create: [{ permissionKey: 'catalog.products.edit', tenantId }],
+          create: [{ permissionKey: 'catalog.products.edit' }],
         },
       },
     });
@@ -101,7 +101,7 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
         key: `s0d2e-loc-${label}-${suffix}`,
         displayName: `S0D2E Location ${label}`,
         permissions: {
-          create: [{ permissionKey: 'catalog.overrides.manage', tenantId }],
+          create: [{ permissionKey: 'catalog.overrides.manage' }],
         },
       },
     });
@@ -324,18 +324,34 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
   it('(8) a role-assignment row whose OWN tenantId was planted as Tenant B still cannot grant Tenant A authorization for that user', async () => {
     const userA = await makeUser(TENANT_1_MOCHA_HOUSE_ID, 'spoof-a');
     const roleB = await makeCorporateRole(TEST_TENANT_B_ID, 'spoof-role');
-    // Planted directly, bypassing assignRole's own same-tenant validation —
+    // Written directly, bypassing assignRole's own same-tenant validation —
     // the exact shape a bug in that validation, or a spoofed internal
-    // write, would produce.
-    await prisma.internalUserRoleAssignment.create({
-      data: {
-        tenantId: TEST_TENANT_B_ID,
-        internalUserId: userA,
-        roleId: roleB,
-        scopeType: 'CORPORATE',
-        scopeId: null,
-      },
-    });
+    // write, would produce. Since Security 4C-5 the database itself refuses
+    // it (the user must belong to the assignment's business)...
+    await expect(
+      prisma.internalUserRoleAssignment.create({
+        data: {
+          tenantId: TEST_TENANT_B_ID,
+          internalUserId: userA,
+          roleId: roleB,
+          scopeType: 'CORPORATE',
+          scopeId: null,
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'P2003' });
+    // ...so plant it as pre-4C-5 legacy data would exist, with foreign-key
+    // triggers suspended: authorization must still ignore it.
+    await prisma.$transaction([
+      prisma.$executeRawUnsafe(`SET LOCAL session_replication_role = replica`),
+      prisma.$executeRawUnsafe(
+        `INSERT INTO "InternalUserRoleAssignment" ("id", "tenantId", "internalUserId", "roleId", "scopeType", "scopeId", "updatedAt")
+         VALUES ($1, $2, $3, $4, 'CORPORATE', NULL, now())`,
+        randomUUID(),
+        TEST_TENANT_B_ID,
+        userA,
+        roleB,
+      ),
+    ]);
 
     const asTenantA = await authorizationService.loadContext(userA, tenantOne);
     expect(asTenantA.has('catalog.products.edit')).toBe(false);
@@ -460,8 +476,8 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
         displayName: 'S0D2E Protected Admin (Tenant B)',
         permissions: {
           create: [
-            { permissionKey: 'users.manage_status', tenantId: TEST_TENANT_B_ID },
-            { permissionKey: 'users.manage_roles', tenantId: TEST_TENANT_B_ID },
+            { permissionKey: 'users.manage_status' },
+            { permissionKey: 'users.manage_roles' },
           ],
         },
       },

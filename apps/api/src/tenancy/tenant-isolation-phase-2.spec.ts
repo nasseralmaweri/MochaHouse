@@ -127,7 +127,6 @@ describe('Tenant isolation phase 2 (integration)', () => {
         permissions: {
           create: permissions.map((permissionKey) => ({
             permissionKey,
-            tenantId,
           })),
         },
       },
@@ -390,6 +389,10 @@ describe('Tenant isolation phase 2 (integration)', () => {
     await prisma.loyaltyBonusPromotion.deleteMany({
       where: { id: { in: created.bonusPromotions } },
     });
+    // Before the Location: a LOCATION grant references it (Security 4C-5).
+    await prisma.internalUserRoleAssignment.deleteMany({
+      where: { internalUserId: { in: userIdsA } },
+    });
     if (A) {
       await prisma.mochaBeanLedgerEntry.deleteMany({
         where: { loyaltyAccount: { customerId: A.customerId } },
@@ -417,9 +420,6 @@ describe('Tenant isolation phase 2 (integration)', () => {
         data: giftCardConfigA,
       });
     }
-    await prisma.internalUserRoleAssignment.deleteMany({
-      where: { internalUserId: { in: userIdsA } },
-    });
     await prisma.internalRolePermission.deleteMany({
       where: { roleId: { in: roleIdsA } },
     });

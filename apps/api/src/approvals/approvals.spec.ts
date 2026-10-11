@@ -54,7 +54,7 @@ describe('Approvals admin (integration)', () => {
         key: `approvals-admin-${suffix}-${randomUUID()}`,
         displayName: 'Approvals Admin Spec Role',
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });

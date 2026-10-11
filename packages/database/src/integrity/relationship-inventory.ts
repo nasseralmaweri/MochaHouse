@@ -409,6 +409,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'InternalRolePermission.roleId',
@@ -419,6 +420,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'InternalUserRoleAssignment.internalUserId',
@@ -429,6 +431,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
   },
   {
     id: 'InternalUserRoleAssignment.roleId',
@@ -439,6 +442,19 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
+  },
+  {
+    id: 'InternalUserRoleAssignment.scopeId',
+    kind: 'composite-fk-candidate',
+    model: 'InternalUserRoleAssignment',
+    column: 'scopeId',
+    target: 'Location',
+    nullable: true,
+    hasForeignKey: true,
+    onDelete: 'Restrict',
+    tenantEnforced: true,
+    note: 'Staff authorization scope: a LOCATION grant names a Location of the same business; CORPORATE leaves it null (scope shape is a database CHECK since Security 4C-5). Was polymorphic until 4C-5.',
   },
   {
     id: 'ChecklistTemplateItem.templateId',
@@ -489,6 +505,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'ChecklistInstanceItem.exceptionByInternalUserId',
@@ -499,6 +516,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'OperationsTask.locationId',
@@ -519,6 +537,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'OperationsTask.completedByInternalUserId',
@@ -529,6 +548,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'CustomerLoyaltyAccount.customerId',
@@ -572,6 +592,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'LoyaltyRewardProduct.rewardId',
@@ -799,6 +820,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'GiftCardTransaction.orderId',
@@ -905,6 +927,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'CustomerNote.customerId',
@@ -926,6 +949,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'FranchiseInquiryNote.franchiseInquiryId',
@@ -946,6 +970,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'MediaAsset.uploadedByInternalUserId',
@@ -956,6 +981,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'Campaign.promotionId',
@@ -1006,6 +1032,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'ApprovalRequest.decidedByInternalUserId',
@@ -1016,6 +1043,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
   },
   {
     id: 'PaymentAttempt.locationId',
@@ -1157,19 +1185,6 @@ const OUTBOX_AGGREGATES = {
 } as const satisfies Record<string, TenantOwnedModel>;
 
 const POLYMORPHIC_REFERENCES: readonly PolymorphicReference[] = [
-  {
-    id: 'InternalUserRoleAssignment.scopeId',
-    kind: 'polymorphic',
-    model: 'InternalUserRoleAssignment',
-    column: 'scopeId',
-    nullable: true,
-    typeColumn: 'scopeType',
-    targets: { LOCATION: 'Location' },
-    nullForTypes: ['CORPORATE'],
-    requiredForTypes: ['LOCATION'],
-    missingTarget: 'violation',
-    note: 'Staff authorization scope: CORPORATE has no scope id; LOCATION names a Location.',
-  },
   {
     id: 'InternalAuditEvent.targetId',
     kind: 'polymorphic',

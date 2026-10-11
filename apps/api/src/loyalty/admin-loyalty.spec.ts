@@ -64,7 +64,7 @@ describe('Admin Mocha Beans surface (integration)', () => {
         tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `loyalty-spec-${suffix}-${randomUUID()}`,
         displayName: 'Loyalty Spec Role',
-        permissions: { create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })) },
+        permissions: { create: permissionKeys.map((permissionKey) => ({ permissionKey })) },
       },
     });
     roleIds.push(role.id);

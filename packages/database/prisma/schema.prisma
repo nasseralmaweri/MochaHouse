@@ -147,6 +147,7 @@ model Location {
   // (see JobOpening): a location a job opening references cannot be
   // hard-deleted out from under it (the codebase uses isActive anyway).
   jobOpenings                      JobOpening[]
+  staffRoleAssignments             InternalUserRoleAssignment[]
 
   // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
   // every write supplies it explicitly (root writes from the request's
@@ -1043,7 +1044,7 @@ model InternalAuditEvent {
   reason              String
   createdAt           DateTime @default(now())
 
-  actorInternalUser InternalUser @relation("InternalAuditEventActor", fields: [actorInternalUserId], references: [id], onDelete: Restrict)
+  actorInternalUser InternalUser @relation("InternalAuditEventActor", fields: [tenantId, actorInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   // Milestone S0D-1 — the owning tenant. REQUIRED since tenant isolation
   // phase 2: every write supplies it explicitly (root writes from the
@@ -1123,7 +1124,7 @@ model InternalRolePermission {
   permissionKey String
   createdAt     DateTime @default(now())
 
-  role InternalRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  role InternalRole @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
 
   // Milestone S0D-2E — the owning tenant. REQUIRED, copied from the owning
   // InternalRole (the same authoritative-parent pattern as every other
@@ -1151,8 +1152,13 @@ model InternalUserRoleAssignment {
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
-  internalUser InternalUser @relation(fields: [internalUserId], references: [id], onDelete: Cascade)
-  role         InternalRole @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  internalUser InternalUser @relation(fields: [tenantId, internalUserId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+  role         InternalRole @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  // Security 4C-5 — a LOCATION assignment's scopeId is a Location of the
+  // SAME business (composite foreign key); CORPORATE leaves it null. A CHECK
+  // constraint (migration) keeps scopeType and scopeId consistent, and a
+  // partial unique index allows one CORPORATE grant per user and role.
+  location     Location?    @relation(fields: [tenantId, scopeId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   // Milestone S0D-2E — the owning tenant. REQUIRED, copied from the
   // assigned InternalUser — the same authoritative-parent pattern as every
@@ -1308,8 +1314,8 @@ model ChecklistInstanceItem {
   createdAt                 DateTime  @default(now())
 
   checklistInstance ChecklistInstance @relation(fields: [checklistInstanceId], references: [id], onDelete: Cascade)
-  completedBy       InternalUser?     @relation("ChecklistItemCompletedBy", fields: [completedByInternalUserId], references: [id], onDelete: Restrict)
-  exceptionBy       InternalUser?     @relation("ChecklistItemExceptionBy", fields: [exceptionByInternalUserId], references: [id], onDelete: Restrict)
+  completedBy       InternalUser?     @relation("ChecklistItemCompletedBy", fields: [tenantId, completedByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  exceptionBy       InternalUser?     @relation("ChecklistItemExceptionBy", fields: [tenantId, exceptionByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
   // every write supplies it explicitly (root writes from the request's
@@ -1348,8 +1354,8 @@ model OperationsTask {
   updatedAt                 DateTime  @updatedAt
 
   location    Location      @relation(fields: [locationId], references: [id])
-  createdBy   InternalUser  @relation("OperationsTaskCreatedBy", fields: [createdByInternalUserId], references: [id], onDelete: Restrict)
-  completedBy InternalUser? @relation("OperationsTaskCompletedBy", fields: [completedByInternalUserId], references: [id], onDelete: Restrict)
+  createdBy   InternalUser  @relation("OperationsTaskCreatedBy", fields: [tenantId, createdByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  completedBy InternalUser? @relation("OperationsTaskCompletedBy", fields: [tenantId, completedByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
   // every write supplies it explicitly (root writes from the request's
@@ -1474,7 +1480,7 @@ model MochaBeanLedgerEntry {
 
   loyaltyAccount    CustomerLoyaltyAccount @relation(fields: [tenantId, loyaltyAccountId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
   order             Order?                 @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: SetNull, onUpdate: Restrict)
-  actorInternalUser InternalUser?          @relation("MochaBeanLedgerActor", fields: [actorInternalUserId], references: [id], onDelete: Restrict)
+  actorInternalUser InternalUser?          @relation("MochaBeanLedgerActor", fields: [tenantId, actorInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   // Milestone S0D-1 — the owning tenant. REQUIRED since tenant isolation
   // phase 2: every write supplies it explicitly (root writes from the
@@ -2273,7 +2279,7 @@ model GiftCardTransaction {
   createdAt              DateTime                @default(now())
 
   giftCard          GiftCard          @relation(fields: [tenantId, giftCardId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
-  actorInternalUser InternalUser?     @relation("GiftCardTransactionActor", fields: [actorInternalUserId], references: [id], onDelete: Restrict)
+  actorInternalUser InternalUser?     @relation("GiftCardTransactionActor", fields: [tenantId, actorInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   order             Order?            @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: SetNull, onUpdate: Restrict)
   giftCardPurchase  GiftCardPurchase? @relation(fields: [tenantId, giftCardPurchaseId], references: [tenantId, id], onDelete: SetNull, onUpdate: Restrict)
 
@@ -2592,7 +2598,7 @@ model JobApplicationNote {
   jobApplicationId     String
   jobApplication       JobApplication @relation(fields: [jobApplicationId], references: [id], onDelete: Cascade)
   authorInternalUserId String
-  authorInternalUser   InternalUser   @relation("JobApplicationNoteAuthor", fields: [authorInternalUserId], references: [id], onDelete: Restrict)
+  authorInternalUser   InternalUser   @relation("JobApplicationNoteAuthor", fields: [tenantId, authorInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   body                 String
   createdAt            DateTime       @default(now())
 
@@ -2623,7 +2629,7 @@ model CustomerNote {
   createdAt            DateTime @default(now())
 
   customer           Customer     @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
-  authorInternalUser InternalUser @relation("CustomerNoteAuthor", fields: [authorInternalUserId], references: [id], onDelete: Restrict)
+  authorInternalUser InternalUser @relation("CustomerNoteAuthor", fields: [tenantId, authorInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   // Milestone S0D-1 / S0D-2B-2 — the owning tenant. REQUIRED since
   // S0D-2B-2: copied from the tenant-validated parent Customer. No default.
@@ -2695,7 +2701,7 @@ model FranchiseInquiryNote {
   franchiseInquiryId   String
   franchiseInquiry     FranchiseInquiry @relation(fields: [franchiseInquiryId], references: [id], onDelete: Cascade)
   authorInternalUserId String
-  authorInternalUser   InternalUser     @relation("FranchiseInquiryNoteAuthor", fields: [authorInternalUserId], references: [id], onDelete: Restrict)
+  authorInternalUser   InternalUser     @relation("FranchiseInquiryNoteAuthor", fields: [tenantId, authorInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   body                 String
   createdAt            DateTime         @default(now())
 
@@ -2765,7 +2771,7 @@ model MediaAsset {
   altText                  String?
   isActive                 Boolean      @default(true)
   uploadedByInternalUserId String
-  uploadedByInternalUser   InternalUser @relation("MediaAssetUploader", fields: [uploadedByInternalUserId], references: [id], onDelete: Restrict)
+  uploadedByInternalUser   InternalUser @relation("MediaAssetUploader", fields: [tenantId, uploadedByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   createdAt                DateTime     @default(now())
   updatedAt                DateTime     @updatedAt
 
@@ -2899,9 +2905,9 @@ model ApprovalRequest {
   status     ApprovalStatus @default(PENDING)
 
   requestedByInternalUserId String
-  requestedByInternalUser   InternalUser  @relation("ApprovalRequester", fields: [requestedByInternalUserId], references: [id], onDelete: Restrict)
+  requestedByInternalUser   InternalUser  @relation("ApprovalRequester", fields: [tenantId, requestedByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   decidedByInternalUserId   String?
-  decidedByInternalUser     InternalUser? @relation("ApprovalDecider", fields: [decidedByInternalUserId], references: [id], onDelete: Restrict)
+  decidedByInternalUser     InternalUser? @relation("ApprovalDecider", fields: [tenantId, decidedByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   decisionReason            String?
 
   createdAt DateTime  @default(now())

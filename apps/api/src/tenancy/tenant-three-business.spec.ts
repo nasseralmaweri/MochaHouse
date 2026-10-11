@@ -140,7 +140,6 @@ describe('Three-business tenant isolation (integration)', () => {
         permissions: {
           create: permissions.map((permissionKey) => ({
             permissionKey,
-            tenantId,
           })),
         },
       },

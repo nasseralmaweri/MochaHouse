@@ -1234,7 +1234,8 @@ describe('Tenant-enforced foreign keys: customers, orders, payments (Security 4C
       // Per table: a move the foreign keys alone would allow.
       const moves: Record<string, string> = {
         Customer: `UPDATE "Customer" SET "tenantId" = '${TENANTS.b}' WHERE id = '${a('customer-bare')}'`,
-        CustomerNote: `UPDATE "CustomerNote" SET "tenantId" = '${TENANTS.b}', "customerId" = '${b('customer-spare')}' WHERE id = '${a('note')}'`,
+        // (Since Security 4C-5 the author must be staff of the same business.)
+        CustomerNote: `UPDATE "CustomerNote" SET "tenantId" = '${TENANTS.b}', "customerId" = '${b('customer-spare')}', "authorInternalUserId" = '${b('staff')}' WHERE id = '${a('note')}'`,
         CustomerPreferredLocation: `UPDATE "CustomerPreferredLocation" SET "tenantId" = '${TENANTS.b}', "customerId" = '${b('customer-spare')}', "locationId" = '${b('location-bare')}' WHERE id = '${a('pref')}'`,
         Location: `UPDATE "Location" SET "tenantId" = '${TENANTS.b}' WHERE id = '${a('location-bare')}'`,
         Order: `UPDATE "Order" SET "tenantId" = '${TENANTS.b}', "locationId" = '${b('location-spare')}', "paymentAttemptId" = '${b('payment-spare')}' WHERE id = '${a('order-2')}'`,

@@ -94,10 +94,10 @@ container starts with only the maintenance database.
 ## Tenant relationship integrity (Security 4C-1)
 
 `packages/database/src/integrity/relationship-inventory.ts` classifies all
-105 references between business-owned records (85 composite foreign-key
-candidates — 84 existing foreign keys, 26 of them tenant-enforced since
-Security 4C-3 / 4C-4, and 1 plain column — 8 historical
-snapshots, 5 polymorphic references, 6 JSON columns, 1 external id).
+105 references between business-owned records (86 composite foreign-key
+candidates — 85 existing foreign keys, 43 of them tenant-enforced since
+Security 4C-3 / 4C-4 / 4C-5, and 1 plain column — 8 historical
+snapshots, 4 polymorphic references, 6 JSON columns, 1 external id).
 `tenant-relationship-inventory.spec.ts` fails when the schema gains, loses or
 changes one without a classification.
 
@@ -258,9 +258,9 @@ Never automatic. Revert the composite relations in `schema.prisma` and ship
 (one `DO` block) as a new forward migration. It restores the eight original
 single-column foreign keys exactly and removes the nine composite keys, the
 `Order ("tenantId", "paymentAttemptId")` key and the eight triggers; data is
-untouched. Roll back 4C-4 first: its triggers use 4C-3's
+untouched. Roll back 4C-5 and 4C-4 first: their triggers use 4C-3's
 `reject_tenant_reassignment()` function, so a 4C-3 rollback is refused (and
-changes nothing) while 4C-4 is applied. Tested end to end with real Prisma
+changes nothing) while either is applied. Tested end to end with real Prisma
 (catalog identical to a pre-4C-3 database).
 
 ## Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)
@@ -385,7 +385,148 @@ Never automatic. Revert the 4C-4 relations in `schema.prisma` and ship
 (seventeen composite keys, eight indexes, fourteen ownership, seven
 snapshot and four id-reuse triggers, and their two functions) and restores the sixteen
 original single-column keys exactly; it keeps 4C-3's function. Roll back in
-reverse order: 4C-4, then 4C-3, then 4C-2.
+reverse order: 4C-5, then 4C-4, then 4C-3, then 4C-2.
+
+## Tenant-enforced staff authorization (Security 4C-5)
+
+Migration `20261014090000_tenant_fk_staff_authorization` makes PostgreSQL
+enforce that staff identities, roles, role assignments and every staff-actor
+reference stay inside one business. Seventeen relationships use a composite
+foreign key `("tenantId", col) -> parent ("tenantId", "id")`:
+
+| Relationship | Parent | On delete |
+| --- | --- | --- |
+| `InternalRolePermission.roleId` | InternalRole | CASCADE |
+| `InternalUserRoleAssignment.internalUserId` | InternalUser | CASCADE |
+| `InternalUserRoleAssignment.roleId` | InternalRole | RESTRICT |
+| `InternalUserRoleAssignment.scopeId` (optional, **new FK**) | Location | RESTRICT |
+| `InternalAuditEvent.actorInternalUserId` | InternalUser | RESTRICT |
+| `ApprovalRequest.requestedByInternalUserId` | InternalUser | RESTRICT |
+| `ApprovalRequest.decidedByInternalUserId` (optional) | InternalUser | RESTRICT |
+| `ChecklistInstanceItem.completedByInternalUserId` (optional) | InternalUser | RESTRICT |
+| `ChecklistInstanceItem.exceptionByInternalUserId` (optional) | InternalUser | RESTRICT |
+| `OperationsTask.createdByInternalUserId` | InternalUser | RESTRICT |
+| `OperationsTask.completedByInternalUserId` (optional) | InternalUser | RESTRICT |
+| `CustomerNote.authorInternalUserId` | InternalUser | RESTRICT |
+| `JobApplicationNote.authorInternalUserId` | InternalUser | RESTRICT |
+| `FranchiseInquiryNote.authorInternalUserId` | InternalUser | RESTRICT |
+| `MediaAsset.uploadedByInternalUserId` | InternalUser | RESTRICT |
+| `MochaBeanLedgerEntry.actorInternalUserId` (optional) | InternalUser | RESTRICT |
+| `GiftCardTransaction.actorInternalUserId` (optional) | InternalUser | RESTRICT |
+
+- **Role-assignment scope.** `scopeId` was the only polymorphic staff
+  reference, and its only target type is `Location` (CORPORATE carries no
+  id). It keeps its name (no contract or API change) and gains its first
+  foreign key: a LOCATION grant can only name a location of the same
+  business. A CHECK (`InternalUserRoleAssignment_scope_shape_check`) keeps
+  CORPORATE ⇔ no `scopeId` and LOCATION ⇔ a `scopeId`, the shape
+  `AuthorizationService` already required. A future scope type (for example
+  a location group) needs its own foreign key and this CHECK updated.
+- **One CORPORATE grant per user and role.** The existing unique key treats
+  NULL `scopeId`s as distinct, so two identical CORPORATE grants were
+  possible (the application's Serializable check normally prevented them)
+  and revoking one would have left the other in force. A partial unique
+  index (`InternalUserRoleAssignment_corporate_grant_key`) now rules that
+  out.
+- Delete behaviour is unchanged, with one intended exception: a location
+  that a LOCATION grant names can no longer be deleted out from under the
+  grant (the grant used to be left pointing at nothing). The application
+  never deletes locations, users or roles.
+- **Ownership:** eleven more tables reject any change of `tenantId` on an
+  existing row (`<Table>_tenantId_immutable`, SQLSTATE `23001`):
+  `InternalUser`, `InternalRole`, `InternalRolePermission`,
+  `InternalUserRoleAssignment`, `InternalAuditEvent`, `ApprovalRequest`,
+  `ChecklistInstanceItem`, `OperationsTask`, `JobApplicationNote`,
+  `FranchiseInquiryNote` and `MediaAsset` (`CustomerNote`,
+  `MochaBeanLedgerEntry` and `GiftCardTransaction` already were). 4C-5
+  requires 4C-3's `reject_tenant_reassignment()` and never drops it.
+- Prisma: since the staff relations are composite, a nested create under a
+  user, role or location takes `tenantId` from the parent (do not pass it),
+  and including `role` on an assignment resolves only a role of the
+  assignment's own business. Clear an optional staff actor by setting its
+  column to `null`; a relation `disconnect` would clear `tenantId` too and
+  is refused (a tripwire test lists every `disconnect` in application code).
+- Not included: the operations records' own links
+  (`ChecklistInstance.locationId` / `templateId`,
+  `ChecklistInstanceItem.checklistInstanceId`, `OperationsTask.locationId`)
+  stay single-column for a later milestone, and the catalog/offer links stay
+  in Security 4C-6; audit and approval *targets* stay polymorphic (checked
+  by the integrity checker).
+- `tenant-fk-staff-authorization.spec.ts` proves, with three fictional
+  businesses: same-business onboarding, role change, location grant,
+  revocation and staff-actor writes accepted; every cross-business grant,
+  role, permission, location, staff actor and move rejected by PostgreSQL
+  (direct SQL for all seventeen relationships and six business pairs, and
+  Prisma nested create / connect / set / connectOrCreate, upsert,
+  updateMany); malformed scopes and duplicate CORPORATE grants rejected;
+  the application's assignment, revocation, deactivation and note paths
+  tenant-safe (concurrent duplicate grants yield exactly one); delete
+  outcomes identical to a pre-4C-5 database except the one above; the
+  integrity checker `CLEAN`; every removed key, trigger, CHECK or index
+  detected; and, with real `prisma migrate deploy`: success without drift,
+  preflight abort, missing-4C-3 refusal, late failure, lock timeout,
+  recovery, rollback and re-apply, the refused 4C-3 rollback, and the full
+  4C-5 → 4C-4 → 4C-3 rollback chain.
+
+### If the 4C-5 migration fails
+
+It is one `DO` block: nothing was changed. Its preflight lists, per
+relationship, rows pointing at another business's (or a missing) user,
+role or location, assignments whose scope shape is malformed, and user/role
+pairs holding duplicate CORPORATE grants. It never repairs, merges, revokes
+or reassigns anything — which grant to keep, or which business's staff
+member authored a record, is a human decision. Correct each reported row
+deliberately, then:
+
+```bash
+pnpm --filter @mocha-house/database exec prisma migrate resolve --rolled-back 20261014090000_tenant_fk_staff_authorization
+pnpm --filter @mocha-house/database exec prisma migrate deploy
+```
+
+It takes the same 5-second `lock_timeout` as 4C-3 and 4C-4.
+
+### Rolling back 4C-5
+
+Never automatic. Revert the 4C-5 relations in `schema.prisma` (back to
+single-column relations; remove `InternalUserRoleAssignment.location` and
+`Location.staffRoleAssignments`) and ship
+`prisma/rollbacks/20261014090000_tenant_fk_staff_authorization.down.sql`
+(one `DO` block) as a new forward migration. It removes only what 4C-5
+added (seventeen composite keys, the scope CHECK, the CORPORATE-grant index
+and eleven ownership triggers) and restores the sixteen original
+single-column keys exactly; it keeps 4C-3's function. Roll back in reverse
+order: 4C-5, then 4C-4, then 4C-3, then 4C-2. (PostgreSQL itself refuses a
+4C-3 rollback while 4C-5 is applied; a 4C-4 rollback shares no object with
+4C-5 and is not refused, so the order is a procedure — follow it.)
+
+## Tracked security follow-ups (Security 4C-5 review)
+
+Recorded by the independent Security 4C-5 review. None of these blocks
+merging Security 4C-5; each has an owner milestone and a deadline below.
+They are tracked here until each is closed by implementation, tests and
+review.
+
+### Prerequisites for the next development milestone
+
+| # | Follow-up | Why | Done when |
+| --- | --- | --- | --- |
+| F-1 | **Harden disposable-database test commands.** | The local command sequence under "Running the same checks locally" (and any ad-hoc script) runs the next command even when `db:create-disposable` refuses the database; `prisma migrate deploy` then **creates and migrates an unguarded database**. Observed during the 4C-5 review on a local, disposable server (database dropped unused). CI is not affected: each step is a separate job step and a failure stops the job. | The documented sequence stops on the first failure (for example `set -euo pipefail` or one script that exits on a refused guard), and `migrate deploy` / `db seed` in test tooling refuse a database the guard has not approved. |
+| F-2 | **Map concurrent role-assignment conflicts to controlled API responses.** | Under concurrent identical assignments the database keeps exactly one grant (Serializable transaction + `InternalUserRoleAssignment_corporate_grant_key`), but a losing request can surface an unmapped Prisma `P2034` (serialization failure) as HTTP 500 instead of 409. Integrity is not affected. | Serialization failures and unique violations on assignment return the same 409 as a sequential duplicate, with a test. |
+| F-3 | **Security 4C-6 product-snapshot finding** (see "OPEN SECURITY FINDING — MANDATORY SECURITY 4C-6 DELIVERABLE" above). | Deleted product ids can be reused by another business while a kept snapshot names them. | Closed by 4C-6 as stated in that finding. It is the next security milestone's mandatory deliverable. |
+
+### Prerequisites for onboarding a second production business
+
+| # | Follow-up | Why | Done when |
+| --- | --- | --- | --- |
+| T-1 | **Tenant-bound staff authentication** (separate identity milestone; approved direction). | Today one verified login may hold an `InternalUser` row in several businesses and switch between them with `X-Tenant-Id` (membership is re-validated on every request, so this is not an exploit, but it contradicts the approved single-tenant staff login policy). An ACTIVE, not-yet-bound `InternalUser` row in another business carrying a person's verified email **automatically attaches that person's existing login** to that business. | Each staff login belongs to exactly one business, carried as a trusted, server-set claim and checked against `InternalUser.tenantId`; cross-business switching (`X-Tenant-Id`, business chooser) and automatic cross-tenant email binding are removed; invitations are single-use and tenant-bound; recovery and deactivation are tenant-scoped; CENTERIVO platform administrators use a separate identity and authorization domain. |
+| T-2 | **Non-owner, least-privilege application database role.** | The runtime role owns the tables. Verified in review: a non-superuser **owner** cannot use `session_replication_role` or disable foreign-key system triggers, but **can** disable the ownership triggers (`ALTER TABLE … DISABLE TRIGGER USER`) and drop the composite foreign keys. | Migrations run as a dedicated owner role; the application runs as a NOSUPERUSER, non-owner role with DML privileges only (no DDL, no `TRUNCATE`); the integrity checker uses a read-only role; verified on a disposable database. |
+| T-3 | **F-3 closed** (Security 4C-6). | As above. | As above. |
+
+### Product decision (not a tenant-isolation prerequisite)
+
+| # | Follow-up | Why | Done when |
+| --- | --- | --- | --- |
+| P-1 | **Inactive-location authorization policy.** | A LOCATION grant on a **deactivated** location still authorizes actions at that location and appears in the person's access summary (`AuthorizationService` loads every location of the business, active or not). This stays inside one business; it is a product question, not a cross-tenant risk. | Product decides whether grants on inactive locations stay effective, become read-only, or are ignored; the decision is implemented with tests, at the latest with the custom roles / location groups work. |
 
 ## Running the same checks locally
 

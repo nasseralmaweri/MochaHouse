@@ -141,7 +141,7 @@ describe('Admin reports — CSV export (integration, Milestone 9E)', () => {
         key: `export-spec-${suffix}-${randomUUID()}`,
         displayName,
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });

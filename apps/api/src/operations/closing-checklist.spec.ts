@@ -70,7 +70,7 @@ describe('Closing Checklist (integration)', () => {
         key: `closing-spec-${suffix}-${randomUUID()}`,
         displayName: 'Closing Spec Role',
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });

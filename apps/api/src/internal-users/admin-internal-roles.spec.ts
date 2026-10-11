@@ -73,7 +73,7 @@ describe('Admin access levels read (integration)', () => {
         description: options.description ?? null,
         isSystem: options.isSystem ?? false,
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });

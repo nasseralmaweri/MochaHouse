@@ -118,7 +118,6 @@ describe('Checkout financial isolation (integration)', () => {
         permissions: {
           create: INTERNAL_PERMISSION_KEYS.map((permissionKey) => ({
             permissionKey,
-            tenantId,
           })),
         },
       },

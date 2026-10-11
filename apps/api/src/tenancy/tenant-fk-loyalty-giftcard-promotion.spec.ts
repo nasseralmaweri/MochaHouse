@@ -2105,6 +2105,12 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
     const scratches: ScratchDatabase[] = [];
     const beforeNames = migrations.slice(0, targetIndex).map((m) => m.name);
     const allNames = migrations.map((m) => m.name);
+    // Up to and including 4C-4: later milestones roll back first (Security
+    // 4C-5's triggers use the same 4C-3 function), so 4C-4's own rollback is
+    // exercised on a database migrated up to 4C-4.
+    const throughNames = migrations
+      .slice(0, targetIndex + 1)
+      .map((m) => m.name);
 
     afterAll(async () => {
       for (const scratch of scratches) await scratch.drop();
@@ -2340,7 +2346,15 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
     it('the documented rollback — shipped as a new forward migration — restores the pre-4C-4 catalog exactly, keeps the data, and 4C-4 re-applies', async () => {
       const scratch = await beforeFourC4('fk_lgp_rollback');
       const data = await dataChecksum(scratch.url);
-      expect((await prisma(scratch.url, ['migrate', 'deploy'])).code).toBe(0);
+      expect(
+        (
+          await prisma(
+            scratch.url,
+            ['migrate', 'deploy'],
+            project(throughNames),
+          )
+        ).code,
+      ).toBe(0);
       const rollback = {
         name: '20261013100000_rollback_tenant_fk_loyalty_giftcard_promotion',
         sql: rollbackSql,
@@ -2350,7 +2364,7 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
           await prisma(
             scratch.url,
             ['migrate', 'deploy'],
-            project(allNames, rollback),
+            project(throughNames, rollback),
           )
         ).code,
       ).toBe(0);
@@ -2377,7 +2391,7 @@ describe('Tenant-enforced loyalty, gift cards and promotions (Security 4C-4)', (
           await prisma(
             scratch.url,
             ['migrate', 'deploy'],
-            project(allNames, [rollback, reapply]),
+            project(throughNames, [rollback, reapply]),
           )
         ).code,
       ).toBe(0);

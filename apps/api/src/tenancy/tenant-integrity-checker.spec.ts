@@ -476,7 +476,8 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
         `UPDATE "Order" SET "locationId" = '${b.location}', "customerId" = '${b.customer}' WHERE "id" = '${a.order}';
          UPDATE "PaymentAttempt" SET "locationId" = '${b.location}' WHERE "id" = '${a.payment}';
          UPDATE "PaymentAttempt" SET "locationId" = '${missingId}' WHERE "id" = '${b.payment}';
-         UPDATE "OrderPromotionRedemption" SET "customerId" = '${b.customer}', "sourcePromotionId" = '${b.promotion}' WHERE "id" = '${a.redemption}';`,
+         UPDATE "OrderPromotionRedemption" SET "customerId" = '${b.customer}', "sourcePromotionId" = '${b.promotion}' WHERE "id" = '${a.redemption}';
+         UPDATE "InternalUserRoleAssignment" SET "scopeId" = '${b.location}' WHERE "id" = '${a.assignment}';`,
       );
       await prisma.menuProduct.update({
         where: { menuId_productId: { menuId: a.menu, productId: a.product } },
@@ -496,37 +497,10 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
         where: { id: b.line },
         data: { productId: missingId },
       });
-      // Polymorphic: staff scope (cross, CORPORATE with an id, LOCATION
-      // without one), audit target (cross, unknown type), approval target,
-      // outbox aggregate.
-      await prisma.internalUserRoleAssignment.update({
-        where: { id: a.assignment },
-        data: { scopeId: b.location },
-      });
-      const role2 = await prisma.internalRole.create({
-        data: { tenantId: A, key: 'a-role-2', displayName: 'A Role 2' },
-      });
-      const role3 = await prisma.internalRole.create({
-        data: { tenantId: A, key: 'a-role-3', displayName: 'A Role 3' },
-      });
-      await prisma.internalUserRoleAssignment.create({
-        data: {
-          tenantId: A,
-          internalUserId: a.user,
-          roleId: role2.id,
-          scopeType: 'CORPORATE',
-          scopeId: a.location,
-        },
-      });
-      await prisma.internalUserRoleAssignment.create({
-        data: {
-          tenantId: A,
-          internalUserId: a.user,
-          roleId: role3.id,
-          scopeType: 'LOCATION',
-          scopeId: null,
-        },
-      });
+      // Polymorphic: audit target (cross, unknown type), approval target,
+      // outbox aggregate. (The staff scope is a composite foreign key since
+      // Security 4C-5, planted above; its shape is a CHECK constraint that
+      // no legacy row can violate.)
       await prisma.internalAuditEvent.update({
         where: { id: a.audit },
         data: { targetId: b.customer },
@@ -663,9 +637,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
           'violation CmsPage.draftContent cross-tenant [hero.backgroundImageId] x1',
           'violation CmsPage.publishedContent missing-target [hero.backgroundImageId] x1',
           'violation InternalAuditEvent.targetId cross-tenant [customer] x1',
-          'violation InternalUserRoleAssignment.scopeId cross-tenant [LOCATION] x1',
-          'violation InternalUserRoleAssignment.scopeId invalid-reference [CORPORATE must not carry an id] x1',
-          'violation InternalUserRoleAssignment.scopeId missing-required [LOCATION requires an id] x1',
+          'violation InternalUserRoleAssignment.scopeId cross-tenant x1',
           'violation MenuProduct.productId cross-tenant x1',
           'violation Order.customerId cross-tenant x1',
           'violation Order.locationId cross-tenant x1',
@@ -688,7 +660,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
           'warning OrderLine.productId missing-target x1',
         ].sort(),
       );
-      expect(report.violations).toBe(24);
+      expect(report.violations).toBe(22);
       expect(report.warnings).toBe(5);
       expect(report.verdict).toBe('violations');
     });
@@ -723,9 +695,9 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     it('summarizes violations by relationship type', () => {
       expect(report.byKind).toEqual({
         'composite-fk-candidate': {
-          relationships: 85,
-          checked: 85,
-          violations: 7,
+          relationships: 86,
+          checked: 86,
+          violations: 8,
           warnings: 0,
         },
         'historical-snapshot': {
@@ -735,9 +707,9 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
           warnings: 1,
         },
         polymorphic: {
-          relationships: 5,
-          checked: 5,
-          violations: 13,
+          relationships: 4,
+          checked: 4,
+          violations: 10,
           warnings: 4,
         },
         'json-reference': {
@@ -786,7 +758,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
 
     it('reports without samples when asked to', async () => {
       const quiet = await check({ sampleLimit: 0 });
-      expect(quiet.violations).toBe(24);
+      expect(quiet.violations).toBe(22);
       expect(quiet.findings.every((f) => f.sampleKeys.length === 0)).toBe(true);
     });
 
@@ -813,7 +785,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
       expect(result.code).toBe(1);
       expect(result.out).toMatch(/^Verdict: VIOLATIONS/m);
       expect(result.out).toContain(
-        '24 violation(s), 5 warning(s), 2 row(s) not checkable',
+        '22 violation(s), 5 warning(s), 2 row(s) not checkable',
       );
       expect(result.out).toContain('Order.locationId cross-tenant: 1');
       const url = new URL(scratch.url);

@@ -92,7 +92,7 @@ describe('Internal admin authorization matrix (integration)', () => {
         key: `authz-matrix-${suffix}-${randomUUID()}`,
         displayName: 'authz matrix spec role',
         permissions: {
-          create: permissions.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissions.map((permissionKey) => ({ permissionKey })),
         },
       },
     });

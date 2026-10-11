@@ -125,7 +125,6 @@ describe('Admin cross-tenant read isolation (integration)', () => {
         permissions: {
           create: permissions.map((permissionKey) => ({
             permissionKey,
-            tenantId,
           })),
         },
       },
@@ -325,6 +324,10 @@ describe('Admin cross-tenant read isolation (integration)', () => {
       where: { customerId: f.customerId },
     });
     await prisma.customer.deleteMany({ where: { id: f.customerId } });
+    // A LOCATION grant references its Location (Security 4C-5).
+    await prisma.internalUserRoleAssignment.deleteMany({
+      where: { scopeId: f.locationId },
+    });
     await prisma.location.deleteMany({ where: { id: f.locationId } });
   }
 

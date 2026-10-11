@@ -69,7 +69,7 @@ describe('Opening Checklist management exception (integration)', () => {
         key: `exc-spec-${suffix}-${randomUUID()}`,
         displayName: 'Exception Spec Role',
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });

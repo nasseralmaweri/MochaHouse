@@ -68,7 +68,7 @@ describe('CMS / Home page (integration)', () => {
         tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: `home-cms-spec-${suffix}-${randomUUID()}`,
         displayName: name,
-        permissions: { create: keys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })) },
+        permissions: { create: keys.map((permissionKey) => ({ permissionKey })) },
       },
     });
     roleIds.push(role.id);
