@@ -440,7 +440,6 @@ describe('Opening Checklist (integration)', () => {
         items: {
           create: [
             {
-              tenantId: TENANT_1_MOCHA_HOUSE_ID,
               section: 'Building & Security',
               label: 'Old item',
               sortOrder: 1,

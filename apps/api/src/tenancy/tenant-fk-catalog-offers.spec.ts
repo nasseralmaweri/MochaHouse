@@ -1944,8 +1944,12 @@ describe('Tenant-enforced catalog, offers and product snapshots (Security 4C-6)'
         (r) =>
           `${r.finished ? 'finished' : 'unfinished'}${r.rolled_back ? '+rolled-back' : ''}`,
       );
-    const noDrift = async (url: string) =>
-      (
+    // schema.prisma describes the newest migration, so the later ones
+    // (Security 4C-7 onwards) are applied first, by the real runner.
+    const noDrift = async (url: string) => {
+      const later = await prisma(url, ['migrate', 'deploy']);
+      if (later.code !== 0) return later.code;
+      return (
         await prisma(url, [
           'migrate',
           'diff',
@@ -1955,6 +1959,7 @@ describe('Tenant-enforced catalog, offers and product snapshots (Security 4C-6)'
           '--exit-code',
         ])
       ).code;
+    };
     const enforcement = (url: string) =>
       withScratchClient(url, tenantEnforcement);
 

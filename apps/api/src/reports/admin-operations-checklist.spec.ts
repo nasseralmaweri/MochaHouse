@@ -135,7 +135,6 @@ describe('Admin reports — operations checklist visibility (integration)', () =
         completedAt: options.completedAt ?? null,
         items: {
           create: (options.items ?? []).map((item, index) => ({
-            tenantId: TENANT_1_MOCHA_HOUSE_ID,
             section: 'Test Section',
             label: `Test item ${index + 1}`,
             sortOrder: index + 1,
