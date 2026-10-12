@@ -72,7 +72,11 @@ describe('GET /api/v1/customers/me/loyalty (integration)', () => {
       },
     });
     await prisma.customerLoyaltyAccount.create({
-      data: { customerId: customer.id, balance },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        customerId: customer.id,
+        balance,
+      },
     });
     return customer.id;
   }

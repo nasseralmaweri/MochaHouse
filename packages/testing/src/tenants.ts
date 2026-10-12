@@ -4,6 +4,10 @@ import {
   type TenantContext,
   type TenantPrincipalType,
 } from '@mocha-house/database';
+import {
+  assertDeletableTestTenantId,
+  assertDisposableDatabase,
+} from './disposable-database';
 
 // TEST-ONLY tenant fixtures (Milestone S0C).
 //
@@ -36,6 +40,7 @@ interface TenantFixtureClient {
 
 // Idempotent: returns the fixed Tenant B id whether or not it existed.
 export async function createTestTenantB(client: TenantFixtureClient): Promise<string> {
+  await assertDisposableDatabase();
   const tenant = await client.tenant.upsert({
     where: { id: TEST_TENANT_B_ID },
     update: {},
@@ -52,7 +57,47 @@ export async function createTestTenantB(client: TenantFixtureClient): Promise<st
 // Always call from the creating test's cleanup, so Tenant B never lingers
 // in a shared development database.
 export async function removeTestTenantB(client: TenantFixtureClient): Promise<void> {
-  await client.tenant.deleteMany({ where: { id: TEST_TENANT_B_ID } });
+  await removeTestTenant(client, TEST_TENANT_B_ID);
+}
+
+// Security 4C-1 — the only way the shared helpers delete a business: the
+// id must be a test-only business (never Mocha House / Tenant #1) and the
+// database must be proven disposable first.
+export async function removeTestTenant(
+  client: TenantFixtureClient,
+  tenantId: string,
+): Promise<void> {
+  assertDeletableTestTenantId(tenantId);
+  await assertDisposableDatabase();
+  await client.tenant.deleteMany({ where: { id: tenantId } });
+}
+
+// Security 4B — a THIRD test-only business, so isolation suites can prove
+// every pair (A↔B, A↔C, B↔C) — including pairs where neither business is
+// Mocha House. Same rules as Tenant B: created and removed by the test that
+// uses it, never resolved by application code on its own. Distinct from the
+// suspended "Tenant C" the S0F tenant-resolution spec defines locally.
+export const TEST_TENANT_C_ID = '01a0db02-f800-7000-8000-7e5700000c0c';
+export const TEST_TENANT_C_SLUG = 'test-tenant-c';
+export const TEST_TENANT_C_NAME = 'Test Tenant C (isolation tests only)';
+
+export async function createTestTenantC(client: TenantFixtureClient): Promise<string> {
+  await assertDisposableDatabase();
+  const tenant = await client.tenant.upsert({
+    where: { id: TEST_TENANT_C_ID },
+    update: {},
+    create: {
+      id: TEST_TENANT_C_ID,
+      slug: TEST_TENANT_C_SLUG,
+      name: TEST_TENANT_C_NAME,
+      status: 'ACTIVE',
+    },
+  });
+  return tenant.id;
+}
+
+export async function removeTestTenantC(client: TenantFixtureClient): Promise<void> {
+  await removeTestTenant(client, TEST_TENANT_C_ID);
 }
 
 // A server-side TenantContext for a test that calls a service directly

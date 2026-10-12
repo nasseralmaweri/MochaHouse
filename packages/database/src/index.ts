@@ -8,3 +8,7 @@ export { PrismaClient, Prisma } from './generated/prisma/client';
 // S0C — tenant foundation (framework-neutral): TenantContext, the model
 // tenancy registry, the report-only query audit and single-tenant config.
 export * from './tenancy';
+
+// Security 4C-1 — the tenant relationship inventory and the read-only
+// integrity checker built on it.
+export * from './integrity';

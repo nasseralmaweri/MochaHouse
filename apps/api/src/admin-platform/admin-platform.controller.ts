@@ -4,6 +4,8 @@ import { InternalAuthGuard } from '../internal-auth/infrastructure/internal-auth
 import { PermissionGuard } from '../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../internal-auth/authorization/require-permission.decorator';
 import type { InternalAuthenticatedRequest } from '../internal-auth/infrastructure/internal-identity';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../tenancy/current-tenant-context.decorator';
 
 // Administration → Platform Status (Milestone 5G). Read-only.
 //
@@ -18,7 +20,10 @@ export class AdminPlatformController {
 
   @RequirePermission('platform.view')
   @Get('status')
-  status(@Req() request: InternalAuthenticatedRequest) {
-    return this.service.getStatus(request.authorization!);
+  status(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.service.getStatus(request.authorization!, tenant);
   }
 }

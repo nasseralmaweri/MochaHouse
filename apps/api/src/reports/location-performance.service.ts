@@ -4,6 +4,7 @@ import type {
   AdminLocationPerformanceRow,
   OrderStatus,
 } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthorizationContext } from '../internal-auth/authorization/authorization-context';
 import {
@@ -35,6 +36,7 @@ export class LocationPerformanceReportService {
   async getLocationPerformance(
     query: LocationPerformanceQuery,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLocationPerformanceReport> {
     // `reports.view` is CORPORATE-only in the permission catalog, so
     // PermissionGuard already rejects a LOCATION grant; this is the
@@ -60,7 +62,10 @@ export class LocationPerformanceReportService {
     // step).
     const grouped = await this.prisma.order.groupBy({
       by: ['locationId', 'status'],
-      where: { createdAt: { gte: start, lt: endExclusive } },
+      where: {
+        tenantId: tenant.tenantId,
+        createdAt: { gte: start, lt: endExclusive },
+      },
       _count: { _all: true },
       _sum: {
         subtotal: true,
@@ -97,6 +102,7 @@ export class LocationPerformanceReportService {
     // order in the selected period (preserves history without resurrecting
     // a closed location that has nothing to show for this period).
     const allLocations = await this.prisma.location.findMany({
+      where: { tenantId: tenant.tenantId },
       select: { id: true, name: true, isActive: true, isDigitalOrderingEnabled: true },
     });
 

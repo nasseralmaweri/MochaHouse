@@ -60,10 +60,20 @@ describe('CheckoutService (integration)', () => {
     await prisma.$connect();
 
     const location = await prisma.location.findUniqueOrThrow({
-      where: { slug: 'dearborn-heights' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'dearborn-heights',
+        },
+      },
     });
     const product = await prisma.product.findUniqueOrThrow({
-      where: { slug: 'drip-coffee' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'drip-coffee',
+        },
+      },
       include: {
         modifierGroups: {
           include: { modifierGroup: { include: { options: true } } },
@@ -499,11 +509,16 @@ describe('CheckoutService (integration)', () => {
     const status = await checkoutService.getStatus(
       confirmation.orderId,
       confirmation.accessToken,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     expect(status.orderNumber).toBe(confirmation.orderNumber);
 
     await expect(
-      checkoutService.getStatus(confirmation.orderId, 'wrong-token'),
+      checkoutService.getStatus(
+        confirmation.orderId,
+        'wrong-token',
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      ),
     ).rejects.toThrow('Order not found.');
   });
 });

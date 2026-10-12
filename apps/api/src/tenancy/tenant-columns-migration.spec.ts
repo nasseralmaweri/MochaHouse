@@ -17,9 +17,10 @@ import {
 // Milestone S0D-1 — the expand + backfill migration, exercised ONLY against
 // throwaway scratch databases (never the shared development database).
 // Migrations are applied exactly as Prisma 7 applies them on PostgreSQL
-// (verified from the server statement log): each file as ONE simple-protocol
-// query — one implicit transaction — except enum-adding files, which Prisma
-// sends statement by statement (see applyMigrationSql).
+// (verified from the server statement log): a file containing dollar-quoting
+// (a DO block, as this migration's guards are) is sent as ONE simple-protocol
+// query — one implicit transaction — while a dollar-free file is sent
+// statement by statement, each committed on its own (see applyMigrationSql).
 
 jest.setTimeout(180_000);
 
@@ -155,7 +156,7 @@ describe('S0D-1 tenant columns migration (scratch databases)', () => {
     ).toBe(true);
   });
 
-  it('is applied by Prisma as ONE atomic unit (no enum value additions), so a failed guard rolls back everything', () => {
+  it('is applied by Prisma as ONE atomic unit (it contains dollar-quoted guards), so a failed guard rolls back everything', () => {
     // If this ever fails, Prisma would apply the file statement by statement
     // and the ADD COLUMNs before a failing guard would NOT be rolled back.
     expect(isAppliedAtomically(s0d1.sql)).toBe(true);

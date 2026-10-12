@@ -148,8 +148,14 @@ describe('Customer gift-card purchase (integration)', () => {
     customAmountEnabled?: boolean;
   }): Promise<void> {
     await prisma.giftCardConfiguration.upsert({
-      where: { key: GIFT_CARD_CONFIGURATION_KEY },
+      where: {
+        tenantId_key: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          key: GIFT_CARD_CONFIGURATION_KEY,
+        },
+      },
       create: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         key: GIFT_CARD_CONFIGURATION_KEY,
         presetAmountsMinorUnits: patch.presetAmountsMinorUnits ?? [
           1000, 2500, 5000, 10000,
@@ -244,7 +250,7 @@ describe('Customer gift-card purchase (integration)', () => {
     });
     const before = await prisma.giftCardConfiguration.count();
 
-    const options = await configuration.getPublicOptions();
+    const options = await configuration.getPublicOptions(t1);
 
     expect(options).toEqual({
       presetAmountsMinorUnits: [1000, 2500, 5000, 10000],
@@ -959,7 +965,7 @@ describe('Customer gift-card purchase (integration)', () => {
 
   it('balance lookup: active / depleted / inactive / malformed / unknown', async () => {
     const { response } = await buy({ amountMinorUnits: 5000 });
-    expect(await balance.lookup(response.code)).toEqual({
+    expect(await balance.lookup(response.code, t1)).toEqual({
       found: true,
       maskedCode: response.maskedCode,
       last4: response.last4,
@@ -977,7 +983,7 @@ describe('Customer gift-card purchase (integration)', () => {
       },
       data: { balanceMinorUnits: 0 },
     });
-    expect((await balance.lookup(depleted.response.code)).status).toBe(
+    expect((await balance.lookup(depleted.response.code, t1)).status).toBe(
       'depleted',
     );
 
@@ -990,12 +996,12 @@ describe('Customer gift-card purchase (integration)', () => {
       },
       data: { status: 'INACTIVE' },
     });
-    expect((await balance.lookup(inactive.response.code)).status).toBe(
+    expect((await balance.lookup(inactive.response.code, t1)).status).toBe(
       'inactive',
     );
 
-    expect(await balance.lookup('nope')).toEqual({ found: false });
-    expect(await balance.lookup('2345 6789 ABCD EFGH')).toEqual({
+    expect(await balance.lookup('nope', t1)).toEqual({ found: false });
+    expect(await balance.lookup('2345 6789 ABCD EFGH', t1)).toEqual({
       found: false,
     });
   });
@@ -1004,7 +1010,12 @@ describe('Customer gift-card purchase (integration)', () => {
 
   it('the database forbids one PaymentAttempt from backing both an Order and a gift-card purchase (INSERT and UPDATE, both directions)', async () => {
     const location = await prisma.location.findUniqueOrThrow({
-      where: { slug: 'dearborn-heights' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'dearborn-heights',
+        },
+      },
     });
     const makeAttempt = async (withLocation: boolean) =>
       prisma.paymentAttempt.create({

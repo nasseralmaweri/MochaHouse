@@ -12,6 +12,8 @@ import {
   operationsChecklistCsvRows,
   ordersOverviewCsvRows,
 } from './report-csv-rows';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../tenancy/current-tenant-context.decorator';
 import { InternalAuthGuard } from '../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../internal-auth/authorization/require-permission.decorator';
@@ -48,6 +50,7 @@ export class AdminReportsController {
   @Get('orders-overview')
   ordersOverviewReport(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('locationId') locationId?: string,
@@ -55,6 +58,7 @@ export class AdminReportsController {
     return this.ordersOverview.getOrdersOverview(
       { startDate, endDate, locationId },
       request.authorization!,
+      tenant,
     );
   }
 
@@ -62,6 +66,7 @@ export class AdminReportsController {
   @Get('orders-overview/export')
   async ordersOverviewExport(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Res() res: Response,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
@@ -70,6 +75,7 @@ export class AdminReportsController {
     const report = await this.ordersOverview.getOrdersOverview(
       { startDate, endDate, locationId },
       request.authorization!,
+      tenant,
     );
     sendCsv(
       res,
@@ -87,12 +93,14 @@ export class AdminReportsController {
   @Get('location-performance')
   locationPerformanceReport(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
     return this.locationPerformance.getLocationPerformance(
       { startDate, endDate },
       request.authorization!,
+      tenant,
     );
   }
 
@@ -100,6 +108,7 @@ export class AdminReportsController {
   @Get('location-performance/export')
   async locationPerformanceExport(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Res() res: Response,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
@@ -107,6 +116,7 @@ export class AdminReportsController {
     const report = await this.locationPerformance.getLocationPerformance(
       { startDate, endDate },
       request.authorization!,
+      tenant,
     );
     sendCsv(
       res,
@@ -123,12 +133,14 @@ export class AdminReportsController {
   @Get('operations-checklists')
   operationsChecklistReport(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
     return this.operationsChecklist.getOperationsChecklistReport(
       { startDate, endDate },
       request.authorization!,
+      tenant,
     );
   }
 
@@ -136,6 +148,7 @@ export class AdminReportsController {
   @Get('operations-checklists/export')
   async operationsChecklistExport(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Res() res: Response,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
@@ -143,6 +156,7 @@ export class AdminReportsController {
     const report = await this.operationsChecklist.getOperationsChecklistReport(
       { startDate, endDate },
       request.authorization!,
+      tenant,
     );
     sendCsv(
       res,
@@ -159,12 +173,14 @@ export class AdminReportsController {
   @Get('customer-growth')
   customerGrowthReport(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
     return this.customerGrowth.getCustomerGrowthReport(
       { startDate, endDate },
       request.authorization!,
+      tenant,
     );
   }
 
@@ -172,6 +188,7 @@ export class AdminReportsController {
   @Get('customer-growth/export')
   async customerGrowthExport(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Res() res: Response,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
@@ -179,6 +196,7 @@ export class AdminReportsController {
     const report = await this.customerGrowth.getCustomerGrowthReport(
       { startDate, endDate },
       request.authorization!,
+      tenant,
     );
     sendCsv(
       res,

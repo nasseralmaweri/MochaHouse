@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  AdminCategorySummary,
   AdminLocationMenuProduct,
   AdminLocationMenuResponse,
   AdminMenuDetail,
@@ -68,9 +69,13 @@ function toAdminProductDetail(row: {
 export class CatalogService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findCategories(): Promise<CategorySummary[]> {
+  // Public storefront reads (S3P): only the storefront business's own
+  // catalog, never another business's — the tenant is the server-resolved
+  // storefront TenantContext, never a client-supplied value.
+  findCategories(tenant: TenantContext): Promise<CategorySummary[]> {
     return this.prisma.category.findMany({
       where: {
+        tenantId: tenant.tenantId,
         isActive: true,
       },
       select: {
@@ -85,10 +90,12 @@ export class CatalogService {
     });
   }
 
-  findProducts(): Promise<ProductSummary[]> {
+  findProducts(tenant: TenantContext): Promise<ProductSummary[]> {
     return this.prisma.product.findMany({
       where: {
+        tenantId: tenant.tenantId,
         isActive: true,
+        category: { tenantId: tenant.tenantId },
       },
       select: {
         id: true,
@@ -112,9 +119,10 @@ export class CatalogService {
     });
   }
 
-  findMenus(): Promise<MenuSummary[]> {
+  findMenus(tenant: TenantContext): Promise<MenuSummary[]> {
     return this.prisma.menu.findMany({
       where: {
+        tenantId: tenant.tenantId,
         isActive: true,
       },
       select: {
@@ -128,9 +136,10 @@ export class CatalogService {
     });
   }
 
-  findModifierGroups(): Promise<ModifierGroupSummary[]> {
+  findModifierGroups(tenant: TenantContext): Promise<ModifierGroupSummary[]> {
     return this.prisma.modifierGroup.findMany({
       where: {
+        tenantId: tenant.tenantId,
         isActive: true,
       },
       select: {
@@ -142,6 +151,7 @@ export class CatalogService {
         maxSelections: true,
         options: {
           where: {
+            tenantId: tenant.tenantId,
             isActive: true,
           },
           select: {
@@ -169,10 +179,12 @@ export class CatalogService {
   // gated. `assertCorporate` here is the matching service-layer defense.
   async listAdminProducts(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminProductSummary[]> {
     authorization.assertCorporate('catalog.view');
 
     const products = await this.prisma.product.findMany({
+      where: { tenantId: tenant.tenantId },
       select: ADMIN_PRODUCT_SELECT,
       orderBy: [{ name: 'asc' }, { id: 'asc' }],
     });
@@ -180,24 +192,54 @@ export class CatalogService {
     return products.map(toAdminProductDetail);
   }
 
+  // S1 — every category of the active business, inactive included (an
+  // Admin picks one when creating a product). `catalog.view` is
+  // CORPORATE-only.
+  async listAdminCategories(
+    authorization: AuthorizationContext,
+    tenant: TenantContext,
+  ): Promise<AdminCategorySummary[]> {
+    authorization.assertCorporate('catalog.view');
+
+    const categories = await this.prisma.category.findMany({
+      where: { tenantId: tenant.tenantId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        displayOrder: true,
+        isActive: true,
+        _count: { select: { products: true } },
+      },
+      orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }, { id: 'asc' }],
+    });
+    return categories.map(({ _count, ...category }) => ({
+      ...category,
+      productCount: _count.products,
+    }));
+  }
+
   async getAdminProductDetail(
     productId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminProductDetail> {
     authorization.assertCorporate('catalog.view');
 
-    const detail = await this.loadAdminProductDetail(productId);
+    const detail = await this.loadAdminProductDetail(productId, tenant);
     if (!detail) {
       throw new NotFoundException('Product not found.');
     }
     return detail;
   }
 
+  // A product of another tenant reads exactly like a missing one.
   private async loadAdminProductDetail(
     productId: string,
+    tenant: TenantContext,
   ): Promise<AdminProductDetail | null> {
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
+    const product = await this.prisma.product.findFirst({
+      where: { id: productId, tenantId: tenant.tenantId },
       select: ADMIN_PRODUCT_SELECT,
     });
     return product ? toAdminProductDetail(product) : null;
@@ -207,6 +249,7 @@ export class CatalogService {
     productId: string,
     input: UpdateProductInput,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminProductDetail> {
     // A master product is global — editing it must be a corporate-scoped
     // capability. PermissionGuard already rejects a caller who lacks
@@ -256,9 +299,12 @@ export class CatalogService {
       );
     }
 
-    const existingProduct = await this.prisma.product.findUnique({
+    // Only the active tenant's products can be edited; another tenant's
+    // product is reported exactly like a missing one, before any write.
+    const existingProduct = await this.prisma.product.findFirst({
       where: {
         id: productId,
+        tenantId: tenant.tenantId,
       },
       select: {
         id: true,
@@ -290,7 +336,7 @@ export class CatalogService {
     });
 
     // Never null — existence was just confirmed above.
-    return (await this.loadAdminProductDetail(productId))!;
+    return (await this.loadAdminProductDetail(productId, tenant))!;
   }
 
   // --- Admin menu reads (Milestone 5D-4) ---------------------------
@@ -298,10 +344,12 @@ export class CatalogService {
   // inactive menus and inactive menu placements — an Admin manages both.
   async listAdminMenus(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminMenuSummary[]> {
     authorization.assertCorporate('catalog.view');
 
     const menus = await this.prisma.menu.findMany({
+      where: { tenantId: tenant.tenantId },
       select: { id: true, name: true, slug: true, isActive: true },
       orderBy: [{ name: 'asc' }, { id: 'asc' }],
     });
@@ -311,11 +359,13 @@ export class CatalogService {
   async getAdminMenuDetail(
     menuId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminMenuDetail> {
     authorization.assertCorporate('catalog.view');
 
-    const menu = await this.prisma.menu.findUnique({
-      where: { id: menuId },
+    // A menu of another tenant reads exactly like a missing one.
+    const menu = await this.prisma.menu.findFirst({
+      where: { id: menuId, tenantId: tenant.tenantId },
       include: {
         products: {
           include: { product: { include: { category: true } } },
@@ -453,6 +503,7 @@ export class CatalogService {
     productId: string,
     isActive: boolean,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ) {
     // Menu composition is shared across every location a menu is assigned
     // to — corporate-scoped capability only.
@@ -464,12 +515,13 @@ export class CatalogService {
       );
     }
 
-    const menuProduct = await this.prisma.menuProduct.findUnique({
+    // Only a placement in the active tenant's menu can be changed; another
+    // tenant's placement is reported exactly like a missing one.
+    const menuProduct = await this.prisma.menuProduct.findFirst({
       where: {
-        menuId_productId: {
-          menuId,
-          productId,
-        },
+        menuId,
+        productId,
+        tenantId: tenant.tenantId,
       },
       select: {
         menuId: true,

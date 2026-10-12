@@ -22,9 +22,12 @@ type PrismaClientLike = PrismaService | Prisma.TransactionClient;
 export class LocationsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(): Promise<LocationSummary[]> {
+  // Public storefront location list (S3P): the storefront business's own
+  // active locations only.
+  async findAll(tenant: TenantContext): Promise<LocationSummary[]> {
     const locations = await this.prisma.location.findMany({
       where: {
+        tenantId: tenant.tenantId,
         isActive: true,
       },
       orderBy: {
@@ -40,18 +43,28 @@ export class LocationsService {
     }));
   }
 
+  // The orderable menu of one Location, restricted to `tenantId` (S3P): a
+  // Location of any other business yields null — the same result as a
+  // missing or inactive one — and every child row (menu, products,
+  // categories, modifiers, options, overrides) must belong to that same
+  // business. Callers pass a server-resolved tenant: the storefront
+  // TenantContext, or the tenant checkout validated for the Location.
   async findMenu(
     locationId: string,
+    tenantId: string,
     client: PrismaClientLike = this.prisma,
   ): Promise<LocationMenuResponse | null> {
     const locationMenu = await client.locationMenu.findFirst({
       where: {
         locationId,
+        tenantId,
         isActive: true,
         location: {
+          tenantId,
           isActive: true,
         },
         menu: {
+          tenantId,
           isActive: true,
         },
       },
@@ -61,10 +74,13 @@ export class LocationsService {
           include: {
             products: {
               where: {
+                tenantId,
                 isActive: true,
                 product: {
+                  tenantId,
                   isActive: true,
                   category: {
+                    tenantId,
                     isActive: true,
                   },
                 },
@@ -78,17 +94,21 @@ export class LocationsService {
                     category: true,
                     priceOverrides: {
                       where: {
+                        tenantId,
                         locationId,
                       },
                     },
                     availabilityOverrides: {
                       where: {
+                        tenantId,
                         locationId,
                       },
                     },
                     modifierGroups: {
                       where: {
+                        tenantId,
                         modifierGroup: {
+                          tenantId,
                           isActive: true,
                         },
                       },
@@ -100,6 +120,7 @@ export class LocationsService {
                           include: {
                             options: {
                               where: {
+                                tenantId,
                                 isActive: true,
                               },
                               orderBy: {

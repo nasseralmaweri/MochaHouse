@@ -109,7 +109,6 @@ describe('Internal admin authentication + baseline authorization (integration)',
         permissions: {
           create: INTERNAL_PERMISSION_KEYS.map((permissionKey) => ({
             permissionKey,
-            tenantId: TENANT_1_MOCHA_HOUSE_ID,
           })),
         },
       },

@@ -97,6 +97,47 @@ export interface AdminUpdateProductRequest {
     basePrice?: number | null;
     isActive?: boolean;
 }
+export declare const CATALOG_NAME_MAX_LENGTH = 120;
+export declare const CATALOG_DESCRIPTION_MAX_LENGTH = 1000;
+export declare const CATALOG_SLUG_MAX_LENGTH = 80;
+export declare const CATALOG_MAX_PRICE_MINOR_UNITS = 100000;
+export declare function isValidCatalogSlug(value: string): boolean;
+export declare function slugifyCatalogName(name: string): string;
+export interface AdminCategorySummary {
+    id: string;
+    name: string;
+    slug: string;
+    displayOrder: number;
+    isActive: boolean;
+    productCount: number;
+}
+export interface AdminCreateCategoryRequest {
+    name: string;
+    slug?: string | null;
+    isActive?: boolean;
+}
+export interface AdminCreateProductRequest {
+    name: string;
+    categoryId: string;
+    description?: string | null;
+    basePrice: number | null;
+    isActive?: boolean;
+    slug?: string | null;
+}
+export interface AdminAddMenuProductRequest {
+    productId: string;
+    isActive?: boolean;
+}
+export interface AdminMenuPlacement {
+    menuId: string;
+    productId: string;
+    displayOrder: number;
+    isActive: boolean;
+}
+export interface AdminAddMenuProductResponse {
+    placement: AdminMenuPlacement;
+    created: boolean;
+}
 export interface AdminMenuSummary {
     id: string;
     name: string;

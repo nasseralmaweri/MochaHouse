@@ -8,6 +8,7 @@ import {
   Injectable,
   Logger,
   OnModuleInit,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import type {
   CreateGiftCardPurchaseIntentRequest,
@@ -138,11 +139,17 @@ export class GiftCardPurchaseService implements OnModuleInit {
     if (existing?.giftCardPurchase) {
       return this.intentResponse(existing.giftCardPurchase, null);
     }
+    // Payment safety — a gift card is only ever issued against a real
+    // payment: with no provider able to take one, no intent is recorded.
+    this.assertPaymentAvailable();
 
     // A brand-new intent — validate everything against CURRENT config.
     const purchaserEmail = this.validateEmail(request?.purchaserEmail);
     const purchaserName = this.validateName(request?.purchaserName);
-    const amountMinorUnits = await this.validateAmount(request?.amountMinorUnits);
+    const amountMinorUnits = await this.validateAmount(
+      request?.amountMinorUnits,
+      tenant,
+    );
     const currency = 'USD';
     const customerId = await this.resolveCustomerId(customerIdentity, tenant);
 
@@ -157,7 +164,8 @@ export class GiftCardPurchaseService implements OnModuleInit {
         data: {
           tenantId: tenant.tenantId,
           idempotencyKey,
-          provider: 'fake',
+          // The provider actually bound (audit).
+          provider: this.paymentProvider.name,
           locationId: null,
           amount: amountMinorUnits,
           currency,
@@ -334,6 +342,10 @@ export class GiftCardPurchaseService implements OnModuleInit {
       );
     }
 
+    // Payment safety — checked again at the charging step, before the claim:
+    // configuration may have changed since the intent was created.
+    this.assertPaymentAvailable();
+
     // Concurrency claim — exactly one request charges.
     const claim = await this.prisma.giftCardPurchase.updateMany({
       where: { id: purchase.id, status: 'PENDING', chargeClaimedAt: null },
@@ -380,6 +392,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
     try {
       const issued = await this.issuance.issue(
         {
+          tenantId: purchase.tenantId,
           originalValueMinorUnits: purchase.amountMinorUnits,
           currency: purchase.currency,
           giftCardPurchaseId: purchase.id,
@@ -452,6 +465,14 @@ export class GiftCardPurchaseService implements OnModuleInit {
   // constant time against the stored HMAC). Signed-in: the caller resolves
   // to the owning customer. Read-only — a wrong / anonymous caller never
   // creates a customer row here.
+  private assertPaymentAvailable(): void {
+    if (!this.paymentProvider.acceptsPayments) {
+      throw new ServiceUnavailableException(
+        'Online payment is not available right now.',
+      );
+    }
+  }
+
   private async isAuthorisedForCode(
     purchase: PurchaseRow,
     suppliedCredential: string | null,
@@ -569,7 +590,10 @@ export class GiftCardPurchaseService implements OnModuleInit {
   // A purchase amount is valid when it matches an HQ-configured preset, OR
   // custom amounts are enabled and it is within [MIN, MAX]. The absolute
   // ceiling always applies. Governs NEW intents only (correction E).
-  private async validateAmount(raw: unknown): Promise<number> {
+  private async validateAmount(
+    raw: unknown,
+    tenant: TenantContext,
+  ): Promise<number> {
     if (
       typeof raw !== 'number' ||
       !Number.isInteger(raw) ||
@@ -579,7 +603,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
       throw new BadRequestException('Choose a valid gift-card amount.');
     }
 
-    const config = await this.configuration.getPublicOptions();
+    const config = await this.configuration.getPublicOptions(tenant);
     if (config.presetAmountsMinorUnits.includes(raw)) {
       return raw;
     }

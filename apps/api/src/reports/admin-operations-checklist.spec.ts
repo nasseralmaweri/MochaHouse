@@ -80,7 +80,7 @@ describe('Admin reports — operations checklist visibility (integration)', () =
         key: `ops-checklist-spec-${suffix}-${randomUUID()}`,
         displayName,
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });
@@ -135,7 +135,6 @@ describe('Admin reports — operations checklist visibility (integration)', () =
         completedAt: options.completedAt ?? null,
         items: {
           create: (options.items ?? []).map((item, index) => ({
-            tenantId: TENANT_1_MOCHA_HOUSE_ID,
             section: 'Test Section',
             label: `Test item ${index + 1}`,
             sortOrder: index + 1,
@@ -183,11 +182,15 @@ describe('Admin reports — operations checklist visibility (integration)', () =
     prisma = moduleFixture.get(PrismaService);
 
     const opening = await prisma.checklistTemplate.findUniqueOrThrow({
-      where: { key: 'opening' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'opening' },
+      },
       select: { id: true },
     });
     const closing = await prisma.checklistTemplate.findUniqueOrThrow({
-      where: { key: 'closing' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'closing' },
+      },
       select: { id: true },
     });
     openingTemplateId = opening.id;

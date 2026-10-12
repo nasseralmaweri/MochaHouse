@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import type { Prisma } from '@mocha-house/database';
 import type { AdminMochaBeanLedgerEntry } from '@mocha-house/contracts';
 import {
@@ -24,6 +24,9 @@ export interface EarnForOrderInput {
   // The SAME transaction client that is creating the Order — so the Order
   // and its EARN entry commit or roll back together.
   tx: Prisma.TransactionClient;
+  // The order's own tenant: its earning rate is read, and the ledger
+  // entry is written, under it.
+  tenantId: string;
   customerId: string;
   orderId: string;
   // Qualifying merchandise spend in integer minor units. For 7A this is
@@ -43,11 +46,17 @@ export class LoyaltyService {
   // checkout transaction would abort the whole order and trip
   // reconciliation. Idempotent — safe to call on every authenticated
   // checkout.
+  // The account belongs to its Customer's tenant: ownership is copied from
+  // that validated parent, never from caller input.
   async ensureAccountForCustomer(customerId: string): Promise<void> {
+    const customer = await this.prisma.customer.findUniqueOrThrow({
+      where: { id: customerId },
+      select: { tenantId: true },
+    });
     try {
       await this.prisma.customerLoyaltyAccount.upsert({
         where: { customerId },
-        create: { customerId },
+        create: { tenantId: customer.tenantId, customerId },
         update: {},
       });
     } catch (error) {
@@ -72,8 +81,14 @@ export class LoyaltyService {
   // only ever called once per order creation, so there is no second call to
   // race it.
   async earnForOrder(input: EarnForOrderInput): Promise<void> {
-    const { tx, customerId, orderId, qualifyingSubtotalMinorUnits, currency } =
-      input;
+    const {
+      tx,
+      tenantId,
+      customerId,
+      orderId,
+      qualifyingSubtotalMinorUnits,
+      currency,
+    } = input;
 
     // 7A earns on USD merchandise only — no currency conversion.
     if (currency !== 'USD') {
@@ -86,7 +101,7 @@ export class LoyaltyService {
     // Historical EARN entries are never recalculated when the rate changes;
     // this snapshot is what this one order earns.
     const config = await tx.loyaltyConfiguration.findUnique({
-      where: { key: LOYALTY_CONFIGURATION_KEY },
+      where: { tenantId_key: { tenantId, key: LOYALTY_CONFIGURATION_KEY } },
       select: { earningRatePerDollar: true },
     });
     const ratePerDollar =
@@ -106,11 +121,13 @@ export class LoyaltyService {
     // INSERT out of the checkout transaction.
     const account = await tx.customerLoyaltyAccount.findUniqueOrThrow({
       where: { customerId },
-      select: { id: true },
+      select: { id: true, tenantId: true },
     });
+    assertAccountTenant(account, tenantId);
 
     await tx.mochaBeanLedgerEntry.create({
       data: {
+        tenantId,
         loyaltyAccountId: account.id,
         type: 'EARN',
         amount: beans,
@@ -180,6 +197,19 @@ export class LoyaltyService {
 // for the same reason CheckoutService does: a genuinely concurrent
 // unique-constraint violation can surface through a different error identity
 // than this module's own Prisma import resolves to.
+// A loyalty account always belongs to its Customer's tenant; an order of a
+// different tenant can never move it.
+export function assertAccountTenant(
+  account: { tenantId: string },
+  tenantId: string,
+): void {
+  if (account.tenantId !== tenantId) {
+    throw new ConflictException(
+      'This loyalty account does not belong to the business of this order.',
+    );
+  }
+}
+
 export function isUniqueConstraintViolation(error: unknown): boolean {
   return (
     typeof error === 'object' &&

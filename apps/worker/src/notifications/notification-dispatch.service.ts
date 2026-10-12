@@ -80,11 +80,13 @@ export class NotificationDispatchService {
 
     let recipient: string;
     let rendered: RenderedEmail | null = null;
+    let fromName: string | undefined;
     let resolutionError: string | null = null;
     try {
       const resolved = await this.resolve(event, templateKey);
       recipient = resolved.recipient;
       rendered = resolved.rendered;
+      fromName = resolved.businessName;
     } catch (error) {
       recipient = '(unresolved)';
       resolutionError = this.sanitize(error);
@@ -131,6 +133,7 @@ export class NotificationDispatchService {
     try {
       const result = await this.emailSender.send({
         to: recipient,
+        fromName,
         subject: rendered.subject,
         html: rendered.html,
         text: rendered.text,
@@ -158,7 +161,12 @@ export class NotificationDispatchService {
   private async resolve(
     event: ClaimedOutboxEvent,
     templateKey: TemplateKey,
-  ): Promise<{ recipient: string; rendered: RenderedEmail }> {
+  ): Promise<{
+    recipient: string;
+    rendered: RenderedEmail;
+    businessName: string;
+  }> {
+    const businessName = await this.businessName(event.tenantId);
     switch (templateKey) {
       case 'order.received':
       case 'order.ready': {
@@ -189,14 +197,16 @@ export class NotificationDispatchService {
         const rendered =
           templateKey === 'order.received'
             ? renderOrderReceived({
+                businessName,
                 orderNumber: order.orderNumber,
                 locationName: order.location.name,
               })
             : renderOrderReady({
+                businessName,
                 orderNumber: order.orderNumber,
                 locationName: order.location.name,
               });
-        return { recipient, rendered };
+        return { recipient, rendered, businessName };
       }
       case 'careers.application.received': {
         // Milestone S0D-2C-3 — tenant-owned routing, resolved from the
@@ -225,7 +235,7 @@ export class NotificationDispatchService {
           applicantName: `${application.firstName} ${application.lastName}`,
           jobTitleSnapshot: application.jobTitleSnapshot,
         });
-        return { recipient, rendered };
+        return { recipient, rendered, businessName };
       }
       case 'franchising.inquiry.received': {
         // Milestone S0D-2C-3 — tenant-owned routing, resolved from the
@@ -254,9 +264,25 @@ export class NotificationDispatchService {
           inquirerName: `${inquiry.firstName} ${inquiry.lastName}`,
           preferredMarket: inquiry.preferredMarket,
         });
-        return { recipient, rendered };
+        return { recipient, rendered, businessName };
       }
     }
+  }
+
+  // Security 4A — the sending business's display name, from the event's own
+  // tenant (the one authoritative ownership chain), never a hardcoded brand
+  // and never another tenant's. A tenant that cannot be read fails the
+  // notification closed rather than sending under some other name.
+  private async businessName(tenantId: string): Promise<string> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true },
+    });
+    const name = tenant?.name.trim();
+    if (!name) {
+      throw new Error('Business name is not available for this tenant.');
+    }
+    return name;
   }
 
   // Bounded and stripped of stack traces before ever reaching the

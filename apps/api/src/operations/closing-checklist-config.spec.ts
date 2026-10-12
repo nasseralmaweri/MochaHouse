@@ -74,7 +74,7 @@ describe('Closing Checklist configuration (integration)', () => {
         key: `closing-cfg-${suffix}-${randomUUID()}`,
         displayName: 'Closing Cfg Role',
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });
@@ -157,7 +157,9 @@ describe('Closing Checklist configuration (integration)', () => {
     prisma = moduleFixture.get(PrismaService);
 
     const template = await prisma.checklistTemplate.findUniqueOrThrow({
-      where: { key: 'closing' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'closing' },
+      },
     });
     closingTemplateId = template.id;
     snapshot = (

@@ -14,6 +14,7 @@ import {
 } from '@mocha-house/domain';
 import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertAccountTenant } from './loyalty.service';
 
 // Milestone 7C — Mocha Bean reward redemption at checkout. This service
 // owns everything about applying ONE reward to an order:
@@ -80,6 +81,7 @@ export class LoyaltyRedemptionService {
     customerId: string,
     priced: PricedOk,
     menu: LocationMenuResponse,
+    tenantId: string,
     regularContext?: RegularDiscountContext,
   ): Promise<{ balance: number; rewards: CheckoutRewardOption[] }> {
     const [account, rewards] = await Promise.all([
@@ -87,8 +89,9 @@ export class LoyaltyRedemptionService {
         where: { customerId },
         select: { balance: true },
       }),
+      // The storefront business's own rewards only.
       this.prisma.loyaltyReward.findMany({
-        where: { isActive: true },
+        where: { tenantId, isActive: true },
         include: {
           eligibleProducts: { select: { productId: true } },
           eligibleCategories: { select: { categoryId: true } },
@@ -131,14 +134,16 @@ export class LoyaltyRedemptionService {
     rewardId: unknown,
     priced: PricedOk,
     menu: LocationMenuResponse,
+    tenantId: string,
     regularContext?: RegularDiscountContext,
   ): Promise<RedemptionPlan> {
     if (typeof rewardId !== 'string' || rewardId.trim().length === 0) {
       throw new BadRequestException('A valid reward selection is required.');
     }
 
-    const reward = await this.prisma.loyaltyReward.findUnique({
-      where: { id: rewardId },
+    // Another business's reward is reported exactly like a missing one.
+    const reward = await this.prisma.loyaltyReward.findFirst({
+      where: { id: rewardId, tenantId },
       include: {
         eligibleProducts: { select: { productId: true } },
         eligibleCategories: { select: { categoryId: true } },
@@ -186,14 +191,20 @@ export class LoyaltyRedemptionService {
   // order consumed the Beans first.
   async applyRedemption(
     tx: Prisma.TransactionClient,
-    input: { orderId: string; customerId: string; plan: RedemptionPlan },
+    input: {
+      tenantId: string;
+      orderId: string;
+      customerId: string;
+      plan: RedemptionPlan;
+    },
   ): Promise<void> {
-    const { orderId, customerId, plan } = input;
+    const { tenantId, orderId, customerId, plan } = input;
 
     const account = await tx.customerLoyaltyAccount.findUniqueOrThrow({
       where: { customerId },
-      select: { id: true },
+      select: { id: true, tenantId: true },
     });
+    assertAccountTenant(account, tenantId);
 
     await tx.$queryRaw`SELECT id FROM "CustomerLoyaltyAccount" WHERE id = ${account.id} FOR UPDATE`;
 
@@ -211,6 +222,7 @@ export class LoyaltyRedemptionService {
 
     await tx.orderLoyaltyRewardRedemption.create({
       data: {
+        tenantId,
         orderId,
         sourceRewardId: plan.rewardId,
         rewardName: plan.rewardName,
@@ -224,6 +236,7 @@ export class LoyaltyRedemptionService {
 
     await tx.mochaBeanLedgerEntry.create({
       data: {
+        tenantId,
         loyaltyAccountId: account.id,
         type: 'REDEEM',
         amount: -plan.beanCost,

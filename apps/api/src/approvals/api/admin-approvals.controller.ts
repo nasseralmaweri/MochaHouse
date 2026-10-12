@@ -9,6 +9,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { RejectApprovalRequestRequest } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
@@ -30,10 +32,15 @@ export class AdminApprovalsController {
   @Get()
   list(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Query('status') status?: string,
     @Query('cursor') cursor?: string,
   ) {
-    return this.service.list({ status, cursor }, request.authorization!);
+    return this.service.list(
+      { status, cursor },
+      request.authorization!,
+      tenant,
+    );
   }
 
   @RequirePermission('approvals.view')
@@ -41,10 +48,12 @@ export class AdminApprovalsController {
   async getOne(
     @Param('approvalRequestId') approvalRequestId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     const approvalRequest = await this.service.getOne(
       approvalRequestId,
       request.authorization!,
+      tenant,
     );
     return { approvalRequest };
   }
@@ -54,11 +63,13 @@ export class AdminApprovalsController {
   async approve(
     @Param('approvalRequestId') approvalRequestId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     const approvalRequest = await this.service.approve(
       approvalRequestId,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
     return { approvalRequest };
   }
@@ -69,12 +80,14 @@ export class AdminApprovalsController {
     @Param('approvalRequestId') approvalRequestId: string,
     @Body() body: RejectApprovalRequestRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     const approvalRequest = await this.service.reject(
       approvalRequestId,
       body?.reason,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
     return { approvalRequest };
   }

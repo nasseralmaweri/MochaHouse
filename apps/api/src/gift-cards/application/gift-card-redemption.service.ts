@@ -29,6 +29,7 @@ import {
 export type GiftCardResolution =
   | {
       outcome: 'usable';
+      tenantId: string;
       giftCardId: string;
       last4: string;
       balanceMinorUnits: number;
@@ -41,6 +42,9 @@ export type GiftCardResolution =
 
 // A validated, ready-to-commit gift-card tender.
 export interface GiftCardTenderPlan {
+  // The card's (and so the order's) business — every row the redemption
+  // writes copies it.
+  tenantId: string;
   giftCardId: string;
   last4: string;
   currency: string;
@@ -60,19 +64,24 @@ export class GiftCardRedemptionService {
   // and report whether it is usable for an order in `orderCurrency`. Never
   // reveals whether a code was malformed vs simply unknown (both →
   // not_found). No lock, no mutation.
+  //
+  // `tenantId` is the checkout's server-validated business: another
+  // business's card resolves exactly like an unknown code.
   async resolveUsableCard(
     rawCode: unknown,
     orderCurrency: string,
+    tenantId: string,
   ): Promise<GiftCardResolution> {
     const canonical = canonicalizeGiftCardCode(rawCode);
     if (canonical === null) {
       return { outcome: 'not_found' };
     }
 
-    const card = await this.prisma.giftCard.findUnique({
-      where: { codeHash: hashGiftCardCode(canonical) },
+    const card = await this.prisma.giftCard.findFirst({
+      where: { codeHash: hashGiftCardCode(canonical), tenantId },
       select: {
         id: true,
+        tenantId: true,
         last4: true,
         status: true,
         balanceMinorUnits: true,
@@ -94,6 +103,7 @@ export class GiftCardRedemptionService {
 
     return {
       outcome: 'usable',
+      tenantId: card.tenantId,
       giftCardId: card.id,
       last4: card.last4,
       balanceMinorUnits: card.balanceMinorUnits,
@@ -110,8 +120,13 @@ export class GiftCardRedemptionService {
     rawCode: unknown,
     amountOwedMinorUnits: number,
     orderCurrency: string,
+    tenantId: string,
   ): Promise<GiftCardTenderPlan> {
-    const resolution = await this.resolveUsableCard(rawCode, orderCurrency);
+    const resolution = await this.resolveUsableCard(
+      rawCode,
+      orderCurrency,
+      tenantId,
+    );
 
     switch (resolution.outcome) {
       case 'not_found':
@@ -142,6 +157,7 @@ export class GiftCardRedemptionService {
     }
 
     return {
+      tenantId: resolution.tenantId,
       giftCardId: resolution.giftCardId,
       last4: resolution.last4,
       currency: resolution.currency,
@@ -171,8 +187,22 @@ export class GiftCardRedemptionService {
 
     const locked = await tx.giftCard.findUniqueOrThrow({
       where: { id: plan.giftCardId },
-      select: { status: true, balanceMinorUnits: true, currency: true },
+      select: {
+        tenantId: true,
+        status: true,
+        balanceMinorUnits: true,
+        currency: true,
+      },
     });
+
+    // The plan was resolved under the checkout's business; the card must
+    // still belong to it (and so to the order) before any money moves.
+    if (locked.tenantId !== plan.tenantId) {
+      throw new ConflictException(
+        `The gift card could not be applied to this order. ` +
+          `Reference ${orderId} for support.`,
+      );
+    }
 
     if (locked.status !== 'ACTIVE') {
       throw new ConflictException(
@@ -199,6 +229,7 @@ export class GiftCardRedemptionService {
 
     await tx.orderGiftCardRedemption.create({
       data: {
+        tenantId: plan.tenantId,
         orderId,
         sourceGiftCardId: plan.giftCardId,
         last4: plan.last4,
@@ -209,6 +240,7 @@ export class GiftCardRedemptionService {
 
     await tx.giftCardTransaction.create({
       data: {
+        tenantId: plan.tenantId,
         giftCardId: plan.giftCardId,
         type: 'REDEMPTION',
         amountMinorUnits: -plan.plannedTenderMinorUnits,

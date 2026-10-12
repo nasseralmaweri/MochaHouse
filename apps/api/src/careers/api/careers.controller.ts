@@ -29,13 +29,16 @@ export class CareersController {
   ) {}
 
   @Get('jobs')
-  list() {
-    return this.jobs.list();
+  list(@CurrentTenantContext() tenant: TenantContext) {
+    return this.jobs.list(tenant);
   }
 
   @Get('jobs/:jobId')
-  detail(@Param('jobId') jobId: string) {
-    return this.jobs.getDetail(jobId);
+  detail(
+    @Param('jobId') jobId: string,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.jobs.getDetail(jobId, tenant);
   }
 
   @UseGuards(CareersPublicThrottleGuard)

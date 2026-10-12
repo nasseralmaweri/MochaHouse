@@ -61,9 +61,15 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     await prisma.$connect();
 
     await prisma.loyaltyConfiguration.upsert({
-      where: { key: 'company' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+      },
       update: { earningRatePerDollar: 1 },
-      create: { key: 'company', earningRatePerDollar: 1 },
+      create: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        key: 'company',
+        earningRatePerDollar: 1,
+      },
     });
 
     const mkLocation = (n: string) =>
@@ -264,7 +270,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     await prisma.customerLoyaltyAccount.upsert({
       where: { customerId: customer.id },
       update: { balance: amount },
-      create: { customerId: customer.id, balance: amount },
+      create: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        customerId: customer.id,
+        balance: amount,
+      },
     });
   }
 
@@ -300,6 +310,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
   }): Promise<string> {
     const promotion = await prisma.loyaltyBonusPromotion.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Bonus ${opts.type} ${randomUUID()} ${suffix}`,
         type: opts.type,
         bonusValue: opts.bonusValue,
@@ -308,10 +319,16 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
         startsAt: opts.startsAt ?? null,
         endsAt: opts.endsAt ?? null,
         eligibleProducts: {
-          create: opts.productIds.map((productId) => ({ productId })),
+          create: opts.productIds.map((productId) => ({
+            productId,
+          })),
         },
         eligibleLocations: opts.locationIds
-          ? { create: opts.locationIds.map((locId) => ({ locationId: locId })) }
+          ? {
+              create: opts.locationIds.map((locId) => ({
+                locationId: locId,
+              })),
+            }
           : undefined,
       },
     });
@@ -325,10 +342,15 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
   ): Promise<string> {
     const reward = await prisma.loyaltyReward.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Free Item ${randomUUID()} ${suffix}`,
         type: 'FREE_ITEM',
         beanCost,
-        eligibleProducts: { create: productIds.map((productId) => ({ productId })) },
+        eligibleProducts: {
+          create: productIds.map((productId) => ({
+            productId,
+          })),
+        },
       },
     });
     return reward.id;
@@ -340,6 +362,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
   ): Promise<string> {
     const reward = await prisma.loyaltyReward.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Fixed Off ${randomUUID()} ${suffix}`,
         type: 'FIXED_AMOUNT',
         beanCost,
@@ -449,7 +472,9 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
 
   it('the configured standard rate applies independently of the flat bonus', async () => {
     await prisma.loyaltyConfiguration.update({
-      where: { key: 'company' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+      },
       data: { earningRatePerDollar: 2 },
     });
     try {
@@ -473,7 +498,9 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       expect(ledger.find((e) => e.type === 'BONUS_EARN')!.amount).toBe(20);
     } finally {
       await prisma.loyaltyConfiguration.update({
-        where: { key: 'company' },
+        where: {
+          tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+        },
         data: { earningRatePerDollar: 1 },
       });
     }
@@ -506,7 +533,9 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
 
   it('MULTIPLIER: respects the configured standard rate', async () => {
     await prisma.loyaltyConfiguration.update({
-      where: { key: 'company' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+      },
       data: { earningRatePerDollar: 2 },
     });
     try {
@@ -530,7 +559,9 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       expect(ledger.find((e) => e.type === 'BONUS_EARN')!.amount).toBe(10);
     } finally {
       await prisma.loyaltyConfiguration.update({
-        where: { key: 'company' },
+        where: {
+          tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+        },
         data: { earningRatePerDollar: 1 },
       });
     }
@@ -905,6 +936,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const status = await checkoutService.getStatus(
       confirmation.orderId,
       confirmation.accessToken,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     expect(status.loyaltyBonus?.totalBonusBeans).toBe(20);
   });

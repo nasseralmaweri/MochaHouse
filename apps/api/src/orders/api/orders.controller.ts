@@ -67,7 +67,8 @@ export class OrdersController {
   getStatus(
     @Param('orderId') orderId: string,
     @Query('accessToken') accessToken: string,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    return this.checkoutService.getStatus(orderId, accessToken ?? '');
+    return this.checkoutService.getStatus(orderId, accessToken ?? '', tenant);
   }
 }

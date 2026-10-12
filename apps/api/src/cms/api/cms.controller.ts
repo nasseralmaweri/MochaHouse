@@ -1,4 +1,6 @@
 import { Controller, Get, Param } from '@nestjs/common';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { CmsContentPublicService } from '../application/cms-content-public.service';
 import { HomeContentPublicService } from '../application/home-content-public.service';
 
@@ -17,10 +19,13 @@ export class CmsController {
   ) {}
 
   @Get(':pageKey')
-  getPublished(@Param('pageKey') pageKey: string) {
+  getPublished(
+    @Param('pageKey') pageKey: string,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
     if (pageKey === 'home') {
-      return this.homeContent.getPublished();
+      return this.homeContent.getPublished(tenant);
     }
-    return this.content.getPublished(pageKey);
+    return this.content.getPublished(pageKey, tenant);
   }
 }

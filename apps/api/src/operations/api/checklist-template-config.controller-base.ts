@@ -34,8 +34,15 @@ export abstract class ChecklistTemplateConfigControllerBase {
 
   @RequirePermission('operations.checklists.configure')
   @Get()
-  getConfig(@Req() request: InternalAuthenticatedRequest) {
-    return this.service.getConfig(this.templateKey, request.authorization!);
+  getConfig(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.service.getConfig(
+      this.templateKey,
+      request.authorization!,
+      tenant,
+    );
   }
 
   @RequirePermission('operations.checklists.configure')
@@ -44,6 +51,7 @@ export abstract class ChecklistTemplateConfigControllerBase {
     @Param('itemId') itemId: string,
     @Body() body: UpdateOpeningChecklistTemplateItemRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     // Explicit fields only — the body is never spread into the service.
     return this.service.updateItem(
@@ -51,6 +59,7 @@ export abstract class ChecklistTemplateConfigControllerBase {
       itemId,
       { label: body?.label, isActive: body?.isActive },
       request.authorization!,
+      tenant,
     );
   }
 
@@ -75,12 +84,14 @@ export abstract class ChecklistTemplateConfigControllerBase {
     @Param('itemId') itemId: string,
     @Body() body: MoveOpeningChecklistTemplateItemRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.moveItem(
       this.templateKey,
       itemId,
       body?.direction,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -89,11 +100,13 @@ export abstract class ChecklistTemplateConfigControllerBase {
   renameSection(
     @Body() body: RenameOpeningChecklistTemplateSectionRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.renameSection(
       this.templateKey,
       { from: body?.from, to: body?.to },
       request.authorization!,
+      tenant,
     );
   }
 
@@ -102,11 +115,13 @@ export abstract class ChecklistTemplateConfigControllerBase {
   moveSection(
     @Body() body: MoveOpeningChecklistTemplateSectionRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.service.moveSection(
       this.templateKey,
       { section: body?.section, direction: body?.direction },
       request.authorization!,
+      tenant,
     );
   }
 }

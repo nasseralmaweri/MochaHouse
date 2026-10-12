@@ -63,7 +63,7 @@ describe('Marketing Campaigns admin (integration)', () => {
         key: `marketing-admin-${suffix}-${randomUUID()}`,
         displayName: 'Marketing Admin Spec Role',
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });
@@ -154,6 +154,7 @@ describe('Marketing Campaigns admin (integration)', () => {
   async function makeMediaAsset(isActive: boolean): Promise<string> {
     const asset = await prisma.mediaAsset.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         objectKey: `media/marketing-spec-${randomUUID()}.jpg`,
         fileName: 'campaign.jpg',
         contentType: 'image/jpeg',
@@ -169,6 +170,7 @@ describe('Marketing Campaigns admin (integration)', () => {
   async function makePromotion(isActive: boolean): Promise<string> {
     const promotion = await prisma.promotion.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Marketing Spec Promo ${randomUUID()}`,
         kind: 'AUTOMATIC',
         discountType: 'PERCENTAGE_OFF',
@@ -184,6 +186,7 @@ describe('Marketing Campaigns admin (integration)', () => {
   async function makeBonusPromotion(isActive: boolean): Promise<string> {
     const promotion = await prisma.loyaltyBonusPromotion.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         name: `Marketing Spec Bonus ${randomUUID()}`,
         type: 'EXTRA_BEANS',
         bonusValue: 5,

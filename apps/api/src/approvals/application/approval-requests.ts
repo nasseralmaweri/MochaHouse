@@ -25,6 +25,9 @@ function isUniqueConstraintViolation(error: unknown): boolean {
 export async function createOrReusePendingApprovalRequest(
   tx: Prisma.TransactionClient,
   input: {
+    // The target's own (validated) business. Requests are found and created
+    // only within it.
+    tenantId: string;
     targetType: string;
     targetId: string;
     action: string;
@@ -33,6 +36,7 @@ export async function createOrReusePendingApprovalRequest(
 ): Promise<{ request: Prisma.ApprovalRequestGetPayload<object>; created: boolean }> {
   const existing = await tx.approvalRequest.findFirst({
     where: {
+      tenantId: input.tenantId,
       targetType: input.targetType,
       targetId: input.targetId,
       action: input.action,
@@ -46,6 +50,7 @@ export async function createOrReusePendingApprovalRequest(
   try {
     const created = await tx.approvalRequest.create({
       data: {
+        tenantId: input.tenantId,
         targetType: input.targetType,
         targetId: input.targetId,
         action: input.action,
@@ -57,6 +62,7 @@ export async function createOrReusePendingApprovalRequest(
     if (isUniqueConstraintViolation(error)) {
       const winner = await tx.approvalRequest.findFirstOrThrow({
         where: {
+          tenantId: input.tenantId,
           targetType: input.targetType,
           targetId: input.targetId,
           action: input.action,
@@ -75,12 +81,13 @@ export async function createOrReusePendingApprovalRequest(
 // directly as an API response.
 export async function latestApprovalRequest(
   tx: Prisma.TransactionClient,
+  tenantId: string,
   targetType: string,
   targetId: string,
   action: string,
 ): Promise<Prisma.ApprovalRequestGetPayload<object> | null> {
   return tx.approvalRequest.findFirst({
-    where: { targetType, targetId, action },
+    where: { tenantId, targetType, targetId, action },
     orderBy: { createdAt: 'desc' },
   });
 }

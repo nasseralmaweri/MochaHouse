@@ -92,7 +92,7 @@ describe('Internal admin authorization matrix (integration)', () => {
         key: `authz-matrix-${suffix}-${randomUUID()}`,
         displayName: 'authz matrix spec role',
         permissions: {
-          create: permissions.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissions.map((permissionKey) => ({ permissionKey })),
         },
       },
     });
@@ -133,10 +133,17 @@ describe('Internal admin authorization matrix (integration)', () => {
     // Two throwaway locations. locA gets the seeded main-menu wired to it so
     // override routes reach their business validation; locB has no menu.
     const menu = await prisma.menu.findUniqueOrThrow({
-      where: { slug: 'main-menu' },
+      where: {
+        tenantId_slug: { tenantId: TENANT_1_MOCHA_HOUSE_ID, slug: 'main-menu' },
+      },
     });
     const product = await prisma.product.findUniqueOrThrow({
-      where: { slug: 'drip-coffee' },
+      where: {
+        tenantId_slug: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          slug: 'drip-coffee',
+        },
+      },
     });
     menuId = menu.id;
     productId = product.id;
@@ -306,9 +313,7 @@ describe('Internal admin authorization matrix (integration)', () => {
         currency: 'USD',
         subtotal: 500,
         status: 'RECEIVED',
-        statusHistory: {
-          create: { tenantId: TENANT_1_MOCHA_HOUSE_ID, status: 'RECEIVED' },
-        },
+        statusHistory: { create: { status: 'RECEIVED' } },
       },
     });
     orderIdA = order.id;
@@ -603,16 +608,17 @@ describe('Internal admin authorization matrix (integration)', () => {
         .get('/api/v1/admin/locations')
         .set('Authorization', `Bearer ${t}`)
         .expect(200);
-      const body = res.body as Array<{ id: string; isActive: boolean }>;
+      const body = res.body as Array<{
+        id: string;
+        name: string;
+        isActive: boolean;
+      }>;
       const ids = body.map((l) => l.id);
       expect(ids).toEqual(expect.arrayContaining([locA, locB, locCInactive]));
       expect(body.find((l) => l.id === locCInactive)?.isActive).toBe(false);
       // Deterministic ordering: sorted by name then id.
       const sorted = [...body].sort(
-        (a, b) =>
-          (a as { name: string }).name.localeCompare(
-            (b as { name: string }).name,
-          ) || a.id.localeCompare(b.id),
+        (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
       );
       expect(body).toEqual(sorted);
     });
@@ -813,6 +819,7 @@ describe('Internal admin authorization matrix (integration)', () => {
         .expect(200);
       const body = res.body as Array<{
         id: string;
+        name: string;
         isActive: boolean;
         category: { id: string; name: string };
       }>;
@@ -822,10 +829,7 @@ describe('Internal admin authorization matrix (integration)', () => {
       expect(byId.get(prodEdit)?.category.name).toBeTruthy();
       // Deterministic order: name then id.
       const sorted = [...body].sort(
-        (a, b) =>
-          (a as { name: string }).name.localeCompare(
-            (b as { name: string }).name,
-          ) || a.id.localeCompare(b.id),
+        (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
       );
       expect(body).toEqual(sorted);
     });
@@ -999,15 +1003,16 @@ describe('Internal admin authorization matrix (integration)', () => {
         .get('/api/v1/admin/catalog/menus')
         .set('Authorization', `Bearer ${token(`catalogViewer-${suffix}`)}`)
         .expect(200);
-      const body = res.body as Array<{ id: string; isActive: boolean }>;
+      const body = res.body as Array<{
+        id: string;
+        name: string;
+        isActive: boolean;
+      }>;
       const byId = new Map(body.map((m) => [m.id, m]));
       expect(byId.get(menuInactive)?.isActive).toBe(false);
       expect(byId.get(menuId)?.isActive).toBe(true);
       const sorted = [...body].sort(
-        (a, b) =>
-          (a as { name: string }).name.localeCompare(
-            (b as { name: string }).name,
-          ) || a.id.localeCompare(b.id),
+        (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
       );
       expect(body).toEqual(sorted);
     });

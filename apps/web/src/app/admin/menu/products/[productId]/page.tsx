@@ -20,10 +20,14 @@ import { Card } from "@/components/Card";
 // API re-checks on save.
 export default async function AdminProductDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ productId: string }>;
+  searchParams: Promise<{ created?: string | string[] }>;
 }) {
   const { productId } = await params;
+  // Set by the "New product" form (S1) right after creation.
+  const justCreated = (await searchParams).created === "1";
 
   const session = await getInternalSession();
   if (!session) {
@@ -110,6 +114,24 @@ export default async function AdminProductDetailPage({
           tone={product.isActive ? "positive" : "neutral"}
         />
       </div>
+
+      {justCreated ? (
+        <Card
+          tone="subtle"
+          className="flex flex-col items-start gap-2 text-sm text-text-secondary"
+        >
+          <p role="status" className="text-base font-medium text-text-primary">
+            Product created
+          </p>
+          <p>
+            It isn&apos;t on any menu yet. Open a menu and use &ldquo;Add a
+            product&rdquo; to offer it to customers.
+          </p>
+          <ButtonLink href="/admin/menu/menus" variant="secondary">
+            Go to menus
+          </ButtonLink>
+        </Card>
+      ) : null}
 
       <AdminSection title="Details">
         <Card className="flex flex-col gap-4">

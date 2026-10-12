@@ -64,7 +64,7 @@ describe('CMS / Content pages (integration)', () => {
         key: `cms-spec-${suffix}-${randomUUID()}`,
         displayName: name,
         permissions: {
-          create: keys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: keys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });
@@ -245,16 +245,36 @@ describe('CMS / Content pages (integration)', () => {
     expect(detail.status).toBe('DRAFT');
     expect(detail.publishedContent).toBeNull();
     expect(detail.hasUnpublishedChanges).toBe(true);
-    expect(detail.draftContent.intro.heading).toEqual(expect.any(String));
+    expect(
+      (detail.draftContent as FranchisingPageContent).intro.heading,
+    ).toEqual(expect.any(String));
 
     // Neither GET wrote a row.
-    expect(await prisma.cmsPage.findUnique({ where: { key: 'franchising' } })).toBeNull();
+    expect(
+      await prisma.cmsPage.findUnique({
+        where: {
+          tenantId_key: {
+            tenantId: TENANT_1_MOCHA_HOUSE_ID,
+            key: 'franchising',
+          },
+        },
+      }),
+    ).toBeNull();
   });
 
   // --- save draft ------------------------------------------
 
   it('PATCH creates the row, validates the shape, trims values, and leaves publishedContent untouched', async () => {
-    expect(await prisma.cmsPage.findUnique({ where: { key: 'franchising' } })).toBeNull();
+    expect(
+      await prisma.cmsPage.findUnique({
+        where: {
+          tenantId_key: {
+            tenantId: TENANT_1_MOCHA_HOUSE_ID,
+            key: 'franchising',
+          },
+        },
+      }),
+    ).toBeNull();
 
     const content = validContent({
       intro: { heading: '  Trimmed Heading  ', body: '  Trimmed body.  ' },
@@ -266,12 +286,20 @@ describe('CMS / Content pages (integration)', () => {
     ).body as AdminCmsPageDetail;
 
     expect(detail.status).toBe('DRAFT');
-    expect(detail.draftContent.intro.heading).toBe('Trimmed Heading');
-    expect(detail.draftContent.intro.body).toBe('Trimmed body.');
+    expect((detail.draftContent as FranchisingPageContent).intro.heading).toBe(
+      'Trimmed Heading',
+    );
+    expect((detail.draftContent as FranchisingPageContent).intro.body).toBe(
+      'Trimmed body.',
+    );
     expect(detail.publishedContent).toBeNull();
     expect(detail.hasUnpublishedChanges).toBe(true);
 
-    const row = await prisma.cmsPage.findUnique({ where: { key: 'franchising' } });
+    const row = await prisma.cmsPage.findUnique({
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'franchising' },
+      },
+    });
     expect(row).not.toBeNull();
     expect(row!.publishedContent).toBeNull();
   });
@@ -311,7 +339,16 @@ describe('CMS / Content pages (integration)', () => {
       })
       .expect(400);
     // no row was created by any of the rejected attempts
-    expect(await prisma.cmsPage.findUnique({ where: { key: 'franchising' } })).toBeNull();
+    expect(
+      await prisma.cmsPage.findUnique({
+        where: {
+          tenantId_key: {
+            tenantId: TENANT_1_MOCHA_HOUSE_ID,
+            key: 'franchising',
+          },
+        },
+      }),
+    ).toBeNull();
   });
 
   it('a draft edit after publish leaves the page PUBLISHED and marks hasUnpublishedChanges', async () => {
@@ -328,8 +365,12 @@ describe('CMS / Content pages (integration)', () => {
 
     expect(edited.status).toBe('PUBLISHED');
     expect(edited.hasUnpublishedChanges).toBe(true);
-    expect(edited.draftContent.intro.heading).toBe('Edited');
-    expect(edited.publishedContent!.intro.heading).not.toBe('Edited');
+    expect((edited.draftContent as FranchisingPageContent).intro.heading).toBe(
+      'Edited',
+    );
+    expect(
+      (edited.publishedContent as FranchisingPageContent).intro.heading,
+    ).not.toBe('Edited');
   });
 
   it('audits the draft save atomically with only changed field keys, never content values', async () => {
@@ -360,7 +401,11 @@ describe('CMS / Content pages (integration)', () => {
       .send({ content: validContent({ intro: { heading: 'Should not persist', body: 'x' } }) })
       .expect(500);
     spy.mockRestore();
-    const row = await prisma.cmsPage.findUnique({ where: { key: 'franchising' } });
+    const row = await prisma.cmsPage.findUnique({
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'franchising' },
+      },
+    });
     expect(row!.draftContent).toMatchObject(validContent());
     expect(await prisma.internalAuditEvent.count()).toBe(before + 1);
   });
@@ -433,15 +478,25 @@ describe('CMS / Content pages (integration)', () => {
 
     // atomicity — audit write fails, status/publishedContent not persisted
     await prisma.cmsPage.update({
-      where: { key: 'franchising' },
-      data: { status: 'DRAFT', publishedContent: undefined as never, publishedAt: null },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'franchising' },
+      },
+      data: {
+        status: 'DRAFT',
+        publishedContent: undefined as never,
+        publishedAt: null,
+      },
     });
     const spy = jest
       .spyOn(audit, 'recordCmsContentPublished')
       .mockRejectedValueOnce(new Error('audit boom'));
     await adminReq('post', '/franchising/publish', `manager-${suffix}`).expect(500);
     spy.mockRestore();
-    const row = await prisma.cmsPage.findUnique({ where: { key: 'franchising' } });
+    const row = await prisma.cmsPage.findUnique({
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'franchising' },
+      },
+    });
     expect(row!.status).toBe('DRAFT');
   });
 

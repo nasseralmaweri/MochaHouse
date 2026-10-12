@@ -40,10 +40,13 @@ export class FranchiseInquiriesAdminService {
   async list(
     query: { status?: string; cursor?: string },
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminFranchiseInquiriesResponse> {
     authorization.assertCorporate('franchising.view');
 
-    const where: Prisma.FranchiseInquiryWhereInput = {};
+    const where: Prisma.FranchiseInquiryWhereInput = {
+      tenantId: tenant.tenantId,
+    };
     if (query.status !== undefined) {
       where.status = this.parseStatus(query.status);
     }
@@ -69,14 +72,19 @@ export class FranchiseInquiriesAdminService {
   async getDetail(
     inquiryId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminFranchiseInquiryDetail> {
     authorization.assertCorporate('franchising.view');
-    const inquiry = await this.loadOrThrow(inquiryId);
+    const inquiry = await this.loadOwnedOrThrow(inquiryId, tenant);
 
     const [notes, activityRows] = await Promise.all([
       this.notes.load(inquiryId),
       this.prisma.internalAuditEvent.findMany({
-        where: { targetType: 'franchise_inquiry', targetId: inquiryId },
+        where: {
+          tenantId: tenant.tenantId,
+          targetType: 'franchise_inquiry',
+          targetId: inquiryId,
+        },
         orderBy: { createdAt: 'desc' },
         take: ACTIVITY_LIMIT,
         select: {
@@ -128,7 +136,7 @@ export class FranchiseInquiriesAdminService {
     const next = this.parseStatus(rawStatus);
 
     if (next === current.status) {
-      return this.getDetail(inquiryId, authorization);
+      return this.getDetail(inquiryId, authorization, tenant);
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -144,7 +152,7 @@ export class FranchiseInquiriesAdminService {
       });
     });
 
-    return this.getDetail(inquiryId, authorization);
+    return this.getDetail(inquiryId, authorization, tenant);
   }
 
   private async loadOrThrow(inquiryId: string): Promise<InquiryRow> {

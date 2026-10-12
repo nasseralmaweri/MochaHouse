@@ -63,6 +63,9 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
   let bLocation: string;
   let bCustomer: { id: string; tenantId: string };
   let notesUser: string;
+  // Tenant B's own staff row: since Security 4C-5 a note's author must be
+  // staff of the note's business (composite foreign key).
+  let notesUserB: string;
 
   const identity = (label: string): CustomerIdentity => {
     const subject = `dev:s0d2b2-${label}-${suffix}`;
@@ -120,10 +123,11 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
   async function makeInternalUser(
     key: string,
     permissionKeys: string[],
+    tenantId: string = TENANT_1_MOCHA_HOUSE_ID,
   ): Promise<string> {
     const user = await prisma.internalUser.create({
       data: {
-        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        tenantId,
         externalProvider: 'internal-dev',
         externalSubject: `internal-dev:${key}`,
         email: `${key}@example.com`,
@@ -135,11 +139,11 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
     userIds.push(user.id);
     const role = await prisma.internalRole.create({
       data: {
-        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        tenantId,
         key: `s0d2b2-${key}`,
         displayName: key,
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });
@@ -147,7 +151,7 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
     await prisma.internalUserRoleAssignment.create({
       data: {
         internalUserId: user.id,
-        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        tenantId,
         roleId: role.id,
         scopeType: 'CORPORATE',
         scopeId: null,
@@ -221,6 +225,11 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
       'customers.notes.manage',
     ]);
     await makeInternalUser(`viewer-${suffix}`, ['customers.view']);
+    notesUserB = await makeInternalUser(
+      `notes-b-${suffix}`,
+      ['customers.view', 'customers.notes.manage'],
+      TEST_TENANT_B_ID,
+    );
   });
 
   afterAll(async () => {
@@ -427,7 +436,7 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
       await notes.addNote(
         bCustomer.id,
         'Tenant B note',
-        notesUser,
+        notesUserB,
         notesAuthorization,
         tenantB,
       );

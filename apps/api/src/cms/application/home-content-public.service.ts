@@ -5,6 +5,7 @@ import type {
   PublicHomePageContentResponse,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { TenantContext } from '@mocha-house/database';
 import {
   MEDIA_STORAGE,
   type MediaStorage,
@@ -42,9 +43,13 @@ export class HomeContentPublicService {
     @Inject(MEDIA_STORAGE) private readonly storage: MediaStorage,
   ) {}
 
-  async getPublished(): Promise<PublicHomePageContentResponse> {
+  // The storefront business's own published home page; its image and
+  // products are resolved only within that business.
+  async getPublished(
+    tenant: TenantContext,
+  ): Promise<PublicHomePageContentResponse> {
     const row = await this.prisma.cmsPage.findUnique({
-      where: { key: 'home' },
+      where: { tenantId_key: { tenantId: tenant.tenantId, key: 'home' } },
       select: { status: true, publishedContent: true },
     });
     if (!row || row.status !== 'PUBLISHED' || row.publishedContent === null) {
@@ -55,9 +60,11 @@ export class HomeContentPublicService {
 
     const backgroundImageUrl = await this.resolveBackgroundImageUrl(
       content.hero.backgroundImageId,
+      tenant.tenantId,
     );
     const products = await this.resolveFeaturedProducts(
       content.featuredProducts.productIds,
+      tenant.tenantId,
     );
 
     return {
@@ -79,12 +86,13 @@ export class HomeContentPublicService {
 
   private async resolveBackgroundImageUrl(
     mediaAssetId: string | null,
+    tenantId: string,
   ): Promise<string | null> {
     if (!mediaAssetId) {
       return null;
     }
-    const asset = await this.prisma.mediaAsset.findUnique({
-      where: { id: mediaAssetId },
+    const asset = await this.prisma.mediaAsset.findFirst({
+      where: { id: mediaAssetId, tenantId },
       select: { isActive: true, objectKey: true },
     });
     if (!asset || !asset.isActive) {
@@ -96,12 +104,13 @@ export class HomeContentPublicService {
 
   private async resolveFeaturedProducts(
     productIds: string[],
+    tenantId: string,
   ): Promise<ProductSummary[]> {
     if (productIds.length === 0) {
       return [];
     }
     const rows = await this.prisma.product.findMany({
-      where: { id: { in: productIds }, isActive: true },
+      where: { id: { in: productIds }, tenantId, isActive: true },
       select: PRODUCT_SELECT,
     });
     const byId = new Map(rows.map((row) => [row.id, row]));

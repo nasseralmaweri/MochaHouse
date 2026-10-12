@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   CUSTOMER_NOTE_MAX_LENGTH,
   type CustomerNote,
@@ -29,9 +25,10 @@ export class CustomerNotesService {
   async listForCustomer(
     customerId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<CustomerNote[]> {
     authorization.assertCorporate('customers.view');
-    await this.assertCustomerExists(customerId);
+    await this.requireOwnedCustomer(customerId, tenant);
     return this.load(customerId);
   }
 
@@ -91,19 +88,10 @@ export class CustomerNotesService {
     return body;
   }
 
-  private async assertCustomerExists(customerId: string): Promise<void> {
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: customerId },
-      select: { id: true },
-    });
-    if (!customer) {
-      throw new NotFoundException('Customer not found.');
-    }
-  }
-
-  // Write-path ownership only (S0D-2B-2); read isolation is S0E's job.
-  // Returns the Customer's own tenantId. A Customer's tenant never changes,
-  // so checking it before the transaction leaves no race.
+  // Customer ownership for both the note list and the note write: another
+  // tenant's Customer is reported exactly like a missing one. Returns the
+  // Customer's own tenantId. A Customer's tenant never changes, so checking
+  // it before the transaction leaves no race.
   private async requireOwnedCustomer(
     customerId: string,
     tenant: TenantContext,

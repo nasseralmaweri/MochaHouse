@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import type { AdminCustomerGrowthReport } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../prisma/prisma.service';
+import { businessDisplayName } from '../tenancy/business-name';
 import type { AuthorizationContext } from '../internal-auth/authorization/authorization-context';
 import {
   businessDateRangeToUtcInstants,
@@ -31,6 +33,7 @@ export class CustomerGrowthReportService {
   async getCustomerGrowthReport(
     query: CustomerGrowthQuery,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCustomerGrowthReport> {
     // `reports.view` is CORPORATE-only in the permission catalog, so
     // PermissionGuard already rejects a LOCATION grant; this is the
@@ -58,10 +61,13 @@ export class CustomerGrowthReportService {
       // starts. Deliberately not scoped to `start` — this is a running
       // total, not a period metric.
       this.prisma.customer.count({
-        where: { createdAt: { lt: endExclusive } },
+        where: { tenantId: tenant.tenantId, createdAt: { lt: endExclusive } },
       }),
       this.prisma.customer.count({
-        where: { createdAt: { gte: start, lt: endExclusive } },
+        where: {
+          tenantId: tenant.tenantId,
+          createdAt: { gte: start, lt: endExclusive },
+        },
       }),
       // One grouped query answers registeredCustomersWithOrders,
       // repeatRegisteredCustomers, registeredCustomerOrders and
@@ -71,7 +77,10 @@ export class CustomerGrowthReportService {
       // ever fetched in full.
       this.prisma.order.groupBy({
         by: ['customerId'],
-        where: { createdAt: { gte: start, lt: endExclusive } },
+        where: {
+          tenantId: tenant.tenantId,
+          createdAt: { gte: start, lt: endExclusive },
+        },
         _count: { _all: true },
       }),
     ]);
@@ -106,8 +115,8 @@ export class CustomerGrowthReportService {
       guestOrders,
       source: {
         scope: 'CUSTOMER_PLATFORM',
-        scopeLabel:
-          'Customer accounts and digital-platform orders recorded in the Mocha House platform.',
+        // Security 4A — names the report's own business, never a brand.
+        scopeLabel: `Customer accounts and digital-platform orders recorded in the ${await businessDisplayName(this.prisma, tenant.tenantId)} platform.`,
         freshnessLabel: 'Live platform data',
       },
     };

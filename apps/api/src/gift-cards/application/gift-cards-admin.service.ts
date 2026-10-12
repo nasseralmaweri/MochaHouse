@@ -16,7 +16,7 @@ import {
   type IssueGiftCardRequest,
   type IssueGiftCardResponse,
 } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
@@ -76,6 +76,7 @@ export class GiftCardsAdminService {
   async search(
     request: GiftCardSearchRequest,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminGiftCardSearchResponse> {
     authorization.assertCorporate('giftcards.view');
 
@@ -99,15 +100,22 @@ export class GiftCardsAdminService {
       const canonical = canonicalizeGiftCardCode(rawCode);
       // A malformed code simply matches nothing — never echo it back.
       if (canonical) {
-        card = await this.prisma.giftCard.findUnique({
-          where: { codeHash: hashGiftCardCode(canonical) },
+        // Only the active business's cards: another business's code reads
+        // exactly like an unknown one.
+        card = await this.prisma.giftCard.findFirst({
+          where: {
+            codeHash: hashGiftCardCode(canonical),
+            tenantId: tenant.tenantId,
+          },
         });
       }
     } else {
       if (!UUID_PATTERN.test(rawId)) {
         throw new BadRequestException('That is not a valid gift-card id.');
       }
-      card = await this.prisma.giftCard.findUnique({ where: { id: rawId } });
+      card = await this.prisma.giftCard.findFirst({
+        where: { id: rawId, tenantId: tenant.tenantId },
+      });
     }
 
     return { giftCards: card ? [this.toAdminGiftCard(card)] : [] };
@@ -116,9 +124,10 @@ export class GiftCardsAdminService {
   async getDetail(
     giftCardId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminGiftCardDetail> {
     authorization.assertCorporate('giftcards.view');
-    return this.buildDetail(giftCardId);
+    return this.buildDetail(giftCardId, tenant);
   }
 
   // Issue a gift card for a legitimate HQ administrative reason (comp cards,
@@ -130,6 +139,7 @@ export class GiftCardsAdminService {
     request: IssueGiftCardRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<IssueGiftCardResponse> {
     authorization.assertCorporate('giftcards.manage');
 
@@ -139,7 +149,12 @@ export class GiftCardsAdminService {
     const currency = this.validateCurrency(request?.currency);
 
     const issued = await this.issuance.issue(
-      { originalValueMinorUnits, currency, actorInternalUserId },
+      {
+        tenantId: tenant.tenantId,
+        originalValueMinorUnits,
+        currency,
+        actorInternalUserId,
+      },
       async (tx, { card, last4 }) => {
         await this.audit.recordGiftCardIssued(tx, {
           actorInternalUserId,
@@ -162,6 +177,7 @@ export class GiftCardsAdminService {
     request: GiftCardStatusChangeRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminGiftCardDetail> {
     return this.changeStatus(
       giftCardId,
@@ -169,6 +185,7 @@ export class GiftCardsAdminService {
       request,
       actorInternalUserId,
       authorization,
+      tenant,
     );
   }
 
@@ -177,6 +194,7 @@ export class GiftCardsAdminService {
     request: GiftCardStatusChangeRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminGiftCardDetail> {
     return this.changeStatus(
       giftCardId,
@@ -184,6 +202,7 @@ export class GiftCardsAdminService {
       request,
       actorInternalUserId,
       authorization,
+      tenant,
     );
   }
 
@@ -200,6 +219,7 @@ export class GiftCardsAdminService {
     request: AdjustGiftCardBalanceRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminGiftCardDetail> {
     authorization.assertCorporate('giftcards.manage');
 
@@ -207,8 +227,11 @@ export class GiftCardsAdminService {
     const reason = this.validateReason(request?.reason);
     const operationKey = this.validateOperationKey(request?.operationKey);
 
-    const card = await this.prisma.giftCard.findUnique({
-      where: { id: giftCardId },
+    // Only the active business's cards can be corrected: another
+    // business's card is reported exactly like a missing one, before any
+    // ledger, balance or audit write.
+    const card = await this.prisma.giftCard.findFirst({
+      where: { id: giftCardId, tenantId: tenant.tenantId },
       select: { id: true },
     });
     if (!card) {
@@ -220,7 +243,7 @@ export class GiftCardsAdminService {
     const preexisting = await this.findCorrectionByOperationKey(operationKey);
     if (preexisting) {
       this.assertOperationKeyOwnedBy(preexisting, giftCardId);
-      return this.buildDetail(giftCardId);
+      return this.buildDetail(giftCardId, tenant);
     }
 
     try {
@@ -264,6 +287,7 @@ export class GiftCardsAdminService {
 
         await tx.giftCardTransaction.create({
           data: {
+            tenantId: tenant.tenantId,
             giftCardId,
             type: 'ADJUSTMENT',
             amountMinorUnits: deltaMinorUnits,
@@ -302,12 +326,12 @@ export class GiftCardsAdminService {
         if (winner) {
           this.assertOperationKeyOwnedBy(winner, giftCardId);
         }
-        return this.buildDetail(giftCardId);
+        return this.buildDetail(giftCardId, tenant);
       }
       throw error;
     }
 
-    return this.buildDetail(giftCardId);
+    return this.buildDetail(giftCardId, tenant);
   }
 
   // --- internals ---------------------------------------------------
@@ -318,13 +342,14 @@ export class GiftCardsAdminService {
     request: GiftCardStatusChangeRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminGiftCardDetail> {
     authorization.assertCorporate('giftcards.manage');
 
     const contextReason = this.validateOptionalReason(request?.reason);
 
-    const card = await this.prisma.giftCard.findUnique({
-      where: { id: giftCardId },
+    const card = await this.prisma.giftCard.findFirst({
+      where: { id: giftCardId, tenantId: tenant.tenantId },
       select: { id: true, status: true },
     });
     if (!card) {
@@ -333,7 +358,7 @@ export class GiftCardsAdminService {
 
     if (card.status === target) {
       // Already in the target state — no change, nothing to audit.
-      return this.buildDetail(giftCardId);
+      return this.buildDetail(giftCardId, tenant);
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -354,12 +379,17 @@ export class GiftCardsAdminService {
       });
     });
 
-    return this.buildDetail(giftCardId);
+    return this.buildDetail(giftCardId, tenant);
   }
 
-  private async buildDetail(giftCardId: string): Promise<AdminGiftCardDetail> {
-    const card = await this.prisma.giftCard.findUnique({
-      where: { id: giftCardId },
+  // Another business's card reads exactly like a missing one; the ledger
+  // below is then keyed by this validated card.
+  private async buildDetail(
+    giftCardId: string,
+    tenant: TenantContext,
+  ): Promise<AdminGiftCardDetail> {
+    const card = await this.prisma.giftCard.findFirst({
+      where: { id: giftCardId, tenantId: tenant.tenantId },
     });
     if (!card) {
       throw new NotFoundException('Gift card not found.');

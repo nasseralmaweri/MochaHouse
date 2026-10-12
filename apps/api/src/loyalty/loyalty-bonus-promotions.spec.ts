@@ -56,7 +56,7 @@ describe('Bonus Mocha Beans Promotions admin (integration)', () => {
         key: `bonus-promo-spec-${suffix}-${randomUUID()}`,
         displayName: 'Bonus Promo Spec Role',
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });

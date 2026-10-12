@@ -72,7 +72,7 @@ describe('Opening Checklist (integration)', () => {
         key: `opening-spec-${suffix}-${randomUUID()}`,
         displayName,
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });
@@ -129,7 +129,9 @@ describe('Opening Checklist (integration)', () => {
 
   async function openingTemplateId(): Promise<string> {
     const template = await prisma.checklistTemplate.findUniqueOrThrow({
-      where: { key: 'opening' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'opening' },
+      },
     });
     return template.id;
   }
@@ -438,7 +440,6 @@ describe('Opening Checklist (integration)', () => {
         items: {
           create: [
             {
-              tenantId: TENANT_1_MOCHA_HOUSE_ID,
               section: 'Building & Security',
               label: 'Old item',
               sortOrder: 1,

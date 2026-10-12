@@ -7,15 +7,17 @@ import type {
   CmsPageKey,
 } from '@mocha-house/contracts';
 import { CMS_PAGE_KEYS } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import {
   CMS_PAGE_REGISTRY,
+  defaultContentFor,
   getRegistryEntry,
   type CmsPageRegistryEntry,
 } from '../registry/cms-page-registry';
+import { businessDisplayName } from '../../tenancy/business-name';
 
 type CmsPageRow = Prisma.CmsPageGetPayload<Record<string, never>>;
 
@@ -31,11 +33,16 @@ export class CmsPagesAdminService {
     private readonly audit: InternalAuditService,
   ) {}
 
-  async list(authorization: AuthorizationContext): Promise<AdminCmsPagesResponse> {
+  async list(
+    authorization: AuthorizationContext,
+    tenant: TenantContext,
+  ): Promise<AdminCmsPagesResponse> {
     authorization.assertCorporate('cms.view');
 
+    // Each business has its own copy of every managed page, keyed
+    // (tenantId, key).
     const rows = await this.prisma.cmsPage.findMany({
-      where: { key: { in: [...CMS_PAGE_KEYS] } },
+      where: { tenantId: tenant.tenantId, key: { in: [...CMS_PAGE_KEYS] } },
     });
     const rowByKey = new Map(rows.map((row) => [row.key, row]));
 
@@ -49,11 +56,19 @@ export class CmsPagesAdminService {
   async getDetail(
     rawKey: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCmsPageDetail> {
     authorization.assertCorporate('cms.view');
     const entry = this.entryOrThrow(rawKey);
 
-    const row = await this.prisma.cmsPage.findUnique({ where: { key: entry.key } });
+    const row = await this.prisma.cmsPage.findUnique({
+      where: {
+        tenantId_key: { tenantId: tenant.tenantId, key: entry.key },
+      },
+    });
+    if (!row) {
+      return this.toDetail(entry, null, await this.defaults(entry, tenant));
+    }
     return this.toDetail(entry, row);
   }
 
@@ -62,26 +77,32 @@ export class CmsPagesAdminService {
     rawContent: unknown,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCmsPageDetail> {
     authorization.assertCorporate('cms.manage');
     const entry = this.entryOrThrow(rawKey);
     const content = entry.validate(rawContent);
     if (entry.validateReferences) {
-      await entry.validateReferences(content, this.prisma);
+      await entry.validateReferences(content, this.prisma, tenant.tenantId);
     }
 
     const existing = await this.prisma.cmsPage.findUnique({
-      where: { key: entry.key },
+      where: {
+        tenantId_key: { tenantId: tenant.tenantId, key: entry.key },
+      },
     });
     const previousDraft = existing
       ? (existing.draftContent as unknown as CmsPageContent)
-      : entry.defaultContent;
+      : await this.defaults(entry, tenant);
     const changedFieldKeys = entry.changedFieldKeys(previousDraft, content);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const row = await tx.cmsPage.upsert({
-        where: { key: entry.key },
+        where: {
+          tenantId_key: { tenantId: tenant.tenantId, key: entry.key },
+        },
         create: {
+          tenantId: tenant.tenantId,
           key: entry.key,
           title: entry.title,
           draftContent: content as object,
@@ -109,29 +130,35 @@ export class CmsPagesAdminService {
     rawKey: string,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminCmsPageDetail> {
     authorization.assertCorporate('cms.manage');
     const entry = this.entryOrThrow(rawKey);
 
     const existing = await this.prisma.cmsPage.findUnique({
-      where: { key: entry.key },
+      where: {
+        tenantId_key: { tenantId: tenant.tenantId, key: entry.key },
+      },
     });
     // Re-validate defensively — the stored draft was already validated on
     // save, but this guards against any out-of-band data (and catches a
     // reference that became invalid, e.g. a media asset deactivated, or a
     // product deactivated, since the draft was last saved).
     const draft = entry.validate(
-      existing ? existing.draftContent : entry.defaultContent,
+      existing ? existing.draftContent : await this.defaults(entry, tenant),
     );
     if (entry.validateReferences) {
-      await entry.validateReferences(draft, this.prisma);
+      await entry.validateReferences(draft, this.prisma, tenant.tenantId);
     }
     const publishedAt = new Date();
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const row = await tx.cmsPage.upsert({
-        where: { key: entry.key },
+        where: {
+          tenantId_key: { tenantId: tenant.tenantId, key: entry.key },
+        },
         create: {
+          tenantId: tenant.tenantId,
           key: entry.key,
           title: entry.title,
           draftContent: draft as object,
@@ -189,16 +216,34 @@ export class CmsPagesAdminService {
     };
   }
 
+  // Security 4A — a never-edited page's default content, filled in with
+  // THIS business's name (never another business's, never a hardcoded
+  // brand), so publishing an untouched default can't put another
+  // business's name on this business's storefront.
+  private async defaults(
+    entry: CmsPageRegistryEntry,
+    tenant: TenantContext,
+  ): Promise<CmsPageContent> {
+    return defaultContentFor(
+      entry,
+      await businessDisplayName(this.prisma, tenant.tenantId),
+    );
+  }
+
   private toDetail(
     entry: CmsPageRegistryEntry,
     row: CmsPageRow | null,
+    defaultContent?: CmsPageContent,
   ): AdminCmsPageDetail {
     if (!row) {
+      if (!defaultContent) {
+        throw new Error('Default content is required for a never-saved page.');
+      }
       return {
         key: entry.key,
         title: entry.title,
         status: 'DRAFT',
-        draftContent: entry.defaultContent,
+        draftContent: defaultContent,
         publishedContent: null,
         publishedAt: null,
         updatedAt: null,

@@ -89,7 +89,7 @@ describe('Opening Checklist configuration (integration)', () => {
         key: `cfg-spec-${suffix}-${randomUUID()}`,
         displayName,
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });
@@ -251,7 +251,9 @@ describe('Opening Checklist configuration (integration)', () => {
     prisma = moduleFixture.get(PrismaService);
 
     const template = await prisma.checklistTemplate.findUniqueOrThrow({
-      where: { key: 'opening' },
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'opening' },
+      },
     });
     templateId = template.id;
     snapshot = (

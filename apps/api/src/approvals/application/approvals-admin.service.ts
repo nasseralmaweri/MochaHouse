@@ -11,7 +11,7 @@ import type {
   ApprovalStatus,
 } from '@mocha-house/contracts';
 import { APPROVAL_TARGET_TYPE_CAMPAIGN } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
@@ -47,11 +47,14 @@ export class ApprovalsAdminService {
   async list(
     query: { status?: string; cursor?: string },
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminApprovalRequestsResponse> {
     authorization.assertCorporate('approvals.view');
     authorization.assertCorporate('marketing.view');
 
-    const where: Prisma.ApprovalRequestWhereInput = {};
+    const where: Prisma.ApprovalRequestWhereInput = {
+      tenantId: tenant.tenantId,
+    };
     if (query.status !== undefined) {
       where.status = this.parseStatus(query.status);
     }
@@ -81,21 +84,25 @@ export class ApprovalsAdminService {
   async getOne(
     approvalRequestId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminApprovalRequest> {
     authorization.assertCorporate('approvals.view');
     authorization.assertCorporate('marketing.view');
-    return this.toAdminApprovalRequest(await this.loadOrThrow(approvalRequestId));
+    return this.toAdminApprovalRequest(
+      await this.loadOrThrow(approvalRequestId, tenant),
+    );
   }
 
   async approve(
     approvalRequestId: string,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminApprovalRequest> {
     authorization.assertCorporate('approvals.decide');
     authorization.assertCorporate('marketing.view');
 
-    const current = await this.loadOrThrow(approvalRequestId);
+    const current = await this.loadOrThrow(approvalRequestId, tenant);
     if (current.status !== 'PENDING') {
       throw new ConflictException('Only a pending approval request can be approved.');
     }
@@ -132,13 +139,14 @@ export class ApprovalsAdminService {
     reason: unknown,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminApprovalRequest> {
     authorization.assertCorporate('approvals.decide');
     authorization.assertCorporate('marketing.view');
 
     const validReason = this.validateReason(reason);
 
-    const current = await this.loadOrThrow(approvalRequestId);
+    const current = await this.loadOrThrow(approvalRequestId, tenant);
     if (current.status !== 'PENDING') {
       throw new ConflictException('Only a pending approval request can be rejected.');
     }
@@ -174,9 +182,14 @@ export class ApprovalsAdminService {
 
   // --- helpers -------------------------------------------------
 
-  private async loadOrThrow(approvalRequestId: string): Promise<ApprovalRequestRow> {
-    const row = await this.prisma.approvalRequest.findUnique({
-      where: { id: approvalRequestId },
+  // Another business's request is reported exactly like a missing one, so
+  // it can never be read, approved or rejected from here.
+  private async loadOrThrow(
+    approvalRequestId: string,
+    tenant: TenantContext,
+  ): Promise<ApprovalRequestRow> {
+    const row = await this.prisma.approvalRequest.findFirst({
+      where: { id: approvalRequestId, tenantId: tenant.tenantId },
       include: REQUEST_INCLUDE,
     });
     if (!row) {
@@ -212,7 +225,11 @@ export class ApprovalsAdminService {
       id: row.id,
       targetType: row.targetType,
       targetId: row.targetId,
-      targetLabel: await this.resolveTargetLabel(row.targetType, row.targetId),
+      targetLabel: await this.resolveTargetLabel(
+        row.targetType,
+        row.targetId,
+        row.tenantId,
+      ),
       action: row.action,
       status: row.status,
       requestedByLabel:
@@ -234,10 +251,11 @@ export class ApprovalsAdminService {
   private async resolveTargetLabel(
     targetType: string,
     targetId: string,
+    tenantId: string,
   ): Promise<string> {
     if (targetType === APPROVAL_TARGET_TYPE_CAMPAIGN) {
-      const campaign = await this.prisma.campaign.findUnique({
-        where: { id: targetId },
+      const campaign = await this.prisma.campaign.findFirst({
+        where: { id: targetId, tenantId },
         select: { name: true },
       });
       return campaign?.name ?? 'Deleted campaign';

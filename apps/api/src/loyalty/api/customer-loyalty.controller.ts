@@ -40,8 +40,10 @@ export class CustomerLoyaltyController {
     const balance = await this.loyaltyService.getBalanceForCustomer(
       customer.id,
     );
-    const rewards =
-      await this.rewardsService.listActiveRewardsForCustomer(balance);
+    const rewards = await this.rewardsService.listActiveRewardsForCustomer(
+      balance,
+      customer.tenantId,
+    );
     return { balance, rewards };
   }
 }

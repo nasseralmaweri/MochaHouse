@@ -526,7 +526,6 @@ describe('Customer reorder (integration)', () => {
         options: {
           create: [
             {
-              tenantId: TENANT_1_MOCHA_HOUSE_ID,
               name: 'Regular',
               priceAdjustment: 0,
               displayOrder: 1,

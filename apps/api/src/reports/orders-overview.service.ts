@@ -3,7 +3,7 @@ import type {
   AdminOrdersOverviewReport,
   OrderStatus,
 } from '@mocha-house/contracts';
-import { Prisma } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthorizationContext } from '../internal-auth/authorization/authorization-context';
 import {
@@ -39,6 +39,7 @@ export class OrdersOverviewReportService {
   async getOrdersOverview(
     query: OrdersOverviewQuery,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminOrdersOverviewReport> {
     // `reports.view` is CORPORATE-only in the permission catalog, so
     // PermissionGuard already rejects a LOCATION grant; this is the
@@ -54,13 +55,13 @@ export class OrdersOverviewReportService {
 
     const [selectedLocation, availableLocations] = await Promise.all([
       locationId
-        ? this.prisma.location.findUnique({
-            where: { id: locationId },
+        ? this.prisma.location.findFirst({
+            where: { id: locationId, tenantId: tenant.tenantId },
             select: { id: true, name: true },
           })
         : Promise.resolve(null),
       this.prisma.location.findMany({
-        where: { isActive: true },
+        where: { tenantId: tenant.tenantId, isActive: true },
         select: { id: true, name: true },
         orderBy: { name: 'asc' },
       }),
@@ -76,7 +77,10 @@ export class OrdersOverviewReportService {
       MOCHA_HOUSE_TIME_ZONE,
     );
 
+    // The active tenant's orders only; a location of another tenant was
+    // already rejected above exactly like an unknown one.
     const where: Prisma.OrderWhereInput = {
+      tenantId: tenant.tenantId,
       createdAt: { gte: start, lt: endExclusive },
       ...(locationId ? { locationId } : {}),
     };

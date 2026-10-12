@@ -22,6 +22,8 @@ export interface InternalDevJwtClaims {
   sub: string;
   email: string | null;
   name: string | null;
+  // Mirrors Cognito's claim; absent means unverified.
+  email_verified?: boolean;
 }
 
 interface InternalDevJwtPayload extends InternalDevJwtClaims {
@@ -99,5 +101,6 @@ export function verifyInternalDevJwt(
     sub: parsed.sub,
     email: typeof parsed.email === 'string' ? parsed.email : null,
     name: typeof parsed.name === 'string' ? parsed.name : null,
+    email_verified: parsed.email_verified === true,
   };
 }

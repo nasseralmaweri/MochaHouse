@@ -115,9 +115,7 @@ describe('S0D-2A explicit tenant writes — catalog & store operations (integrat
         key: templateKey,
         name: `S0D2A ${label} checklist`,
         items: {
-          create: [
-            { tenantId, section: 'Open', label: 'Unlock doors', sortOrder: 1 },
-          ],
+          create: [{ section: 'Open', label: 'Unlock doors', sortOrder: 1 }],
         },
       },
     });
@@ -221,7 +219,7 @@ describe('S0D-2A explicit tenant writes — catalog & store operations (integrat
             'operations.view',
             'operations.tasks.complete',
             'catalog.overrides.manage',
-          ].map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          ].map((permissionKey) => ({ permissionKey })),
         },
       },
     });

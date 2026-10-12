@@ -35,6 +35,10 @@ export interface IssuedGiftCard {
 }
 
 export interface IssueGiftCardCoreParams {
+  // The owning business: the request's TenantContext for HQ issuance, the
+  // validated GiftCardPurchase's own tenant for a customer purchase. The
+  // card and its ISSUANCE ledger entry both copy it.
+  tenantId: string;
   originalValueMinorUnits: number;
   currency: string;
   // Set for an HQ-issued card; null for a customer purchase.
@@ -64,6 +68,7 @@ export class GiftCardIssuanceService {
         const issued = await this.prisma.$transaction(async (tx) => {
           const card = await tx.giftCard.create({
             data: {
+              tenantId: params.tenantId,
               codeHash,
               last4,
               originalValueMinorUnits: params.originalValueMinorUnits,
@@ -73,6 +78,7 @@ export class GiftCardIssuanceService {
           });
           await tx.giftCardTransaction.create({
             data: {
+              tenantId: params.tenantId,
               giftCardId: card.id,
               type: 'ISSUANCE',
               amountMinorUnits: params.originalValueMinorUnits,

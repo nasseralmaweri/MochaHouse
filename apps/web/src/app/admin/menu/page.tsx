@@ -37,14 +37,21 @@ export default async function AdminMenuHomePage() {
           <MenuHomeCard
             href="/admin/menu/products"
             title="Products"
-            description="Names, descriptions, prices and whether each item is active."
+            description="Create products and manage names, descriptions, prices and whether each item is active."
+          />
+        </li>
+        <li>
+          <MenuHomeCard
+            href="/admin/menu/categories"
+            title="Categories"
+            description="How products are grouped, and where new ones start."
           />
         </li>
         <li>
           <MenuHomeCard
             href="/admin/menu/menus"
             title="Menus"
-            description="See which products appear on each menu and turn them on or off."
+            description="Add products to each menu and turn them on or off."
           />
         </li>
       </ul>

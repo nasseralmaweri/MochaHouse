@@ -58,7 +58,10 @@ export class CustomerReorderService {
     // exists / is inactive. It does NOT filter on digital ordering — that
     // check is ours to make (a location can be a real, active location
     // that is simply not taking online orders right now).
-    const menu = await this.locationsService.findMenu(order.locationId);
+    const menu = await this.locationsService.findMenu(
+      order.locationId,
+      order.tenantId,
+    );
 
     if (!menu) {
       return this.locationUnavailable(order, location, {

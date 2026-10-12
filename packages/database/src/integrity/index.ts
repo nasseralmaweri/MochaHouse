@@ -1,0 +1,25 @@
+export {
+  TENANT_MODEL_KEYS,
+  TENANT_RELATIONSHIPS,
+  type DirectReference,
+  type ExternalIdentifier,
+  type JsonReference,
+  type PolymorphicReference,
+  type ReferentialAction,
+  type RelationshipKind,
+  type TenantOwnedModel,
+  type TenantRelationship,
+} from './relationship-inventory';
+export {
+  checkTenantIntegrity,
+  formatTenantIntegrityReport,
+  integrityVerdict,
+  type FindingType,
+  type IntegrityVerdict,
+  type IntegrityQueryable,
+  type KindSummary,
+  type NotCheckableEntry,
+  type RelationshipFinding,
+  type TenantIntegrityOptions,
+  type TenantIntegrityReport,
+} from './tenant-integrity-checker';

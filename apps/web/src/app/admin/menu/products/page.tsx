@@ -10,6 +10,7 @@ import {
   AdminForbidden,
 } from "@/components/admin/states";
 import { ProductsBrowser } from "@/components/admin/ProductsBrowser";
+import { ButtonLink } from "@/components/admin/Button";
 
 // Admin product list (Milestone 5D-3). Server component fetches the
 // authorized, scope-checked list; the small client island handles the
@@ -22,6 +23,13 @@ export default async function AdminProductsPage() {
     redirect("/internal/sign-in");
   }
 
+  const canCreate = can(
+    session.authorization.capabilities,
+    "catalog.products.edit",
+  );
+  const newProduct = canCreate ? (
+    <ButtonLink href="/admin/menu/products/new">New product</ButtonLink>
+  ) : undefined;
   const header = (
     <AdminPageHeader
       title="Products"
@@ -30,6 +38,7 @@ export default async function AdminProductsPage() {
         { label: "Menu & Products", href: "/admin/menu" },
         { label: "Products" },
       ]}
+      actions={newProduct}
     />
   );
 
@@ -71,6 +80,7 @@ export default async function AdminProductsPage() {
         <AdminEmptyState
           title="No products yet"
           description="The catalog is empty."
+          action={newProduct}
         />
       </AdminPage>
     );

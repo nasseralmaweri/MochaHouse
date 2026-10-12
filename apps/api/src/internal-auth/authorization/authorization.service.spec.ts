@@ -83,10 +83,9 @@ describe('AuthorizationService (integration)', () => {
         displayName: 'Role A (orders.view + catalog.overrides.manage)',
         permissions: {
           create: [
-            { permissionKey: 'orders.view', tenantId: TENANT_1_MOCHA_HOUSE_ID },
+            { permissionKey: 'orders.view' },
             {
               permissionKey: 'catalog.overrides.manage',
-              tenantId: TENANT_1_MOCHA_HOUSE_ID,
             },
           ],
         },
@@ -101,7 +100,6 @@ describe('AuthorizationService (integration)', () => {
           create: [
             {
               permissionKey: 'catalog.products.edit',
-              tenantId: TENANT_1_MOCHA_HOUSE_ID,
             },
           ],
         },
@@ -114,10 +112,9 @@ describe('AuthorizationService (integration)', () => {
         displayName: 'Role with an unknown permission key',
         permissions: {
           create: [
-            { permissionKey: 'orders.view', tenantId: TENANT_1_MOCHA_HOUSE_ID },
+            { permissionKey: 'orders.view' },
             {
               permissionKey: 'orders.delete_everything',
-              tenantId: TENANT_1_MOCHA_HOUSE_ID,
             },
           ],
         },
@@ -150,6 +147,31 @@ describe('AuthorizationService (integration)', () => {
       where: { internalUserId: userId },
     });
   });
+
+  // Since Security 4C-5 PostgreSQL refuses a cross-business grant outright
+  // (composite foreign keys). Rows written before that can only be pictured
+  // as legacy data: planted with foreign-key triggers suspended, they must
+  // still never surface.
+  async function plantLegacyAssignment(row: {
+    tenantId: string;
+    roleId: string;
+    scopeType: 'CORPORATE' | 'LOCATION';
+    scopeId: string | null;
+  }) {
+    await prisma.$transaction([
+      prisma.$executeRawUnsafe(`SET LOCAL session_replication_role = replica`),
+      prisma.$executeRawUnsafe(
+        `INSERT INTO "InternalUserRoleAssignment" ("id", "tenantId", "internalUserId", "roleId", "scopeType", "scopeId", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5::"InternalScopeType", $6, now())`,
+        randomUUID(),
+        row.tenantId,
+        userId,
+        row.roleId,
+        row.scopeType,
+        row.scopeId,
+      ),
+    ]);
+  }
 
   it('a user with no assignments has an empty context', async () => {
     const ctx = await service.loadContext(userId, tenantOne);
@@ -240,16 +262,23 @@ describe('AuthorizationService (integration)', () => {
     expect(ctx.has('orders.view')).toBe(true);
   });
 
-  it('ignores a CORPORATE assignment that wrongly carries a scopeId', async () => {
-    await prisma.internalUserRoleAssignment.create({
-      data: {
-        tenantId: TENANT_1_MOCHA_HOUSE_ID,
-        internalUserId: userId,
-        roleId: roleIds[roleKeys[1]],
-        scopeType: 'CORPORATE',
-        scopeId: 'should-not-be-here',
-      },
-    });
+  it('a CORPORATE assignment that carries a scopeId cannot exist (Security 4C-5 CHECK), so it can never grant anything', async () => {
+    await expect(
+      prisma.internalUserRoleAssignment.create({
+        data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          internalUserId: userId,
+          roleId: roleIds[roleKeys[1]],
+          scopeType: 'CORPORATE',
+          scopeId: 'should-not-be-here',
+        },
+      }),
+    ).rejects.toThrow(/InternalUserRoleAssignment_scope_shape_check/);
+    expect(
+      await prisma.internalUserRoleAssignment.count({
+        where: { internalUserId: userId },
+      }),
+    ).toBe(0);
     const ctx = await service.loadContext(userId, tenantOne);
     expect(ctx.has('catalog.products.edit')).toBe(false);
   });
@@ -281,23 +310,35 @@ describe('AuthorizationService (integration)', () => {
   });
 
   it("a row whose OWN tenantId is Tenant B is invisible under Tenant A's context, even addressed by the same internalUserId", async () => {
-    // Planted directly via Prisma, bypassing assignRole's own same-tenant
-    // validation — exactly the shape a bug in that validation would produce.
-    await prisma.internalUserRoleAssignment.create({
-      data: {
-        tenantId: TEST_TENANT_B_ID,
-        internalUserId: userId,
-        roleId: roleIds[roleKeys[0]],
-        scopeType: 'CORPORATE',
-        scopeId: null,
-      },
+    // Written directly via Prisma, bypassing assignRole's own same-tenant
+    // validation — exactly the shape a bug in that validation would
+    // produce. The database refuses it (Security 4C-5)...
+    await expect(
+      prisma.internalUserRoleAssignment.create({
+        data: {
+          tenantId: TEST_TENANT_B_ID,
+          internalUserId: userId,
+          roleId: roleIds[roleKeys[0]],
+          scopeType: 'CORPORATE',
+          scopeId: null,
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'P2003' });
+    // ...and as pre-4C-5 legacy data it stays invisible to Tenant A.
+    await plantLegacyAssignment({
+      tenantId: TEST_TENANT_B_ID,
+      roleId: roleIds[roleKeys[0]],
+      scopeType: 'CORPORATE',
+      scopeId: null,
     });
 
     const asTenantA = await service.loadContext(userId, tenantOne);
-    const asTenantB = await service.loadContext(userId, tenantB);
-
     expect(asTenantA.has('orders.view')).toBe(false);
-    expect(asTenantB.has('orders.view')).toBe(true);
+    // Under Tenant B the row no longer even joins to Tenant A's role: the
+    // role relation is (tenantId, roleId) since Security 4C-5, so it never
+    // resolves to another business's role and evaluation fails closed
+    // (before 4C-5 it granted that role's permissions under Tenant B).
+    await expect(service.loadContext(userId, tenantB)).rejects.toThrow();
   });
 
   it('removing tenantId from the lookup would have caught both of the above (mutation sanity check via direct query)', async () => {
@@ -305,23 +346,20 @@ describe('AuthorizationService (integration)', () => {
     // above really do carry different tenantId values, so the two tests
     // above are actually exercising cross-tenant isolation and not some
     // other accident.
-    await prisma.internalUserRoleAssignment.createMany({
-      data: [
-        {
-          tenantId: TENANT_1_MOCHA_HOUSE_ID,
-          internalUserId: userId,
-          roleId: roleIds[roleKeys[1]],
-          scopeType: 'CORPORATE',
-          scopeId: null,
-        },
-        {
-          tenantId: TEST_TENANT_B_ID,
-          internalUserId: userId,
-          roleId: roleIds[roleKeys[1]],
-          scopeType: 'LOCATION',
-          scopeId: 'loc-only-in-b',
-        },
-      ],
+    await prisma.internalUserRoleAssignment.create({
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        internalUserId: userId,
+        roleId: roleIds[roleKeys[1]],
+        scopeType: 'CORPORATE',
+        scopeId: null,
+      },
+    });
+    await plantLegacyAssignment({
+      tenantId: TEST_TENANT_B_ID,
+      roleId: roleIds[roleKeys[1]],
+      scopeType: 'LOCATION',
+      scopeId: 'loc-only-in-b',
     });
     const rows = await prisma.internalUserRoleAssignment.findMany({
       where: { internalUserId: userId },
@@ -355,14 +393,22 @@ describe('AuthorizationService (integration)', () => {
   });
 
   it("a LOCATION grant pointing at another tenant's location contributes nothing", async () => {
-    await prisma.internalUserRoleAssignment.create({
-      data: {
-        tenantId: TENANT_1_MOCHA_HOUSE_ID,
-        internalUserId: userId,
-        roleId: roleIds[roleKeys[0]],
-        scopeType: 'LOCATION',
-        scopeId: locInB,
-      },
+    await expect(
+      prisma.internalUserRoleAssignment.create({
+        data: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          internalUserId: userId,
+          roleId: roleIds[roleKeys[0]],
+          scopeType: 'LOCATION',
+          scopeId: locInB,
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'P2003' });
+    await plantLegacyAssignment({
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
+      roleId: roleIds[roleKeys[0]],
+      scopeType: 'LOCATION',
+      scopeId: locInB,
     });
 
     const ctx = await service.loadContext(userId, tenantOne);

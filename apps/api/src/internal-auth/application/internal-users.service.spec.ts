@@ -168,7 +168,10 @@ describe('InternalUsersService (integration)', () => {
     await createInternalUser(email, 'ACTIVE', { withSubject: false });
 
     const result = await service.resolveForAuthentication(
-      identityFor(email, { subject: 'internal-dev:bound-subject-123' }),
+      identityFor(email, {
+        subject: 'internal-dev:bound-subject-123',
+        emailVerified: true,
+      }),
       TENANT_1_MOCHA_HOUSE_ID,
     );
 
@@ -179,6 +182,28 @@ describe('InternalUsersService (integration)', () => {
       },
     });
     expect(stored.externalSubject).toBe('internal-dev:bound-subject-123');
+  });
+
+  it('never binds an email-provisioned user to an unverified email claim', async () => {
+    const email = uniqueEmail();
+    await createInternalUser(email, 'ACTIVE', { withSubject: false });
+
+    for (const emailVerified of [undefined, false]) {
+      const result = await service.resolveForAuthentication(
+        identityFor(email, {
+          subject: `internal-dev:unverified-${randomUUID()}`,
+          emailVerified,
+        }),
+        TENANT_1_MOCHA_HOUSE_ID,
+      );
+      expect(result.outcome).toBe('not-found');
+    }
+    const stored = await prisma.internalUser.findUniqueOrThrow({
+      where: {
+        tenantId_email: { tenantId: TENANT_1_MOCHA_HOUSE_ID, email },
+      },
+    });
+    expect(stored.externalSubject).toBeNull();
   });
 
   it('does not bind a subject to a non-ACTIVE email-provisioned user', async () => {

@@ -11,6 +11,7 @@ import type {
   UpdateLoyaltyBonusPromotionRequest,
 } from '@mocha-house/contracts';
 import { Prisma } from '@mocha-house/database';
+import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
@@ -64,9 +65,11 @@ export class LoyaltyBonusPromotionsService {
 
   async listPromotions(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLoyaltyBonusPromotionsResponse> {
     authorization.assertCorporate('loyalty.configure');
     const promotions = await this.prisma.loyaltyBonusPromotion.findMany({
+      where: { tenantId: tenant.tenantId },
       include: PROMOTION_INCLUDE,
       orderBy: PROMOTION_ORDER_BY,
     });
@@ -75,18 +78,20 @@ export class LoyaltyBonusPromotionsService {
 
   // Product + location picker data. Identity + name only — managing
   // promotions never requires `catalog.view` or `locations.view`.
+  // The active tenant's own catalog and locations only.
   async getOptions(
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLoyaltyBonusPromotionOptions> {
     authorization.assertCorporate('loyalty.configure');
     const [products, locations] = await Promise.all([
       this.prisma.product.findMany({
-        where: { isActive: true },
+        where: { tenantId: tenant.tenantId, isActive: true },
         select: { id: true, name: true },
         orderBy: { name: 'asc' },
       }),
       this.prisma.location.findMany({
-        where: { isActive: true },
+        where: { tenantId: tenant.tenantId, isActive: true },
         select: { id: true, name: true },
         orderBy: { name: 'asc' },
       }),
@@ -98,6 +103,7 @@ export class LoyaltyBonusPromotionsService {
     request: CreateLoyaltyBonusPromotionRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLoyaltyBonusPromotion> {
     authorization.assertCorporate('loyalty.configure');
 
@@ -119,26 +125,34 @@ export class LoyaltyBonusPromotionsService {
       request?.endsAt,
     );
 
-    await this.assertProductsExist(productIds);
+    await this.assertProductsExist(productIds, tenant);
     if (locationIds.length > 0) {
-      await this.assertLocationsExist(locationIds);
+      await this.assertLocationsExist(locationIds, tenant);
     }
 
     const created = await this.prisma.$transaction(async (tx) => {
       const promotion = await tx.loyaltyBonusPromotion.create({
         data: {
+          tenantId: tenant.tenantId,
           name,
           type,
           bonusValue,
           appliesToAllLocations,
           startsAt,
           endsAt,
+          // Nested rows take tenantId from the parent (composite key, Security 4C-6).
           eligibleProducts: {
-            create: productIds.map((productId) => ({ productId })),
+            create: productIds.map((productId) => ({
+              productId,
+            })),
           },
           eligibleLocations:
             locationIds.length > 0
-              ? { create: locationIds.map((locationId) => ({ locationId })) }
+              ? {
+                  create: locationIds.map((locationId) => ({
+                    locationId,
+                  })),
+                }
               : undefined,
         },
         include: PROMOTION_INCLUDE,
@@ -161,11 +175,14 @@ export class LoyaltyBonusPromotionsService {
     request: UpdateLoyaltyBonusPromotionRequest,
     actorInternalUserId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLoyaltyBonusPromotion> {
     authorization.assertCorporate('loyalty.configure');
 
-    const current = await this.prisma.loyaltyBonusPromotion.findUnique({
-      where: { id: promotionId },
+    // Another business's bonus promotion is reported exactly like a missing
+    // one, before any write.
+    const current = await this.prisma.loyaltyBonusPromotion.findFirst({
+      where: { id: promotionId, tenantId: tenant.tenantId },
       include: PROMOTION_INCLUDE,
     });
     if (!current) {
@@ -221,7 +238,7 @@ export class LoyaltyBonusPromotionsService {
       nextAppliesToAll = resolved.appliesToAllLocations;
       nextLocationIds = resolved.locationIds;
       if (nextLocationIds.length > 0) {
-        await this.assertLocationsExist(nextLocationIds);
+        await this.assertLocationsExist(nextLocationIds, tenant);
       }
       data.appliesToAllLocations = nextAppliesToAll;
     }
@@ -234,7 +251,7 @@ export class LoyaltyBonusPromotionsService {
           'A bonus promotion needs at least one eligible product.',
         );
       }
-      await this.assertProductsExist(nextProductIds);
+      await this.assertProductsExist(nextProductIds, tenant);
     }
 
     // Date window — validate against the intended end state.
@@ -263,7 +280,11 @@ export class LoyaltyBonusPromotionsService {
           where: { promotionId },
         });
         await tx.loyaltyBonusPromotionProduct.createMany({
-          data: nextProductIds.map((productId) => ({ promotionId, productId })),
+          data: nextProductIds.map((productId) => ({
+            tenantId: tenant.tenantId,
+            promotionId,
+            productId,
+          })),
         });
       }
 
@@ -274,6 +295,7 @@ export class LoyaltyBonusPromotionsService {
         if (nextLocationIds.length > 0) {
           await tx.loyaltyBonusPromotionLocation.createMany({
             data: nextLocationIds.map((locationId) => ({
+              tenantId: tenant.tenantId,
               promotionId,
               locationId,
             })),
@@ -450,9 +472,14 @@ export class LoyaltyBonusPromotionsService {
     return [...new Set((raw as string[]).map((id) => id.trim()))];
   }
 
-  private async assertProductsExist(productIds: string[]): Promise<void> {
+  // Eligibility may only reference the active business's own products and
+  // locations; another business's id reads exactly like a missing one.
+  private async assertProductsExist(
+    productIds: string[],
+    tenant: TenantContext,
+  ): Promise<void> {
     const found = await this.prisma.product.findMany({
-      where: { id: { in: productIds } },
+      where: { id: { in: productIds }, tenantId: tenant.tenantId },
       select: { id: true },
     });
     if (found.length !== productIds.length) {
@@ -462,9 +489,12 @@ export class LoyaltyBonusPromotionsService {
     }
   }
 
-  private async assertLocationsExist(locationIds: string[]): Promise<void> {
+  private async assertLocationsExist(
+    locationIds: string[],
+    tenant: TenantContext,
+  ): Promise<void> {
     const found = await this.prisma.location.findMany({
-      where: { id: { in: locationIds } },
+      where: { id: { in: locationIds }, tenantId: tenant.tenantId },
       select: { id: true },
     });
     if (found.length !== locationIds.length) {

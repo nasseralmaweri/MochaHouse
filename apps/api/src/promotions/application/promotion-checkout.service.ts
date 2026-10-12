@@ -91,8 +91,13 @@ export class PromotionCheckoutService {
 
   // A `db` that is the ambient client pre-payment, or the transaction client
   // for the authoritative in-transaction revalidation.
+  // `tenantId` is the checkout's server-validated business (the ordering
+  // Location's tenant). Only that business's coupons and automatic
+  // promotions are ever considered — another business's code reads exactly
+  // like an unknown one.
   async resolveRegularDiscount(input: {
     db?: Prisma.TransactionClient;
+    tenantId: string;
     priced: PricedOk;
     menu: LocationMenuResponse;
     locationId: string;
@@ -114,7 +119,9 @@ export class PromotionCheckoutService {
         return this.reject('invalid', "That coupon code isn't valid.");
       }
       const promotion = await db.promotion.findUnique({
-        where: { code: normalized },
+        where: {
+          tenantId_code: { tenantId: input.tenantId, code: normalized },
+        },
         include: PROMOTION_INCLUDE,
       });
       if (!promotion || promotion.kind !== 'COUPON') {
@@ -180,6 +187,7 @@ export class PromotionCheckoutService {
     // No coupon — pick the best eligible automatic Promotion.
     const candidates = await db.promotion.findMany({
       where: {
+        tenantId: input.tenantId,
         kind: 'AUTOMATIC',
         isActive: true,
         AND: [
@@ -234,15 +242,24 @@ export class PromotionCheckoutService {
   // available redemption.
   async applyRedemption(
     tx: Prisma.TransactionClient,
-    input: { orderId: string; customerId: string | null; plan: RegularDiscountPlan },
+    input: {
+      tenantId: string;
+      orderId: string;
+      customerId: string | null;
+      plan: RegularDiscountPlan;
+    },
   ): Promise<void> {
-    const { orderId, customerId, plan } = input;
+    // `tenantId` is the order's own tenant. The promotion was resolved under
+    // it; every counter update is constrained to it and every row written
+    // here copies it.
+    const { tenantId, orderId, customerId, plan } = input;
 
     // Total redemption limit — conditional increment.
     if (plan.totalRedemptionLimit !== null) {
       const res = await tx.promotion.updateMany({
         where: {
           id: plan.promotionId,
+          tenantId,
           redemptionCount: { lt: plan.totalRedemptionLimit },
         },
         data: { redemptionCount: { increment: 1 } },
@@ -254,10 +271,15 @@ export class PromotionCheckoutService {
         );
       }
     } else {
-      await tx.promotion.updateMany({
-        where: { id: plan.promotionId },
+      const res = await tx.promotion.updateMany({
+        where: { id: plan.promotionId, tenantId },
         data: { redemptionCount: { increment: 1 } },
       });
+      if (res.count === 0) {
+        throw new ConflictException(
+          `This offer is no longer available. Reference ${orderId} for support.`,
+        );
+      }
     }
 
     // Per-customer limit — conditional increment of the dedicated counter
@@ -269,7 +291,12 @@ export class PromotionCheckoutService {
         where: {
           promotionId_customerId: { promotionId: plan.promotionId, customerId },
         },
-        create: { promotionId: plan.promotionId, customerId, usedCount: 0 },
+        create: {
+          tenantId,
+          promotionId: plan.promotionId,
+          customerId,
+          usedCount: 0,
+        },
         update: {},
       });
       const res = await tx.promotionCustomerUsage.updateMany({
@@ -290,6 +317,7 @@ export class PromotionCheckoutService {
 
     await tx.orderPromotionRedemption.create({
       data: {
+        tenantId,
         orderId,
         sourcePromotionId: plan.promotionId,
         promotionName: plan.name,

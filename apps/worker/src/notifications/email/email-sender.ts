@@ -5,6 +5,10 @@
 // EmailSenderModule from one env var.
 export interface SendEmailInput {
   to: string;
+  // Security 4A — the sending business's display name (Tenant.name). The
+  // address stays the deployment's configured sender; only the name shown
+  // to the recipient is per business. Omitted -> the bare address.
+  fromName?: string;
   subject: string;
   html: string;
   text: string;

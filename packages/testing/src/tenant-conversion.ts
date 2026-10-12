@@ -63,4 +63,38 @@ export const TENANT_ID_REQUIRED_MODELS: readonly string[] = [
   'InternalRole',
   'InternalRolePermission',
   'InternalUserRoleAssignment',
+  // Tenant isolation phase 2 — every remaining tenant-owned model. Roots
+  // are stamped from the request TenantContext (or, for customer-facing
+  // writes, the server-validated Location / Customer / GiftCardPurchase);
+  // children and order snapshots copy their validated parent. The
+  // backfill derives every legacy NULL from a reliable relationship and
+  // aborts on anything ambiguous — it never assumes Tenant #1.
+  'InternalAuditEvent',
+  'ApprovalRequest',
+  'MediaAsset',
+  'CmsPage',
+  'CustomerLoyaltyAccount',
+  'MochaBeanLedgerEntry',
+  'LoyaltyConfiguration',
+  'LoyaltyReward',
+  'LoyaltyRewardProduct',
+  'LoyaltyRewardCategory',
+  'OrderLoyaltyRewardRedemption',
+  'LoyaltyBonusPromotion',
+  'LoyaltyBonusPromotionProduct',
+  'LoyaltyBonusPromotionLocation',
+  'OrderLoyaltyBonus',
+  'OrderLoyaltyBonusItem',
+  'Promotion',
+  'PromotionProduct',
+  'PromotionCategory',
+  'PromotionLocation',
+  'PromotionCustomerUsage',
+  'OrderPromotionRedemption',
+  'GiftCard',
+  'GiftCardTransaction',
+  'OrderGiftCardRedemption',
+  'GiftCardConfiguration',
+  'Campaign',
+  'CampaignProduct',
 ];

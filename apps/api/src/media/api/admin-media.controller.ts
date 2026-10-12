@@ -13,6 +13,8 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { UpdateMediaAssetMetadataRequest } from '@mocha-house/contracts';
+import type { TenantContext } from '@mocha-house/database';
+import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
@@ -36,10 +38,11 @@ export class AdminMediaController {
   @Get()
   list(
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
     @Query('cursor') cursor?: string,
     @Query('q') q?: string,
   ) {
-    return this.service.list({ cursor, q }, request.authorization!);
+    return this.service.list({ cursor, q }, request.authorization!, tenant);
   }
 
   @RequirePermission('media.view')
@@ -47,8 +50,13 @@ export class AdminMediaController {
   async getOne(
     @Param('mediaAssetId') mediaAssetId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
-    const asset = await this.service.getOne(mediaAssetId, request.authorization!);
+    const asset = await this.service.getOne(
+      mediaAssetId,
+      request.authorization!,
+      tenant,
+    );
     return { asset };
   }
 
@@ -58,11 +66,13 @@ export class AdminMediaController {
   async upload(
     @UploadedFile() file: Express.Multer.File | undefined,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     const asset = await this.service.upload(
       file,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
     return { asset };
   }
@@ -73,12 +83,14 @@ export class AdminMediaController {
     @Param('mediaAssetId') mediaAssetId: string,
     @Body() body: UpdateMediaAssetMetadataRequest,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     const asset = await this.service.updateMetadata(
       mediaAssetId,
       body,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
     return { asset };
   }
@@ -88,11 +100,13 @@ export class AdminMediaController {
   async deactivate(
     @Param('mediaAssetId') mediaAssetId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     const asset = await this.service.deactivate(
       mediaAssetId,
       request.internalUser!.id,
       request.authorization!,
+      tenant,
     );
     return { asset };
   }

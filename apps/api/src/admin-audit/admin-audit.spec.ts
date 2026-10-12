@@ -79,7 +79,7 @@ describe('Admin activity log (integration)', () => {
         key: `audit-spec-${suffix}-${randomUUID()}`,
         displayName,
         permissions: {
-          create: permissionKeys.map((permissionKey) => ({ permissionKey, tenantId: TENANT_1_MOCHA_HOUSE_ID })),
+          create: permissionKeys.map((permissionKey) => ({ permissionKey })),
         },
       },
     });
@@ -107,6 +107,7 @@ describe('Admin activity log (integration)', () => {
   }): Promise<string> {
     const event = await prisma.internalAuditEvent.create({
       data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
         actorInternalUserId: input.actorId,
         action: input.action,
         targetType: 'internal_user',
