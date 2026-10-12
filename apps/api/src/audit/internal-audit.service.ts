@@ -1095,6 +1095,101 @@ export class InternalAuditService {
       },
     });
   }
+
+  // --- S1, Admin catalog creation -----------------------------------
+  // Written in the SAME transaction as the change. New polymorphic targets
+  // 'category', 'product' and 'menu' (registered in the relationship
+  // inventory); the Admin Activity Log is scoped to 'internal_user' and
+  // ignores them. Only compact catalog fields are recorded.
+
+  async recordCatalogCategoryCreated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      categoryId: string;
+      name: string;
+      slug: string;
+      isActive: boolean;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'catalog.category_created',
+        targetType: 'category',
+        targetId: input.categoryId,
+        afterData: {
+          name: input.name,
+          slug: input.slug,
+          isActive: input.isActive,
+        },
+        reason: 'Category created.',
+      },
+    });
+  }
+
+  async recordCatalogProductCreated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      productId: string;
+      name: string;
+      slug: string;
+      categoryId: string;
+      basePrice: number | null;
+      isActive: boolean;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'catalog.product_created',
+        targetType: 'product',
+        targetId: input.productId,
+        afterData: {
+          name: input.name,
+          slug: input.slug,
+          categoryId: input.categoryId,
+          basePrice: input.basePrice,
+          isActive: input.isActive,
+        },
+        reason: 'Product created.',
+      },
+    });
+  }
+
+  // The target is the menu whose composition changed; the product is named
+  // in the payload. Recorded only when a placement is actually created —
+  // an idempotent repeat that finds it already there records nothing.
+  async recordCatalogMenuProductAdded(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      menuId: string;
+      productId: string;
+      displayOrder: number;
+      isActive: boolean;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'catalog.menu_product_added',
+        targetType: 'menu',
+        targetId: input.menuId,
+        beforeData: { placement: null },
+        afterData: {
+          productId: input.productId,
+          displayOrder: input.displayOrder,
+          isActive: input.isActive,
+        },
+        reason: 'Product added to menu.',
+      },
+    });
+  }
 }
 
 interface ChecklistExceptionAuditInput {

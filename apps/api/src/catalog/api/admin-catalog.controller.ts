@@ -3,14 +3,25 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
+  Post,
   Put,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import type { AdminUpdateProductRequest } from '@mocha-house/contracts';
 import { CatalogService } from '../application/catalog.service';
+import { CatalogCreationService } from '../application/catalog-creation.service';
+import {
+  parseAddMenuProduct,
+  parseCreateCategory,
+  parseCreateProduct,
+} from '../application/catalog-create-input';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
@@ -44,7 +55,83 @@ interface UpdateMenuProductAssignmentBody {
 @UseGuards(InternalAuthGuard, PermissionGuard)
 @Controller('api/v1/admin/catalog')
 export class AdminCatalogController {
-  constructor(private readonly catalogService: CatalogService) {}
+  constructor(
+    private readonly catalogService: CatalogService,
+    private readonly catalogCreation: CatalogCreationService,
+  ) {}
+
+  // --- Admin catalog creation (S1) ----------------------------------
+  // Categories and products are master catalog shared by every location,
+  // so creating them needs the CORPORATE-only `catalog.products.edit`;
+  // placing a product on a menu changes menu composition, so it needs the
+  // CORPORATE-only `catalog.menu.manage`. Bodies are parsed field by field
+  // (catalog-create-input.ts) — nothing is spread into Prisma, and any
+  // tenant id in the body is ignored.
+  @RequirePermission('catalog.view')
+  @Get('categories')
+  listCategories(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.catalogService.listAdminCategories(
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  @RequirePermission('catalog.products.edit')
+  @Post('categories')
+  @HttpCode(HttpStatus.CREATED)
+  createCategory(
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.catalogCreation.createCategory(
+      parseCreateCategory(body),
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  @RequirePermission('catalog.products.edit')
+  @Post('products')
+  @HttpCode(HttpStatus.CREATED)
+  createProduct(
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.catalogCreation.createProduct(
+      parseCreateProduct(body),
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  // Idempotent: 201 when the placement is created, 200 when the product was
+  // already on the menu (returned unchanged).
+  @RequirePermission('catalog.menu.manage')
+  @Post('menus/:menuId/products')
+  async addProductToMenu(
+    @Param('menuId') menuId: string,
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.catalogCreation.addProductToMenu(
+      menuId,
+      parseAddMenuProduct(body),
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+    response.status(result.created ? HttpStatus.CREATED : HttpStatus.OK);
+    return result;
+  }
 
   // --- Admin master-catalog reads (Milestone 5D-3) -----------------
   // `catalog.view` is CORPORATE-only. The list and detail both include

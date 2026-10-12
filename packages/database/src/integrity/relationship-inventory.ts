@@ -1208,6 +1208,7 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
 const AUDIT_TARGETS = {
   approval_request: 'ApprovalRequest',
   campaign: 'Campaign',
+  category: 'Category',
   checklist_instance_item: 'ChecklistInstanceItem',
   cms_page: 'CmsPage',
   customer: 'Customer',
@@ -1219,6 +1220,8 @@ const AUDIT_TARGETS = {
   loyalty_bonus_promotion: 'LoyaltyBonusPromotion',
   loyalty_reward: 'LoyaltyReward',
   media_asset: 'MediaAsset',
+  menu: 'Menu',
+  product: 'Product',
   promotion: 'Promotion',
 } as const satisfies Record<string, TenantOwnedModel>;
 

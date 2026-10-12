@@ -39,6 +39,11 @@ import type {
   AdminLoyaltyCustomerDetail,
   AdminLoyaltyReward,
   AdminProductDetail,
+  AdminAddMenuProductRequest,
+  AdminAddMenuProductResponse,
+  AdminCategorySummary,
+  AdminCreateCategoryRequest,
+  AdminCreateProductRequest,
   AdminPromotion,
   CreateLoyaltyBonusPromotionRequest,
   CreateLoyaltyRewardRequest,
@@ -572,6 +577,87 @@ export async function updateProductFromBrowser(
     outcome: "success",
     product: (await response.json()) as AdminProductDetail,
   };
+}
+
+// --- Admin catalog creation (S1) -----------------------------------
+// Same proxy and failure mapping as the product edit above, plus `conflict`
+// for a web address (slug) that is already taken. The API (CORPORATE-only
+// `catalog.products.edit` / `catalog.menu.manage`) remains the authority.
+
+export type AdminCreateResult<T> =
+  | { outcome: "success"; data: T }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string }
+  | { outcome: "conflict"; message: string }
+  | { outcome: "error"; message: string };
+
+async function adminProxyCreate<T>(
+  path: string,
+  body: unknown,
+): Promise<AdminCreateResult<T>> {
+  let response: Response;
+  try {
+    response = await fetch(`${INTERNAL_ADMIN_PROXY}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400 || response.status === 409) {
+    const parsed = await safeJson(response);
+    const message = parsed?.message ?? "Please check the form and try again.";
+    return response.status === 409
+      ? { outcome: "conflict", message }
+      : { outcome: "invalid", message };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return { outcome: "success", data: (await response.json()) as T };
+}
+
+export function createCategoryFromBrowser(
+  input: AdminCreateCategoryRequest,
+): Promise<AdminCreateResult<AdminCategorySummary>> {
+  return adminProxyCreate<AdminCategorySummary>("/catalog/categories", input);
+}
+
+export function createProductFromBrowser(
+  input: AdminCreateProductRequest,
+): Promise<AdminCreateResult<AdminProductDetail>> {
+  return adminProxyCreate<AdminProductDetail>("/catalog/products", input);
+}
+
+// Idempotent: succeeds whether or not the product was already on the menu.
+export function addProductToMenuFromBrowser(
+  menuId: string,
+  input: AdminAddMenuProductRequest,
+): Promise<AdminCreateResult<AdminAddMenuProductResponse>> {
+  return adminProxyCreate<AdminAddMenuProductResponse>(
+    `/catalog/menus/${encodeURIComponent(menuId)}/products`,
+    input,
+  );
 }
 
 // --- Admin menu composition + location price / availability (5D-4) -

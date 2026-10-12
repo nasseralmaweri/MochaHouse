@@ -154,6 +154,97 @@ export interface AdminUpdateProductRequest {
   isActive?: boolean;
 }
 
+// --- Admin catalog creation (S1) --------------------------------------
+// Categories, products and menu placements created from the Admin. Every
+// route is CORPORATE-only (`catalog.products.edit` for categories and
+// products, `catalog.menu.manage` for placements) and writes the server-
+// resolved business only. Slugs ("web addresses") are generated from the
+// name unless one is supplied, are unique within the business and are not
+// editable afterwards. Prices are integer cents.
+export const CATALOG_NAME_MAX_LENGTH = 120;
+export const CATALOG_DESCRIPTION_MAX_LENGTH = 1000;
+export const CATALOG_SLUG_MAX_LENGTH = 80;
+// Upper bound for a product's standard price: $1,000.00.
+export const CATALOG_MAX_PRICE_MINOR_UNITS = 100_000;
+
+const CATALOG_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+// Lower-case letters, digits and single hyphens, 1..CATALOG_SLUG_MAX_LENGTH.
+export function isValidCatalogSlug(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= CATALOG_SLUG_MAX_LENGTH &&
+    CATALOG_SLUG_PATTERN.test(value)
+  );
+}
+
+// The slug the server generates from a name (accents dropped, anything else
+// collapsed to single hyphens). Empty when the name has no usable letters
+// or digits — the server then falls back to a generic slug.
+export function slugifyCatalogName(name: string): string {
+  return name
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, CATALOG_SLUG_MAX_LENGTH)
+    .replace(/-+$/g, "");
+}
+
+export interface AdminCategorySummary {
+  id: string;
+  name: string;
+  slug: string;
+  displayOrder: number;
+  isActive: boolean;
+  productCount: number;
+}
+
+// POST /api/v1/admin/catalog/categories. `slug` is optional (generated from
+// the name when omitted). New categories are placed after existing ones.
+// Response 201: `AdminCategorySummary`.
+export interface AdminCreateCategoryRequest {
+  name: string;
+  slug?: string | null;
+  isActive?: boolean;
+}
+
+// POST /api/v1/admin/catalog/products. Creating a product never places it
+// on a menu — it reaches customers only once it is added to a menu (and
+// shown there). `basePrice` null means "no standard price" exactly as on
+// edit. Response 201: `AdminProductDetail`.
+export interface AdminCreateProductRequest {
+  name: string;
+  categoryId: string;
+  description?: string | null;
+  basePrice: number | null;
+  isActive?: boolean;
+  slug?: string | null;
+}
+
+// POST /api/v1/admin/catalog/menus/:menuId/products. Idempotent: adds the
+// product to the menu if it is not there yet (hidden unless `isActive` is
+// true, at the end of the menu) and otherwise returns the existing
+// placement unchanged — use the assignment PATCH to show / hide it.
+// Response 201 when created, 200 when it already existed.
+export interface AdminAddMenuProductRequest {
+  productId: string;
+  isActive?: boolean;
+}
+
+export interface AdminMenuPlacement {
+  menuId: string;
+  productId: string;
+  displayOrder: number;
+  isActive: boolean;
+}
+
+export interface AdminAddMenuProductResponse {
+  placement: AdminMenuPlacement;
+  created: boolean;
+}
+
 // --- Admin menus & location pricing (Milestone 5D-4) -----------------
 // Read models for the two Admin screens that manage EXISTING menu
 // composition and EXISTING per-location price / availability. The field

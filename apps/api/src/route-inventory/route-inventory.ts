@@ -29,6 +29,7 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'GET /api/v1/admin/careers/jobs': { scope: 'tenant' },
   'GET /api/v1/admin/careers/jobs/:jobId': { scope: 'tenant' },
   'GET /api/v1/admin/careers/jobs/options': { scope: 'tenant' },
+  'GET /api/v1/admin/catalog/categories': { scope: 'tenant' },
   'GET /api/v1/admin/catalog/menus': { scope: 'tenant' },
   'GET /api/v1/admin/catalog/menus/:menuId': { scope: 'tenant' },
   'GET /api/v1/admin/catalog/products': { scope: 'tenant' },
@@ -139,6 +140,9 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/admin/careers/jobs/:jobId/archive': { scope: 'tenant' },
   'POST /api/v1/admin/careers/jobs/:jobId/publish': { scope: 'tenant' },
   'POST /api/v1/admin/careers/jobs/:jobId/unpublish': { scope: 'tenant' },
+  'POST /api/v1/admin/catalog/categories': { scope: 'tenant' },
+  'POST /api/v1/admin/catalog/menus/:menuId/products': { scope: 'tenant' },
+  'POST /api/v1/admin/catalog/products': { scope: 'tenant' },
   'POST /api/v1/admin/content/:pageKey/publish': { scope: 'tenant' },
   'POST /api/v1/admin/customers/:customerId/notes': { scope: 'tenant' },
   'POST /api/v1/admin/franchising/inquiries/:inquiryId/notes': {
