@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { Client } from "pg";
+import { PRODUCTION_ENV_VARS, PRODUCTION_VALUES } from "../runtime-environment";
 
 // Security 4C-1 — TEST-ONLY proof that a database is disposable.
 //
@@ -55,18 +56,9 @@ const TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 // a `test` or `ci` segment, or the scratch prefix.
 const DATABASE_NAME_PATTERN = /^[a-z0-9_]{1,63}$/;
 const TEST_SEGMENT_PATTERN = /(^|_)(test|ci)(_|$)/;
-export const PRODUCTION_ENV_VARS = [
-  "CENTERIVO_ENV",
-  "APP_ENV",
-  "DEPLOYMENT_ENV",
-  "ENVIRONMENT",
-] as const;
-export const PRODUCTION_VALUES = new Set([
-  "production",
-  "prod",
-  "staging",
-  "live",
-]);
+// The production-signal list lives in the shared runtime classifier; it is
+// re-exported here for the existing importers.
+export { PRODUCTION_ENV_VARS, PRODUCTION_VALUES };
 const SECOND_DATABASE_URL_ENVS = [
   "DIRECT_URL",
   "DIRECT_DATABASE_URL",

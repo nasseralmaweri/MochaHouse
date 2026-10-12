@@ -168,6 +168,50 @@ Existing databases that were seeded before this change keep their
 with an audited, approved query. See the regression suite
 `apps/api/src/tenancy/seed-safety.spec.ts`.
 
+### Development authentication startup safety (ESP-02)
+
+The dev auth providers (`AUTH_PROVIDER=dev`, `INTERNAL_AUTH_PROVIDER=dev`) sign
+in without a password and trust a shared dev JWT secret. They must never be
+live in production or staging. Until ESP-02 the only gate was
+`NODE_ENV !== 'production'` (an exact, case-sensitive match), read on every
+request, with no startup validation.
+
+- **One classifier.** `productionSignal` (`packages/database/src/runtime-environment.ts`)
+  is shared by the seed guard, the API's startup validation and the
+  request-time gates. `NODE_ENV`, `CENTERIVO_ENV`, `APP_ENV`, `DEPLOYMENT_ENV`
+  and `ENVIRONMENT` set to `production`, `prod`, `staging` or `live` (trimmed,
+  case-insensitive) each count; the strictest signal wins.
+- **Startup validation.** `apps/api/src/main.ts` runs `assertAuthConfigSafe`
+  (`apps/api/src/config/auth-startup-guard.ts`) before `NestFactory.create`, so
+  an unsafe configuration never accepts a request. The process prints every
+  problem (variable names and requirements, never a value) and exits non-zero.
+- **When dev auth is allowed.** Only in a verified safe context
+  (`apps/api/src/config/dev-auth-context.ts`): (a) a declared isolated test run
+  (`CENTERIVO_TEST_DATABASE=1`, a well-formed token, `NODE_ENV=test` or,
+  inside Jest, `development`) — how CI and the suites run, no opt-in needed;
+  or (b) `NODE_ENV=development` **and** `ALLOW_DEV_AUTH=1` **and** a loopback
+  `DATABASE_URL`. An unset or unknown `NODE_ENV` is not safe. Both contexts
+  require no production-like signal.
+- **What startup refuses.** A mode variable that is not exactly `cognito`,
+  `dev` or unset (a typo like `Dev` would otherwise silently pick Cognito);
+  dev auth outside a safe context; `ALLOW_DEV_AUTH` other than `1`/unset, or set
+  at all in a production-like environment; in a production-like environment any
+  leftover dev JWT secret (even with Cognito selected),
+  `PAYMENT_PROVIDER=fake`, or a missing Cognito pool / client id; in local mode a
+  missing, short (< 32), single-character, placeholder or published CI dev
+  secret; and the same secret for both boundaries.
+- **Request-time gates match.** `isDevInternalAuthEnabled`,
+  `isDevCustomerAuthEnabled` and `resolvePaymentProviderMode` use the same
+  classifier, so a gate can never be on when startup would refuse.
+- **Local development change.** Developers who use the dev providers must set
+  `NODE_ENV=development` and `ALLOW_DEV_AUTH=1` in `apps/api/.env` and use a
+  loopback database (see `apps/api/.env.example`). CI is unchanged.
+- **Not covered** (follow-ups): media storage and worker email defaults, the web
+  session cookie's `secure` flag (still `NODE_ENV === 'production'`), and
+  removal of already-seeded `internal-dev` rows from live databases.
+- Regression suites: `apps/api/src/config/auth-startup-guard.spec.ts` and
+  `main-startup-order.spec.ts`.
+
 **Boundary (what is not covered).** Confirmed by the independent PR #17
 review:
 

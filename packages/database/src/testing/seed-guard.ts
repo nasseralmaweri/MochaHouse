@@ -1,8 +1,5 @@
-import {
-  PRODUCTION_ENV_VARS,
-  PRODUCTION_VALUES,
-  assertMarkedDisposableDatabase,
-} from "./disposable-database";
+import { assertMarkedDisposableDatabase } from "./disposable-database";
+import { isLoopbackHost, productionSignal } from "../runtime-environment";
 import {
   declaresTestRun,
   targetsTestNamedDatabase,
@@ -75,25 +72,9 @@ export interface SeedSafety {
   readonly devAdmin: boolean;
 }
 
-// The name of the first production signal, or null. Only the VARIABLE name is
-// ever reported, never its value.
-export function productionSignal(env: Env): string | null {
-  const nodeEnv = env.NODE_ENV?.trim().toLowerCase();
-  if (nodeEnv && PRODUCTION_VALUES.has(nodeEnv)) return "NODE_ENV";
-  for (const name of PRODUCTION_ENV_VARS) {
-    const value = env[name]?.trim().toLowerCase();
-    if (value && PRODUCTION_VALUES.has(value)) return name;
-  }
-  return null;
-}
-
-// localhost, 127.0.0.0/8 and ::1 only. The WHATWG URL parser lower-cases the
-// host and keeps IPv6 literals in brackets.
-export function isLoopbackHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  if (host === "localhost" || host === "[::1]") return true;
-  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
-}
+// The production-signal and loopback classifiers are shared with the API
+// (src/runtime-environment.ts); re-exported for the existing importers.
+export { isLoopbackHost, productionSignal };
 
 function parseTarget(
   url: string | undefined,
