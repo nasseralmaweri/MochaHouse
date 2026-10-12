@@ -55,13 +55,18 @@ const TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 // a `test` or `ci` segment, or the scratch prefix.
 const DATABASE_NAME_PATTERN = /^[a-z0-9_]{1,63}$/;
 const TEST_SEGMENT_PATTERN = /(^|_)(test|ci)(_|$)/;
-const PRODUCTION_ENV_VARS = [
+export const PRODUCTION_ENV_VARS = [
   "CENTERIVO_ENV",
   "APP_ENV",
   "DEPLOYMENT_ENV",
   "ENVIRONMENT",
 ] as const;
-const PRODUCTION_VALUES = new Set(["production", "prod", "staging", "live"]);
+export const PRODUCTION_VALUES = new Set([
+  "production",
+  "prod",
+  "staging",
+  "live",
+]);
 const SECOND_DATABASE_URL_ENVS = [
   "DIRECT_URL",
   "DIRECT_DATABASE_URL",

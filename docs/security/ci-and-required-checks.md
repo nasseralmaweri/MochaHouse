@@ -118,6 +118,56 @@ Prisma connects (`packages/database/src/testing/prisma-command-guard.ts`):
 - **Not affected:** ordinary development and real deployments — no test
   declaration and a database not named like a test database.
 
+### Seed safety (audit DB2-1 / DB2-2)
+
+`packages/database/prisma/seed.ts` is development and test bootstrap data
+(demo locations and menu, a local-dev administrator that signs in without a
+password, the built-in roles). It is **not** a production bootstrap. Before it
+touches anything it calls `assertSeedSafe`
+(`packages/database/src/testing/seed-guard.ts`), which fails closed:
+
+- **Production, staging and live are refused.** `NODE_ENV` or any of
+  `CENTERIVO_ENV`, `APP_ENV`, `DEPLOYMENT_ENV`, `ENVIRONMENT` set to
+  `production`, `prod`, `staging` or `live` stops the seed, even against a
+  database that looks like a test database.
+- **Ambiguous targets are refused:** no URL, a non-PostgreSQL URL, several
+  hosts, connection `options`, `PGOPTIONS`, or a `DIRECT_URL` /
+  `SHADOW_DATABASE_URL` naming a different host or database.
+- **Two ways to be allowed.** (1) A *verified disposable* database — a declared
+  test run (or a test-named database) whose catalog marker and token pass the
+  checks above. (2) A *loopback* host (`localhost`, `127.0.0.0/8`, `::1`) with
+  no test declaration — the ordinary development database. Anything else, such
+  as a remote host that is not a verified disposable database, is refused.
+- Refusals name the failed check, never the connection string, user, password
+  or host.
+
+**A re-run never changes what HQ changed.** Everything the seed writes is
+create-once: a re-run does not reactivate a suspended administrator, restore a
+revoked permission (role permissions are seeded when the role is first
+created), re-grant a removed role assignment, re-enable a disabled location,
+delete price or availability overrides, or revert modifier prices and checklist
+templates. The Size modifier lookups are tenant-scoped.
+
+**Local-dev administrator** (`admin@mochahouse.test`, provider `internal-dev`):
+created only when the row does not exist, and only in a verified disposable
+database, or in a loopback database with the explicit opt-in
+`SEED_DEV_ADMIN=1`. A loopback address is not proof that a database is
+disposable (a tunnel or port-forward makes any database look local), so the
+opt-in is deliberate.
+
+**`SEED_RESET=1`** restores the seeded defaults (location flags, the seeded
+override rows, modifier options, built-in role display fields and permissions,
+the admin's status and assignment, checklist templates). It is allowed **only**
+on a verified disposable database; on a local, remote, staging or production
+database the seed refuses to run. A developer who relied on re-seeding to
+reset a local database should use a disposable database
+(`pnpm --filter @mocha-house/testing db:create-disposable`) or recreate it.
+
+Existing databases that were seeded before this change keep their
+`internal-dev` administrator row; remove it from any shared or live database
+with an audited, approved query. See the regression suite
+`apps/api/src/tenancy/seed-safety.spec.ts`.
+
 **Boundary (what is not covered).** Confirmed by the independent PR #17
 review:
 

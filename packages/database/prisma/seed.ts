@@ -9,7 +9,7 @@ import {
   ensureTenantOne,
   runWithTenantContext,
 } from '../src/tenancy';
-import { guardDatabaseScript } from '../src/testing/prisma-command-guard';
+import { assertSeedSafe, type SeedSafety } from '../src/testing/seed-guard';
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL!,
@@ -23,11 +23,20 @@ const prisma = new PrismaClient({ adapter });
 // code that creates that tenant, not a request path choosing a default.
 // The business rows below are Mocha House data; they gain their tenantId
 // column in S0D, not here.
+//
+// SEED OWNERSHIP (audit DB2-1 / DB2-2): this is development and test data.
+// Everything here is CREATE-ONCE — a re-run never reactivates a user, restores
+// a revoked permission, deletes an override or reverts a location or modifier
+// setting HQ changed. Only `SEED_RESET=1` restores the seeded defaults, and
+// the guard allows it on a verified disposable test database only.
 async function main() {
-  // Security follow-up F-1 — when run directly (not through `prisma db seed`,
-  // whose config already checked), a test run may only seed a database
-  // proven disposable. Ordinary development seeding is unaffected.
-  await guardDatabaseScript();
+  // Fail closed before anything is touched: no production / staging / live
+  // signal, an unambiguous target, and either a verified disposable test
+  // database or a loopback host. See src/testing/seed-guard.ts.
+  const safety = await assertSeedSafe();
+  console.log(
+    `Seeding database "${safety.database}" (mode: ${safety.mode}, reset: ${safety.reset ? 'yes' : 'no'}, dev admin: ${safety.devAdmin ? 'yes' : 'no'}).`,
+  );
   const tenantId = await ensureTenantOne(prisma);
   if (tenantId !== TENANT_1_MOCHA_HOUSE_ID) {
     throw new Error('Seed resolved an unexpected Tenant #1 id.');
@@ -43,19 +52,25 @@ async function main() {
   // EXPLICITLY (passed as a parameter). The surrounding context is for
   // correlation/diagnostics only; nothing here reads the tenant from it.
   await runWithTenantContext(seedContext, () =>
-    seedMochaHouseBusinessData(tenantId),
+    seedMochaHouseBusinessData(tenantId, safety),
   );
 }
 
-async function seedMochaHouseBusinessData(tenantId: string) {
+async function seedMochaHouseBusinessData(
+  tenantId: string,
+  safety: SeedSafety,
+) {
+  // Applied on update ONLY under SEED_RESET=1; otherwise `update` is empty so
+  // a re-run never overrides what HQ changed.
+  const resetLocationFlags = safety.reset
+    ? { isActive: true, isDigitalOrderingEnabled: true }
+    : {};
+
   const location = await prisma.location.upsert({
     where: {
       tenantId_slug: { tenantId, slug: 'dearborn-heights' },
     },
-    update: {
-      isActive: true,
-      isDigitalOrderingEnabled: true,
-    },
+    update: resetLocationFlags,
     create: {
       tenantId,
       name: 'Mocha House - Dearborn Heights',
@@ -75,10 +90,7 @@ async function seedMochaHouseBusinessData(tenantId: string) {
     where: {
       tenantId_slug: { tenantId, slug: 'ann-arbor' },
     },
-    update: {
-      isActive: true,
-      isDigitalOrderingEnabled: true,
-    },
+    update: resetLocationFlags,
     create: {
       tenantId,
       name: 'Mocha House - Ann Arbor',
@@ -165,27 +177,34 @@ async function seedMochaHouseBusinessData(tenantId: string) {
     },
   });
 
-  // Dearborn Heights / Drip Coffee should inherit Master pricing and
-  // availability (no active override), so the effective price is the
-  // product's $3.50 base price and it is available for ordering.
-  await prisma.locationProductPriceOverride.deleteMany({
-    where: {
-      locationId: location.id,
-      menuId: menu.id,
-      productId: product.id,
-    },
-  });
+  // Dearborn Heights / Drip Coffee start out inheriting Master pricing and
+  // availability (no override), so a fresh database has the product's $3.50
+  // base price and it is available for ordering. Override rows are HQ data:
+  // they are removed here only under SEED_RESET=1.
+  if (safety.reset) {
+    await prisma.locationProductPriceOverride.deleteMany({
+      where: {
+        tenantId,
+        locationId: location.id,
+        menuId: menu.id,
+        productId: product.id,
+      },
+    });
 
-  await prisma.locationProductAvailabilityOverride.deleteMany({
-    where: {
-      locationId: location.id,
-      menuId: menu.id,
-      productId: product.id,
-    },
-  });
+    await prisma.locationProductAvailabilityOverride.deleteMany({
+      where: {
+        tenantId,
+        locationId: location.id,
+        menuId: menu.id,
+        productId: product.id,
+      },
+    });
+  }
 
+  // Tenant-scoped: a Size group of another business is never this one's.
   let sizeGroup = await prisma.modifierGroup.findFirst({
     where: {
+      tenantId,
       name: 'Size',
     },
   });
@@ -202,7 +221,7 @@ async function seedMochaHouseBusinessData(tenantId: string) {
         isActive: true,
       },
     });
-  } else {
+  } else if (safety.reset) {
     sizeGroup = await prisma.modifierGroup.update({
       where: {
         id: sizeGroup.id,
@@ -238,22 +257,26 @@ async function seedMochaHouseBusinessData(tenantId: string) {
   for (const option of sizeOptions) {
     const existingOption = await prisma.modifierOption.findFirst({
       where: {
+        tenantId,
         modifierGroupId: sizeGroup.id,
         name: option.name,
       },
     });
 
     if (existingOption) {
-      await prisma.modifierOption.update({
-        where: {
-          id: existingOption.id,
-        },
-        data: {
-          priceAdjustment: option.priceAdjustment,
-          displayOrder: option.displayOrder,
-          isActive: true,
-        },
-      });
+      // HQ-managed price / order / active state: restored only on reset.
+      if (safety.reset) {
+        await prisma.modifierOption.update({
+          where: {
+            id: existingOption.id,
+          },
+          data: {
+            priceAdjustment: option.priceAdjustment,
+            displayOrder: option.displayOrder,
+            isActive: true,
+          },
+        });
+      }
     } else {
       await prisma.modifierOption.create({
         data: {
@@ -275,9 +298,7 @@ async function seedMochaHouseBusinessData(tenantId: string) {
         modifierGroupId: sizeGroup.id,
       },
     },
-    update: {
-      displayOrder: 1,
-    },
+    update: safety.reset ? { displayOrder: 1 } : {},
     create: {
       tenantId,
       productId: product.id,
@@ -294,31 +315,62 @@ async function seedMochaHouseBusinessData(tenantId: string) {
   // production credential (the local-dev provider performs no password
   // check) and never created in production, where a real Cognito internal
   // pool and an administrative invitation flow (Milestone 5B) apply.
+  //
+  // Created ONLY when the seed guard says so (a verified disposable test
+  // database, or a loopback database with SEED_DEV_ADMIN=1) and ONLY when the
+  // row does not exist yet: an existing admin keeps whatever status HQ gave
+  // it (a SUSPENDED admin is never reactivated by a re-seed) and keeps (or
+  // loses) whatever role assignments HQ left it. SEED_RESET=1 restores both.
   const internalAdminEmail = 'admin@mochahouse.test';
-  const internalAdmin = await prisma.internalUser.upsert({
-    where: { tenantId_email: { tenantId, email: internalAdminEmail } },
-    update: { status: 'ACTIVE' },
-    create: {
-      tenantId,
-      externalProvider: 'internal-dev',
-      externalSubject: `internal-dev:${internalAdminEmail}`,
-      email: internalAdminEmail,
-      displayName: 'Local Dev Admin',
-      status: 'ACTIVE',
-      activatedAt: new Date(),
-    },
-  });
+  let internalAdminId: string | null = null;
+  let internalAdminIsNew = false;
+  if (safety.devAdmin) {
+    const existingAdmin = await prisma.internalUser.findUnique({
+      where: { tenantId_email: { tenantId, email: internalAdminEmail } },
+    });
+    if (existingAdmin) {
+      internalAdminId = existingAdmin.id;
+      if (safety.reset) {
+        await prisma.internalUser.update({
+          where: { id: existingAdmin.id },
+          data: { status: 'ACTIVE' },
+        });
+      }
+    } else {
+      const created = await prisma.internalUser.create({
+        data: {
+          tenantId,
+          externalProvider: 'internal-dev',
+          externalSubject: `internal-dev:${internalAdminEmail}`,
+          email: internalAdminEmail,
+          displayName: 'Local Dev Admin',
+          status: 'ACTIVE',
+          activatedAt: new Date(),
+        },
+      });
+      internalAdminId = created.id;
+      internalAdminIsNew = true;
+    }
+  }
 
   // Milestone 5B — data-driven bootstrap. The platform-administrator role
-  // holds EVERY permission in the code vocabulary; the seed re-synchronises
-  // its permission rows to that vocabulary on every run, so a permission
-  // added to INTERNAL_PERMISSION_KEYS is picked up by re-seeding. `isSystem`
-  // is protective metadata only — this role is evaluated by exactly the
-  // same AuthorizationService and PermissionGuard as any other role, with
-  // no special-casing anywhere (no email check, no wildcard, no bypass).
+  // holds EVERY permission in the code vocabulary. Its permission rows are
+  // seeded when the role is first created (and on SEED_RESET=1, which also
+  // prunes keys outside the vocabulary); a re-run never re-adds a permission
+  // that was revoked. `isSystem` is protective metadata only — this role is
+  // evaluated by exactly the same AuthorizationService and PermissionGuard as
+  // any other role, with no special-casing anywhere (no email check, no
+  // wildcard, no bypass).
+  const platformAdminExisted =
+    (await prisma.internalRole.findUnique({
+      where: { tenantId_key: { tenantId, key: 'platform-administrator' } },
+      select: { id: true },
+    })) !== null;
   const platformAdminRole = await prisma.internalRole.upsert({
     where: { tenantId_key: { tenantId, key: 'platform-administrator' } },
-    update: { displayName: 'Platform Administrator', isSystem: true },
+    update: safety.reset
+      ? { displayName: 'Platform Administrator', isSystem: true }
+      : {},
     create: {
       tenantId,
       key: 'platform-administrator',
@@ -329,43 +381,51 @@ async function seedMochaHouseBusinessData(tenantId: string) {
     },
   });
 
-  await prisma.internalRolePermission.deleteMany({
-    where: {
-      roleId: platformAdminRole.id,
-      permissionKey: { notIn: [...INTERNAL_PERMISSION_KEYS] },
-    },
-  });
-  for (const permissionKey of INTERNAL_PERMISSION_KEYS) {
-    await prisma.internalRolePermission.upsert({
+  if (!platformAdminExisted || safety.reset) {
+    await prisma.internalRolePermission.deleteMany({
       where: {
-        roleId_permissionKey: { roleId: platformAdminRole.id, permissionKey },
+        roleId: platformAdminRole.id,
+        permissionKey: { notIn: [...INTERNAL_PERMISSION_KEYS] },
       },
-      update: {},
-      create: { tenantId, roleId: platformAdminRole.id, permissionKey },
     });
+    for (const permissionKey of INTERNAL_PERMISSION_KEYS) {
+      await prisma.internalRolePermission.upsert({
+        where: {
+          roleId_permissionKey: {
+            roleId: platformAdminRole.id,
+            permissionKey,
+          },
+        },
+        update: {},
+        create: { tenantId, roleId: platformAdminRole.id, permissionKey },
+      });
+    }
   }
 
   // Assign the local-dev internal admin the platform-administrator role at
-  // CORPORATE scope (scopeId null). Idempotent: CORPORATE scope has no
-  // scopeId, so it is matched by (user, role, scopeType).
-  const existingAssignment =
-    await prisma.internalUserRoleAssignment.findFirst({
-      where: {
-        internalUserId: internalAdmin.id,
-        roleId: platformAdminRole.id,
-        scopeType: 'CORPORATE',
-      },
-    });
-  if (!existingAssignment) {
-    await prisma.internalUserRoleAssignment.create({
-      data: {
-        tenantId,
-        internalUserId: internalAdmin.id,
-        roleId: platformAdminRole.id,
-        scopeType: 'CORPORATE',
-        scopeId: null,
-      },
-    });
+  // CORPORATE scope (scopeId null) — for a NEW admin (or on SEED_RESET=1)
+  // only, so a re-run never re-grants a scope HQ removed. Idempotent: CORPORATE
+  // scope has no scopeId, so it is matched by (user, role, scopeType).
+  if (internalAdminId !== null && (internalAdminIsNew || safety.reset)) {
+    const existingAssignment =
+      await prisma.internalUserRoleAssignment.findFirst({
+        where: {
+          internalUserId: internalAdminId,
+          roleId: platformAdminRole.id,
+          scopeType: 'CORPORATE',
+        },
+      });
+    if (!existingAssignment) {
+      await prisma.internalUserRoleAssignment.create({
+        data: {
+          tenantId,
+          internalUserId: internalAdminId,
+          roleId: platformAdminRole.id,
+          scopeType: 'CORPORATE',
+          scopeId: null,
+        },
+      });
+    }
   }
 
   // Milestone 5E-4 — the second built-in access level. Store Manager runs a
@@ -373,9 +433,10 @@ async function seedMochaHouseBusinessData(tenantId: string) {
   // availability for the locations it is assigned to. It is intentionally a
   // LOCATION-scoped access level; it deliberately does NOT carry catalog
   // editing, menu composition, location editing, or any user / role
-  // administration. Its permission rows are re-synchronised to exactly this
-  // set on every run — the same deterministic mechanism as
-  // platform-administrator above — so a change here converges by re-seeding.
+  // administration. Its permission rows are seeded to exactly this set when
+  // the role is first created (and on SEED_RESET=1) — the same create-once
+  // rule as platform-administrator above — so HQ's later tuning of what a
+  // Store Manager may do survives re-seeding.
   // The seed assigns it to NOBODY (not even the Local Dev Admin): who holds
   // Store Manager, and where, is decided through the Administration UI.
   const STORE_MANAGER_PERMISSION_KEYS = [
@@ -400,14 +461,21 @@ async function seedMochaHouseBusinessData(tenantId: string) {
     // CORPORATE-only HQ function a Store Manager never holds by default.
   ] as const;
 
+  const storeManagerExisted =
+    (await prisma.internalRole.findUnique({
+      where: { tenantId_key: { tenantId, key: 'store-manager' } },
+      select: { id: true },
+    })) !== null;
   const storeManagerRole = await prisma.internalRole.upsert({
     where: { tenantId_key: { tenantId, key: 'store-manager' } },
-    update: {
-      displayName: 'Store Manager',
-      description:
-        'Manages day-to-day orders, online ordering, prices and availability for assigned locations.',
-      isSystem: true,
-    },
+    update: safety.reset
+      ? {
+          displayName: 'Store Manager',
+          description:
+            'Manages day-to-day orders, online ordering, prices and availability for assigned locations.',
+          isSystem: true,
+        }
+      : {},
     create: {
       tenantId,
       key: 'store-manager',
@@ -418,20 +486,25 @@ async function seedMochaHouseBusinessData(tenantId: string) {
     },
   });
 
-  await prisma.internalRolePermission.deleteMany({
-    where: {
-      roleId: storeManagerRole.id,
-      permissionKey: { notIn: [...STORE_MANAGER_PERMISSION_KEYS] },
-    },
-  });
-  for (const permissionKey of STORE_MANAGER_PERMISSION_KEYS) {
-    await prisma.internalRolePermission.upsert({
+  if (!storeManagerExisted || safety.reset) {
+    await prisma.internalRolePermission.deleteMany({
       where: {
-        roleId_permissionKey: { roleId: storeManagerRole.id, permissionKey },
+        roleId: storeManagerRole.id,
+        permissionKey: { notIn: [...STORE_MANAGER_PERMISSION_KEYS] },
       },
-      update: {},
-      create: { tenantId, roleId: storeManagerRole.id, permissionKey },
     });
+    for (const permissionKey of STORE_MANAGER_PERMISSION_KEYS) {
+      await prisma.internalRolePermission.upsert({
+        where: {
+          roleId_permissionKey: {
+            roleId: storeManagerRole.id,
+            permissionKey,
+          },
+        },
+        update: {},
+        create: { tenantId, roleId: storeManagerRole.id, permissionKey },
+      });
+    }
   }
 
   // Milestone 6B / 6D — the official corporate daily checklists (Opening
@@ -517,7 +590,7 @@ async function seedMochaHouseBusinessData(tenantId: string) {
   ): Promise<void> {
     const template = await prisma.checklistTemplate.upsert({
       where: { tenantId_key: { tenantId, key } },
-      update: { name, isActive: true },
+      update: safety.reset ? { name, isActive: true } : {},
       create: { tenantId, key, name, isActive: true },
     });
     const existingItemCount = await prisma.checklistTemplateItem.count({
