@@ -188,7 +188,8 @@ request, with no startup validation.
 - **When dev auth is allowed.** Only in a verified safe context
   (`apps/api/src/config/dev-auth-context.ts`): (a) a declared isolated test run
   (`CENTERIVO_TEST_DATABASE=1`, a well-formed token, `NODE_ENV=test` or,
-  inside Jest, `development`) — how CI and the suites run, no opt-in needed;
+  inside Jest, `development`) — how CI and the suites run, no opt-in needed for
+  the request-time gates;
   or (b) `NODE_ENV=development` **and** `ALLOW_DEV_AUTH=1` **and** a loopback
   `DATABASE_URL`. An unset or unknown `NODE_ENV` is not safe. Both contexts
   require no production-like signal.
@@ -197,9 +198,13 @@ request, with no startup validation.
   dev auth outside a safe context; `ALLOW_DEV_AUTH` other than `1`/unset, or set
   at all in a production-like environment; in a production-like environment any
   leftover dev JWT secret (even with Cognito selected),
-  `PAYMENT_PROVIDER=fake`, or a missing Cognito pool / client id; in local mode a
-  missing, short (< 32), single-character, placeholder or published CI dev
-  secret; and the same secret for both boundaries.
+  `PAYMENT_PROVIDER=fake`, or a missing Cognito pool / client id; whenever dev
+  auth is requested — **including a declared test run** — a missing, short
+  (< 32), single-character, placeholder or published CI dev secret; and the same
+  secret for both boundaries. A test declaration is only environment variables,
+  so a server started with a copied CI environment is refused; CI and the Jest
+  suites never boot the API through `main.ts` and the request-time gates do not
+  look at secrets, so they keep using the placeholder values.
 - **Request-time gates match.** `isDevInternalAuthEnabled`,
   `isDevCustomerAuthEnabled` and `resolvePaymentProviderMode` use the same
   classifier, so a gate can never be on when startup would refuse.

@@ -26,10 +26,15 @@ import {
 //     with Cognito selected — it means a copied dev configuration and the mode
 //     could flip), PAYMENT_PROVIDER=fake, and missing Cognito pool / client ids
 //     (otherwise auth only fails at the first request).
-//   - Dev requested in local mode with a missing, short, repeated-character or
-//     placeholder secret — including the public CI values — and, in any
-//     context, the same secret used for both the customer and internal boundary.
-//     Isolated test runs keep using the CI placeholder secrets.
+//   - Dev requested with a missing, short, repeated-character or placeholder
+//     secret — including the public CI values — and the same secret used for
+//     both the customer and internal boundary. This applies in EVERY safe
+//     context, a declared test run included: a "test run" is only environment
+//     variables, so a server started with a copied CI environment (NODE_ENV=test,
+//     the test flag and token, the secrets published in the repository) must
+//     not pass. CI and the Jest suites never boot the API through main.ts, and
+//     the request-time gates (which Jest uses) do not look at secrets, so they
+//     keep working with the placeholder values.
 
 type Env = Record<string, string | undefined>;
 
@@ -152,7 +157,7 @@ export function authConfigProblems(env: Env = process.env): string[] {
     }
   }
 
-  if (context === 'local') {
+  if (context !== null) {
     for (const boundary of devRequested) {
       const secret = env[boundary.secret];
       if (!secret || secret.trim() === '') {

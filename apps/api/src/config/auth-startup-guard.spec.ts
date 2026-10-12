@@ -49,6 +49,14 @@ const CI: Env = {
   PAYMENT_PROVIDER: 'fake',
 };
 
+// A declared test run that boots a real API server (not how CI runs): the same
+// test declaration, but with credentials that meet the server requirements.
+const TEST_SERVER: Env = {
+  ...CI,
+  AUTH_DEV_JWT_SECRET: CUSTOMER_SECRET,
+  INTERNAL_AUTH_DEV_JWT_SECRET: INTERNAL_SECRET,
+};
+
 // A real deployment: Cognito, no dev anything.
 const COGNITO: Env = {
   COGNITO_USER_POOL_ID: 'us-east-1_abc123',
@@ -182,16 +190,80 @@ describe('dev auth startup validation (ESP-02)', () => {
     });
   });
 
-  describe('isolated tests and CI keep working', () => {
-    it('the CI environment (public placeholder secrets, no opt-in) passes', () => {
-      expect(problems(CI)).toEqual([]);
+  describe('isolated tests keep working; a server started in a test context does not weaken startup', () => {
+    it('the CI environment is still an isolated-test context for the request-time gates', () => {
       expect(devAuthContext(CI)).toBe('isolated-test');
+      expect(
+        devAuthContext({ ...CI, NODE_ENV: 'development', JEST_WORKER_ID: '1' }),
+      ).toBe('isolated-test');
     });
 
-    it('NODE_ENV=development inside a Jest worker with a declared test run passes', () => {
-      const env = { ...CI, NODE_ENV: 'development', JEST_WORKER_ID: '1' };
-      expect(problems(env)).toEqual([]);
-      expect(devAuthContext(env)).toBe('isolated-test');
+    it('API startup refuses a copied CI configuration (public placeholder secrets)', () => {
+      for (const env of [
+        CI,
+        { ...CI, NODE_ENV: 'development', JEST_WORKER_ID: '1' },
+      ]) {
+        expect(problems(env)).toEqual([
+          expect.stringContaining(
+            'AUTH_DEV_JWT_SECRET must not be a placeholder',
+          ),
+          expect.stringContaining(
+            'INTERNAL_AUTH_DEV_JWT_SECRET must not be a placeholder',
+          ),
+        ]);
+        expect(() => assertAuthConfigSafe(env)).toThrow(AuthConfigurationError);
+      }
+    });
+
+    it('a test-context server starts only with credentials that meet the server requirements', () => {
+      expect(problems(TEST_SERVER)).toEqual([]);
+      expect(() => assertAuthConfigSafe(TEST_SERVER)).not.toThrow();
+      expect(
+        problems({
+          ...TEST_SERVER,
+          NODE_ENV: 'development',
+          JEST_WORKER_ID: '1',
+        }),
+      ).toEqual([]);
+    });
+
+    it.each([
+      ['missing', undefined],
+      ['empty', ''],
+      ['short', 'ab'.repeat(15) + 'c'],
+      ['one repeated character', 'x'.repeat(40)],
+      ['a placeholder', 'changeme'],
+      ['a published CI value', 'ci-customer-dev-secret-not-a-real-credential'],
+    ])(
+      'a %s dev secret is refused at startup in an isolated-test context',
+      (_label, secret) => {
+        expect(devAuthContext(TEST_SERVER)).toBe('isolated-test');
+        expect(refuses({ ...TEST_SERVER, AUTH_DEV_JWT_SECRET: secret })).toBe(
+          true,
+        );
+        expect(
+          refuses({ ...TEST_SERVER, INTERNAL_AUTH_DEV_JWT_SECRET: secret }),
+        ).toBe(true);
+      },
+    );
+
+    it('one secret shared by both boundaries is refused at startup in a test context', () => {
+      const shared = 'one-shared-dev-secret-for-both-boundaries-0000';
+      expect(
+        problems({
+          ...TEST_SERVER,
+          AUTH_DEV_JWT_SECRET: shared,
+          INTERNAL_AUTH_DEV_JWT_SECRET: shared,
+        }),
+      ).toEqual([expect.stringContaining('must differ')]);
+    });
+
+    it('a copied CI environment cannot be rescued by the test declaration in a production-like environment', () => {
+      for (const name of ['APP_ENV', 'CENTERIVO_ENV']) {
+        const result = problems({ ...CI, [name]: 'staging' });
+        expect(result.join(' ')).toMatch(/not allowed here/);
+        expect(devAuthContext({ ...CI, [name]: 'staging' })).toBeNull();
+      }
     });
 
     it.each([
@@ -345,7 +417,7 @@ describe('dev auth startup validation (ESP-02)', () => {
 
     it('is allowed locally and in tests', () => {
       expect(problems({ ...LOCAL, PAYMENT_PROVIDER: 'fake' })).toEqual([]);
-      expect(problems(CI)).toEqual([]);
+      expect(problems(TEST_SERVER)).toEqual([]);
     });
 
     it('the request-time payment gate uses the same classifier', () => {
@@ -485,6 +557,17 @@ describe('dev auth startup validation (ESP-02)', () => {
       // Both outcomes occur, so the comparison above is not vacuous.
       expect(allowed).toBeGreaterThan(0);
       expect(refused).toBeGreaterThan(0);
+    });
+
+    it('Jest keeps working: the request-time gates stay on for the CI environment although API startup refuses its placeholder secrets', () => {
+      withEnv(CI);
+      expect(isDevCustomerAuthEnabled()).toBe(true);
+      expect(isDevInternalAuthEnabled()).toBe(true);
+      expect(refuses(CI)).toBe(true);
+      withEnv(TEST_SERVER);
+      expect(isDevCustomerAuthEnabled()).toBe(true);
+      expect(isDevInternalAuthEnabled()).toBe(true);
+      expect(refuses(TEST_SERVER)).toBe(false);
     });
 
     it('never enables a gate without its own mode variable being exactly "dev"', () => {
