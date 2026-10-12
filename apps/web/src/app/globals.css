@@ -74,7 +74,8 @@
  * own 5–15% tint, is >= 4.5:1 on page, card and subtle surfaces; the focus
  * ring is >= 3:1 against every surface.
  */
-.centerivo {
+.centerivo,
+.centerivo .cx-light {
   --surface-page: #faf7f2;
   --surface-card: #fefdfa;
   --surface-subtle: #f0ece4;
@@ -97,7 +98,48 @@
   --status-warning: #824c11;
   --status-error: #b7191c;
   --status-info: #2a5885;
+}
 
+/*
+ * Light islands (menus and popovers) that open from inside the navy sidebar
+ * re-establish the light tokens above and their own text colour.
+ */
+.centerivo .cx-light {
+  color: var(--text-primary);
+}
+
+/*
+ * The navy region: the desktop sidebar and the mobile drawer. It redefines
+ * the SAME semantic tokens, so the existing navigation, business switcher
+ * and account components render correctly on navy without a parallel set of
+ * colour classes. Gold is the accent here (active icon, active bar, focus).
+ * Contrast: all text >= 5.6:1 on the sidebar, hover and active fills; gold
+ * marks and the focus ring >= 7:1.
+ */
+.centerivo .cx-dark {
+  --surface-page: #0b172f;
+  --surface-card: #0f1d38;
+  --surface-subtle: #19263f;
+  --surface-sidebar: #0b172f;
+
+  --text-primary: #f5f2e9;
+  --text-secondary: #c7cedb;
+  --text-muted: #a1abbd;
+
+  --border-default: #2a354a;
+
+  --accent: #e1b767;
+  --accent-soft: #1f304f;
+  --accent-contrast: #0b172f;
+  --focus: #e1b767;
+
+  --status-error: #fda19a;
+
+  background: linear-gradient(180deg, #0f1d38, #0b172f);
+  color: var(--text-primary);
+}
+
+.centerivo {
   --cx-radius-control: 0.625rem;
   --cx-radius-panel: 1rem;
   --cx-shadow-pop:
@@ -134,9 +176,9 @@
   }
 }
 
-/* The Admin shell sits on the sidebar tone; the workspace is an inset panel. */
+/* The Admin shell: navy sidebar beside the ivory workspace. */
 .centerivo.cx-shell {
-  background: var(--surface-sidebar);
+  background: var(--surface-page);
 }
 
 /* A restrained, consistent keyboard focus ring across the shell. */
@@ -186,4 +228,7 @@ body {
 }
 .centerivo .cx-scroll:hover {
   scrollbar-color: rgb(18 26 43 / 0.18) transparent;
+}
+.centerivo .cx-dark .cx-scroll:hover {
+  scrollbar-color: rgb(255 255 255 / 0.2) transparent;
 }

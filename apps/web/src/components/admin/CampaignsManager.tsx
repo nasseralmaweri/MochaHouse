@@ -41,7 +41,7 @@ export function CampaignsManager({
               aria-pressed={filter === f}
               className={`rounded-full px-3 py-1 text-xs font-medium ${
                 filter === f
-                  ? "bg-status-success/10 text-status-success"
+                  ? "bg-accent text-accent-contrast"
                   : "bg-surface-subtle text-text-secondary"
               }`}
             >

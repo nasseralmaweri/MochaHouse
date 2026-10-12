@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { IconClose } from "@/components/centerivo/Icons";
 
 // The off-canvas drawer for narrow viewports. It holds the SAME sidebar
-// content as the desktop sidebar (business, location, modules, account) so
+// content as the desktop sidebar (business, modules, account) so
 // nothing is reachable only on large screens. Keyboard-operable: Esc closes,
 // focus moves into the drawer on open and returns to the trigger on close,
 // focus is trapped while open, the page behind does not scroll, backdrop
@@ -69,7 +69,7 @@ export function MobileNav({
   return (
     <div className="fixed inset-0 z-40 lg:hidden">
       <div
-        className="absolute inset-0 bg-text-primary/30"
+        className="absolute inset-0 bg-text-primary/40"
         onClick={onClose}
         aria-hidden="true"
       />
@@ -79,12 +79,12 @@ export function MobileNav({
         aria-modal="true"
         aria-label="Navigation"
         tabIndex={-1}
-        className="cx-pop-in absolute inset-y-0 left-0 w-80 max-w-[88%] border-r border-border-default bg-surface-sidebar focus:outline-none"
+        className="cx-dark cx-pop-in absolute inset-y-0 left-0 w-80 max-w-[88%] focus:outline-none"
       >
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-3 top-3.5 z-10 flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm text-text-secondary transition-colors hover:bg-surface-subtle"
+          className="absolute right-2 top-2 z-10 flex h-11 items-center gap-1.5 rounded-lg px-2.5 text-sm text-text-secondary transition-colors hover:bg-surface-subtle"
         >
           <IconClose className="h-4 w-4" />
           Close

@@ -125,7 +125,7 @@ export default async function OperationsTodayPage({
         {header}
         <AdminForbidden
           title="You're not assigned to that location"
-          description="The location in this link isn't in your assigned scope. Pick one of your locations from the location selector in the sidebar."
+          description="The location in this link isn't in your assigned scope. Pick one of your locations from the scope selector at the top of the page."
         />
       </AdminPage>
     );
@@ -153,7 +153,7 @@ export default async function OperationsTodayPage({
         />
         <AdminEmptyState
           title="Select a location"
-          description="Operations is per store. Choose one from the location selector in the sidebar to see its day."
+          description="Operations is per store. Choose one from the scope selector at the top of the page to see its day."
         />
       </AdminPage>
     );

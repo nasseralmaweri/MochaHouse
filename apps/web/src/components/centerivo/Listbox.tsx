@@ -32,6 +32,7 @@ export function Listbox({
   searchable,
   trigger,
   triggerClassName,
+  className = "",
 }: {
   options: ListboxOption[];
   value: string;
@@ -46,6 +47,8 @@ export function Listbox({
   searchable?: boolean;
   trigger: React.ReactNode;
   triggerClassName: string;
+  // Extra classes for the positioning wrapper (e.g. to let it shrink).
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -145,7 +148,11 @@ export function Listbox({
       : "left-0 right-0 top-full mt-1.5");
 
   return (
-    <div ref={rootRef} className="relative" onKeyDown={onKeyDown}>
+    <div
+      ref={rootRef}
+      className={`relative ${className}`}
+      onKeyDown={onKeyDown}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -168,7 +175,7 @@ export function Listbox({
 
       {open ? (
         <div
-          className={`cx-pop-in absolute z-40 min-w-64 overflow-hidden rounded-xl border border-border-default bg-surface-card ${panelPosition}`}
+          className={`cx-light cx-pop-in absolute z-40 min-w-64 overflow-hidden rounded-xl border border-border-default bg-surface-card ${panelPosition}`}
           style={{ boxShadow: "var(--cx-shadow-pop)" }}
         >
           <p className="px-3.5 pb-1 pt-3 text-xs font-medium text-text-muted">
@@ -213,7 +220,7 @@ export function Listbox({
                       close(true);
                       if (!selected) onSelect(option.value);
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-surface-subtle focus-visible:bg-surface-subtle focus-visible:outline-none ${
+                    className={`flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm lg:min-h-0 transition-colors hover:bg-surface-subtle focus-visible:bg-surface-subtle focus-visible:outline-none ${
                       selected ? "text-text-primary" : "text-text-secondary"
                     }`}
                   >

@@ -111,7 +111,7 @@ export default async function AdminLoyaltyPage({
           </label>
           <button
             type="submit"
-            className="inline-flex min-h-11 items-center justify-center rounded-xl bg-status-success/10 px-4 py-2 text-sm font-semibold text-status-success hover:bg-status-success/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+            className="inline-flex min-h-11 items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-accent-contrast hover:bg-accent/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
           >
             Search
           </button>
