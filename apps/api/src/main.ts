@@ -2,8 +2,17 @@ import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
+import {
+  AuthConfigurationError,
+  assertAuthConfigSafe,
+} from './config/auth-startup-guard';
 
 async function bootstrap() {
+  // ESP-02 — fail closed BEFORE anything is created or listening: no dev
+  // authentication, dev secret or simulated payment outside a verified safe
+  // development context. See config/auth-startup-guard.ts.
+  assertAuthConfigSafe();
+
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   // Trusted reverse-proxy hop count for client-IP derivation (used by
@@ -32,4 +41,11 @@ async function bootstrap() {
 
   await app.listen(process.env.PORT ?? 3000);
 }
-void bootstrap();
+bootstrap().catch((error: unknown) => {
+  // A refused configuration prints its (secret-free) reasons and exits
+  // non-zero; any other startup failure keeps its stack.
+  console.error(
+    error instanceof AuthConfigurationError ? error.message : error,
+  );
+  process.exit(1);
+});
