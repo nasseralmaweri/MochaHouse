@@ -505,6 +505,7 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
     'pay-gc-spare',
   ]) {
     await prisma.paymentAttempt.create({
+      select: { id: true },
       data: {
         id: i(name),
         tenantId,

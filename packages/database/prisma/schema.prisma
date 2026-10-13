@@ -73,6 +73,8 @@ model Tenant {
   customers                            Customer[]
   customerPreferredLocations           CustomerPreferredLocation[]
   paymentAttempts                      PaymentAttempt[]
+  paymentReconciliationCases           PaymentReconciliationCase[]
+  paymentReconciliationEvents          PaymentReconciliationEvent[]
   orders                               Order[]
   orderLines                           OrderLine[]
   orderStatusHistories                 OrderStatusHistory[]
@@ -581,6 +583,23 @@ model PaymentAttempt {
   reconciliationReason     String?
   reconciliationDetectedAt DateTime?
 
+  // ESP-03 PR 1 — the payment-recovery state machine, ADDITIVE and unused by
+  // application code until a later PR. Both are NULL for every row the new
+  // code has not yet classified: NULL means "legacy semantics — `status` and
+  // `reconciliationRequired` above are authoritative". Plain text with CHECK
+  // constraints (not enums): PostgreSQL cannot add an enum value and use it
+  // in the same transaction, and enum values cannot be dropped.
+  //   paymentState      NOT_SENT | CHARGING | AWAITING_CONFIRMATION | UNKNOWN |
+  //                     SUCCEEDED | DECLINED | FAILED   (the provider side;
+  //                     an unknown outcome is NEVER recorded as FAILED)
+  //   fulfilmentStatus  NOT_REQUIRED | PENDING | DONE | NEEDS_REVIEW
+  //                     (our side: the order / gift card for a SUCCEEDED payment)
+  // The migration backfills ONLY rows that clearly need attention (stuck
+  // PENDING, SUCCEEDED without an order or card) and opens a reconciliation
+  // case for each; every other row stays NULL.
+  paymentState     String?
+  fulfilmentStatus String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -592,6 +611,7 @@ model PaymentAttempt {
   // insert OR update whose paymentAttemptId is already claimed by the other
   // table — declarative cross-table enforcement, not programmer convention.
   order            Order?
+  reconciliationCase PaymentReconciliationCase?
   // Security 4C-3 — the checkout location, now a composite foreign key: a
   // payment attempt can only name a Location of its own business. Locations
   // are never deleted while a payment references them (Restrict, like
@@ -615,6 +635,71 @@ model PaymentAttempt {
   @@index([status])
   @@index([reconciliationRequired])
   @@index([tenantId])
+}
+
+// ESP-03 PR 1 — one reconciliation case per PaymentAttempt that needs a human
+// or a later automated recovery step (a payment of unknown outcome, or a
+// charged payment with no order / gift card). A case is the OPERATIONAL record;
+// every change to it is also appended to PaymentReconciliationEvent. Nothing in
+// the application reads or writes either table yet (PR 1 is the foundation).
+//
+// status      OPEN | IN_REVIEW | RESOLVED
+// reasonCode  a short machine code (e.g. LEGACY_PENDING_UNRESOLVED) — never
+//             free text, never provider output, never personal data
+// resolution  set only with status RESOLVED: FULFILLED | REFUNDED_EXTERNALLY |
+//             NOT_CHARGED. REFUNDED_EXTERNALLY records a HUMAN-asserted fact; no
+//             refund capability exists in the platform.
+// CHECK constraints (not expressible in Prisma) keep status / resolution /
+// resolvedAt consistent. Tenant-owned: composite foreign keys keep the case, its
+// attempt, its assignee and its events inside one business; the
+// "<Table>_tenantId_immutable" trigger refuses a change of tenantId.
+model PaymentReconciliationCase {
+  id                     String         @id @default(uuid(7))
+  paymentAttemptId       String
+  paymentAttempt         PaymentAttempt @relation(fields: [tenantId, paymentAttemptId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  status                 String         @default("OPEN")
+  reasonCode             String
+  assigneeInternalUserId String?
+  assignee               InternalUser?  @relation("PaymentReconciliationAssignee", fields: [tenantId, assigneeInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  resolution             String?
+  resolvedAt             DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events PaymentReconciliationEvent[]
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, paymentAttemptId])
+  @@index([tenantId, status])
+}
+
+// ESP-03 PR 1 — append-only history of a reconciliation case. A database
+// trigger rejects every UPDATE and DELETE of a row. actorKind USER carries the
+// acting InternalUser; SYSTEM (a sweeper, a migration) carries none — which is
+// why this is not InternalAuditEvent, whose actor is required. `detail` is a
+// small JSON object that must never hold personal data, secrets, codes,
+// tokens, idempotency keys or raw provider payloads.
+model PaymentReconciliationEvent {
+  id                  String                    @id @default(uuid(7))
+  caseId              String
+  reconciliationCase  PaymentReconciliationCase @relation(fields: [tenantId, caseId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  actorKind           String
+  actorInternalUserId String?
+  actor               InternalUser?             @relation("PaymentReconciliationEventActor", fields: [tenantId, actorInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  action              String
+  detail              Json?
+
+  createdAt DateTime @default(now())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId])
+  @@index([caseId, createdAt])
 }
 
 // The durable Mocha House order. Only ever created inside the protected
@@ -955,6 +1040,8 @@ model InternalUser {
 
   roleAssignments               InternalUserRoleAssignment[]
   auditEventsActed              InternalAuditEvent[]         @relation("InternalAuditEventActor")
+  reconciliationCasesAssigned   PaymentReconciliationCase[]  @relation("PaymentReconciliationAssignee")
+  reconciliationEventsActed     PaymentReconciliationEvent[] @relation("PaymentReconciliationEventActor")
   // Milestone 7A — the manual Mocha Bean adjustments this HQ user performed.
   // onDelete: Restrict (see MochaBeanLedgerEntry) so an internal user who
   // has moved customer Beans cannot be hard-deleted and orphan that record.

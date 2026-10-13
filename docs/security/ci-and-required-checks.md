@@ -217,6 +217,51 @@ request, with no startup validation.
 - Regression suites: `apps/api/src/config/auth-startup-guard.spec.ts` and
   `main-startup-order.spec.ts`.
 
+### Payment recovery database foundation (ESP-03 PR 1)
+
+Migration `20261017090000_payment_recovery_foundation` (rollback:
+`prisma/rollbacks/20261017090000_payment_recovery_foundation.down.sql`) is the
+**additive, unused-for-now** database base of the payment recovery design. No
+application code reads or writes any of it yet, so checkout and gift-card
+behaviour are unchanged.
+
+- **`PaymentAttempt."paymentState"` / `"fulfilmentStatus"`** — nullable text with
+  CHECK constraints (not enums: PostgreSQL cannot add an enum value and use it
+  in the same transaction). `paymentState`: `NOT_SENT | CHARGING |
+  AWAITING_CONFIRMATION | UNKNOWN | SUCCEEDED | DECLINED | FAILED`;
+  `fulfilmentStatus`: `NOT_REQUIRED | PENDING | DONE | NEEDS_REVIEW`. **NULL means
+  legacy semantics**: the existing `status` and `reconciliationRequired` stay
+  authoritative.
+- **`PaymentReconciliationCase`** — one operational case per attempt (unique per
+  tenant and attempt; status `OPEN | IN_REVIEW | RESOLVED`; machine `reasonCode`;
+  optional assignee; `resolution` `FULFILLED | REFUNDED_EXTERNALLY | NOT_CHARGED`,
+  consistent with `status` and `resolvedAt` by CHECK).
+- **`PaymentReconciliationEvent`** — append-only history (a trigger rejects UPDATE
+  and DELETE). The actor is nullable (`actorKind` `SYSTEM` for a sweeper or a
+  migration), which is why it is not `InternalAuditEvent` (required human actor).
+- **Tenancy:** `tenantId` required; composite foreign keys keep a case, its
+  attempt, its assignee and its events inside one business; the
+  `<Table>_tenantId_immutable` trigger applies; both models are in the tenancy
+  registry and the relationship inventory.
+- **Conservative backfill** (only rows that clearly need attention; everything
+  else stays NULL; no `status`, flag or amount is changed): a payment still
+  PENDING after an hour becomes `paymentState = UNKNOWN` (**never FAILED** — whether
+  money moved is unknown; an abandoned gift-card intent whose charge was never
+  claimed is left alone), and a SUCCEEDED payment with no order and no issued
+  gift card, flagged or older than an hour, becomes `fulfilmentStatus =
+  NEEDS_REVIEW`. Each gets an `OPEN` case and a `SYSTEM` `OPENED` event. Nothing is
+  refunded, retried or fulfilled.
+- **Rollback** (never automatic, shipped as a new forward migration): drops what
+  the migration added. It **refuses** once anyone has worked a case (an assignee,
+  a status other than OPEN, or any event beyond the migration's own) — that work
+  and its audit trail would be destroyed.
+- **Safety:** one DO block (atomic), read-only preflight, `lock_timeout` 5s. The
+  two CHECKs scan `PaymentAttempt` once under the lock the `ADD COLUMN` takes;
+  nothing is rewritten.
+- **Suites pinned to older migrations** exclude these models through
+  `apps/api/src/tenancy/models-added-later.ts`. Regression suite:
+  `apps/api/src/tenancy/payment-recovery-foundation-migration.spec.ts`.
+
 **Boundary (what is not covered).** Confirmed by the independent PR #17
 review:
 

@@ -501,6 +501,7 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
   });
   // Orders and their product snapshots.
   await prisma.paymentAttempt.create({
+    select: { id: true },
     data: {
       id: i('pay'),
       tenantId,

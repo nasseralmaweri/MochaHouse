@@ -47,6 +47,10 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     OutboxEvent: 'tenant',
     NotificationDelivery: 'tenant',
     NotificationRecipient: 'tenant',
+    // ESP-03 — payment recovery: reconciliation cases and their append-only
+    // history, tenant-owned from inception.
+    PaymentReconciliationCase: 'tenant',
+    PaymentReconciliationEvent: 'tenant',
 
     // Internal users, authorization & audit (tenant-scoped per ADR-4)
     InternalUser: 'tenant',

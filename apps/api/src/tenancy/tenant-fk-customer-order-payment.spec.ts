@@ -321,6 +321,7 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
   ];
   for (const [name, location] of payments) {
     await prisma.paymentAttempt.create({
+      select: { id: true },
       data: {
         id: id(tag, name),
         tenantId,
@@ -1045,6 +1046,7 @@ describe('Tenant-enforced foreign keys: customers, orders, payments (Security 4C
         ),
         paymentLocationById: await rejected(
           prisma.paymentAttempt.update({
+            select: { id: true },
             where: { id: a('payment') },
             data: { location: { connect: { id: b('location-spare') } } },
           }),
@@ -1179,6 +1181,7 @@ describe('Tenant-enforced foreign keys: customers, orders, payments (Security 4C
       expect(
         await disconnect(
           prisma.paymentAttempt.update({
+            select: { id: true },
             where: { id: id('a', 'payment') },
             data: { location: { disconnect: true } },
           }),

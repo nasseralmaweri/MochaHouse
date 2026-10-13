@@ -12,6 +12,7 @@ import {
   withScratchClient,
   type ScratchDatabase,
 } from '@mocha-house/testing';
+import { MODELS_ADDED_LATER } from './models-added-later';
 
 // Milestone S0D-2B-2 — the guarded, parent-derived backfill + NOT NULL
 // migration for CustomerPreferredLocation and CustomerNote ONLY, exercised
@@ -59,7 +60,7 @@ const tenantTables = Object.entries(MODEL_TENANCY)
   // Milestone S0D-2C-3 added NotificationRecipient AFTER this migration;
   // this test is pinned to the schema exactly as it existed at `target`,
   // which never has that table.
-  .filter((model) => model !== 'NotificationRecipient');
+  .filter((model) => !MODELS_ADDED_LATER.has(model));
 
 const baseUrl = process.env.DATABASE_URL!;
 

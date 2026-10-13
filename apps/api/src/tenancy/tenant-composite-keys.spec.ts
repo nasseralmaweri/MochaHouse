@@ -20,6 +20,10 @@ import {
   type MigrationProject,
   type ScratchDatabase,
 } from '@mocha-house/testing';
+import {
+  MODELS_ADDED_LATER,
+  TENANT_RELATIONSHIPS_BEFORE_LATER_MODELS,
+} from './models-added-later';
 
 // Security 4C-2 — composite tenant keys.
 //
@@ -64,7 +68,11 @@ const PARENTS = [
       (r) => (r as { target: string }).target,
     ),
   ),
-].sort();
+]
+  // Pinned to Security 4C-2: a parent introduced later (ESP-03's
+  // PaymentReconciliationCase) was not part of that migration.
+  .filter((table) => !MODELS_ADDED_LATER.has(table))
+  .sort();
 
 // The statements inside the file's single DO block — null unless the file
 // (comments aside) is exactly one `DO $tag$ BEGIN ... END $tag$;` block.
@@ -163,6 +171,7 @@ describe('Composite tenant keys (Security 4C-2)', () => {
     const declared = [...schema.matchAll(/^model (\w+) \{\n([\s\S]*?)^\}/gm)]
       .filter((m) => /@@unique\(\[tenantId, id\]\)/.test(m[2]))
       .map((m) => m[1])
+      .filter((table) => !MODELS_ADDED_LATER.has(table))
       .sort();
     expect(declared).toEqual(PARENTS);
   });
@@ -297,7 +306,10 @@ describe('Composite tenant keys (Security 4C-2)', () => {
       await relink('ck-loc-b');
       try {
         const report = await withScratchClient(scratch.url, (client) =>
-          checkTenantIntegrity(client, { sampleLimit: 1 }),
+          checkTenantIntegrity(client, {
+            sampleLimit: 1,
+            relationships: TENANT_RELATIONSHIPS_BEFORE_LATER_MODELS,
+          }),
         );
         expect(
           report.findings.map(

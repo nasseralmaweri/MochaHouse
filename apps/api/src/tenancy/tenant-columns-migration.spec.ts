@@ -13,6 +13,7 @@ import {
   type MigrationFile,
   type ScratchDatabase,
 } from '@mocha-house/testing';
+import { MODELS_ADDED_LATER } from './models-added-later';
 
 // Milestone S0D-1 — the expand + backfill migration, exercised ONLY against
 // throwaway scratch databases (never the shared development database).
@@ -39,7 +40,7 @@ const tenantTables = Object.entries(MODEL_TENANCY)
   // Milestone S0D-2C-3 added NotificationRecipient as a brand-new table,
   // long after this migration; this test is pinned to the schema exactly
   // as it existed at `s0d1`, which never has that table.
-  .filter((model) => model !== 'NotificationRecipient')
+  .filter((model) => !MODELS_ADDED_LATER.has(model))
   .sort();
 
 const baseUrl = process.env.DATABASE_URL!;

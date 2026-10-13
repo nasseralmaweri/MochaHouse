@@ -78,7 +78,13 @@ const tenantTables = Object.entries(MODEL_TENANCY)
   // this test is pinned to the schema exactly as it existed at `target`,
   // which never has that table. Excluded here rather than letting this
   // file's expected set silently grow with every later milestone.
-  .filter((model) => model !== 'NotificationRecipient');
+  // ESP-03 PR 1 added the payment reconciliation models after this migration.
+  .filter(
+    (model) =>
+      model !== 'NotificationRecipient' &&
+      model !== 'PaymentReconciliationCase' &&
+      model !== 'PaymentReconciliationEvent',
+  );
 
 const baseUrl = process.env.DATABASE_URL!;
 const T1 = TENANT_1_MOCHA_HOUSE_ID;
