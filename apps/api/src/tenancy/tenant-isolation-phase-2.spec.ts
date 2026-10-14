@@ -32,6 +32,7 @@ import { ApprovalsModule } from '../approvals/approvals.module';
 import { MediaModule } from '../media/media.module';
 import { CmsModule } from '../cms/cms.module';
 import { OrdersController } from '../orders/api/orders.controller';
+import { RateLimitModule } from '../rate-limit/rate-limit.module';
 import { CheckoutService } from '../orders/application/checkout.service';
 
 // Security Phase 2 — tenant isolation of the business-owned commercial data
@@ -250,6 +251,8 @@ describe('Tenant isolation phase 2 (integration)', () => {
         PromotionsModule,
         GiftCardsModule,
         PaymentModule,
+        // OrdersController applies RateLimitGuard (R1 / S3a).
+        RateLimitModule,
         MarketingModule,
         ApprovalsModule,
         MediaModule,

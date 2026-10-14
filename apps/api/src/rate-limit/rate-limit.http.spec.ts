@@ -171,6 +171,11 @@ async function buildApp(
   const app = moduleRef.createNestApplication<NestExpressApplication>();
   app.set('trust proxy', options.trustProxy ?? 0);
   await app.init();
+  // One shared RUNNING server for every request of this app: supertest uses an
+  // already-listening server as it is, instead of opening (and closing) a fresh
+  // ephemeral server per request — which reset connections under the 40-request
+  // concurrency burst on the Linux CI runner.
+  await app.listen(0, '127.0.0.1');
 
   for (const [name, previous] of Object.entries(saved)) {
     if (previous === undefined) delete process.env[name];
@@ -893,6 +898,7 @@ describe('rate limiting: abuse resistance', () => {
 
     it('limits a concurrent burst of guesses straight away (no check-then-record race)', async () => {
       const tenant = unique('t');
+      // All 40 requests are in flight at once against the app's one shared server.
       const results = await Promise.all(
         Array.from({ length: 40 }, () =>
           poll(tenant, unique('guess'), 'wrong'),

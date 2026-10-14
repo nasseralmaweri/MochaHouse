@@ -35,6 +35,7 @@ import { PromotionsModule } from '../promotions/promotions.module';
 import { GiftCardsModule } from '../gift-cards/gift-cards.module';
 import { PaymentModule } from '../payment/payment.module';
 import { OrdersController } from '../orders/api/orders.controller';
+import { RateLimitModule } from '../rate-limit/rate-limit.module';
 import { CheckoutService } from '../orders/application/checkout.service';
 
 // Security Phase 3 — public storefront tenant isolation. The storefront's
@@ -86,6 +87,8 @@ describe('Public storefront tenant isolation (integration)', () => {
         PromotionsModule,
         GiftCardsModule,
         PaymentModule,
+        // OrdersController applies RateLimitGuard (R1 / S3a).
+        RateLimitModule,
       ],
       controllers: [OrdersController],
       providers: [CheckoutService],
