@@ -136,6 +136,14 @@ export function describeConnection(
         tone: 'danger',
         actionsPausedReason: 'Orders have not loaded.',
       };
+    case 'not-found':
+      return {
+        label: 'Not found',
+        tone: 'danger',
+        actionsPausedReason: 'This queue could not be found.',
+      };
+    case 'complete':
+      return { label: 'Complete', tone: 'ok', actionsPausedReason: null };
     case 'loading':
     default:
       return {

@@ -578,3 +578,94 @@ describe('PollingController: stale and resume edge cases', () => {
     c.stop();
   });
 });
+
+describe('PollingController: final data and not-found (order tracking)', () => {
+  const isFinal = (data: string[]) => data.includes('COMPLETED');
+
+  it('stops polling for good once the data is final, and is never stale afterwards', async () => {
+    const env = new FakeEnv();
+    const results = [ok(['PREPARING']), ok(['READY']), ok(['COMPLETED'])];
+    const fetch = jest.fn(async () => results.shift() ?? ok(['COMPLETED']));
+    const c = make(env, fetch, { isFinal });
+    c.start();
+    await flush();
+    await env.advance(10_000);
+    await env.advance(10_000);
+    expect(c.getSnapshot()).toMatchObject({ connection: 'complete', data: ['COMPLETED'] });
+    const calls = fetch.mock.calls.length;
+    expect(calls).toBe(3);
+
+    // Hours pass, the tab is hidden and shown again, the network flaps: no more requests.
+    await env.advance(3_600_000);
+    env.setVisible(false);
+    env.setVisible(true);
+    env.setOnline(false);
+    env.setOnline(true);
+    c.refreshNow();
+    await flush();
+    expect(fetch).toHaveBeenCalledTimes(calls);
+    expect(c.getSnapshot().connection).toBe('complete');
+    expect(env.pendingTimers()).toBe(0);
+    c.stop();
+  });
+
+  it('keeps polling while the data is not final', async () => {
+    const env = new FakeEnv();
+    const fetch = jest.fn(async () => ok(['READY']));
+    const c = make(env, fetch, { isFinal });
+    c.start();
+    await flush();
+    await env.advance(30_000);
+    expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(c.getSnapshot().connection).toBe('live');
+    c.stop();
+  });
+
+  it('stops on not-found, as for a wrong access token, and never retries', async () => {
+    const env = new FakeEnv();
+    const fetch = jest.fn(async (): Promise<PollOutcome<string[]>> => ({
+      outcome: 'not-found',
+    }));
+    const c = make(env, fetch, { isFinal });
+    c.start();
+    await flush();
+    expect(c.getSnapshot()).toMatchObject({ connection: 'not-found', data: null });
+    await env.advance(300_000);
+    c.refreshNow();
+    await flush();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    c.stop();
+  });
+
+  it('an older response cannot overwrite a newer status (sequence guard)', async () => {
+    const env = new FakeEnv();
+    const first = deferred<PollOutcome<string[]>>();
+    const fetch = jest
+      .fn<Promise<PollOutcome<string[]>>, []>()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValue(ok(['READY']));
+    const c = make(env, fetch, { isFinal, requestTimeoutMs: 1_000 });
+    c.start();
+    await env.advance(1_000); // the first request times out
+    await env.advance(30_000); // a later poll succeeds with READY
+    expect(c.getSnapshot().data).toEqual(['READY']);
+    first.resolve(ok(['RECEIVED'])); // the old request finally answers
+    await flush();
+    expect(c.getSnapshot().data).toEqual(['READY']);
+    c.stop();
+  });
+
+  it('recovers from failures and reaches the final state', async () => {
+    const env = new FakeEnv();
+    const results = [ok(['READY']), err, err, ok(['COMPLETED'])];
+    const fetch = jest.fn(async () => results.shift() ?? err);
+    const c = make(env, fetch, { isFinal });
+    c.start();
+    await flush();
+    await env.advance(10_000);
+    expect(c.getSnapshot()).toMatchObject({ data: ['READY'], connection: 'degraded' });
+    await env.advance(60_000);
+    expect(c.getSnapshot()).toMatchObject({ connection: 'complete', data: ['COMPLETED'] });
+    c.stop();
+  });
+});

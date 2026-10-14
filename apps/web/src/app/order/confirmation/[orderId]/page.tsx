@@ -1,77 +1,132 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import type { OrderStatus, OrderStatusResponse } from "@mocha-house/contracts";
-import { getOrderStatusFromBrowser } from "@/lib/api-client";
+import type { OrderStatusResponse } from "@mocha-house/contracts";
+import { pollOrderStatusFromBrowser } from "@/lib/api-client";
 import { formatPrice } from "@/lib/money";
+import {
+  PollingController,
+  browserPollingEnv,
+} from "@/lib/polling/polling-controller";
+import { usePollingController } from "@/lib/polling/use-polling";
+import {
+  TRACKING_POLL,
+  TRACKING_STATUS_LABEL,
+  describeTrackingConnection,
+  isTrackingFinal,
+  statusChangeAnnouncement,
+  statusHeadline,
+  trackingDocumentTitle,
+} from "@/lib/order-tracking";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { BackLink } from "@/components/BackLink";
 
-const STATUS_LABEL: Record<OrderStatus, string> = {
-  RECEIVED: "Received",
-  ACCEPTED: "Accepted",
-  PREPARING: "Preparing",
-  READY: "Ready",
-  COMPLETED: "Completed",
-};
+const TONE_CLASS = {
+  ok: "text-status-success",
+  warning: "text-status-warning",
+  danger: "text-status-error",
+} as const;
+
+// How long a spoken status change stays in the live region before it is
+// cleared, so the next one is read even if the wording repeats.
+const ANNOUNCEMENT_CLEAR_MS = 8_000;
+
+function timeLabel(ms: number | null): string {
+  if (ms === null) return "";
+  return new Date(ms).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
 // The URL (orderId + accessToken) is the only source of truth here — this
 // page never reads the cart or any client-side session state, so a reload,
 // a bookmark, or navigating away and back all resolve the same way: refetch
-// from the backend and render whatever it says right now.
+// from the backend and render whatever it says right now. Keyed on the id and
+// token so a different order always starts with a fresh poller.
 export default function OrderConfirmationPage() {
   const params = useParams<{ orderId: string }>();
   const searchParams = useSearchParams();
   const accessToken = searchParams.get("token") ?? "";
 
-  const [status, setStatus] = useState<OrderStatusResponse | null>(null);
-  const [notFound, setNotFound] = useState(false);
-  const [loadFailed, setLoadFailed] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  return (
+    <OrderTracking
+      key={`${params.orderId}:${accessToken}`}
+      orderId={params.orderId}
+      accessToken={accessToken}
+    />
+  );
+}
+
+function OrderTracking({
+  orderId,
+  accessToken,
+}: {
+  orderId: string;
+  accessToken: string;
+}) {
+  const previousStatus = useRef<OrderStatusResponse["status"] | null>(null);
+  // Alternates a trailing no-break space so two identical announcements in a
+  // row still change the live region and are both spoken.
+  const announceFlip = useRef(false);
+  const [announcement, setAnnouncement] = useState("");
+
+  const { controller, snapshot } = usePollingController<OrderStatusResponse>(
+    () =>
+      new PollingController<OrderStatusResponse>({
+        env: browserPollingEnv(),
+        fetch: async () => {
+          const result = await pollOrderStatusFromBrowser(orderId, accessToken);
+          if (result.outcome === "success") {
+            return { outcome: "success", data: result.status };
+          }
+          return { outcome: result.outcome };
+        },
+        // A completed order cannot change again: stop polling.
+        isFinal: isTrackingFinal,
+        onData: (next) => {
+          const message = statusChangeAnnouncement(
+            previousStatus.current,
+            next.status,
+          );
+          previousStatus.current = next.status;
+          if (message) {
+            announceFlip.current = !announceFlip.current;
+            setAnnouncement(
+              message + (announceFlip.current ? String.fromCharCode(160) : ""),
+            );
+          }
+        },
+        ...TRACKING_POLL,
+      }),
+  );
+
+  const status = snapshot.data;
+  const notice = describeTrackingConnection(snapshot.connection);
+
+  // The tab title carries the status, so a customer on another tab can see
+  // "Ready" at a glance. Order number and status only.
+  useEffect(() => {
+    if (!status) return;
+    const previous = document.title;
+    document.title = trackingDocumentTitle(status.orderNumber, status.status);
+    return () => {
+      document.title = previous;
+    };
+  }, [status]);
 
   useEffect(() => {
-    let cancelled = false;
+    if (!announcement) return;
+    const handle = window.setTimeout(
+      () => setAnnouncement(""),
+      ANNOUNCEMENT_CLEAR_MS,
+    );
+    return () => window.clearTimeout(handle);
+  }, [announcement]);
 
-    getOrderStatusFromBrowser(params.orderId, accessToken)
-      .then((result) => {
-        if (cancelled) return;
-        if (result === null) {
-          setNotFound(true);
-          return;
-        }
-        setStatus(result);
-      })
-      .catch(() => {
-        if (!cancelled) setLoadFailed(true);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [params.orderId, accessToken]);
-
-  // No automatic polling here by design — this is a manual, deliberate
-  // action, not real-time order tracking.
-  async function handleRefresh() {
-    setRefreshing(true);
-    try {
-      const result = await getOrderStatusFromBrowser(params.orderId, accessToken);
-      if (result === null) {
-        setNotFound(true);
-      } else {
-        setStatus(result);
-        setLoadFailed(false);
-      }
-    } catch {
-      setLoadFailed(true);
-    } finally {
-      setRefreshing(false);
-    }
-  }
-
-  if (notFound) {
+  if (snapshot.connection === "not-found" || snapshot.connection === "forbidden") {
     return (
       <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
         <PageHeader
@@ -83,13 +138,20 @@ export default function OrderConfirmationPage() {
     );
   }
 
-  if (loadFailed) {
+  if (!status && snapshot.connection === "failed") {
     return (
       <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
         <PageHeader
           title="Couldn't load your order"
-          subtitle="Please check your connection and try reloading this page."
+          subtitle="Please check your connection. We'll keep trying, or you can try now."
         />
+        <button
+          type="button"
+          onClick={() => controller.refreshNow()}
+          className="self-start text-sm font-medium text-text-primary underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+        >
+          Try again
+        </button>
         <BackLink href="/order/location">Start a new order</BackLink>
       </main>
     );
@@ -213,18 +275,47 @@ export default function OrderConfirmationPage() {
         </div>
       </Card>
 
-      <Card tone="subtle" className="flex flex-col gap-2 text-sm text-text-secondary">
+      <Card tone="subtle" className="flex flex-col gap-3 text-sm text-text-secondary">
         <span>Thanks, {status.guestName}!</span>
-        <div className="flex items-center justify-between gap-4">
-          <span>Status: {STATUS_LABEL[status.status]}</span>
-          <button
-            type="button"
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="text-xs font-medium text-text-primary underline underline-offset-2 disabled:text-text-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+        <div className="flex flex-col gap-1">
+          <span className="text-base font-semibold text-text-primary">
+            {statusHeadline(status.status)}
+          </span>
+          <span>Status: {TRACKING_STATUS_LABEL[status.status]}</span>
+        </div>
+
+        {/* Spoken announcement of a status change; visually hidden. */}
+        <p role="status" aria-live="polite" className="sr-only">
+          {announcement}
+        </p>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-default pt-2">
+          {/* Only the state text is a live region, so it is announced when the
+              state changes, not on every refresh. */}
+          <span
+            role="status"
+            aria-live="polite"
+            className={`text-xs font-medium ${TONE_CLASS[notice.tone]}`}
           >
-            {refreshing ? "Refreshing…" : "Refresh status"}
-          </button>
+            {notice.label}
+          </span>
+          <span className="flex items-center gap-3 text-xs">
+            {snapshot.lastSuccessAt !== null ? (
+              <span className="text-text-muted">
+                Updated {timeLabel(snapshot.lastSuccessAt)}
+              </span>
+            ) : null}
+            {snapshot.connection !== "complete" ? (
+              <button
+                type="button"
+                onClick={() => controller.refreshNow()}
+                disabled={snapshot.refreshing}
+                className="font-medium text-text-primary underline underline-offset-2 disabled:text-text-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+              >
+                {snapshot.refreshing ? "Refreshing…" : "Refresh status"}
+              </button>
+            ) : null}
+          </span>
         </div>
       </Card>
 

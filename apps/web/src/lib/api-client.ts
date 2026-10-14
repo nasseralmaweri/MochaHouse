@@ -218,22 +218,54 @@ export async function submitCheckoutFromBrowser(
   return { outcome: "success", confirmation: (await response.json()) as OrderConfirmation };
 }
 
-export async function getOrderStatusFromBrowser(
+export type OrderStatusPollResult =
+  | { outcome: "success"; status: OrderStatusResponse }
+  | { outcome: "not-found" }
+  | { outcome: "error" };
+
+// One poll of a guest order's status. The order id + access token in the URL
+// is the existing guest contract and is deliberately unchanged. Beyond it:
+//   - no-store, so a cached response can never present an old status as
+//     current, and nothing about the order is kept in the browser cache;
+//   - no Referer, so the token-bearing request URL is not echoed anywhere;
+//   - a 404 (wrong id or token) is a distinct outcome so polling can stop;
+//   - anything else that is not a well-formed order is a failed poll, never
+//     data the page could crash on.
+export async function pollOrderStatusFromBrowser(
   orderId: string,
   accessToken: string,
-): Promise<OrderStatusResponse | null> {
-  const response = await fetch(
-    `${getPublicApiUrl()}/orders/${orderId}?accessToken=${encodeURIComponent(accessToken)}`,
-  );
+): Promise<OrderStatusPollResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${getPublicApiUrl()}/orders/${orderId}?accessToken=${encodeURIComponent(accessToken)}`,
+      { cache: "no-store", referrerPolicy: "no-referrer" },
+    );
+  } catch {
+    return { outcome: "error" };
+  }
 
   if (response.status === 404) {
-    return null;
+    return { outcome: "not-found" };
   }
   if (!response.ok) {
-    throw new Error(`Failed to load order status (${response.status}).`);
+    return { outcome: "error" };
   }
 
-  return response.json() as Promise<OrderStatusResponse>;
+  try {
+    const body: unknown = await response.json();
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      typeof (body as { orderId?: unknown }).orderId !== "string" ||
+      typeof (body as { status?: unknown }).status !== "string"
+    ) {
+      return { outcome: "error" };
+    }
+    return { outcome: "success", status: body as OrderStatusResponse };
+  } catch {
+    return { outcome: "error" };
+  }
 }
 
 async function safeJson(response: Response): Promise<{ outcome?: string; message?: string } | null> {
