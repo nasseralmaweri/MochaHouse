@@ -3,9 +3,11 @@
 // switching it off. It mirrors the Redis semantics: a fixed window that starts
 // at the first count and expires `windowSeconds` later.
 //
-// Memory is bounded: expired entries are dropped as the map grows, and if it
-// is still full the oldest entry is evicted, so a flood of distinct keys can
-// never exhaust the process.
+// Memory is bounded: expired entries are dropped as the map grows. If it is
+// still full of LIVE counters, a request for a NEW key is refused (counted as
+// over its limit) instead of evicting a live counter — evicting would let a
+// flood of throwaway keys reset real limits. Reaching that cap takes tens of
+// thousands of distinct live keys inside one window.
 
 interface Entry {
   count: number;
@@ -39,7 +41,14 @@ export class MemoryWindowCounter {
 
     if (!live) {
       if (!increment) return { count: 0, retryAfterSeconds: windowSeconds };
-      this.makeRoom(nowMs);
+      if (!this.makeRoom(nowMs)) {
+        // Full of LIVE counters: refuse rather than evict one, because
+        // evicting would let a flood of throwaway keys reset real limits.
+        return {
+          count: Number.MAX_SAFE_INTEGER,
+          retryAfterSeconds: windowSeconds,
+        };
+      }
       this.entries.set(key, {
         count: 1,
         expiresAt: nowMs + windowSeconds * 1000,
@@ -57,19 +66,25 @@ export class MemoryWindowCounter {
     };
   }
 
+  // Gives one count back (never below zero).
+  release(key: string): void {
+    const entry = this.entries.get(key);
+    if (entry && entry.expiresAt > this.now() && entry.count > 0) {
+      entry.count -= 1;
+    }
+  }
+
   get size(): number {
     return this.entries.size;
   }
 
-  private makeRoom(nowMs: number): void {
-    if (this.entries.size < this.maxKeys) return;
+  // Room for one more counter: true if there is space (after dropping expired
+  // entries), false if the map is full of live counters.
+  private makeRoom(nowMs: number): boolean {
+    if (this.entries.size < this.maxKeys) return true;
     for (const [key, entry] of this.entries) {
       if (entry.expiresAt <= nowMs) this.entries.delete(key);
     }
-    while (this.entries.size >= this.maxKeys) {
-      const oldest = this.entries.keys().next();
-      if (oldest.done) break;
-      this.entries.delete(oldest.value);
-    }
+    return this.entries.size < this.maxKeys;
   }
 }

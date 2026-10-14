@@ -66,4 +66,31 @@ describe('MemoryWindowCounter', () => {
     expect(counter.hit('live', 600, false).count).toBe(1);
     expect(counter.size).toBe(2);
   });
+
+  it('refuses a NEW key when full of live counters, without evicting any live counter', () => {
+    const counter = make(2);
+    counter.hit('a', 60, true);
+    counter.hit('a', 60, true);
+    counter.hit('b', 60, true);
+    const refused = counter.hit('flood', 60, true);
+    expect(refused.count).toBe(Number.MAX_SAFE_INTEGER);
+    expect(counter.size).toBe(2);
+    // the existing counters were not reset by the flood
+    expect(counter.hit('a', 60, false).count).toBe(2);
+  });
+
+  it('gives a count back, never below zero, and only for live entries', () => {
+    const counter = make();
+    counter.hit('k', 60, true);
+    counter.hit('k', 60, true);
+    counter.release('k');
+    expect(counter.hit('k', 60, false).count).toBe(1);
+    counter.release('k');
+    counter.release('k');
+    expect(counter.hit('k', 60, false).count).toBe(0);
+    counter.release('never-seen');
+    nowMs += 120_000;
+    counter.release('k'); // expired: nothing to give back
+    expect(counter.hit('k', 60, false).count).toBe(0);
+  });
 });

@@ -4,7 +4,6 @@ import {
   Get,
   HttpCode,
   HttpStatus,
-  NotFoundException,
   Param,
   Post,
   Query,
@@ -76,8 +75,10 @@ export class OrdersController {
   // the actual credential (see CheckoutService.getStatus).
   //
   // R1 / S3a — rate limited per order (generous: customer tracking polls every
-  // 15 s per tab) and, separately, by RECENT FAILED lookups from one client, so
-  // guessing is throttled without ever counting a customer's successful polls.
+  // 15 s per tab) and, separately, by RECENT FAILED lookups from one client. The
+  // failure scope counts a lookup as it arrives (so a concurrent burst of
+  // guesses is limited at once) and the count is given back when the lookup
+  // succeeds, so a customer's successful polls never accumulate.
   @UseGuards(RateLimitGuard)
   @RateLimit('order-status')
   @Get(':orderId')
@@ -87,17 +88,12 @@ export class OrdersController {
     @CurrentTenantContext() tenant: TenantContext,
     @Req() request: CustomerAuthenticatedRequest,
   ) {
-    try {
-      return await this.checkoutService.getStatus(
-        orderId,
-        accessToken ?? '',
-        tenant,
-      );
-    } catch (error) {
-      if (error instanceof NotFoundException) {
-        await this.rateLimits.recordFailure(request, 'order-status');
-      }
-      throw error;
-    }
+    const status = await this.checkoutService.getStatus(
+      orderId,
+      accessToken ?? '',
+      tenant,
+    );
+    await this.rateLimits.releaseOnSuccess(request);
+    return status;
   }
 }

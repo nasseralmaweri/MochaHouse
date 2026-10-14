@@ -144,6 +144,10 @@ export async function registerAction(
     };
   }
 
+  if (response.status === 429) {
+    return { error: TOO_MANY_ATTEMPTS_MESSAGE };
+  }
+
   if (!response.ok) {
     return { error: await readErrorMessage(response, "Could not create your account. Please try again.") };
   }
@@ -188,6 +192,10 @@ export async function verifyAction(
     };
   }
 
+  if (response.status === 429) {
+    return { error: TOO_MANY_ATTEMPTS_MESSAGE };
+  }
+
   if (!response.ok) {
     return { error: await readErrorMessage(response, "We couldn't verify your account. Please try again.") };
   }
@@ -229,6 +237,10 @@ export async function resendVerificationAction(
       message: null,
       error: "Could not reach the server. Check your connection and try again.",
     };
+  }
+
+  if (response.status === 429) {
+    return { message: null, error: TOO_MANY_ATTEMPTS_MESSAGE };
   }
 
   if (!response.ok) {
@@ -280,6 +292,10 @@ export async function forgotPasswordAction(
     return {
       error: "Could not reach the server. Check your connection and try again.",
     };
+  }
+
+  if (response.status === 429) {
+    return { error: TOO_MANY_ATTEMPTS_MESSAGE };
   }
 
   if (!response.ok) {
@@ -335,6 +351,10 @@ export async function resetPasswordAction(
     return {
       error: "Could not reach the server. Check your connection and try again.",
     };
+  }
+
+  if (response.status === 429) {
+    return { error: TOO_MANY_ATTEMPTS_MESSAGE };
   }
 
   if (!response.ok) {

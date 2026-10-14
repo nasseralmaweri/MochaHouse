@@ -89,9 +89,9 @@ class StubController {
     @Req() req: RateLimitedRequest,
   ) {
     if (token !== 'good-token') {
-      await this.enforcer.recordFailure(req, 'order-status');
       throw new NotFoundException('Order not found.');
     }
+    await this.enforcer.releaseOnSuccess(req);
     return { orderId, status: 'PREPARING' };
   }
 }
@@ -493,19 +493,28 @@ describe('rate limiting over HTTP', () => {
       expect(results).toEqual([201, 201, 201, 429, 429]);
     });
 
-    it('ignores a missing or non-string identifier instead of crashing, and still limits by address', async () => {
+    it('puts a missing, object or oversized identifier in ONE shared bucket instead of skipping the limits', async () => {
       const tenant = unique('t');
+      const malformed: Array<Record<string, unknown>> = [
+        {},
+        { identifier: { $ne: 1 } },
+        { identifier: ['a', 'b'] },
+        { identifier: 'x'.repeat(400) },
+        { identifier: '   ' },
+        { identifier: 7 },
+      ];
       const statuses: number[] = [];
-      for (let i = 0; i < 10; i += 1)
+      for (const body of malformed) {
         statuses.push(
           (
             await post(h.app, '/t/sign-in')
               .set('x-test-tenant', tenant)
-              .send({ identifier: { $ne: 1 } })
+              .send(body)
           ).status,
         );
-      expect(statuses.slice(0, 8).every((s) => s === 201)).toBe(true);
-      expect(statuses.slice(8)).toEqual([429, 429]);
+      }
+      // The shared bucket for unparseable identifiers fills after 3 (pair limit).
+      expect(statuses).toEqual([201, 201, 201, 429, 429, 429]);
     });
   });
 
@@ -741,6 +750,208 @@ describe('rate limiting over HTTP', () => {
           ).status,
         ).toBe(201);
       }
+    });
+  });
+});
+
+describe('rate limiting: abuse resistance', () => {
+  describe('the limiter reads the field the handler acts on', () => {
+    let h: Harness;
+    beforeAll(async () => {
+      h = await buildApp({ RATE_LIMIT_CLIENT_IP_MODE: 'peer' });
+    });
+    afterAll(() => h.close());
+
+    it('cannot be sidestepped by a throwaway "identifier" next to the real "email" (recovery, reset)', async () => {
+      const tenant = unique('t');
+      const victim = `${unique('victim')}@example.com`;
+      const forgot: number[] = [];
+      for (let i = 0; i < 4; i += 1) {
+        forgot.push(
+          (
+            await post(h.app, '/t/forgot')
+              .set('x-test-tenant', tenant)
+              .send({ email: victim, identifier: `throwaway-${i}` })
+          ).status,
+        );
+      }
+      // the bucket is the victim's EMAIL, whatever "identifier" says
+      expect(forgot).toEqual([201, 201, 429, 429]);
+
+      const reset: number[] = [];
+      for (let i = 0; i < 5; i += 1) {
+        reset.push(
+          (
+            await post(h.app, '/t/reset')
+              .set('x-test-tenant', tenant)
+              .send({
+                email: victim,
+                identifier: `throwaway-${i}`,
+                code: String(i),
+              })
+          ).status,
+        );
+      }
+      expect(reset).toEqual([201, 201, 201, 429, 429]);
+    });
+
+    it('cannot be sidestepped by a throwaway "email" next to the real "identifier" (sign-in)', async () => {
+      const tenant = unique('t');
+      const identifier = `${unique('real')}@example.com`;
+      const statuses: number[] = [];
+      for (let i = 0; i < 4; i += 1) {
+        statuses.push(
+          (
+            await post(h.app, '/t/sign-in')
+              .set('x-test-tenant', tenant)
+              .send({
+                identifier,
+                email: `throwaway-${i}@example.com`,
+                password: 'x',
+              })
+          ).status,
+        );
+      }
+      expect(statuses).toEqual([201, 201, 201, 429]);
+    });
+  });
+
+  describe('refused requests do not consume wider shared allowances', () => {
+    let h: Harness;
+    beforeAll(async () => {
+      h = await buildApp(
+        { RATE_LIMIT_CLIENT_IP_MODE: 'peer' },
+        { trustProxy: 1 },
+      );
+    });
+    afterAll(() => h.close());
+
+    it('one source hammering an identifier cannot exhaust its ceiling and lock the customer out', async () => {
+      const tenant = unique('t');
+      const victim = `${unique('victim')}@example.com`;
+      // The attacker (one address) sends many requests; only its first 2 are counted
+      // anywhere (pair limit 2) — the rest are refused before the ceiling (4) is touched.
+      for (let i = 0; i < 25; i += 1) {
+        await post(h.app, '/t/forgot')
+          .set('x-test-tenant', tenant)
+          .set('x-forwarded-for', '203.0.113.99')
+          .send({ email: victim });
+      }
+      // The real customer, from another address, can still use the remaining allowance.
+      const statuses: number[] = [];
+      for (let i = 0; i < 3; i += 1) {
+        statuses.push(
+          (
+            await post(h.app, '/t/forgot')
+              .set('x-test-tenant', tenant)
+              .set('x-forwarded-for', '198.51.100.7')
+              .send({ email: victim })
+          ).status,
+        );
+      }
+      expect(statuses).toEqual([201, 201, 429]); // ceiling 4 = 2 (attacker) + 2 (customer)
+    });
+
+    it('one flooding address cannot exhaust the tenant ceiling for everyone else', async () => {
+      const tenant = unique('t');
+      for (let i = 0; i < 60; i += 1) {
+        await post(h.app, '/t/checkout')
+          .set('x-test-tenant', tenant)
+          .set('x-forwarded-for', '203.0.113.77')
+          .send({});
+      }
+      // The flood was refused at the per-address scope (4), so only 4 counted against the
+      // tenant ceiling (12): several signed-in customers can still check out.
+      for (const subject of ['c1', 'c2']) {
+        for (let i = 0; i < 4; i += 1) {
+          expect(
+            (
+              await post(h.app, '/t/checkout')
+                .set('x-test-tenant', tenant)
+                .set('x-test-subject', subject)
+                .set('x-forwarded-for', '198.51.100.8')
+                .send({})
+            ).status,
+          ).toBe(201);
+        }
+      }
+    });
+  });
+
+  describe('guest order status failure counter', () => {
+    let h: Harness;
+    beforeAll(async () => {
+      h = await buildApp({ RATE_LIMIT_CLIENT_IP_MODE: 'peer' });
+    });
+    afterAll(() => h.close());
+
+    const poll = (tenant: string, orderId: string, token: string) =>
+      request(h.app.getHttpServer())
+        .get(`/t/orders/${orderId}`)
+        .query({ accessToken: token })
+        .set('x-test-tenant', tenant);
+
+    it('limits a concurrent burst of guesses straight away (no check-then-record race)', async () => {
+      const tenant = unique('t');
+      const results = await Promise.all(
+        Array.from({ length: 40 }, () =>
+          poll(tenant, unique('guess'), 'wrong'),
+        ),
+      );
+      const notFound = results.filter((r) => r.status === 404).length;
+      const limited = results.filter((r) => r.status === 429).length;
+      expect(notFound).toBe(3); // the failure limit
+      expect(limited).toBe(37);
+    });
+
+    it('gives a successful lookup back, so a customer polling for an hour never fills it', async () => {
+      const tenant = unique('t');
+      const orderId = unique('o');
+      for (let i = 0; i < 12; i += 1)
+        expect((await poll(tenant, orderId, 'good-token')).status).toBe(200);
+      // all 12 reservations were returned: three wrong guesses still get their 404s
+      const bad: number[] = [];
+      for (let i = 0; i < 4; i += 1)
+        bad.push((await poll(tenant, unique('g'), 'wrong')).status);
+      expect(bad).toEqual([404, 404, 404, 429]);
+    });
+  });
+
+  describe('memory fallback under a key flood', () => {
+    let h: Harness;
+    beforeAll(async () => {
+      h = await buildApp(
+        { RATE_LIMIT_CLIENT_IP_MODE: 'peer' },
+        { redisDown: true },
+      );
+    });
+    afterAll(() => h.close());
+
+    it('still limits normally while Redis is down, including the failure counter and its release', async () => {
+      const tenant = unique('t');
+      const orderId = unique('o');
+      for (let i = 0; i < 6; i += 1) {
+        expect(
+          (
+            await request(h.app.getHttpServer())
+              .get(`/t/orders/${orderId}`)
+              .query({ accessToken: 'good-token' })
+              .set('x-test-tenant', tenant)
+          ).status,
+        ).toBe(200);
+      }
+      const bad: number[] = [];
+      for (let i = 0; i < 4; i += 1) {
+        bad.push(
+          (
+            await request(h.app.getHttpServer())
+              .get(`/t/orders/${unique('g')}`)
+              .query({ accessToken: 'wrong' })
+              .set('x-test-tenant', tenant)
+          ).status,
+        );
+      }
+      expect(bad).toEqual([404, 404, 404, 429]);
     });
   });
 });

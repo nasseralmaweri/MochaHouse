@@ -153,6 +153,54 @@ describe('loadRateLimitConfig', () => {
   });
 });
 
+describe('policy invariants', () => {
+  const { policies } = loadRateLimitConfig({});
+
+  it('lists scopes narrowest first, so a refused request never counts against a wider one', () => {
+    for (const policy of Object.values(policies)) {
+      const widths = policy.scopes.map((scope) => scope.key.length);
+      expect([...widths].sort((a, b) => b - a)).toEqual(widths);
+    }
+  });
+
+  it('names the identifier field each credential policy keys on (the one its handler reads)', () => {
+    expect(policies['customer-sign-in'].identifierField).toBe('identifier');
+    expect(policies['internal-sign-in'].identifierField).toBe('identifier');
+    expect(policies['account-recovery'].identifierField).toBe('email');
+    expect(policies['account-verification'].identifierField).toBe('email');
+    for (const name of [
+      'checkout',
+      'checkout-quote',
+      'reward-eligibility',
+      'order-status',
+    ] as const) {
+      expect(policies[name].identifierField).toBeNull();
+    }
+  });
+
+  it('keeps every per-identifier ceiling above what ONE address can reach, so one source cannot lock a customer out', () => {
+    for (const name of [
+      'customer-sign-in',
+      'internal-sign-in',
+      'account-recovery',
+      'account-verification',
+    ] as const) {
+      const pair = policies[name].scopes.find(
+        (s) => s.name === 'identifier-ip',
+      )!;
+      const ceiling = policies[name].scopes.find(
+        (s) => s.name === 'identifier',
+      )!;
+      const hourly = pair.limit * Math.ceil(3600 / pair.windowSeconds);
+      // single-source reach in the ceiling's own window must stay under it
+      const reachInCeilingWindow =
+        pair.limit * Math.ceil(ceiling.windowSeconds / pair.windowSeconds);
+      expect(reachInCeilingWindow).toBeLessThan(ceiling.limit);
+      expect(hourly).toBeLessThan(ceiling.limit + 1);
+    }
+  });
+});
+
 describe('assertRateLimitConfigSafe', () => {
   it('allows disabling rate limiting only outside production-like environments', () => {
     expect(() =>

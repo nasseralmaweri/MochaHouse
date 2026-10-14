@@ -11,11 +11,11 @@ Web side: `apps/web/src/lib/client-ip-forwarding.ts`.
 | `POST /orders` (checkout) | `checkout` | signed-in customer 30/min; anonymous per IP 30/min; tenant ceiling 300/min |
 | `POST /orders/checkout-quote` | `checkout-quote` | customer 60/min; anonymous per IP 60/min; tenant 600/min |
 | `POST /orders/reward-eligibility` | `reward-eligibility` | customer 30/min; tenant 300/min |
-| `GET /orders/:orderId` (guest status, polled) | `order-status` | per order 30/min; **failed** lookups per IP 20 per 5 min; tenant 1200/min |
-| `POST /auth/sign-in` | `customer-sign-in` | per identifier+IP 10 per 15 min; per IP 60 per 5 min; per identifier 40/hour |
-| `POST /internal/auth/sign-in` | `internal-sign-in` | per identifier+IP 5 per 15 min; per IP 30 per 5 min; per identifier 20/hour |
-| `POST /auth/register`, `/verification/resend`, `/forgot-password` | `account-recovery` | per identifier+IP 3/hour; per IP 10/hour; per identifier 6/hour |
-| `POST /auth/verify`, `/reset-password` | `account-verification` | per identifier+IP 10 per 15 min; per IP 30 per 15 min; per identifier 30/hour |
+| `GET /orders/:orderId` (guest status, polled) | `order-status` | per order 30/min; **unsuccessful** lookups per IP 20 per 5 min (counted on arrival, given back on success); tenant 1200/min |
+| `POST /auth/sign-in` | `customer-sign-in` | per identifier+IP 10 per 15 min; per IP 60 per 5 min; per identifier 60/hour |
+| `POST /internal/auth/sign-in` | `internal-sign-in` | per identifier+IP 5 per 15 min; per IP 30 per 5 min; per identifier 30/hour |
+| `POST /auth/register`, `/verification/resend`, `/forgot-password` | `account-recovery` | per identifier+IP 5/hour; per IP 20/hour; per identifier 10/hour |
+| `POST /auth/verify`, `/reset-password` | `account-verification` | per identifier+IP 10 per 15 min; per IP 30 per 15 min; per identifier 60/hour |
 
 Every key includes the **tenant** (the server-resolved tenant of the request,
 never client input), so one business's traffic never counts against another's.
@@ -31,16 +31,29 @@ its policy or its guard, or if a new customer-auth route is added without one.
   IP, so a signed-in customer is limited by their own identity, never by the
   address, and anonymous per-IP limits are generous. The tenant ceiling is the
   circuit breaker against a flood.
+* **Scopes are evaluated narrowest first and stop at the first refusal**, so a
+  request refused by a narrow scope never counts against a wider, shared one
+  (the per-identifier or tenant ceiling). One flooding address therefore cannot
+  use up a customer's allowance or the tenant's.
+* **The limiter keys on the field the handler acts on.** Sign-in policies key
+  on `identifier`; register / resend / forgot / verify / reset key on `email`
+  — and only on that field, so a throwaway value in the other field cannot buy
+  a fresh bucket. A missing, non-string, empty or oversized value goes into one
+  shared "unparseable" bucket instead of skipping the limit.
 * **Credential routes use three scopes.** The pair scope (identifier + IP)
   stops guessing from one place without letting an attacker elsewhere burn a
   victim's allowance. The per-IP scope stops one source spraying many accounts.
   The per-identifier ceiling is the IP-independent backstop (many sources, one
   victim) — it is also what caps how many emails or texts anyone can trigger to
   one person.
-* **Guest status counts only failures against an address.** A customer polling
-  a real order every 15 s (4/min per tab) never accrues failures; guessing
-  tokens does, then returns 429 for any order from that address. The order
-  scope separately bounds how hard one order can be polled.
+* **Guest status counts only unsuccessful lookups against an address.** Each
+  lookup is counted when it arrives (so a concurrent burst of guesses is limited
+  at once, with no check-then-record race) and the count is given back when the
+  lookup succeeds. A customer polling a real order every 15 s (4/min per tab)
+  never accumulates; guessing tokens does, then returns 429 for any order from
+  that address. The order scope separately bounds how hard one order can be
+  polled. (A burst of more than the failure limit of *simultaneous* in-flight
+  polls from one address would also be refused; at 20 that is far above normal.)
 * **Responses are uniform.** Every refusal is `429` with
   `{"statusCode":429,"message":"Too many requests. Please wait a moment and try again."}`
   and a numeric `Retry-After`, whichever scope fired and whether or not the
@@ -48,10 +61,14 @@ its policy or its guard, or if a new customer-auth route is added without one.
 * Identifiers are normalised (Unicode NFKC, trimmed, lower-cased) and hashed
   before they reach Redis; raw emails never appear in keys or logs.
 
-Known limit: a per-identifier ceiling can itself be used to deny a customer sign-in
-for the rest of its window by someone who knows their email. The identity provider
-(Cognito) has its own, tighter lockout, so this adds little; the real fix is a
-CAPTCHA/challenge before general launch (not in this PR).
+Known limit: the per-identifier ceiling can be used to deny a customer sign-in (or
+recovery) for the rest of its window by someone who knows their email **from
+several addresses**. It cannot be done from one address: every ceiling is set
+above what a single address can reach (see `rate-limit.config.spec.ts`), and
+refused requests do not count toward it. In `off` mode (no per-IP scopes) one
+source *can* reach the ceiling alone — another reason to declare the topology.
+The identity provider (Cognito) has its own, tighter lockout, so this adds
+little; the real fix is a CAPTCHA/challenge before general launch (not in this PR).
 
 ## Where the client IP comes from
 
@@ -67,7 +84,8 @@ peer address**. A raw `X-Forwarded-For` or any other unsigned header is never re
 | `peer` | The peer address (as Express resolves it from `TRUSTED_PROXY_HOP_COUNT`) *is* the client | Callers reach the API directly or via a known number of proxies |
 | `off` | No per-IP limits; tenant, customer, identifier and order limits still apply | The topology has not been declared yet |
 
-`off` is a deliberate, **logged** state (a warning at startup) — it is the safe
+`off` is a deliberate, **logged** state (a warning at startup, an *error* in a
+production-like environment) — it is the safe
 choice when the topology is unknown, because a wrong per-IP assumption would
 throttle every visitor behind the web server as one client.
 
@@ -127,7 +145,9 @@ requests cannot interleave and a key never lacks an expiry).
 
 If Redis is not connected, errors, returns something unexpected, or does not
 answer within `RATE_LIMIT_REDIS_TIMEOUT_MS`, the **same limit** is enforced by a
-bounded in-process counter. Protection continues rather than switching off; the
+bounded in-process counter (if that is full of live counters, requests for a new
+key are refused rather than evicting a live counter, so a flood of throwaway keys
+cannot reset real limits). Protection continues rather than switching off; the
 trade-off is that the limit is then per API instance (so effectively multiplied
 by the instance count). The degraded state is logged (one warning a minute) and
 visible in `status()`; recovery is logged. No request waits on Redis longer than

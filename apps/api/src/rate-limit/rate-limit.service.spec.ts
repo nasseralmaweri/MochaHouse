@@ -83,6 +83,22 @@ describe('RateLimitService', () => {
       expect((await service.hit(k, 5, 60, { increment: false })).count).toBe(2);
     });
 
+    it('gives a count back atomically, never below zero', async () => {
+      const k = key('release');
+      for (let i = 0; i < 10; i += 1) await service.hit(k, 100, 60);
+      await Promise.all(Array.from({ length: 4 }, () => service.release(k)));
+      expect((await service.hit(k, 100, 60, { increment: false })).count).toBe(
+        6,
+      );
+      // releasing more than was counted stops at zero rather than going negative
+      await Promise.all(Array.from({ length: 20 }, () => service.release(k)));
+      expect((await service.hit(k, 100, 60, { increment: false })).count).toBe(
+        0,
+      );
+      // releasing a key that does not exist is harmless and creates nothing
+      await service.release(key('absent'));
+    });
+
     it('keeps keys independent (different tenants / subjects never share a counter)', async () => {
       const a = key('tenant-a');
       const b = key('tenant-b');

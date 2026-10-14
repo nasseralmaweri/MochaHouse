@@ -51,6 +51,9 @@ describe('normalizeClientIp', () => {
     expect(normalizeClientIp('203.0.113.7')).toBe('203.0.113.7');
     expect(normalizeClientIp(' 203.0.113.7 ')).toBe('203.0.113.7');
     expect(normalizeClientIp('::ffff:203.0.113.7')).toBe('203.0.113.7');
+    // the same address written in hexadecimal
+    expect(normalizeClientIp('::ffff:cb00:7107')).toBe('203.0.113.7');
+    expect(normalizeClientIp('0:0:0:0:0:ffff:cb00:7107')).toBe('203.0.113.7');
   });
 
   it('collapses IPv6 to its /64 so rotating within a prefix is not a bypass', () => {

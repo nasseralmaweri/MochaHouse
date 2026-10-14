@@ -61,6 +61,17 @@ export function normalizeClientIp(raw: unknown): string | null {
       ...tailParts,
     ].slice(0, 8);
     if (full.length !== 8) return null;
+    // IPv4-mapped IPv6 written in hex (::ffff:c000:204) is the IPv4 address.
+    if (
+      full.slice(0, 5).every((h) => /^0+$/.test(h)) &&
+      full[5] === 'ffff' &&
+      /^[0-9a-f]{1,4}$/.test(full[6]) &&
+      /^[0-9a-f]{1,4}$/.test(full[7])
+    ) {
+      const high = Number.parseInt(full[6], 16);
+      const low = Number.parseInt(full[7], 16);
+      return `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
+    }
     return `${full
       .slice(0, 4)
       .map((hextet) => hextet.replace(/^0+(?=.)/, ''))

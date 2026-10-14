@@ -6,7 +6,7 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { RedisService } from '../redis/redis.service';
-import type { RateLimitConfig } from './rate-limit.config';
+import { isProductionLike, type RateLimitConfig } from './rate-limit.config';
 import { MemoryWindowCounter } from './memory-window-counter';
 
 export const RATE_LIMIT_CONFIG = Symbol('RATE_LIMIT_CONFIG');
@@ -14,8 +14,7 @@ export const RATE_LIMIT_CONFIG = Symbol('RATE_LIMIT_CONFIG');
 // One atomic step: count the request and read the time left in the window.
 // INCR + EXPIRE happen inside a single script, so concurrent requests cannot
 // interleave between them, and a key can never be left without an expiry.
-// ARGV[2] = 0 reads the counter without counting (used for failure counters
-// that are checked on the way in and only incremented when a request fails).
+// ARGV[2] = 0 reads the counter without counting.
 const WINDOW_SCRIPT = `
 local increment = tonumber(ARGV[2])
 local count
@@ -33,6 +32,16 @@ if count > 0 and ttl < 0 then
   ttl = tonumber(ARGV[1])
 end
 return {count, ttl}
+`;
+
+// Gives one count back (never below zero): used by failure counters when the
+// request turned out to succeed.
+const RELEASE_SCRIPT = `
+local count = tonumber(redis.call('GET', KEYS[1]) or '0')
+if count > 0 then
+  redis.call('DECR', KEYS[1])
+end
+return count
 `;
 
 export interface RateLimitDecision {
@@ -84,11 +93,14 @@ export class RateLimitService implements OnModuleInit {
       return;
     }
     if (this.config.clientIpMode === 'off') {
-      this.logger.warn(
+      const message =
         'Rate limiting: no client-IP source is configured (RATE_LIMIT_CLIENT_IP_MODE / CLIENT_IP_FORWARD_SECRET). ' +
-          'Per-IP limits are INACTIVE; tenant, customer, identifier and order limits still apply. ' +
-          'See docs/security/public-api-rate-limiting.md.',
-      );
+        'Per-IP limits are INACTIVE; tenant, customer, identifier and order limits still apply. ' +
+        'See docs/security/public-api-rate-limiting.md.';
+      // In a production-like environment this is a launch dependency, so it is
+      // logged as an error rather than a warning.
+      if (isProductionLike()) this.logger.error(message);
+      else this.logger.warn(message);
     } else {
       this.logger.log(
         `Rate limiting active; client IP mode: ${this.config.clientIpMode}.`,
@@ -142,6 +154,32 @@ export class RateLimitService implements OnModuleInit {
       retryAfterSeconds: local.retryAfterSeconds,
       backend: 'memory',
     };
+  }
+
+  // Gives back one count of a counter (a failure counter whose request
+  // succeeded). Best effort and bounded like hit(): Redis first, else the
+  // in-process counter.
+  async release(key: string): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let released = false;
+    try {
+      const client = this.redis.getClient();
+      if (client.status === 'ready') {
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('Redis timed out')),
+            this.config.redisTimeoutMs,
+          );
+        });
+        await Promise.race([client.eval(RELEASE_SCRIPT, 1, key), timeout]);
+        released = true;
+      }
+    } catch {
+      released = false;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+    if (!released) this.memory.release(key);
   }
 
   // Records that a request was refused, and logs a one-line summary at most
