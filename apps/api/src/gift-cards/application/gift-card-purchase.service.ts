@@ -27,6 +27,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CustomersService } from '../../customers/application/customers.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 import { PAYMENT_PROVIDER } from '../../payment/payment-provider.token';
+import {
+  chargeAttempt,
+  heldStateOf,
+  HELD_PAYMENT_MESSAGE,
+} from '../../payment/payment-charge';
 import { maskGiftCardCode } from '../infrastructure/gift-card-code';
 import {
   decryptGiftCardCode,
@@ -137,6 +142,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
       this.assertAttemptOwned(existing, tenant);
     }
     if (existing?.giftCardPurchase) {
+      this.assertSameIntent(existing.giftCardPurchase, request);
       return this.intentResponse(existing.giftCardPurchase, null);
     }
     // Payment safety — a gift card is only ever issued against a real
@@ -169,6 +175,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
           locationId: null,
           amount: amountMinorUnits,
           currency,
+          paymentState: 'NOT_SENT',
         },
         select: { id: true, tenantId: true },
       });
@@ -184,6 +191,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
       // up front — never returned, and never built upon, for another tenant.
       this.assertAttemptOwned(raced, tenant);
       if (raced.giftCardPurchase) {
+        this.assertSameIntent(raced.giftCardPurchase, request);
         return this.intentResponse(raced.giftCardPurchase, null);
       }
       attempt = { id: raced.id, tenantId: raced.tenantId };
@@ -218,6 +226,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
       const raced = await this.prisma.giftCardPurchase.findUniqueOrThrow({
         where: { paymentAttemptId: attempt.id },
       });
+      this.assertSameIntent(raced, request);
       return this.intentResponse(raced, null);
     }
   }
@@ -233,6 +242,30 @@ export class GiftCardPurchaseService implements OnModuleInit {
     if (attempt.tenantId !== tenant.tenantId) {
       throw new ConflictException(
         'This idempotency key cannot be used. Start a new purchase.',
+      );
+    }
+  }
+
+  // ESP-03 PR 2 — an idempotency key is bound to the intent that created it.
+  // The persisted amount and purchaser contact are compared against the
+  // replayed request WITHOUT consulting current configuration (so a config
+  // change can never reject a legitimate replay). A different request
+  // reusing the key is refused before anything about the original is shown.
+  private assertSameIntent(
+    purchase: {
+      amountMinorUnits: number;
+      purchaserEmail: string | null;
+      purchaserName: string | null;
+    },
+    request: CreateGiftCardPurchaseIntentRequest,
+  ): void {
+    const same =
+      request?.amountMinorUnits === purchase.amountMinorUnits &&
+      this.validateEmail(request?.purchaserEmail) === purchase.purchaserEmail &&
+      this.validateName(request?.purchaserName) === purchase.purchaserName;
+    if (!same) {
+      throw new ConflictException(
+        'This idempotency key was already used for a different gift-card purchase. Start a new purchase.',
       );
     }
   }
@@ -313,6 +346,11 @@ export class GiftCardPurchaseService implements OnModuleInit {
         HttpStatus.PAYMENT_REQUIRED,
       );
     }
+    // ESP-03 PR 2 — a charge whose outcome is not final is held, never
+    // charged again and never reported as failed.
+    if (heldStateOf(attempt) !== null) {
+      throw new ConflictException(HELD_PAYMENT_MESSAGE);
+    }
     if (
       attempt.reconciliationRequired ||
       purchase.status === 'RECONCILIATION_REQUIRED'
@@ -357,34 +395,29 @@ export class GiftCardPurchaseService implements OnModuleInit {
       );
     }
 
-    const chargeResult = await this.paymentProvider.charge({
-      idempotencyKey,
-      amount: purchase.amountMinorUnits,
-      currency: purchase.currency,
-      metadata: {},
-    });
-
-    if (chargeResult.outcome !== 'succeeded') {
-      await this.prisma.paymentAttempt.update({
-        where: { id: attempt.id },
-        data: {
-          status: chargeResult.outcome === 'declined' ? 'DECLINED' : 'FAILED',
-          failureReason: chargeResult.reason,
-        },
-      });
+    // The purchase's permanent claim above already guarantees a single
+    // charging request; a pre-ESP-03 intent (paymentState NULL) was never
+    // charged, so it may enter CHARGING too.
+    const charged = await chargeAttempt(
+      this.prisma,
+      this.paymentProvider,
+      attempt,
+      {
+        amount: purchase.amountMinorUnits,
+        currency: purchase.currency,
+        metadata: {},
+      },
+      { allowLegacyNullState: true },
+    );
+    if (charged.kind === 'declined' || charged.kind === 'failed') {
       throw new HttpException(
-        { outcome: chargeResult.outcome, message: chargeResult.reason },
+        { outcome: charged.kind, message: charged.reason },
         HttpStatus.PAYMENT_REQUIRED,
       );
     }
-
-    await this.prisma.paymentAttempt.update({
-      where: { id: attempt.id },
-      data: {
-        status: 'SUCCEEDED',
-        providerReference: chargeResult.providerReference,
-      },
-    });
+    if (charged.kind !== 'succeeded') {
+      throw new ConflictException(HELD_PAYMENT_MESSAGE);
+    }
 
     let displayCode: string;
     let last4: string;
@@ -619,7 +652,9 @@ export class GiftCardPurchaseService implements OnModuleInit {
         `Choose a preset amount, or a custom amount between $5.00 and $500.00.`,
       );
     }
-    throw new BadRequestException('Choose one of the listed gift-card amounts.');
+    throw new BadRequestException(
+      'Choose one of the listed gift-card amounts.',
+    );
   }
 }
 

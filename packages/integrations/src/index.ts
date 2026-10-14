@@ -20,10 +20,18 @@ export interface ChargeRequest {
   metadata?: Record<string, string>;
 }
 
+// Outcome vocabulary (ESP-03 PR 2). "declined" and "failed" are DEFINITIVE:
+// the provider certifies that no money moved. "pending" means the provider
+// accepted the charge but has not finished it (awaiting confirmation).
+// "unknown" means the provider cannot say what happened. A provider that
+// throws or times out is treated by callers exactly like "unknown" — never
+// like "failed" — because the charge may have gone through.
 export type ChargeResult =
   | { outcome: "succeeded"; providerReference: string }
   | { outcome: "declined"; reason: string }
-  | { outcome: "failed"; reason: string };
+  | { outcome: "failed"; reason: string }
+  | { outcome: "pending"; reason: string; providerReference?: string }
+  | { outcome: "unknown"; reason: string };
 
 export interface PaymentProvider {
   readonly name: string;
