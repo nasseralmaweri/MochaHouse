@@ -22,6 +22,9 @@
 export type PollOutcome<T> =
   | { outcome: 'success'; data: T }
   | { outcome: 'forbidden' }
+  // The thing being watched does not exist (or the caller's access token does
+  // not match it): polling stops, as with forbidden.
+  | { outcome: 'not-found' }
   | { outcome: 'error' };
 
 export type ConnectionState =
@@ -33,12 +36,22 @@ export type ConnectionState =
   | 'live'
   // The last attempt failed but the data is still fresh enough to act on.
   | 'degraded'
-  // The data is older than the stale threshold.
+  // The data is older than the stale threshold and requests ARE failing (or
+  // none has been confirmed): the shop may be unreachable.
   | 'stale'
+  // The data is older than the stale threshold but nothing has failed: a
+  // refresh is simply due (a tab that was in the background, a device that
+  // slept). Not an outage — but the data is not trusted for actions.
+  | 'catching-up'
   // The browser reports no connectivity.
   | 'offline'
   // The server refused this caller; polling has stopped.
-  | 'forbidden';
+  | 'forbidden'
+  // The watched thing does not exist; polling has stopped.
+  | 'not-found'
+  // The data reached a final state (see `isFinal`): polling has stopped on
+  // purpose and the data is not going to change, so it is never "stale".
+  | 'complete';
 
 export interface PollingSnapshot<T> {
   readonly data: T | null;
@@ -67,6 +80,9 @@ export interface PollingOptions<T> {
   // Called whenever fetched data replaces the current data (not for local
   // `update()` edits), with the previous data (null on the first load).
   onData?: (data: T, previous: T | null) => void;
+  // When fetched data satisfies this, polling stops for good: nothing more can
+  // change (for example a completed order), so further requests are waste.
+  isFinal?: (data: T) => boolean;
   intervalMs?: number;
   hiddenIntervalMs?: number;
   staleAfterMs?: number;
@@ -95,17 +111,23 @@ export function deriveConnection(input: {
   now: number;
   online: boolean;
   forbidden: boolean;
+  notFound?: boolean;
+  complete?: boolean;
   lastSuccessAt: number | null;
   failures: number;
   staleAfterMs: number;
 }): ConnectionState {
   if (input.forbidden) return 'forbidden';
+  if (input.notFound) return 'not-found';
+  if (input.complete) return 'complete';
   if (input.lastSuccessAt === null) {
     if (!input.online) return 'offline';
     return input.failures > 0 ? 'failed' : 'loading';
   }
   if (!input.online) return 'offline';
-  if (input.now - input.lastSuccessAt >= input.staleAfterMs) return 'stale';
+  if (input.now - input.lastSuccessAt >= input.staleAfterMs) {
+    return input.failures > 0 ? 'stale' : 'catching-up';
+  }
   return input.failures > 0 ? 'degraded' : 'live';
 }
 
@@ -113,6 +135,7 @@ export class PollingController<T> {
   private readonly fetchFn: () => Promise<PollOutcome<T>>;
   private readonly env: PollingEnv;
   private readonly onData?: (data: T, previous: T | null) => void;
+  private readonly isFinal?: (data: T) => boolean;
   private readonly intervalMs: number;
   private readonly hiddenIntervalMs: number;
   private readonly staleAfterMs: number;
@@ -128,6 +151,8 @@ export class PollingController<T> {
   private lastSuccessAt: number | null = null;
   private failures = 0;
   private forbidden = false;
+  private notFound = false;
+  private complete = false;
 
   private started = false;
   private inFlight = false;
@@ -149,6 +174,7 @@ export class PollingController<T> {
     this.fetchFn = options.fetch;
     this.env = options.env;
     this.onData = options.onData;
+    this.isFinal = options.isFinal;
     this.intervalMs = options.intervalMs ?? POLLING_DEFAULTS.intervalMs;
     this.hiddenIntervalMs =
       options.hiddenIntervalMs ?? POLLING_DEFAULTS.hiddenIntervalMs;
@@ -210,6 +236,8 @@ export class PollingController<T> {
       now: this.env.now(),
       online: this.env.isOnline(),
       forbidden: this.forbidden,
+      notFound: this.notFound,
+      complete: this.complete,
       lastSuccessAt: this.lastSuccessAt,
       failures: this.failures,
       staleAfterMs: this.staleAfterMs,
@@ -220,7 +248,7 @@ export class PollingController<T> {
   // Fetch now (used by the Refresh/Retry controls and after a mutation). If a
   // request is already running, one more run is queued behind it.
   refreshNow(): void {
-    if (!this.started || this.forbidden) return;
+    if (!this.started || this.halted) return;
     if (this.inFlight) {
       this.queuedRefresh = true;
       return;
@@ -240,8 +268,13 @@ export class PollingController<T> {
 
   // --- internals ----------------------------------------------------------
 
+  // Polling has ended for a reason that will not change by itself.
+  private get halted(): boolean {
+    return this.forbidden || this.notFound || this.complete;
+  }
+
   private poll(): void {
-    if (!this.started || this.forbidden || this.inFlight) return;
+    if (!this.started || this.halted || this.inFlight) return;
     this.clear('pollTimer');
 
     if (!this.env.isOnline()) {
@@ -290,8 +323,9 @@ export class PollingController<T> {
     if (!this.started || seq !== this.requestSeq) return;
     this.inFlight = false;
 
-    if (result.outcome === 'forbidden') {
-      this.forbidden = true;
+    if (result.outcome === 'forbidden' || result.outcome === 'not-found') {
+      if (result.outcome === 'forbidden') this.forbidden = true;
+      else this.notFound = true;
       this.clear('pollTimer');
       this.clear('staleTimer');
       this.emit();
@@ -316,6 +350,15 @@ export class PollingController<T> {
       // older than that change. Keep the local view and refetch straight away.
       this.queuedRefresh = true;
     }
+    if (this.data !== null && this.isFinal?.(this.data)) {
+      // Nothing more can change: stop for good.
+      this.complete = true;
+      this.queuedRefresh = false;
+      this.clear('pollTimer');
+      this.clear('staleTimer');
+      this.emit();
+      return;
+    }
     this.armStaleTimer();
     this.emit();
     this.afterAttempt();
@@ -332,7 +375,7 @@ export class PollingController<T> {
 
   private schedule(): void {
     this.clear('pollTimer');
-    if (!this.started || this.forbidden) return;
+    if (!this.started || this.halted) return;
     this.pollTimer = this.env.setTimeout(() => {
       this.pollTimer = null;
       this.poll();
@@ -355,7 +398,7 @@ export class PollingController<T> {
   }
 
   private handleVisibilityChange(): void {
-    if (!this.started || this.forbidden) return;
+    if (!this.started || this.halted) return;
     // Re-derive the state against the clock first: a tab that resumes after a
     // long freeze must show "stale" at once, not "live" until the refetch lands.
     this.emit();
@@ -374,7 +417,7 @@ export class PollingController<T> {
   }
 
   private handleOnlineChange(): void {
-    if (!this.started || this.forbidden) return;
+    if (!this.started || this.halted) return;
     this.emit();
     if (this.env.isOnline()) {
       this.refreshNow();
@@ -406,6 +449,8 @@ export class PollingController<T> {
       now: this.env.now(),
       online: this.env.isOnline(),
       forbidden: this.forbidden,
+      notFound: this.notFound,
+      complete: this.complete,
       lastSuccessAt: this.lastSuccessAt,
       failures: this.failures,
       staleAfterMs: this.staleAfterMs,

@@ -477,7 +477,12 @@ describe('deriveConnection', () => {
   it('classifies each state', () => {
     expect(deriveConnection(base)).toBe('live');
     expect(deriveConnection({ ...base, failures: 1 })).toBe('degraded');
-    expect(deriveConnection({ ...base, lastSuccessAt: 70_000 })).toBe('stale');
+    // Old data with nothing failing is "catching up", not an outage...
+    expect(deriveConnection({ ...base, lastSuccessAt: 70_000 })).toBe('catching-up');
+    // ...old data while requests are failing is "stale".
+    expect(
+      deriveConnection({ ...base, lastSuccessAt: 70_000, failures: 1 }),
+    ).toBe('stale');
     expect(deriveConnection({ ...base, online: false })).toBe('offline');
     expect(deriveConnection({ ...base, forbidden: true })).toBe('forbidden');
     expect(deriveConnection({ ...base, lastSuccessAt: null })).toBe('loading');
@@ -488,24 +493,28 @@ describe('deriveConnection', () => {
 });
 
 describe('PollingController: stale and resume edge cases', () => {
-  it('goes stale on the timer alone when the next poll is further away than the threshold', async () => {
+  it('is only ever "catching up" (never "stale") on the timer alone when the next poll is further away than the threshold', async () => {
     const env = new FakeEnv();
     const c = make(env, async () => ok(['a']));
+    const seen: string[] = [];
+    c.subscribe(() => seen.push(c.getSnapshot().connection));
     c.start();
     await flush();
     // A hidden tab polls every 30 s, which is not below the 30 s threshold, so
-    // the data goes stale between polls without any failed request.
+    // the data is briefly older than the threshold between polls — with no
+    // failed request, which is "catching up", never "stale".
     env.setVisible(false);
     await env.advance(29_999);
     expect(c.getSnapshot().connection).toBe('live');
     await env.advance(1);
-    // The stale timer and the next poll fire at the same instant; the poll
-    // then succeeds and the data is live again.
-    expect(['stale', 'live']).toContain(c.getSnapshot().connection);
+    // The stale timer and the next poll fire together; the poll succeeds and
+    // the data is live again. It must never have been reported as an outage.
+    expect(c.getSnapshot().connection).toBe('live');
+    expect(seen).not.toContain('stale');
     c.stop();
   });
 
-  it('shows stale immediately when a long-frozen tab becomes visible, before the refetch lands', async () => {
+  it('shows "catching up" (actions paused, no outage claimed) when a long-frozen tab becomes visible, before the refetch lands', async () => {
     const env = new FakeEnv();
     const hang = deferred<PollOutcome<string[]>>();
     const fetch = jest
@@ -520,7 +529,7 @@ describe('PollingController: stale and resume edge cases', () => {
     env.time += 600_000;
     env.setVisible(true);
     expect(c.getSnapshot()).toMatchObject({
-      connection: 'stale',
+      connection: 'catching-up',
       actionsAllowed: false,
       data: ['a'],
     });
@@ -575,6 +584,97 @@ describe('PollingController: stale and resume edge cases', () => {
     await flush();
     expect(c.getSnapshot().lastSuccessAt).toBeGreaterThanOrEqual(at);
     expect(c.getSnapshot().data).toEqual(['b']);
+    c.stop();
+  });
+});
+
+describe('PollingController: final data and not-found (order tracking)', () => {
+  const isFinal = (data: string[]) => data.includes('COMPLETED');
+
+  it('stops polling for good once the data is final, and is never stale afterwards', async () => {
+    const env = new FakeEnv();
+    const results = [ok(['PREPARING']), ok(['READY']), ok(['COMPLETED'])];
+    const fetch = jest.fn(async () => results.shift() ?? ok(['COMPLETED']));
+    const c = make(env, fetch, { isFinal });
+    c.start();
+    await flush();
+    await env.advance(10_000);
+    await env.advance(10_000);
+    expect(c.getSnapshot()).toMatchObject({ connection: 'complete', data: ['COMPLETED'] });
+    const calls = fetch.mock.calls.length;
+    expect(calls).toBe(3);
+
+    // Hours pass, the tab is hidden and shown again, the network flaps: no more requests.
+    await env.advance(3_600_000);
+    env.setVisible(false);
+    env.setVisible(true);
+    env.setOnline(false);
+    env.setOnline(true);
+    c.refreshNow();
+    await flush();
+    expect(fetch).toHaveBeenCalledTimes(calls);
+    expect(c.getSnapshot().connection).toBe('complete');
+    expect(env.pendingTimers()).toBe(0);
+    c.stop();
+  });
+
+  it('keeps polling while the data is not final', async () => {
+    const env = new FakeEnv();
+    const fetch = jest.fn(async () => ok(['READY']));
+    const c = make(env, fetch, { isFinal });
+    c.start();
+    await flush();
+    await env.advance(30_000);
+    expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(c.getSnapshot().connection).toBe('live');
+    c.stop();
+  });
+
+  it('stops on not-found, as for a wrong access token, and never retries', async () => {
+    const env = new FakeEnv();
+    const fetch = jest.fn(async (): Promise<PollOutcome<string[]>> => ({
+      outcome: 'not-found',
+    }));
+    const c = make(env, fetch, { isFinal });
+    c.start();
+    await flush();
+    expect(c.getSnapshot()).toMatchObject({ connection: 'not-found', data: null });
+    await env.advance(300_000);
+    c.refreshNow();
+    await flush();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    c.stop();
+  });
+
+  it('an older response cannot overwrite a newer status (sequence guard)', async () => {
+    const env = new FakeEnv();
+    const first = deferred<PollOutcome<string[]>>();
+    const fetch = jest
+      .fn<Promise<PollOutcome<string[]>>, []>()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValue(ok(['READY']));
+    const c = make(env, fetch, { isFinal, requestTimeoutMs: 1_000 });
+    c.start();
+    await env.advance(1_000); // the first request times out
+    await env.advance(30_000); // a later poll succeeds with READY
+    expect(c.getSnapshot().data).toEqual(['READY']);
+    first.resolve(ok(['RECEIVED'])); // the old request finally answers
+    await flush();
+    expect(c.getSnapshot().data).toEqual(['READY']);
+    c.stop();
+  });
+
+  it('recovers from failures and reaches the final state', async () => {
+    const env = new FakeEnv();
+    const results = [ok(['READY']), err, err, ok(['COMPLETED'])];
+    const fetch = jest.fn(async () => results.shift() ?? err);
+    const c = make(env, fetch, { isFinal });
+    c.start();
+    await flush();
+    await env.advance(10_000);
+    expect(c.getSnapshot()).toMatchObject({ data: ['READY'], connection: 'degraded' });
+    await env.advance(60_000);
+    expect(c.getSnapshot()).toMatchObject({ connection: 'complete', data: ['COMPLETED'] });
     c.stop();
   });
 });

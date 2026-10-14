@@ -110,6 +110,12 @@ export function describeConnection(
         tone: 'warning',
         actionsPausedReason: null,
       };
+    case 'catching-up':
+      return {
+        label: 'Updating…',
+        tone: 'warning',
+        actionsPausedReason: 'Order actions are paused while the list updates.',
+      };
     case 'stale':
       return {
         label: 'Connection lost — this list may be out of date',
@@ -136,6 +142,14 @@ export function describeConnection(
         tone: 'danger',
         actionsPausedReason: 'Orders have not loaded.',
       };
+    case 'not-found':
+      return {
+        label: 'Not found',
+        tone: 'danger',
+        actionsPausedReason: 'This queue could not be found.',
+      };
+    case 'complete':
+      return { label: 'Complete', tone: 'ok', actionsPausedReason: null };
     case 'loading':
     default:
       return {

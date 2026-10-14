@@ -24,6 +24,11 @@ import {
   queueTitle,
 } from "@/lib/admin/order-queue";
 import { ConnectionBanner } from "@/components/admin/ConnectionBanner";
+import { SoundToggle } from "@/components/admin/SoundToggle";
+import {
+  SoundAlertController,
+  browserSoundEnv,
+} from "@/lib/admin/sound-alert";
 import { Card } from "@/components/Card";
 import { AdminPage } from "@/components/admin/AdminPage";
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
@@ -154,6 +159,9 @@ function OrdersQueue({
   const announceFlip = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   const now = useNow();
+  // Optional audible alert, off until someone taps "Enable sound". Created
+  // before the poller so its arrival callback can use it.
+  const [sound] = useState(() => new SoundAlertController(browserSoundEnv()));
 
   const { controller, snapshot } = usePollingController<StoreOrderSummary[]>(
     () =>
@@ -176,10 +184,21 @@ function OrdersQueue({
               arrivalAnnouncement(arrivals.length) +
                 (announceFlip.current ? String.fromCharCode(160) : ""),
             );
+            // Genuinely new arrivals only: the first load passes none, so the
+            // existing backlog never makes a sound. One chime per batch.
+            void sound.notifyArrivals(arrivals);
           }
         },
       }),
   );
+
+  // A saved "sound on" preference tries to start audio again after a reload;
+  // if the browser refuses, the toggle asks for a tap.
+  useEffect(() => {
+    void sound.prepare();
+    // Release the audio context when the queue goes away.
+    return () => sound.dispose();
+  }, [sound]);
 
   const orders = snapshot.data;
   const awaiting = orders ? countAwaitingAcceptance(orders) : 0;
@@ -270,13 +289,16 @@ function OrdersQueue({
       context={{ label: locationName, kind: "location" }}
       actions={
         orders !== null && snapshot.connection !== "forbidden" ? (
-          <Button
-            variant="secondary"
-            onClick={() => controller.refreshNow()}
-            disabled={snapshot.refreshing}
-          >
-            {snapshot.refreshing ? "Refreshing…" : "Refresh"}
-          </Button>
+          <div className="flex flex-wrap items-start justify-end gap-2">
+            <SoundToggle controller={sound} />
+            <Button
+              variant="secondary"
+              onClick={() => controller.refreshNow()}
+              disabled={snapshot.refreshing}
+            >
+              {snapshot.refreshing ? "Refreshing…" : "Refresh"}
+            </Button>
+          </div>
         ) : undefined
       }
     />
