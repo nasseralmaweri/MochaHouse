@@ -74,7 +74,8 @@ export class AdminOrdersService {
         status: { in: [...ACTIVE_ORDER_STATUSES] },
       },
       include: { lines: true },
-      orderBy: { createdAt: 'asc' },
+      // id (uuid v7, time-ordered) breaks createdAt ties so the order is stable.
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
 
     return orders.map((order) => this.toSummary(order));
