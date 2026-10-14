@@ -231,6 +231,21 @@ describe('PollingController', () => {
     c.stop();
   });
 
+  it('canAct reflects the clock at call time, even if no timer has fired (device sleep)', async () => {
+    const env = new FakeEnv();
+    const c = make(env, async () => ok(['a']));
+    c.start();
+    await flush();
+    expect(c.canAct()).toBe(true);
+
+    // The device sleeps: wall-clock time jumps but no timer callback has run,
+    // so the cached snapshot still says "live".
+    env.time += 120_000;
+    expect(c.getSnapshot().connection).toBe('live');
+    expect(c.canAct()).toBe(false);
+    c.stop();
+  });
+
   describe('tab visibility', () => {
     it('polls a hidden tab at the slower interval', async () => {
       const env = new FakeEnv();
@@ -469,5 +484,97 @@ describe('deriveConnection', () => {
     expect(
       deriveConnection({ ...base, lastSuccessAt: null, failures: 2 }),
     ).toBe('failed');
+  });
+});
+
+describe('PollingController: stale and resume edge cases', () => {
+  it('goes stale on the timer alone when the next poll is further away than the threshold', async () => {
+    const env = new FakeEnv();
+    const c = make(env, async () => ok(['a']));
+    c.start();
+    await flush();
+    // A hidden tab polls every 30 s, which is not below the 30 s threshold, so
+    // the data goes stale between polls without any failed request.
+    env.setVisible(false);
+    await env.advance(29_999);
+    expect(c.getSnapshot().connection).toBe('live');
+    await env.advance(1);
+    // The stale timer and the next poll fire at the same instant; the poll
+    // then succeeds and the data is live again.
+    expect(['stale', 'live']).toContain(c.getSnapshot().connection);
+    c.stop();
+  });
+
+  it('shows stale immediately when a long-frozen tab becomes visible, before the refetch lands', async () => {
+    const env = new FakeEnv();
+    const hang = deferred<PollOutcome<string[]>>();
+    const fetch = jest
+      .fn<Promise<PollOutcome<string[]>>, []>()
+      .mockResolvedValueOnce(ok(['a']))
+      .mockReturnValue(hang.promise);
+    const c = make(env, fetch);
+    c.start();
+    await flush();
+    env.setVisible(false);
+    // Time passes while the page was frozen: no timer ran.
+    env.time += 600_000;
+    env.setVisible(true);
+    expect(c.getSnapshot()).toMatchObject({
+      connection: 'stale',
+      actionsAllowed: false,
+      data: ['a'],
+    });
+    c.stop();
+  });
+
+  it('a forbidden answer to an in-flight request stops everything', async () => {
+    const env = new FakeEnv();
+    const d = deferred<PollOutcome<string[]>>();
+    const c = make(env, () => d.promise);
+    c.start();
+    await flush();
+    c.refreshNow(); // queued behind the in-flight request
+    d.resolve({ outcome: 'forbidden' });
+    await flush();
+    expect(c.getSnapshot().connection).toBe('forbidden');
+    await env.advance(120_000);
+    expect(env.pendingTimers()).toBe(0);
+    c.stop();
+  });
+
+  it('leaves no timers behind after stop(), including a queued refresh', async () => {
+    const env = new FakeEnv();
+    const d = deferred<PollOutcome<string[]>>();
+    const c = make(env, () => d.promise);
+    c.start();
+    await flush();
+    c.refreshNow();
+    c.stop();
+    expect(env.pendingTimers()).toBe(0);
+    d.resolve(ok(['x']));
+    await flush();
+    expect(c.getSnapshot().data).toBeNull();
+  });
+
+  it('records the successful response time even when the data is discarded by a local update', async () => {
+    const env = new FakeEnv();
+    const slow = deferred<PollOutcome<string[]>>();
+    const fetch = jest
+      .fn<Promise<PollOutcome<string[]>>, []>()
+      .mockResolvedValueOnce(ok(['a']))
+      .mockReturnValueOnce(slow.promise)
+      .mockResolvedValue(ok(['b']));
+    const c = make(env, fetch);
+    c.start();
+    await flush();
+    await env.advance(10_000);
+    c.update(() => ['local']);
+    env.time += 3_000;
+    const at = env.time;
+    slow.resolve(ok(['old']));
+    await flush();
+    expect(c.getSnapshot().lastSuccessAt).toBeGreaterThanOrEqual(at);
+    expect(c.getSnapshot().data).toEqual(['b']);
+    c.stop();
   });
 });

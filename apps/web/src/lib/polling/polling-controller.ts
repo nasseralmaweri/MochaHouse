@@ -202,6 +202,21 @@ export class PollingController<T> {
     this.unsubscribeOnline = null;
   }
 
+  // True only if the data is fresh RIGHT NOW. Computed at call time rather than
+  // read from the cached snapshot, so a device that slept with the tab open
+  // cannot act on a list that went stale while nothing was ticking.
+  canAct(): boolean {
+    const connection = deriveConnection({
+      now: this.env.now(),
+      online: this.env.isOnline(),
+      forbidden: this.forbidden,
+      lastSuccessAt: this.lastSuccessAt,
+      failures: this.failures,
+      staleAfterMs: this.staleAfterMs,
+    });
+    return connection === 'live' || connection === 'degraded';
+  }
+
   // Fetch now (used by the Refresh/Retry controls and after a mutation). If a
   // request is already running, one more run is queued behind it.
   refreshNow(): void {
@@ -341,6 +356,9 @@ export class PollingController<T> {
 
   private handleVisibilityChange(): void {
     if (!this.started || this.forbidden) return;
+    // Re-derive the state against the clock first: a tab that resumes after a
+    // long freeze must show "stale" at once, not "live" until the refetch lands.
+    this.emit();
     if (this.env.isVisible()) {
       const age =
         this.lastSuccessAt === null

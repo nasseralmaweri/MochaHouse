@@ -149,6 +149,9 @@ function OrdersQueue({
   const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
   const [arrivedIds, setArrivedIds] = useState<ReadonlySet<string>>(new Set());
   const [announcement, setAnnouncement] = useState("");
+  // Alternates a trailing space so two identical announcements in a row still
+  // change the live region and are both spoken.
+  const announceFlip = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   const now = useNow();
 
@@ -168,7 +171,11 @@ function OrdersQueue({
           knownIds.current = new Set(orders.map((o) => o.orderId));
           if (arrivals.length > 0) {
             setArrivedIds((current) => new Set([...current, ...arrivals]));
-            setAnnouncement(arrivalAnnouncement(arrivals.length));
+            announceFlip.current = !announceFlip.current;
+            setAnnouncement(
+              arrivalAnnouncement(arrivals.length) +
+                (announceFlip.current ? String.fromCharCode(160) : ""),
+            );
           }
         },
       }),
@@ -203,7 +210,11 @@ function OrdersQueue({
   async function handleAdvance(order: StoreOrderSummary) {
     // Refuse a repeat tap, and refuse any action on data we cannot trust.
     if (advancing.current.has(order.orderId)) return;
-    if (!snapshot.actionsAllowed) return;
+    // Checked at tap time against the clock, not only the last render.
+    if (!snapshot.actionsAllowed || !controller.canAct()) {
+      controller.refreshNow();
+      return;
+    }
     advancing.current.add(order.orderId);
     setPendingIds(new Set(advancing.current));
     setNotice(null);
@@ -388,7 +399,8 @@ function QueueSection({
   pausedReason: string | null;
   onAdvance: (order: StoreOrderSummary) => void;
 }) {
-  if (orders.length === 0) return null;
+  // Always rendered (an empty one shows a quiet line) so sections do not
+  // appear and disappear under a finger as orders move between them.
   return (
     <section aria-label={title} className="flex flex-col gap-3">
       <h2 className="flex items-baseline gap-2 text-sm font-semibold uppercase tracking-wide text-text-secondary">
@@ -400,6 +412,9 @@ function QueueSection({
           </span>
         ) : null}
       </h2>
+      {orders.length === 0 ? (
+        <p className="text-sm text-text-muted">None right now</p>
+      ) : null}
       <ul className="flex flex-col gap-3">
         {orders.map((order) => (
           <li key={order.orderId}>
