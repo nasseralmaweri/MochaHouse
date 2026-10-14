@@ -24,6 +24,7 @@ import {
   MODELS_ADDED_LATER,
   TENANT_RELATIONSHIPS_BEFORE_LATER_MODELS,
 } from './models-added-later';
+import { TABLES_ADDED_AFTER_4C, dataChecksum } from './historical-state';
 
 // Security 4C-2 — composite tenant keys.
 //
@@ -117,29 +118,16 @@ async function tablesWithCompositeKey(url: string): Promise<string[]> {
             = ARRAY['tenantId', 'id']::name[]
       ORDER BY 1`,
   );
-  return rows.map((r) => r.table);
+  // Pinned to Security 4C-2: a parent table created later is not one of its keys.
+  return rows
+    .map((r) => r.table)
+    .filter((table) => !TABLES_ADDED_AFTER_4C.has(table));
 }
 
 // Every index and constraint definition in the public schema.
 const catalog = databaseCatalog;
 
 // A checksum of every row of every table (excluding Prisma's own history).
-async function dataChecksum(url: string): Promise<string> {
-  return withScratchClient(url, async (client) => {
-    const { rows: tables } = await client.query<{ name: string }>(
-      `SELECT tablename AS name FROM pg_tables
-        WHERE schemaname = 'public' AND tablename <> '_prisma_migrations' ORDER BY 1`,
-    );
-    const parts: string[] = [];
-    for (const { name } of tables) {
-      const { rows } = await client.query<{ sum: string }>(
-        `SELECT md5(coalesce(string_agg(t::text, '|' ORDER BY t::text), '')) AS sum FROM "${name}" t`,
-      );
-      parts.push(`${name}:${rows[0].sum}`);
-    }
-    return parts.join(',');
-  });
-}
 
 // Fictional two-business data in the parent tables the fixture touches.
 const FIXTURE = `

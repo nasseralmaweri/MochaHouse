@@ -16,6 +16,15 @@
 -- events. Those are derived from data that remains (status, reconciliationRequired,
 -- missing order / card), so a re-applied migration recreates them.
 --
+-- The follow-up migration 20261017090100_payment_recovery_validate_checks only
+-- validates two constraints this script drops; it needs no rollback of its own,
+-- and this script works whether or not those constraints were ever validated.
+--
+-- Code coupling: once this SQL has run, an application built from the new schema
+-- (whose Prisma client selects the two dropped columns) fails on every
+-- PaymentAttempt query. Ship the schema revert and this SQL together, as one
+-- deployment; never run it under running new code.
+--
 -- It REFUSES to run when anyone has worked a case — an assignee, a status other
 -- than OPEN, or any event other than the migration's own OPENED event — because
 -- dropping the tables would destroy that human work and its audit trail. Export

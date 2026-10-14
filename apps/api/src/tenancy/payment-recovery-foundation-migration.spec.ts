@@ -26,6 +26,11 @@ const targetIndex = migrations.findIndex((m) =>
 );
 const beforeTarget = migrations.slice(0, targetIndex);
 const target = migrations[targetIndex];
+// The follow-up migration that VALIDATEs the two PaymentAttempt CHECKs the
+// foundation migration adds NOT VALID.
+const validate = migrations.find((m) =>
+  m.name.endsWith('_payment_recovery_validate_checks'),
+)!;
 const rollbackSql = readFileSync(
   join(
     databasePackage,
@@ -522,6 +527,178 @@ describe('ESP-03 PR 1: payment recovery database foundation', () => {
     });
   });
 
+  describe('PaymentAttempt CHECKs: NOT VALID first, validated without a long lock', () => {
+    const state = (url: string) =>
+      rows<{ n: string; v: boolean }>(
+        url,
+        `SELECT conname AS n, convalidated AS v FROM pg_constraint
+          WHERE conrelid = '"PaymentAttempt"'::regclass
+            AND conname IN ('PaymentAttempt_paymentState_check', 'PaymentAttempt_fulfilmentStatus_check')
+          ORDER BY 1`,
+      );
+
+    it('adds both CHECKs NOT VALID (enforced for writes, no scan), then the second migration validates them', async () => {
+      const scratch = await fresh('esp03_notvalid');
+      await applyMigrations(scratch.url, beforeTarget);
+      for (const statement of LEGACY_FIXTURES)
+        await run(scratch.url, statement);
+      await applyMigrationSql(scratch.url, target.sql);
+
+      expect(await state(scratch.url)).toEqual([
+        { n: 'PaymentAttempt_fulfilmentStatus_check', v: false },
+        { n: 'PaymentAttempt_paymentState_check', v: false },
+      ]);
+      // Not validated, but already enforced for new and updated rows.
+      expect(
+        await sqlState(
+          scratch.url,
+          `UPDATE "PaymentAttempt" SET "paymentState" = 'BOGUS' WHERE id = 'p-new'`,
+        ),
+      ).toBe('23514');
+      const attempts = await rows(
+        scratch.url,
+        `SELECT * FROM "PaymentAttempt" ORDER BY id`,
+      );
+
+      await applyMigrationSql(scratch.url, validate.sql);
+      expect(await state(scratch.url)).toEqual([
+        { n: 'PaymentAttempt_fulfilmentStatus_check', v: true },
+        { n: 'PaymentAttempt_paymentState_check', v: true },
+      ]);
+      // Validation changes no data, and is a harmless no-op the second time.
+      expect(
+        await rows(scratch.url, `SELECT * FROM "PaymentAttempt" ORDER BY id`),
+      ).toEqual(attempts);
+      await applyMigrationSql(scratch.url, validate.sql);
+      expect(await state(scratch.url)).toEqual([
+        { n: 'PaymentAttempt_fulfilmentStatus_check', v: true },
+        { n: 'PaymentAttempt_paymentState_check', v: true },
+      ]);
+    });
+
+    it('the validation migration refuses to run without the foundation, changing nothing', async () => {
+      const scratch = await fresh('esp03_novalidate');
+      await applyMigrations(scratch.url, beforeTarget);
+      await expect(
+        applyMigrationSql(scratch.url, validate.sql),
+      ).rejects.toThrow(/requires the foundation migration/);
+    });
+
+    it('rolls back cleanly whether or not the constraints were ever validated', async () => {
+      const scratch = await fresh('esp03_rb_notvalid');
+      await applyMigrations(scratch.url, beforeTarget);
+      await applyMigrationSql(scratch.url, target.sql);
+      expect(await state(scratch.url)).toEqual([
+        { n: 'PaymentAttempt_fulfilmentStatus_check', v: false },
+        { n: 'PaymentAttempt_paymentState_check', v: false },
+      ]);
+      await applyMigrationSql(scratch.url, rollbackSql);
+      expect(await state(scratch.url)).toEqual([]);
+      expect(
+        await rows(
+          scratch.url,
+          `SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'PaymentAttempt' AND column_name IN ('paymentState', 'fulfilmentStatus')`,
+        ),
+      ).toEqual([]);
+    });
+
+    it('takes no lock that blocks writes while validating (SHARE UPDATE EXCLUSIVE only)', () => {
+      const code = validate.sql
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('--'))
+        .join('\n');
+      expect(code).toMatch(
+        /VALIDATE CONSTRAINT "PaymentAttempt_paymentState_check"/,
+      );
+      expect(code).toMatch(
+        /VALIDATE CONSTRAINT "PaymentAttempt_fulfilmentStatus_check"/,
+      );
+      // Nothing that needs a stronger lock: no ADD COLUMN, ADD CONSTRAINT, UPDATE or DROP.
+      expect(code).not.toMatch(/ADD COLUMN|ADD CONSTRAINT|UPDATE|DROP|DELETE/);
+    });
+  });
+
+  describe('backfill cutoff is UTC-consistent under any session time zone', () => {
+    // PaymentAttempt."updatedAt" is a TIMESTAMP WITHOUT TIME ZONE holding UTC.
+    // These rows are aged in UTC; the migration runs in a session whose time
+    // zone is set at the DATABASE level, so a bare now() would shift the cutoff
+    // by the zone's offset (up to +14h / -12h).
+    const AGES: Array<[string, string, boolean]> = [
+      ['10min', '10 minutes', false],
+      ['50min', '50 minutes', false],
+      ['70min', '70 minutes', true],
+      ['3h', '3 hours', true],
+    ];
+    const attempts = AGES.flatMap(([tag, age]) => {
+      const at = `(now() AT TIME ZONE 'UTC') - interval '${age}'`;
+      return [
+        attempt(`tz-p-${tag}`, A, 'PENDING', at),
+        attempt(`tz-s-${tag}`, A, 'SUCCEEDED', at),
+      ];
+    });
+    const FIXTURES = [
+      `INSERT INTO "Tenant" (id, slug, name, status, "updatedAt") VALUES ('${A}', 'tenant-a', 'A', 'ACTIVE', now())`,
+      ...attempts,
+    ];
+
+    it.each([
+      'UTC',
+      'Asia/Kolkata',
+      'Pacific/Kiritimati',
+      'America/Los_Angeles',
+      'Etc/GMT+12',
+    ])(
+      'in a %s session, only attempts older than one hour (in UTC) are queued',
+      async (zone) => {
+        const scratch = await fresh('esp03_tz');
+        await run(
+          baseUrl,
+          `ALTER DATABASE "${scratch.name}" SET timezone TO '${zone}'`,
+        );
+        await applyMigrations(scratch.url, beforeTarget);
+        for (const statement of FIXTURES) await run(scratch.url, statement);
+        expect(
+          (await rows<{ TimeZone: string }>(scratch.url, 'SHOW timezone'))[0],
+        ).toEqual({
+          TimeZone: zone,
+        });
+
+        await applyMigrationSql(scratch.url, target.sql);
+
+        const queued = await rows<{
+          id: string;
+          s: string | null;
+          f: string | null;
+        }>(
+          scratch.url,
+          `SELECT id, "paymentState" AS s, "fulfilmentStatus" AS f FROM "PaymentAttempt" ORDER BY id COLLATE "C"`,
+        );
+        const expected = AGES.flatMap(([tag, , old]) => [
+          { id: `tz-p-${tag}`, s: old ? 'UNKNOWN' : null, f: null },
+          {
+            id: `tz-s-${tag}`,
+            s: old ? 'SUCCEEDED' : null,
+            f: old ? 'NEEDS_REVIEW' : null,
+          },
+        ]).sort((x, y) => (x.id < y.id ? -1 : 1));
+        expect(queued).toEqual(expected);
+        expect(await caseSnapshot(scratch.url)).toHaveLength(4);
+        // Never a failure classification, whatever the zone.
+        expect(
+          queued.filter((r) => r.s === 'FAILED' || r.s === 'DECLINED'),
+        ).toEqual([]);
+        // The rows the migration itself writes are UTC too.
+        const skew = await rows<{ s: number }>(
+          scratch.url,
+          `SELECT max(abs(extract(epoch FROM ((now() AT TIME ZONE 'UTC') - "createdAt"))))::float AS s
+             FROM "PaymentReconciliationCase"`,
+        );
+        expect(skew[0].s).toBeLessThan(120);
+      },
+    );
+  });
+
   describe('rollback and re-apply', () => {
     it('rolls back to exactly the legacy schema and re-applies to the same cases', async () => {
       const scratch = await fresh('esp03_rollback');
@@ -531,6 +708,7 @@ describe('ESP-03 PR 1: payment recovery database foundation', () => {
       const before = await legacySnapshot(scratch.url);
 
       await applyMigrationSql(scratch.url, target.sql);
+      await applyMigrationSql(scratch.url, validate.sql);
       const firstCases = await caseSnapshot(scratch.url);
       expect(firstCases).toHaveLength(Object.keys(EXPECTED_CASES).length);
 

@@ -255,11 +255,36 @@ behaviour are unchanged.
   the migration added. It **refuses** once anyone has worked a case (an assignee,
   a status other than OPEN, or any event beyond the migration's own) — that work
   and its audit trail would be destroyed.
-- **Safety:** one DO block (atomic), read-only preflight, `lock_timeout` 5s. The
-  two CHECKs scan `PaymentAttempt` once under the lock the `ADD COLUMN` takes;
-  nothing is rewritten.
+- **Safety:** one DO block (atomic), read-only preflight, `lock_timeout` 5s,
+  nothing rewritten. The two `PaymentAttempt` CHECK constraints are added
+  `NOT VALID`: they are enforced for every new and updated row at once (the
+  backfill is checked) but do not scan the existing rows while the `ADD COLUMN`
+  lock is held. A second migration,
+  `20261017090100_payment_recovery_validate_checks`, then runs `VALIDATE
+  CONSTRAINT` — which takes only a `SHARE UPDATE EXCLUSIVE` lock, so reads and
+  writes continue — in its own transaction. It changes no data and is a no-op
+  if run again.
+- **Time zone.** `PaymentAttempt."updatedAt"` is a `TIMESTAMP WITHOUT TIME ZONE`
+  holding UTC. The backfill's one-hour cutoff compares it with `(now() AT TIME
+  ZONE 'UTC')`, so a session time zone other than UTC cannot shift the cutoff
+  and queue a payment that is still in flight. Covered by a regression test
+  across UTC, +5:30, +14, -7/-8 and -12 sessions.
+- **Deployment order (expand, then use).** Apply the migrations **before** any
+  application instance runs code built from this schema: the generated Prisma
+  client selects every column of `PaymentAttempt`, including the two new ones,
+  so a new client against an un-migrated database fails on every `PaymentAttempt`
+  query. The reverse is safe: code from before this change runs unchanged
+  against the migrated database.
+- **Rollback is coupled to code.** After the rollback SQL runs, a client built
+  from the new schema breaks on the dropped columns. Roll back by shipping the
+  schema revert (remove the two models and the two fields) together with the
+  rollback SQL as a new forward migration, and deploy that code and migration
+  together; do not run the rollback SQL under running new code.
 - **Suites pinned to older migrations** exclude these models through
-  `apps/api/src/tenancy/models-added-later.ts`. Regression suite:
+  `apps/api/src/tenancy/models-added-later.ts` and, for the Security 4C suites,
+  `historical-state.ts` (a checksum that ignores only the tables and columns
+  added after them, and a drift check that first applies the later migrations
+  with the real runner). Regression suite:
   `apps/api/src/tenancy/payment-recovery-foundation-migration.spec.ts`.
 
 **Boundary (what is not covered).** Confirmed by the independent PR #17

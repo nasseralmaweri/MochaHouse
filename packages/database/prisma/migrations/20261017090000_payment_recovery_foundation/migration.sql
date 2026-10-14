@@ -28,6 +28,11 @@
 --      paymentState SUCCEEDED, fulfilmentStatus NEEDS_REVIEW, case
 --      LEGACY_SUCCEEDED_UNFULFILLED. (The one-hour margin keeps a payment whose
 --      order transaction is still running at deploy time out of the queue.)
+-- The one-hour comparison is made in UTC: "updatedAt" is a TIMESTAMP WITHOUT TIME
+-- ZONE holding UTC (Prisma writes UTC), so it is compared with
+-- (now() AT TIME ZONE 'UTC'), never with a bare now() — otherwise a session time
+-- zone other than UTC would shift the cutoff by the zone's offset and could
+-- queue a payment that is still in flight (or miss one that is stuck).
 -- No status, flag or amount is changed, nothing is marked failed, and nothing
 -- is refunded, retried or fulfilled. Each case gets an OPENED SYSTEM event.
 --
@@ -45,9 +50,14 @@
 --     not); any problem aborts with nothing changed.
 --   - lock_timeout 5s (local to this transaction): it fails, atomically, rather
 --     than queue application traffic behind a lock it cannot get. Adding two
---     nullable columns to PaymentAttempt is metadata-only; the two CHECK
---     constraints scan the table once, under the lock the ADD COLUMN takes
---     (held until commit). Nothing is rewritten.
+--     nullable columns to PaymentAttempt is metadata-only. The two PaymentAttempt
+--     CHECK constraints are added NOT VALID: they are enforced for every new and
+--     updated row at once but do NOT scan the existing rows, so no table scan
+--     runs under the ACCESS EXCLUSIVE lock the ADD COLUMN holds until commit.
+--     They are VALIDATED by the next migration
+--     (20261017090100_payment_recovery_validate_checks), whose VALIDATE
+--     CONSTRAINT takes only a SHARE UPDATE EXCLUSIVE lock (reads and writes go
+--     on). Nothing is rewritten.
 --   - The backfill touches only the problem rows (typically none) and is safe
 --     to re-run only by rolling back first.
 --
@@ -85,12 +95,14 @@ BEGIN
   -- PaymentAttempt: the two nullable state columns and their value checks.
   ALTER TABLE "PaymentAttempt" ADD COLUMN "paymentState" TEXT;
   ALTER TABLE "PaymentAttempt" ADD COLUMN "fulfilmentStatus" TEXT;
+  -- NOT VALID: enforced for new and updated rows immediately (the backfill below
+  -- is checked), validated without blocking writes by the next migration.
   ALTER TABLE "PaymentAttempt" ADD CONSTRAINT "PaymentAttempt_paymentState_check"
     CHECK ("paymentState" IS NULL OR "paymentState" IN
-      ('NOT_SENT', 'CHARGING', 'AWAITING_CONFIRMATION', 'UNKNOWN', 'SUCCEEDED', 'DECLINED', 'FAILED'));
+      ('NOT_SENT', 'CHARGING', 'AWAITING_CONFIRMATION', 'UNKNOWN', 'SUCCEEDED', 'DECLINED', 'FAILED')) NOT VALID;
   ALTER TABLE "PaymentAttempt" ADD CONSTRAINT "PaymentAttempt_fulfilmentStatus_check"
     CHECK ("fulfilmentStatus" IS NULL OR "fulfilmentStatus" IN
-      ('NOT_REQUIRED', 'PENDING', 'DONE', 'NEEDS_REVIEW'));
+      ('NOT_REQUIRED', 'PENDING', 'DONE', 'NEEDS_REVIEW')) NOT VALID;
 
   -- PaymentReconciliationCase
   CREATE TABLE "PaymentReconciliationCase" (
@@ -174,7 +186,7 @@ BEGIN
   UPDATE "PaymentAttempt" a
      SET "paymentState" = 'UNKNOWN'
    WHERE a."status" = 'PENDING'
-     AND a."updatedAt" < now() - interval '1 hour'
+     AND a."updatedAt" < (now() AT TIME ZONE 'UTC') - interval '1 hour'
      AND NOT EXISTS (
        SELECT 1 FROM "GiftCardPurchase" g
         WHERE g."paymentAttemptId" = a."id" AND g."chargeClaimedAt" IS NULL);
@@ -187,20 +199,20 @@ BEGIN
      AND NOT EXISTS (
        SELECT 1 FROM "GiftCardPurchase" g
         WHERE g."paymentAttemptId" = a."id" AND g."status" = 'ISSUED' AND g."giftCardId" IS NOT NULL)
-     AND (a."reconciliationRequired" OR a."updatedAt" < now() - interval '1 hour');
+     AND (a."reconciliationRequired" OR a."updatedAt" < (now() AT TIME ZONE 'UTC') - interval '1 hour');
   GET DIAGNOSTICS unfulfilled_rows = ROW_COUNT;
 
   INSERT INTO "PaymentReconciliationCase" ("id", "paymentAttemptId", "status", "reasonCode", "tenantId", "createdAt", "updatedAt")
   SELECT gen_random_uuid()::text, a."id", 'OPEN',
          CASE WHEN a."paymentState" = 'UNKNOWN' THEN 'LEGACY_PENDING_UNRESOLVED' ELSE 'LEGACY_SUCCEEDED_UNFULFILLED' END,
-         a."tenantId", now(), now()
+         a."tenantId", (now() AT TIME ZONE 'UTC'), (now() AT TIME ZONE 'UTC')
     FROM "PaymentAttempt" a
    WHERE a."paymentState" = 'UNKNOWN' OR a."fulfilmentStatus" = 'NEEDS_REVIEW';
 
   INSERT INTO "PaymentReconciliationEvent" ("id", "caseId", "actorKind", "action", "detail", "createdAt", "tenantId")
   SELECT gen_random_uuid()::text, c."id", 'SYSTEM', 'OPENED',
          jsonb_build_object('source', 'migration', 'migration', '20261017090000_payment_recovery_foundation', 'reasonCode', c."reasonCode"),
-         now(), c."tenantId"
+         (now() AT TIME ZONE 'UTC'), c."tenantId"
     FROM "PaymentReconciliationCase" c;
 
   RAISE NOTICE 'ESP-03 backfill: % pending attempt(s) classified UNKNOWN, % succeeded attempt(s) without an order or card queued for review.',
