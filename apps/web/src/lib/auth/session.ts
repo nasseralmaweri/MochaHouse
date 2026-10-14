@@ -1,12 +1,14 @@
 import "server-only";
 import { cookies } from "next/headers";
 import type { CustomerProfile } from "@mocha-house/contracts";
+import { cookieName } from "@/lib/security/cookies";
 
 // The "server-only" import above makes it a build error for any Client
 // Component to import this module (directly or transitively) — this file
 // handles the raw session token (getCustomerSessionToken), which must
 // never reach browser code even accidentally.
-export const CUSTOMER_SESSION_COOKIE = "mh_customer_session";
+export const CUSTOMER_SESSION_COOKIE_BASE = "mh_customer_session";
+export const CUSTOMER_SESSION_COOKIE = cookieName(CUSTOMER_SESSION_COOKIE_BASE);
 
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;

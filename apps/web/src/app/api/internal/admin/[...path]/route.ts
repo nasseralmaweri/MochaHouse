@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { buildProxyTarget } from "@/lib/security/path-safety";
+import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 import { INTERNAL_SESSION_COOKIE } from "@/lib/internal-auth/session";
 import { internalAuthHeaders } from "@/lib/internal-auth/active-business";
 
@@ -35,6 +37,9 @@ async function proxy(
   request: NextRequest,
   segments: string[],
 ): Promise<NextResponse> {
+  const untrusted = rejectUntrustedOrigin(request);
+  if (untrusted) return untrusted as NextResponse;
+
   if (!FORWARDED_METHODS.has(request.method)) {
     return NextResponse.json(
       { message: "Method not allowed." },
@@ -50,9 +55,17 @@ async function proxy(
     );
   }
 
-  const path = segments.map(encodeURIComponent).join("/");
-  const search = request.nextUrl.search;
-  const target = `${getApiUrl()}/admin/${path}${search}`;
+  // Segments that could navigate (".", "..", encoded or double-encoded forms,
+  // separators) are refused, and the rebuilt URL must stay under /admin/.
+  const target = buildProxyTarget(
+    getApiUrl(),
+    "admin",
+    segments,
+    request.nextUrl.search,
+  );
+  if (!target) {
+    return NextResponse.json({ message: "Not found." }, { status: 404 });
+  }
 
   const headers = await internalAuthHeaders(token);
   const hasBody = request.method !== "GET" && request.method !== "DELETE";

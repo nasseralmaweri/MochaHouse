@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 import { CUSTOMER_SESSION_COOKIE } from "@/lib/auth/session";
 
 function getApiUrl(): string {
@@ -21,6 +22,9 @@ function getApiUrl(): string {
 // GiftCardPurchaseService remains the single source of truth; the response
 // (which may carry the one-time full code) is passed straight through.
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const untrusted = rejectUntrustedOrigin(request);
+  if (untrusted) return untrusted as NextResponse;
+
   const token = request.cookies.get(CUSTOMER_SESSION_COOKIE)?.value;
   const body = await request.text();
 

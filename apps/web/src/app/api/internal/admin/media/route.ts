@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 import { INTERNAL_SESSION_COOKIE } from "@/lib/internal-auth/session";
 import { internalAuthHeaders } from "@/lib/internal-auth/active-business";
 
@@ -55,6 +56,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const untrusted = rejectUntrustedOrigin(request);
+  if (untrusted) return untrusted as NextResponse;
+
   const token = requireToken(request);
   if (!token) {
     return NextResponse.json({ message: "Authentication required." }, { status: 401 });

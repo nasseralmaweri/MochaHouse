@@ -1,6 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { clearLegacySessionCookie, clearSessionCookie, sessionCookieOptions } from "@/lib/security/cookies";
 import { serverActionClientIpHeaders } from "@/lib/client-ip-forwarding";
 import { TOO_MANY_ATTEMPTS_MESSAGE } from "@/lib/rate-limit-message";
 import { redirect } from "next/navigation";
@@ -9,8 +10,15 @@ import type {
   InternalSignInRequest,
   InternalSignInResponse,
 } from "@mocha-house/contracts";
-import { INTERNAL_SESSION_COOKIE } from "./session";
-import { ACTIVE_TENANT_HEADER, ADMIN_BUSINESS_COOKIE } from "./active-business";
+import {
+  ADMIN_LOCATION_COOKIE_BASE,
+  INTERNAL_SESSION_COOKIE,
+  INTERNAL_SESSION_COOKIE_BASE,
+} from "./session";
+import {
+  ACTIVE_TENANT_HEADER,
+  ADMIN_BUSINESS_COOKIE_BASE,
+} from "./active-business";
 
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;
@@ -128,13 +136,8 @@ export async function internalSignInAction(
   }
 
   const cookieStore = await cookies();
-  cookieStore.set(INTERNAL_SESSION_COOKIE, result.idToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: result.expiresInSeconds,
-  });
+  clearLegacySessionCookie(cookieStore, INTERNAL_SESSION_COOKIE_BASE);
+  cookieStore.set(INTERNAL_SESSION_COOKIE, result.idToken, sessionCookieOptions(result.expiresInSeconds));
 
   redirect("/admin/orders");
 }
@@ -146,7 +149,8 @@ export async function internalSignInAction(
 // deferred to a later Milestone 5 slice.
 export async function internalSignOutAction(): Promise<void> {
   const cookieStore = await cookies();
-  cookieStore.delete(INTERNAL_SESSION_COOKIE);
-  cookieStore.delete(ADMIN_BUSINESS_COOKIE);
+  clearSessionCookie(cookieStore, INTERNAL_SESSION_COOKIE_BASE);
+  clearSessionCookie(cookieStore, ADMIN_BUSINESS_COOKIE_BASE);
+  clearSessionCookie(cookieStore, ADMIN_LOCATION_COOKIE_BASE);
   redirect("/internal/sign-in");
 }

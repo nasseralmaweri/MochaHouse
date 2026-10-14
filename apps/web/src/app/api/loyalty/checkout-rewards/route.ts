@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 import { CUSTOMER_SESSION_COOKIE } from "@/lib/auth/session";
 import { signedClientIpHeaders } from "@/lib/client-ip-forwarding";
 import { passthroughHeaders } from "@/lib/rate-limit-message";
@@ -21,6 +22,9 @@ function getApiUrl(): string {
 // to the real API. A signed-out visitor has no rewards — no forward, an
 // empty response.
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const untrusted = rejectUntrustedOrigin(request);
+  if (untrusted) return untrusted as NextResponse;
+
   const token = request.cookies.get(CUSTOMER_SESSION_COOKIE)?.value;
   if (!token) {
     return NextResponse.json({ balance: 0, rewards: [] });

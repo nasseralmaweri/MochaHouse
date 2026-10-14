@@ -1,5 +1,7 @@
 "use client";
 
+// Adds the request-origin marker header to state-changing /api calls (S3b).
+import { markedFetch as fetch } from "@/lib/security/marked-fetch";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   GiftCardBalanceResponse,

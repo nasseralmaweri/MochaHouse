@@ -1,8 +1,13 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { clearLegacySessionCookie, sessionCookieOptions } from "@/lib/security/cookies";
 import { redirect } from "next/navigation";
-import { getInternalSession, ADMIN_LOCATION_COOKIE } from "./session";
+import {
+  getInternalSession,
+  ADMIN_LOCATION_COOKIE,
+  ADMIN_LOCATION_COOKIE_BASE,
+} from "./session";
 import { CORPORATE_LOCATION_VALUE } from "@/lib/admin/location-context";
 
 const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
@@ -31,11 +36,6 @@ export async function setAdminLocationPreference(value: string): Promise<void> {
   }
 
   const cookieStore = await cookies();
-  cookieStore.set(ADMIN_LOCATION_COOKIE, value, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: ONE_YEAR_SECONDS,
-  });
+  clearLegacySessionCookie(cookieStore, ADMIN_LOCATION_COOKIE_BASE);
+  cookieStore.set(ADMIN_LOCATION_COOKIE, value, sessionCookieOptions(ONE_YEAR_SECONDS));
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 
 // Milestone 8C — same-origin proxy for a public, anonymous job application,
 // mirroring app/api/gift-cards/purchase/route.ts. The apply form runs in the
@@ -25,6 +26,9 @@ export async function POST(
   request: NextRequest,
   context: RouteContext,
 ): Promise<NextResponse> {
+  const untrusted = rejectUntrustedOrigin(request);
+  if (untrusted) return untrusted as NextResponse;
+
   const { jobId } = await context.params;
   const body = await request.text();
 

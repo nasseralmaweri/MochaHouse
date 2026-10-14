@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 
 // Milestone 8D — same-origin proxy for a public, anonymous franchise
 // inquiry, mirroring app/api/careers/[jobId]/apply/route.ts. The inquiry
@@ -19,6 +20,9 @@ function getApiUrl(): string {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const untrusted = rejectUntrustedOrigin(request);
+  if (untrusted) return untrusted as NextResponse;
+
   const body = await request.text();
 
   let response: Response;

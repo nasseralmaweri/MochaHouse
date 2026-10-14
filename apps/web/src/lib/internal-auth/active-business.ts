@@ -6,12 +6,14 @@ import type {
   InternalBusinessSummary,
 } from "@mocha-house/contracts";
 import { resolveActiveBusiness } from "@/lib/admin/business-context";
+import { cookieName } from "@/lib/security/cookies";
 
 // Non-security UI preference: which authorized business the Admin shell
 // last selected. INTENT only — it is validated against the API's own list of
 // the identity's enterable businesses before it is ever used, and the API
 // re-validates membership on every request (Milestone S0F).
-export const ADMIN_BUSINESS_COOKIE = "mh_admin_business";
+export const ADMIN_BUSINESS_COOKIE_BASE = "mh_admin_business";
+export const ADMIN_BUSINESS_COOKIE = cookieName(ADMIN_BUSINESS_COOKIE_BASE);
 
 // The S0F active-business request header.
 export const ACTIVE_TENANT_HEADER = "X-Tenant-Id";

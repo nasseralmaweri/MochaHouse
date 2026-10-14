@@ -2,6 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { cookieName } from "@/lib/security/cookies";
 import type { InternalMeResponse } from "@mocha-house/contracts";
 import { resolveActiveBusiness } from "@/lib/admin/business-context";
 import {
@@ -18,12 +19,14 @@ import {
 // A SEPARATE boundary from lib/auth/session.ts (customer sessions): a
 // different cookie name, a different backend endpoint, a different response
 // type. Neither is interchangeable with the other.
-export const INTERNAL_SESSION_COOKIE = "mh_internal_session";
+export const INTERNAL_SESSION_COOKIE_BASE = "mh_internal_session";
+export const INTERNAL_SESSION_COOKIE = cookieName(INTERNAL_SESSION_COOKIE_BASE);
 
 // Non-security UI preference: which authorized location (or "corporate")
 // the Admin shell should default to between navigations. Never trusted for
 // authorization — every Admin API call is still guarded server-side.
-export const ADMIN_LOCATION_COOKIE = "mh_admin_location";
+export const ADMIN_LOCATION_COOKIE_BASE = "mh_admin_location";
+export const ADMIN_LOCATION_COOKIE = cookieName(ADMIN_LOCATION_COOKIE_BASE);
 
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;
