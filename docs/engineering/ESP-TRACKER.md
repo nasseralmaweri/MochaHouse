@@ -9,33 +9,40 @@ deliverable, and re-verify the "Last verified" line when you do.
 ## How to read this
 
 - **Status** is one of `DONE` (merged, post-merge CI green), `IN PROGRESS`,
-  `PLANNED`, `NOT DEFINED`.
+  `PLANNED`, `NOT STARTED`.
 - **Evidence** names the PR, the merge commit on `main`, and the CI run.
-- Items marked **(inferred)** or **(proposed)** are not recorded anywhere else in
-  the repository or in the PR history. They are the tracker author's grouping,
-  must be confirmed by the program owner, and are not commitments.
+- Stage definitions (ESP-01 to ESP-08) are the program owner's. Deferred items
+  not yet assigned to a stage are listed separately and are not commitments.
+
+## Release 1 and how ESP is prioritised
+
+ESP is a supporting engineering workstream, not the product roadmap. The primary
+objective is **Release 1**: a production-ready Mocha House Dearborn Heights
+online-ordering pilot with real online payments. ESP findings are prioritised
+against what Release 1 requires: a finding that blocks the pilot is scheduled
+ahead of one that does not, whatever its ESP stage. The full Release 1 roadmap is
+kept separate and is not part of this file until its readiness assessment is
+approved.
 
 ## Summary
 
-| ESP | Scope | Status | Evidence |
+| ESP | Stage | Status | Evidence |
 |---|---|---|---|
-| ESP-01 (inferred) | Development seed fails closed and is create-once | DONE | PR #25, `769f83d` |
-| ESP-02 | Dev auth, dev secrets and fake payments fail closed outside safe contexts | DONE | PR #26, `b282259` |
-| ESP-03 | Payment recovery and safe retries | IN PROGRESS (2 of 8 deliverables merged) | PR #27 `6f1bfb1`, PR #28 `fba6fd0` |
-| ESP-04 (proposed) | Production defaults for media, email and web cookies | PLANNED | none yet |
-| ESP-05 (proposed) | API startup assertion follow-ups; remove seeded `internal-dev` rows | PLANNED | none yet |
-| ESP-06 (proposed) | Workspace hygiene: stale local worktrees and branches | PLANNED | none yet |
-| ESP-07 | not defined | NOT DEFINED | no scope recorded |
-| ESP-08 | not defined | NOT DEFINED | no scope recorded |
+| ESP-01 | Database seed safety | DONE | PR #25, `769f83d` |
+| ESP-02 | Authentication startup security | DONE | PR #26, `b282259` |
+| ESP-03 | Payment and checkout recovery | IN PROGRESS: PR 1 and PR 2 merged; remaining risks and findings open | PR #27 `6f1bfb1`, PR #28 `fba6fd0` |
+| ESP-04 | Gift cards, loyalty and financial integrity | NOT STARTED | none |
+| ESP-05 | Tenant isolation, permissions and data security | NOT STARTED | none |
+| ESP-06 | Workers, notifications and reliability | NOT STARTED | none |
+| ESP-07 | Frontend, Admin and business functionality | NOT STARTED | none |
+| ESP-08 | Regression testing and final verification | NOT STARTED | none |
 
-> **Open question for the program owner:** ESP-01 and ESP-04 to ESP-08 have no
-> written definition in the repository. ESP-01 is inferred from the seed-safety
-> PR that preceded ESP-02. ESP-04 to ESP-06 are drawn from audit items that were
-> explicitly deferred. ESP-07 and ESP-08 are left undefined rather than guessed.
+"NOT STARTED" means no ESP work has been merged for that stage. It says nothing
+about whether the underlying capability works; that is not verified here.
 
 ---
 
-## ESP-01 (inferred) — Seed safety
+## ESP-01 — Database seed safety
 
 - **Scope:** the development seed must refuse to run against anything that is not
   provably disposable or local, and must not overwrite existing data.
@@ -46,10 +53,10 @@ deliverable, and re-verify the "Last verified" line when you do.
 - **Acceptance criteria met:** seed fails closed outside a disposable/local
   database; re-running does not reset existing rows.
 - **Deferred:** removal of seeded `internal-dev` rows from non-development
-  databases (see ESP-05).
+  databases (see "Deferred items not yet assigned").
 - **Next action:** none.
 
-## ESP-02 — Development auth startup safety
+## ESP-02 — Authentication startup security
 
 - **Scope:** the passwordless dev auth providers, the shared dev secret and the
   fake payment provider must not be reachable in production-like environments.
@@ -62,12 +69,12 @@ deliverable, and re-verify the "Last verified" line when you do.
 - **Acceptance criteria met:** API refuses to start with dev auth or fake
   payments in a production-like environment; request-time gates stay off outside
   a verified safe context; isolated-test secret gap closed in review.
-- **Deferred:** API startup assertion follow-ups (ESP-05).
+- **Deferred:** API startup assertion follow-ups (see "Deferred items not yet assigned").
 - **Next action:** none.
 
 ---
 
-## ESP-03 — Payment recovery and safe retries
+## ESP-03 — Payment and checkout recovery
 
 **Problem.** A provider call that throws or times out left a payment `PENDING`
 forever with its charge claim never released; a pending provider result was
@@ -227,31 +234,34 @@ PR #27), PR 7 (tenant-scoped uniqueness, snapshots).
 
 ---
 
-## ESP-04 (proposed) — Production defaults for media, email and web cookies
+## ESP-04 to ESP-08 — not started
 
-- **Scope:** safe-by-default configuration for media storage, outbound email and
-  web session cookies, so a misconfigured production deployment fails closed
-  rather than running with a development default.
-- **Defects:** none confirmed; deferred from the engineering audit.
-- **PRs:** none. **Status:** PLANNED. **Next action:** needs a written scope.
+No ESP work for these stages has been merged. Known items that belong to them
+and are already recorded elsewhere in this file:
 
-## ESP-05 (proposed) — Startup assertions and seeded dev rows
+- **ESP-04 Gift cards, loyalty and financial integrity:** gift-card tender
+  reservation; gift-card restoration on refund (no refund capability exists today).
+- **ESP-05 Tenant isolation, permissions and data security:** tenant-scoped
+  idempotency uniqueness (risk R9). Other findings are pending the Release 1
+  readiness assessment.
+- **ESP-06 Workers, notifications and reliability:** none recorded yet.
+- **ESP-07 Frontend, Admin and business functionality:** none recorded yet.
+- **ESP-08 Regression testing and final verification:** none recorded yet.
 
-- **Scope:** API startup assertion follow-ups left over from ESP-02; remove seeded
-  `internal-dev` rows from any non-development database.
-- **PRs:** none. **Status:** PLANNED. **Next action:** needs a written scope.
+Scope, defects and acceptance criteria for each stage are to be added when the
+stage is planned; none is invented here.
 
-## ESP-06 (proposed) — Workspace hygiene
+## Deferred items not yet assigned to a stage
 
-- **Scope:** retire stale local worktrees and branches. Candidates recorded
-  earlier: `centerivo-pr-22-security-917ac4`, `C:\w22b`,
-  `fix/checkout-request-validation`. Removal was deferred once because a live
-  session was attached; each removal needs a fresh safety check.
-- **PRs:** none (local housekeeping, not a code change). **Status:** PLANNED.
+Carried over from the engineering audit; assign them when the owning stage is
+planned.
 
-## ESP-07, ESP-08 — not defined
-
-No scope is recorded for either. Do not infer one from this document.
+- Production defaults for media storage, outbound email and web session cookies.
+- API startup assertion follow-ups left over from ESP-02.
+- Removal of seeded `internal-dev` rows from non-development databases.
+- Local housekeeping (not a code change): stale worktrees and branches such as
+  `centerivo-pr-22-security-917ac4`, `C:w22b` and
+  `fix/checkout-request-validation`; each removal needs a fresh safety check.
 
 ---
 
@@ -260,5 +270,4 @@ No scope is recorded for either. Do not infer one from this document.
 | Date (UTC) | What | Result |
 |---|---|---|
 | 2026-10-14 | `main` = `fba6fd0`; CI run 38591976541: Typecheck/lint/build, API tests, Worker tests, Web tests, Tenant isolation and route inventory | all five `success`; tenant isolation completed 15:53:08 |
-| 2026-10-14 | Open PRs on the repository | none |
 | 2026-10-14 | PR #28 independent review (two read-only specialist agents, findings re-checked against the code) | no merge blocker; risks R1-R3 recorded above |
