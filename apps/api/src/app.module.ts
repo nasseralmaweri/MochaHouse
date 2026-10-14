@@ -3,6 +3,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
+import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { PaymentModule } from './payment/payment.module';
 import { LocationsModule } from './locations/locations.module';
 import { CatalogModule } from './catalog/catalog.module';
@@ -35,6 +36,8 @@ import { NotificationsModule } from './notifications/notifications.module';
     // a TenantContext on every request.
     TenancyModule,
     RedisModule,
+    // R1 / S3a — tenant-aware rate limiting for the public API.
+    RateLimitModule,
     PaymentModule,
     LocationsModule,
     CatalogModule,

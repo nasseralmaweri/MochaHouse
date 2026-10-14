@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CUSTOMER_SESSION_COOKIE } from "@/lib/auth/session";
+import { signedClientIpHeaders } from "@/lib/client-ip-forwarding";
+import { passthroughHeaders } from "@/lib/rate-limit-message";
 
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;
@@ -33,6 +35,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
+        ...signedClientIpHeaders(request.headers),
       },
       body,
       cache: "no-store",
@@ -50,6 +53,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const responseBody = await response.text();
   return new NextResponse(responseBody, {
     status: response.status,
-    headers: { "Content-Type": "application/json" },
+    headers: passthroughHeaders(response),
   });
 }

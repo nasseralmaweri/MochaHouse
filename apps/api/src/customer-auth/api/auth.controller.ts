@@ -6,6 +6,7 @@ import {
   NotFoundException,
   Post,
   UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
 import type {
   CustomerForgotPasswordRequest,
@@ -21,6 +22,8 @@ import type {
   CustomerVerifyRequest,
   CustomerVerifyResponse,
 } from '@mocha-house/contracts';
+import { RateLimit } from '../../rate-limit/rate-limit.decorator';
+import { RateLimitGuard } from '../../rate-limit/rate-limit.guard';
 import { CustomerSignInService } from '../application/customer-sign-in.service';
 import { CustomerRegistrationService } from '../application/customer-registration.service';
 import { CustomerPasswordRecoveryService } from '../application/customer-password-recovery.service';
@@ -46,6 +49,8 @@ export class AuthController {
     private readonly customersService: CustomersService,
   ) {}
 
+  @UseGuards(RateLimitGuard)
+  @RateLimit('customer-sign-in')
   @Post('sign-in')
   async signIn(
     @Body() body: CustomerSignInRequest,
@@ -73,6 +78,8 @@ export class AuthController {
     };
   }
 
+  @UseGuards(RateLimitGuard)
+  @RateLimit('account-recovery')
   @Post('register')
   async register(
     @Body() body: CustomerRegisterRequest,
@@ -134,6 +141,8 @@ export class AuthController {
     return { email };
   }
 
+  @UseGuards(RateLimitGuard)
+  @RateLimit('account-verification')
   @Post('verify')
   async verify(
     @Body() body: CustomerVerifyRequest,
@@ -208,6 +217,8 @@ export class AuthController {
     return { email };
   }
 
+  @UseGuards(RateLimitGuard)
+  @RateLimit('account-recovery')
   @Post('verification/resend')
   async resendVerification(
     @Body() body: CustomerResendVerificationRequest,
@@ -241,6 +252,8 @@ export class AuthController {
   // provider failure is NOT caught here: the provider throws
   // ServiceUnavailableException, which propagates as a 503 so the customer
   // gets a retryable error and monitoring still sees the outage.
+  @UseGuards(RateLimitGuard)
+  @RateLimit('account-recovery')
   @Post('forgot-password')
   async forgotPassword(
     @Body() body: CustomerForgotPasswordRequest,
@@ -260,6 +273,8 @@ export class AuthController {
   // password policy; the new password is posted straight through and never
   // stored or logged here. Deliberately does NOT establish a session or
   // return a token — the flow ends at Sign In.
+  @UseGuards(RateLimitGuard)
+  @RateLimit('account-verification')
   @Post('reset-password')
   async resetPassword(
     @Body() body: CustomerResetPasswordRequest,

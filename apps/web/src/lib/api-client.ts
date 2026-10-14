@@ -212,6 +212,15 @@ export async function submitCheckoutFromBrowser(
     };
   }
 
+  if (response.status === 429) {
+    // Too many requests: nothing was placed. The same idempotency key is kept
+    // for the retry, so waiting and trying again can never double-order.
+    return {
+      outcome: "network-error",
+      message: "Too many requests right now. Please wait a moment and try again.",
+    };
+  }
+
   if (!response.ok) {
     return {
       outcome: "network-error",

@@ -12,6 +12,8 @@ import { CustomerAuthGuard } from '../../customer-auth/infrastructure/customer-a
 import type { CustomerAuthenticatedRequest } from '../../customer-auth/infrastructure/customer-identity';
 import type { TenantContext } from '@mocha-house/database';
 import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
+import { RateLimit } from '../../rate-limit/rate-limit.decorator';
+import { RateLimitGuard } from '../../rate-limit/rate-limit.guard';
 import { CheckoutService } from '../application/checkout.service';
 
 // Milestone 7C — the checkout reward-eligibility quote. Separate from
@@ -22,11 +24,12 @@ import { CheckoutService } from '../application/checkout.service';
 // POST (not GET) for the same reason the reorder endpoint is POST: the cart
 // lines don't fit a query string cleanly. It creates nothing — 200, not
 // 201 — reserves nothing and deducts nothing.
-@UseGuards(CustomerAuthGuard)
+@UseGuards(CustomerAuthGuard, RateLimitGuard)
 @Controller('api/v1/orders')
 export class CheckoutRewardsController {
   constructor(private readonly checkoutService: CheckoutService) {}
 
+  @RateLimit('reward-eligibility')
   @Post('reward-eligibility')
   @HttpCode(HttpStatus.OK)
   quote(

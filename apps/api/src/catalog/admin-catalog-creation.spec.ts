@@ -28,6 +28,7 @@ import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 import { GiftCardsModule } from '../gift-cards/gift-cards.module';
 import { PaymentModule } from '../payment/payment.module';
+import { RateLimitModule } from '../rate-limit/rate-limit.module';
 import { OrdersController } from '../orders/api/orders.controller';
 import { CheckoutService } from '../orders/application/checkout.service';
 import { signInternalDevJwt } from '../internal-auth/infrastructure/internal-dev-jwt';
@@ -132,6 +133,8 @@ describe('S1 Admin catalog creation (integration)', () => {
         PromotionsModule,
         GiftCardsModule,
         PaymentModule,
+        // The controllers below apply RateLimitGuard (R1 / S3a).
+        RateLimitModule,
       ],
       controllers: [OrdersController],
       providers: [CheckoutService],

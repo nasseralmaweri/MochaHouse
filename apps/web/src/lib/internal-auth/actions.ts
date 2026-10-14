@@ -1,6 +1,8 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { serverActionClientIpHeaders } from "@/lib/client-ip-forwarding";
+import { TOO_MANY_ATTEMPTS_MESSAGE } from "@/lib/rate-limit-message";
 import { redirect } from "next/navigation";
 import type {
   InternalBusinessesResponse,
@@ -54,13 +56,20 @@ export async function internalSignInAction(
   try {
     signInResponse = await fetch(`${getApiUrl()}/internal/auth/sign-in`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(await serverActionClientIpHeaders()),
+      },
       body: JSON.stringify(request),
     });
   } catch {
     return {
       error: "Could not reach the server. Check your connection and try again.",
     };
+  }
+
+  if (signInResponse.status === 429) {
+    return { error: TOO_MANY_ATTEMPTS_MESSAGE };
   }
 
   if (!signInResponse.ok) {

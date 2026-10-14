@@ -6,12 +6,20 @@ import {
   AuthConfigurationError,
   assertAuthConfigSafe,
 } from './config/auth-startup-guard';
+import {
+  RateLimitConfigurationError,
+  assertRateLimitConfigSafe,
+} from './rate-limit/rate-limit.config';
 
 async function bootstrap() {
   // ESP-02 — fail closed BEFORE anything is created or listening: no dev
   // authentication, dev secret or simulated payment outside a verified safe
   // development context. See config/auth-startup-guard.ts.
   assertAuthConfigSafe();
+  // R1 / S3a — a malformed rate-limit setting, or rate limiting switched off
+  // in a production-like environment, refuses to start (see
+  // docs/security/public-api-rate-limiting.md).
+  assertRateLimitConfigSafe();
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
@@ -45,7 +53,10 @@ bootstrap().catch((error: unknown) => {
   // A refused configuration prints its (secret-free) reasons and exits
   // non-zero; any other startup failure keeps its stack.
   console.error(
-    error instanceof AuthConfigurationError ? error.message : error,
+    error instanceof AuthConfigurationError ||
+      error instanceof RateLimitConfigurationError
+      ? error.message
+      : error,
   );
   process.exit(1);
 });
