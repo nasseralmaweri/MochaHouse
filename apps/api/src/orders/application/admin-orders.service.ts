@@ -9,7 +9,7 @@ import type {
   StoreOrderDetail,
   StoreOrderSummary,
 } from '@mocha-house/contracts';
-import { nextOrderStatus } from '@mocha-house/domain';
+import { ACTIVE_ORDER_STATUSES, nextOrderStatus } from '@mocha-house/domain';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma, type TenantContext } from '@mocha-house/database';
 import {
@@ -39,11 +39,12 @@ function assertValidOrderStatus(value: string): asserts value is OrderStatus {
 }
 
 // Store-facing read/act surface over the existing Order — deliberately not
-// a second authoritative record. "Active" here means both operationally
-// unfinished (status != COMPLETED) *and* published for store visibility
-// (its checkout OutboxEvent has been processed) — see OutboxProcessorService.
-// A freshly-paid order genuinely doesn't appear here until that happens,
-// which is what gives the outbox step real meaning in this slice.
+// a second authoritative record. "Active" means the order's status is an
+// ACTIVE_ORDER_STATUSES member (packages/domain) — nothing else. Visibility
+// is decided ONLY by committed order state: an order the checkout
+// transaction committed is in the queue immediately, whether or not the
+// worker is running or its OutboxEvent has been processed. The outbox only
+// drives notifications; it must never gate what the shop can see.
 @Injectable()
 export class AdminOrdersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -51,6 +52,7 @@ export class AdminOrdersService {
   async listActive(
     locationId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<StoreOrderSummary[]> {
     if (typeof locationId !== 'string' || locationId.trim().length === 0) {
       throw new BadRequestException('locationId is required.');
@@ -62,25 +64,27 @@ export class AdminOrdersService {
     // orders through this endpoint.
     authorization.assertCanActOnLocation('orders.view', locationId);
 
-    const candidates = await this.prisma.order.findMany({
-      where: { locationId, status: { not: 'COMPLETED' } },
+    // The tenant predicate is defence in depth beside the location one: a
+    // location id that somehow belonged to another tenant still yields
+    // nothing for this request's tenant.
+    const orders = await this.prisma.order.findMany({
+      where: {
+        tenantId: tenant.tenantId,
+        locationId,
+        status: { in: [...ACTIVE_ORDER_STATUSES] },
+      },
       include: { lines: true },
       orderBy: { createdAt: 'asc' },
     });
 
-    const publishedIds = await this.publishedOrderIds(
-      candidates.map((o) => o.id),
-    );
-
-    return candidates
-      .filter((order) => publishedIds.has(order.id))
-      .map((order) => this.toSummary(order));
+    return orders.map((order) => this.toSummary(order));
   }
 
   async getDetail(
     orderId: string,
     locationId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<StoreOrderDetail> {
     if (typeof locationId !== 'string' || locationId.trim().length === 0) {
       throw new BadRequestException('locationId is required.');
@@ -104,6 +108,8 @@ export class AdminOrdersService {
       // the difference, same principle as the guest access token check.
       throw new NotFoundException('Order not found for this location.');
     }
+    // ...and "belongs to another tenant" gets the very same response.
+    requireTenantOwnership(order, tenant, 'Order not found for this location.');
 
     return {
       ...this.toSummary(order),
@@ -197,7 +203,7 @@ export class AdminOrdersService {
 
     const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.order.updateMany({
-        where: { id: orderId, locationId, status: expectedStatus },
+        where: { id: orderId, tenantId, locationId, status: expectedStatus },
         data: { status: target },
       });
 
@@ -240,21 +246,6 @@ export class AdminOrdersService {
     });
 
     return { orderId, status: current.status, advanced: result.advanced };
-  }
-
-  private async publishedOrderIds(orderIds: string[]): Promise<Set<string>> {
-    if (orderIds.length === 0) {
-      return new Set();
-    }
-    const events = await this.prisma.outboxEvent.findMany({
-      where: {
-        aggregateType: 'Order',
-        aggregateId: { in: orderIds },
-        status: 'PROCESSED',
-      },
-      select: { aggregateId: true },
-    });
-    return new Set(events.map((e) => e.aggregateId));
   }
 
   private toSummary(order: OrderWithLines): StoreOrderSummary {

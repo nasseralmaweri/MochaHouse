@@ -179,38 +179,17 @@ describe('AdminOrdersService (integration)', () => {
     };
   }
 
-  // Simulates apps/worker's OutboxProcessorService for exactly this
-  // order's event, using the identical conditional-update shape (WHERE
-  // status = PENDING) so the test still proves the real gating condition
-  // — "published" means PROCESSED — without depending on worker code.
-  async function publishOrder(orderId: string): Promise<void> {
-    const result = await prisma.outboxEvent.updateMany({
-      where: {
-        aggregateType: 'Order',
-        aggregateId: orderId,
-        status: 'PENDING',
-      },
-      data: { status: 'PROCESSED', processedAt: new Date() },
-    });
-    if (result.count !== 1) {
-      throw new Error(
-        `Expected exactly one PENDING outbox event for order ${orderId}, claimed ${result.count}.`,
-      );
-    }
-  }
-
-  async function createPublishedOrder() {
+  async function createOrder() {
     const confirmation = await checkoutService.checkout(
       buildCheckoutRequest(),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     createdOrderIds.push(confirmation.orderId);
-    await publishOrder(confirmation.orderId);
     return confirmation;
   }
 
-  it('does not appear in the store queue until its outbox event is processed', async () => {
+  it('appears in the store queue immediately, without any processed outbox event', async () => {
     const confirmation = await checkoutService.checkout(
       buildCheckoutRequest(),
       undefined,
@@ -218,29 +197,21 @@ describe('AdminOrdersService (integration)', () => {
     );
     createdOrderIds.push(confirmation.orderId);
 
-    const beforeProcessing = await adminOrdersService.listActive(
-      locationId,
-      corporate,
-    );
-    expect(
-      beforeProcessing.some((o) => o.orderId === confirmation.orderId),
-    ).toBe(false);
+    // The worker is not running in this suite and nothing has processed the
+    // checkout's outbox event: it is still PENDING.
+    const event = await prisma.outboxEvent.findFirstOrThrow({
+      where: { aggregateType: 'Order', aggregateId: confirmation.orderId },
+    });
+    expect(event.status).toBe('PENDING');
 
-    await publishOrder(confirmation.orderId);
-
-    const afterProcessing = await adminOrdersService.listActive(
-      locationId,
-      corporate,
-    );
-    expect(
-      afterProcessing.some((o) => o.orderId === confirmation.orderId),
-    ).toBe(true);
+    const list = await adminOrdersService.listActive(locationId, corporate, t1);
+    expect(list.some((o) => o.orderId === confirmation.orderId)).toBe(true);
   });
 
   it('does not expose guest access token or email in the store list/detail', async () => {
-    const confirmation = await createPublishedOrder();
+    const confirmation = await createOrder();
 
-    const list = await adminOrdersService.listActive(locationId, corporate);
+    const list = await adminOrdersService.listActive(locationId, corporate, t1);
     const summary = list.find((o) => o.orderId === confirmation.orderId)!;
     expect(summary).not.toHaveProperty('accessToken');
     expect(summary).not.toHaveProperty('guestEmail');
@@ -249,17 +220,19 @@ describe('AdminOrdersService (integration)', () => {
       confirmation.orderId,
       locationId,
       corporate,
+      t1,
     );
     expect(detail).not.toHaveProperty('accessToken');
     expect(detail.guestPhone).toBe('5556660000');
   });
 
   it('is not visible from a different location', async () => {
-    const confirmation = await createPublishedOrder();
+    const confirmation = await createOrder();
 
     const otherLocationOrders = await adminOrdersService.listActive(
       otherLocationId,
       corporate,
+      t1,
     );
     expect(
       otherLocationOrders.some((o) => o.orderId === confirmation.orderId),
@@ -270,12 +243,13 @@ describe('AdminOrdersService (integration)', () => {
         confirmation.orderId,
         otherLocationId,
         corporate,
+        t1,
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('denies a LOCATION-scoped caller acting on a location they are not assigned to (403, before any data)', async () => {
-    const confirmation = await createPublishedOrder();
+    const confirmation = await createOrder();
     // Scoped to `otherLocationId` only — must not touch `locationId`.
     const scopedElsewhere = AuthorizationContext.of({
       'orders.view': [{ scopeType: 'LOCATION', scopeId: otherLocationId }],
@@ -285,13 +259,14 @@ describe('AdminOrdersService (integration)', () => {
     });
 
     await expect(
-      adminOrdersService.listActive(locationId, scopedElsewhere),
+      adminOrdersService.listActive(locationId, scopedElsewhere, t1),
     ).rejects.toBeInstanceOf(ForbiddenException);
     await expect(
       adminOrdersService.getDetail(
         confirmation.orderId,
         locationId,
         scopedElsewhere,
+        t1,
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
     await expect(
@@ -306,13 +281,17 @@ describe('AdminOrdersService (integration)', () => {
   });
 
   it('a LOCATION-scoped caller CAN act on their own assigned location', async () => {
-    const confirmation = await createPublishedOrder();
+    const confirmation = await createOrder();
     const scopedHere = AuthorizationContext.of({
       'orders.view': [{ scopeType: 'LOCATION', scopeId: locationId }],
       'orders.manage_status': [{ scopeType: 'LOCATION', scopeId: locationId }],
     });
 
-    const list = await adminOrdersService.listActive(locationId, scopedHere);
+    const list = await adminOrdersService.listActive(
+      locationId,
+      scopedHere,
+      t1,
+    );
     expect(list.some((o) => o.orderId === confirmation.orderId)).toBe(true);
 
     const advanced = await adminOrdersService.advance(
@@ -326,7 +305,7 @@ describe('AdminOrdersService (integration)', () => {
   });
 
   it('advances through the full lifecycle, one immutable history row per step, payment status untouched', async () => {
-    const confirmation = await createPublishedOrder();
+    const confirmation = await createOrder();
 
     const steps: Array<[string, string]> = [
       ['RECEIVED', 'ACCEPTED'],
@@ -368,7 +347,7 @@ describe('AdminOrdersService (integration)', () => {
   });
 
   it('writes an order.status.ready OutboxEvent only on the transition into READY (Milestone 8H)', async () => {
-    const confirmation = await createPublishedOrder();
+    const confirmation = await createOrder();
 
     await adminOrdersService.advance(
       confirmation.orderId,
@@ -446,7 +425,7 @@ describe('AdminOrdersService (integration)', () => {
   });
 
   it('rejects advancing an order that is already completed', async () => {
-    const confirmation = await createPublishedOrder();
+    const confirmation = await createOrder();
     for (const expected of ['RECEIVED', 'ACCEPTED', 'PREPARING', 'READY']) {
       await adminOrdersService.advance(
         confirmation.orderId,
@@ -469,7 +448,7 @@ describe('AdminOrdersService (integration)', () => {
   });
 
   it('a retried advance call with the same expectedStatus does not duplicate history', async () => {
-    const confirmation = await createPublishedOrder();
+    const confirmation = await createOrder();
 
     const first = await adminOrdersService.advance(
       confirmation.orderId,
@@ -499,7 +478,7 @@ describe('AdminOrdersService (integration)', () => {
   });
 
   it('rejects a genuinely stale expectedStatus as a conflict, not a silent no-op', async () => {
-    const confirmation = await createPublishedOrder();
+    const confirmation = await createOrder();
     await adminOrdersService.advance(
       confirmation.orderId,
       locationId,
@@ -528,7 +507,7 @@ describe('AdminOrdersService (integration)', () => {
   });
 
   it('concurrent advance calls for the same order never produce two history rows', async () => {
-    const confirmation = await createPublishedOrder();
+    const confirmation = await createOrder();
 
     const results = await Promise.allSettled([
       adminOrdersService.advance(
@@ -561,7 +540,7 @@ describe('AdminOrdersService (integration)', () => {
   });
 
   it('a completed order disappears from the active store queue', async () => {
-    const confirmation = await createPublishedOrder();
+    const confirmation = await createOrder();
     for (const expected of ['RECEIVED', 'ACCEPTED', 'PREPARING', 'READY']) {
       await adminOrdersService.advance(
         confirmation.orderId,
@@ -575,6 +554,7 @@ describe('AdminOrdersService (integration)', () => {
     const activeOrders = await adminOrdersService.listActive(
       locationId,
       corporate,
+      t1,
     );
     expect(activeOrders.some((o) => o.orderId === confirmation.orderId)).toBe(
       false,
@@ -582,7 +562,7 @@ describe('AdminOrdersService (integration)', () => {
   });
 
   it('customer-facing status reflects store-side transitions', async () => {
-    const confirmation = await createPublishedOrder();
+    const confirmation = await createOrder();
 
     let status = await checkoutService.getStatus(
       confirmation.orderId,

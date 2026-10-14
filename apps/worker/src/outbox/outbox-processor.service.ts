@@ -13,16 +13,15 @@ const DEFAULT_POLL_INTERVAL_MS = 2000;
 const DEFAULT_BATCH_SIZE = 20;
 
 // Outbox consumer: claims PENDING OutboxEvent rows and marks them
-// PROCESSED, which is what makes an order visible to the store queue
-// (AdminOrdersService.listActive, in apps/api, only returns orders with a
-// PROCESSED event). Milestone 8H added a second effect of that same claim:
+// PROCESSED. Store-queue visibility does NOT depend on this: the shop queue
+// (AdminOrdersService.listActive, in apps/api) reads committed Order state
+// only, so a stopped or slow worker never hides an order. Milestone 8H added
+// an effect to that same claim:
 // for eventTypes NotificationDispatchService recognizes, it attempts to
 // send a notification — but this is deliberately bolted onto the existing
 // claim rather than a second consumer polling the same table, because two
 // independent consumers racing to claim the same PENDING row would mean
-// only one of them ever gets to act on it. Store-queue visibility and
-// notification dispatch are two ordinary side effects of "this worker
-// process claimed this event", not two competing owners of it.
+// only one of them ever gets to act on it.
 //
 // Lives here (apps/worker), not apps/api: the approved architecture
 // assigns asynchronous/background execution to the worker. apps/api stays

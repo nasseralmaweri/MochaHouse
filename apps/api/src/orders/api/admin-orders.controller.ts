@@ -33,10 +33,12 @@ export class AdminOrdersController {
   listActive(
     @Query('locationId') locationId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.adminOrdersService.listActive(
       locationId,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -46,11 +48,13 @@ export class AdminOrdersController {
     @Param('orderId') orderId: string,
     @Query('locationId') locationId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.adminOrdersService.getDetail(
       orderId,
       locationId,
       request.authorization!,
+      tenant,
     );
   }
 
