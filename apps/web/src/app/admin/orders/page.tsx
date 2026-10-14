@@ -1,14 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { OrderStatus, StoreOrderSummary } from "@mocha-house/contracts";
-import { isActiveOrderStatus } from "@mocha-house/domain";
 import {
   advanceStoreOrderStatusFromBrowser,
   getActiveStoreOrdersFromBrowser,
 } from "@/lib/api-client";
 import { formatPrice } from "@/lib/money";
+import {
+  PollingController,
+  browserPollingEnv,
+} from "@/lib/polling/polling-controller";
+import { useNow, usePollingController } from "@/lib/polling/use-polling";
+import {
+  applyAdvanced,
+  arrivalAnnouncement,
+  countAwaitingAcceptance,
+  describeConnection,
+  findArrivals,
+  groupOrders,
+  orderAgeLabel,
+  queueTitle,
+} from "@/lib/admin/order-queue";
+import { ConnectionBanner } from "@/components/admin/ConnectionBanner";
 import { Card } from "@/components/Card";
 import { AdminPage } from "@/components/admin/AdminPage";
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
@@ -114,6 +129,10 @@ export default function AdminOrdersPage() {
   );
 }
 
+// How long an arrival announcement stays in the live region before it is
+// cleared, so the next announcement is read even if the wording repeats.
+const ANNOUNCEMENT_CLEAR_MS = 6_000;
+
 function OrdersQueue({
   locationId,
   locationName,
@@ -121,76 +140,127 @@ function OrdersQueue({
   locationId: string;
   locationName: string;
 }) {
-  // null = not loaded yet for the current location (distinct from "loaded,
-  // zero results").
-  const [orders, setOrders] = useState<StoreOrderSummary[] | null>(null);
-  const [state, setState] = useState<"ok" | "forbidden" | "error">("ok");
+  // Ids this screen has already seen. null until the first successful load,
+  // so opening the page never announces the existing backlog as "new".
+  const knownIds = useRef<Set<string> | null>(null);
+  // Orders currently being advanced. A ref (not state) so a second tap in the
+  // same tick is refused synchronously, before React re-renders.
+  const advancing = useRef<Set<string>>(new Set());
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
+  const [arrivedIds, setArrivedIds] = useState<ReadonlySet<string>>(new Set());
+  const [announcement, setAnnouncement] = useState("");
+  // Alternates a trailing space so two identical announcements in a row still
+  // change the live region and are both spoken.
+  const announceFlip = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const now = useNow();
 
-  const load = useCallback(async () => {
-    const result = await getActiveStoreOrdersFromBrowser(locationId);
-    if (result.outcome === "forbidden") {
-      setState("forbidden");
-      return;
-    }
-    if (result.outcome === "error") {
-      setState("error");
-      return;
-    }
-    setState("ok");
-    setNotice(null);
-    setOrders(result.orders);
-  }, [locationId]);
+  const { controller, snapshot } = usePollingController<StoreOrderSummary[]>(
+    () =>
+      new PollingController<StoreOrderSummary[]>({
+        env: browserPollingEnv(),
+        fetch: async () => {
+          const result = await getActiveStoreOrdersFromBrowser(locationId);
+          if (result.outcome === "success") {
+            return { outcome: "success", data: result.orders };
+          }
+          return { outcome: result.outcome };
+        },
+        onData: (orders) => {
+          const arrivals = findArrivals(knownIds.current, orders);
+          knownIds.current = new Set(orders.map((o) => o.orderId));
+          if (arrivals.length > 0) {
+            setArrivedIds((current) => new Set([...current, ...arrivals]));
+            announceFlip.current = !announceFlip.current;
+            setAnnouncement(
+              arrivalAnnouncement(arrivals.length) +
+                (announceFlip.current ? String.fromCharCode(160) : ""),
+            );
+          }
+        },
+      }),
+  );
 
+  const orders = snapshot.data;
+  const awaiting = orders ? countAwaitingAcceptance(orders) : 0;
+  const connectionNotice = describeConnection(snapshot.connection);
+
+  // The tab title carries the count of orders waiting to be accepted, so the
+  // queue stays noticeable from another tab. Derived from server state, so a
+  // reload loses nothing.
   useEffect(() => {
-    let cancelled = false;
-    getActiveStoreOrdersFromBrowser(locationId).then((result) => {
-      if (cancelled) return;
-      if (result.outcome === "forbidden") {
-        setState("forbidden");
-      } else if (result.outcome === "error") {
-        setState("error");
-      } else {
-        setOrders(result.orders);
-      }
-    });
+    const previous = document.title;
+    document.title = queueTitle(awaiting);
     return () => {
-      cancelled = true;
+      document.title = previous;
     };
-  }, [locationId]);
+  }, [awaiting]);
+
+  // Clear a spoken announcement after a moment, so the next one is read even
+  // when its wording repeats.
+  useEffect(() => {
+    if (!announcement) return;
+    const handle = window.setTimeout(
+      () => setAnnouncement(""),
+      ANNOUNCEMENT_CLEAR_MS,
+    );
+    return () => window.clearTimeout(handle);
+  }, [announcement]);
 
   async function handleAdvance(order: StoreOrderSummary) {
-    const outcome = await advanceStoreOrderStatusFromBrowser(
-      order.orderId,
-      locationId,
-      order.status,
-    );
+    // Refuse a repeat tap, and refuse any action on data we cannot trust.
+    if (advancing.current.has(order.orderId)) return;
+    // Checked at tap time against the clock, not only the last render.
+    if (!snapshot.actionsAllowed || !controller.canAct()) {
+      controller.refreshNow();
+      return;
+    }
+    advancing.current.add(order.orderId);
+    setPendingIds(new Set(advancing.current));
+    setNotice(null);
 
-    if (outcome.outcome === "forbidden") {
-      setState("forbidden");
-      return;
-    }
-    if (outcome.outcome === "conflict") {
-      // Someone else already acted — resync rather than guess.
-      setNotice(outcome.message);
-      await load();
-      return;
-    }
-    if (outcome.outcome === "error") {
-      setNotice(outcome.message);
-      return;
-    }
-
-    const nextStatus = outcome.result.status;
-    setOrders((current) => {
-      if (!current) return current;
-      if (!isActiveOrderStatus(nextStatus)) {
-        return current.filter((o) => o.orderId !== order.orderId);
-      }
-      return current.map((o) =>
-        o.orderId === order.orderId ? { ...o, status: nextStatus } : o,
+    try {
+      const outcome = await advanceStoreOrderStatusFromBrowser(
+        order.orderId,
+        locationId,
+        order.status,
       );
-    });
+
+      if (outcome.outcome === "forbidden") {
+        setNotice("You no longer have permission to update this order.");
+        controller.refreshNow();
+        return;
+      }
+      if (outcome.outcome === "conflict") {
+        // Someone else already acted — resync rather than guess.
+        setNotice(outcome.message);
+        controller.refreshNow();
+        return;
+      }
+      if (outcome.outcome === "error") {
+        setNotice(outcome.message);
+        controller.refreshNow();
+        return;
+      }
+
+      // Show what the server just confirmed. This also invalidates any poll
+      // already in flight (it began before this change), which is then
+      // refetched, so an old response can never put the card back.
+      const confirmed = outcome.result.status;
+      controller.update((current) =>
+        applyAdvanced(current, order.orderId, confirmed),
+      );
+      setArrivedIds((current) => {
+        if (!current.has(order.orderId)) return current;
+        const next = new Set(current);
+        next.delete(order.orderId);
+        return next;
+      });
+      controller.refreshNow();
+    } finally {
+      advancing.current.delete(order.orderId);
+      setPendingIds(new Set(advancing.current));
+    }
   }
 
   const header = (
@@ -199,16 +269,20 @@ function OrdersQueue({
       description="Work the live queue for this location."
       context={{ label: locationName, kind: "location" }}
       actions={
-        state === "ok" ? (
-          <Button variant="secondary" onClick={() => void load()}>
-            Refresh
+        orders !== null && snapshot.connection !== "forbidden" ? (
+          <Button
+            variant="secondary"
+            onClick={() => controller.refreshNow()}
+            disabled={snapshot.refreshing}
+          >
+            {snapshot.refreshing ? "Refreshing…" : "Refresh"}
           </Button>
         ) : undefined
       }
     />
   );
 
-  if (state === "forbidden") {
+  if (snapshot.connection === "forbidden") {
     return (
       <AdminPage>
         {header}
@@ -216,75 +290,180 @@ function OrdersQueue({
       </AdminPage>
     );
   }
-  if (state === "error") {
+
+  if (orders === null) {
     return (
       <AdminPage>
         {header}
-        <AdminErrorState
-          description="Couldn't load the order queue for this location."
-          onRetry={() => void load()}
-        />
+        {snapshot.connection === "loading" ? (
+          <AdminLoading label="Loading orders" />
+        ) : (
+          <AdminErrorState
+            description="Couldn't load the order queue for this location."
+            onRetry={() => controller.refreshNow()}
+          />
+        )}
       </AdminPage>
     );
   }
+
+  const groups = groupOrders(orders);
+  const pausedReason = connectionNotice.actionsPausedReason;
+  const sectionProps = {
+    locationId,
+    now,
+    pendingIds,
+    arrivedIds,
+    pausedReason,
+    actionsAllowed: snapshot.actionsAllowed,
+    onAdvance: handleAdvance,
+  };
 
   return (
     <AdminPage>
       {header}
 
+      <ConnectionBanner
+        connection={snapshot.connection}
+        lastSuccessAt={snapshot.lastSuccessAt}
+        refreshing={snapshot.refreshing}
+        onRetry={() => controller.refreshNow()}
+      />
+
+      {/* Spoken announcement of new arrivals; visually hidden. */}
+      <p role="status" aria-live="polite" className="sr-only">
+        {announcement}
+      </p>
+
       {notice ? (
         <Card tone="subtle" className="text-sm text-status-warning">
-          {notice}
+          <span role="status">{notice}</span>
         </Card>
       ) : null}
 
-      {orders === null ? (
-        <AdminLoading label="Loading orders" />
-      ) : orders.length === 0 ? (
+      {pausedReason ? (
+        <p id="queue-actions-paused" className="text-sm text-status-error">
+          {pausedReason}
+        </p>
+      ) : null}
+
+      {orders.length === 0 ? (
         <AdminEmptyState
           title="No active orders"
           description="Nothing is in the queue for this location right now."
         />
       ) : (
-        <ul className="flex flex-col gap-3">
-          {orders.map((order) => (
-            <li key={order.orderId}>
-              <OrderCard
-                order={order}
-                locationId={locationId}
-                onAdvance={() => handleAdvance(order)}
-              />
-            </li>
-          ))}
-        </ul>
+        <div className="flex flex-col gap-6">
+          <QueueSection
+            title="New"
+            hint="Waiting to be accepted"
+            orders={groups.needsAcceptance}
+            {...sectionProps}
+          />
+          <QueueSection
+            title="In progress"
+            orders={groups.inProgress}
+            {...sectionProps}
+          />
+          <QueueSection
+            title="Ready for pickup"
+            orders={groups.ready}
+            {...sectionProps}
+          />
+        </div>
       )}
     </AdminPage>
+  );
+}
+
+function QueueSection({
+  title,
+  hint,
+  orders,
+  locationId,
+  now,
+  pendingIds,
+  arrivedIds,
+  actionsAllowed,
+  pausedReason,
+  onAdvance,
+}: {
+  title: string;
+  hint?: string;
+  orders: StoreOrderSummary[];
+  locationId: string;
+  now: number;
+  pendingIds: ReadonlySet<string>;
+  arrivedIds: ReadonlySet<string>;
+  actionsAllowed: boolean;
+  pausedReason: string | null;
+  onAdvance: (order: StoreOrderSummary) => void;
+}) {
+  // Always rendered (an empty one shows a quiet line) so sections do not
+  // appear and disappear under a finger as orders move between them.
+  return (
+    <section aria-label={title} className="flex flex-col gap-3">
+      <h2 className="flex items-baseline gap-2 text-sm font-semibold uppercase tracking-wide text-text-secondary">
+        {title}
+        <span className="text-text-muted">({orders.length})</span>
+        {hint ? (
+          <span className="text-xs font-normal normal-case text-text-muted">
+            {hint}
+          </span>
+        ) : null}
+      </h2>
+      {orders.length === 0 ? (
+        <p className="text-sm text-text-muted">None right now</p>
+      ) : null}
+      <ul className="flex flex-col gap-3">
+        {orders.map((order) => (
+          <li key={order.orderId}>
+            <OrderCard
+              order={order}
+              locationId={locationId}
+              now={now}
+              isNew={order.status === "RECEIVED"}
+              justArrived={arrivedIds.has(order.orderId)}
+              busy={pendingIds.has(order.orderId)}
+              actionsAllowed={actionsAllowed}
+              pausedReason={pausedReason}
+              onAdvance={() => onAdvance(order)}
+            />
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
 function OrderCard({
   order,
   locationId,
+  now,
+  isNew,
+  justArrived,
+  busy,
+  actionsAllowed,
+  pausedReason,
   onAdvance,
 }: {
   order: StoreOrderSummary;
   locationId: string;
+  now: number;
+  isNew: boolean;
+  justArrived: boolean;
+  busy: boolean;
+  actionsAllowed: boolean;
+  pausedReason: string | null;
   onAdvance: () => void;
 }) {
-  const [advancing, setAdvancing] = useState(false);
   const nextActionLabel = NEXT_ACTION_LABEL[order.status];
-
-  async function handleClick() {
-    setAdvancing(true);
-    try {
-      await onAdvance();
-    } finally {
-      setAdvancing(false);
-    }
-  }
+  const disabled = busy || !actionsAllowed;
 
   return (
-    <Card className="flex flex-col gap-3">
+    <Card
+      className={`flex flex-col gap-3 ${isNew ? "ring-2 ring-status-warning" : ""}`}
+    >
       <div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
           <Link
@@ -299,9 +478,18 @@ function OrderCard({
               hour: "numeric",
               minute: "2-digit",
             })}
+            {" · "}
+            {orderAgeLabel(order.createdAt, now)}
           </span>
         </div>
-        <OrderStatusBadge status={order.status} />
+        <div className="flex flex-col items-end gap-1">
+          <OrderStatusBadge status={order.status} />
+          {justArrived ? (
+            <span className="rounded-full bg-status-warning px-2 py-0.5 text-xs font-semibold text-white">
+              New
+            </span>
+          ) : null}
+        </div>
       </div>
 
       <ul className="flex flex-col gap-1">
@@ -323,8 +511,15 @@ function OrderCard({
           {formatPrice(order.subtotal, order.currency)}
         </span>
         {nextActionLabel ? (
-          <Button onClick={handleClick} disabled={advancing}>
-            {advancing ? "Updating…" : nextActionLabel}
+          <Button
+            onClick={onAdvance}
+            disabled={disabled}
+            aria-describedby={
+              !actionsAllowed && pausedReason ? "queue-actions-paused" : undefined
+            }
+            className="min-w-32"
+          >
+            {busy ? "Updating…" : nextActionLabel}
           </Button>
         ) : null}
       </div>

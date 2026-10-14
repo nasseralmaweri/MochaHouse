@@ -283,8 +283,11 @@ export async function getActiveStoreOrdersFromBrowser(
 ): Promise<StoreOrdersResult> {
   let response: Response;
   try {
+    // no-store: this list is polled, and a cached response would present old
+    // orders as live.
     response = await fetch(
       `${INTERNAL_ADMIN_PROXY}/orders?locationId=${encodeURIComponent(locationId)}`,
+      { cache: "no-store" },
     );
   } catch {
     return { outcome: "error" };
@@ -299,10 +302,18 @@ export async function getActiveStoreOrdersFromBrowser(
   if (!response.ok) {
     return { outcome: "error" };
   }
-  return {
-    outcome: "success",
-    orders: (await response.json()) as StoreOrderSummary[],
-  };
+  try {
+    const body: unknown = await response.json();
+    // A 200 that is not a list (an error envelope from a proxy, say) is a
+    // failed poll, never data the page would crash on.
+    if (!Array.isArray(body)) {
+      return { outcome: "error" };
+    }
+    return { outcome: "success", orders: body as StoreOrderSummary[] };
+  } catch {
+    // A truncated or non-JSON body is a failed poll, not a crash.
+    return { outcome: "error" };
+  }
 }
 
 export type StoreOrderDetailResult =
@@ -392,10 +403,19 @@ export async function advanceStoreOrderStatusFromBrowser(
     };
   }
 
-  return {
-    outcome: "success",
-    result: (await response.json()) as AdvanceOrderStatusResponse,
-  };
+  try {
+    return {
+      outcome: "success",
+      result: (await response.json()) as AdvanceOrderStatusResponse,
+    };
+  } catch {
+    // The server answered 2xx but the body was unreadable: the change may or
+    // may not have been applied, so report an error and let the caller refetch.
+    return {
+      outcome: "error",
+      message: "The update may not have completed. Refreshing the list.",
+    };
+  }
 }
 
 // --- Admin locations: controls (Milestone 5D-2) ---------------------
