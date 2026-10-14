@@ -1,4 +1,5 @@
 import { Global, Module } from '@nestjs/common';
+import { RateLimitModule } from '../rate-limit/rate-limit.module';
 import { InternalAuthController } from './api/internal-auth.controller';
 import { InternalMeController } from './api/internal-me.controller';
 import { InternalBusinessesController } from './api/internal-businesses.controller';
@@ -35,6 +36,8 @@ import { InternalSessionService } from './application/internal-session.service';
 // cross-cutting boundary, not a feature module.
 @Global()
 @Module({
+  // RateLimitModule: InternalAuthController applies RateLimitGuard to sign-in.
+  imports: [RateLimitModule],
   controllers: [
     InternalAuthController,
     InternalMeController,

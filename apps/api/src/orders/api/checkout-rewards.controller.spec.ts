@@ -19,6 +19,7 @@ import { GiftCardsModule } from '../../gift-cards/gift-cards.module';
 import { signDevJwt } from '../../customer-auth/infrastructure/dev-jwt';
 import { CheckoutService } from '../application/checkout.service';
 import { PaymentModule } from '../../payment/payment.module';
+import { RateLimitModule } from '../../rate-limit/rate-limit.module';
 import { CheckoutRewardsController } from './checkout-rewards.controller';
 
 // Milestone 7C — POST /api/v1/orders/reward-eligibility over real HTTP.
@@ -54,6 +55,8 @@ describe('POST /api/v1/orders/reward-eligibility (integration)', () => {
         PromotionsModule,
         GiftCardsModule,
         PaymentModule,
+        // The controllers below apply RateLimitGuard (R1 / S3a).
+        RateLimitModule,
       ],
       controllers: [CheckoutRewardsController],
       providers: [CheckoutService],

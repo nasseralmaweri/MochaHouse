@@ -4,11 +4,14 @@ import {
   Controller,
   Post,
   UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
 import type {
   InternalSignInRequest,
   InternalSignInResponse,
 } from '@mocha-house/contracts';
+import { RateLimit } from '../../rate-limit/rate-limit.decorator';
+import { RateLimitGuard } from '../../rate-limit/rate-limit.guard';
 import { InternalSignInService } from '../application/internal-sign-in.service';
 
 // The internal-auth namespace, kept separate from the customer
@@ -21,6 +24,8 @@ import { InternalSignInService } from '../application/internal-sign-in.service';
 export class InternalAuthController {
   constructor(private readonly signInService: InternalSignInService) {}
 
+  @UseGuards(RateLimitGuard)
+  @RateLimit('internal-sign-in')
   @Post('sign-in')
   async signIn(
     @Body() body: InternalSignInRequest,

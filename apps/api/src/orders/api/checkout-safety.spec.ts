@@ -23,6 +23,7 @@ import { signDevJwt } from '../../customer-auth/infrastructure/dev-jwt';
 import { CheckoutService } from '../application/checkout.service';
 import { malformedLineCases } from '../application/validate-checkout-lines.fixtures';
 import { PaymentModule } from '../../payment/payment.module';
+import { RateLimitModule } from '../../rate-limit/rate-limit.module';
 import { OrdersController } from './orders.controller';
 import { CheckoutRewardsController } from './checkout-rewards.controller';
 
@@ -64,6 +65,8 @@ describe('checkout request validation and payment safety (integration)', () => {
         PromotionsModule,
         GiftCardsModule,
         PaymentModule,
+        // The controllers below apply RateLimitGuard (R1 / S3a).
+        RateLimitModule,
       ],
       controllers: [OrdersController, CheckoutRewardsController],
       providers: [CheckoutService],

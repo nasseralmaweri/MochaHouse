@@ -1,6 +1,8 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { serverActionClientIpHeaders } from "@/lib/client-ip-forwarding";
+import { TOO_MANY_ATTEMPTS_MESSAGE } from "@/lib/rate-limit-message";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import type {
@@ -60,13 +62,20 @@ export async function signInAction(
   try {
     response = await fetch(`${getApiUrl()}/auth/sign-in`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(await serverActionClientIpHeaders()),
+      },
       body: JSON.stringify(request),
     });
   } catch {
     return {
       error: "Could not reach the server. Check your connection and try again.",
     };
+  }
+
+  if (response.status === 429) {
+    return { error: TOO_MANY_ATTEMPTS_MESSAGE };
   }
 
   if (!response.ok) {
@@ -123,7 +132,10 @@ export async function registerAction(
   try {
     response = await fetch(`${getApiUrl()}/auth/register`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(await serverActionClientIpHeaders()),
+      },
       body: JSON.stringify(request),
     });
   } catch {
@@ -164,7 +176,10 @@ export async function verifyAction(
   try {
     response = await fetch(`${getApiUrl()}/auth/verify`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(await serverActionClientIpHeaders()),
+      },
       body: JSON.stringify(request),
     });
   } catch {
@@ -203,7 +218,10 @@ export async function resendVerificationAction(
   try {
     response = await fetch(`${getApiUrl()}/auth/verification/resend`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(await serverActionClientIpHeaders()),
+      },
       body: JSON.stringify(request),
     });
   } catch {
@@ -252,7 +270,10 @@ export async function forgotPasswordAction(
   try {
     response = await fetch(`${getApiUrl()}/auth/forgot-password`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(await serverActionClientIpHeaders()),
+      },
       body: JSON.stringify(request),
     });
   } catch {
@@ -304,7 +325,10 @@ export async function resetPasswordAction(
   try {
     response = await fetch(`${getApiUrl()}/auth/reset-password`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(await serverActionClientIpHeaders()),
+      },
       body: JSON.stringify(request),
     });
   } catch {

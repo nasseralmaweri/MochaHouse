@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { CustomersModule } from '../customers/customers.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
+import { RateLimitModule } from '../rate-limit/rate-limit.module';
 import { AuthController } from './api/auth.controller';
 import { CustomerSignInService } from './application/customer-sign-in.service';
 import { CustomerRegistrationService } from './application/customer-registration.service';
@@ -44,7 +45,9 @@ import { LocalDevCustomerDirectory } from './infrastructure/local-dev-customer-d
 @Module({
   // TenancyModule (Milestone S0D-2B-1): registration JIT-creates the
   // Customer under the request's TenantContext.
-  imports: [CustomersModule, TenancyModule],
+  // RateLimitModule: AuthController applies RateLimitGuard to its public
+  // sign-in / registration / recovery routes.
+  imports: [CustomersModule, TenancyModule, RateLimitModule],
   controllers: [AuthController],
   providers: [
     CustomerSignInService,

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CUSTOMER_SESSION_COOKIE } from "@/lib/auth/session";
+import { signedClientIpHeaders } from "@/lib/client-ip-forwarding";
+import { passthroughHeaders } from "@/lib/rate-limit-message";
 
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;
@@ -28,7 +30,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const token = request.cookies.get(CUSTOMER_SESSION_COOKIE)?.value;
   const body = await request.text();
 
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...signedClientIpHeaders(request.headers),
+  };
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
@@ -50,6 +55,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const responseBody = await response.text();
   return new NextResponse(responseBody, {
     status: response.status,
-    headers: { "Content-Type": "application/json" },
+    headers: passthroughHeaders(response),
   });
 }

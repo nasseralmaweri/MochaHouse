@@ -7,6 +7,7 @@ import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 import { GiftCardsModule } from '../gift-cards/gift-cards.module';
 import { PaymentModule } from '../payment/payment.module';
+import { RateLimitModule } from '../rate-limit/rate-limit.module';
 import { OrdersController } from './api/orders.controller';
 import { CheckoutRewardsController } from './api/checkout-rewards.controller';
 import { AdminOrdersController } from './api/admin-orders.controller';
@@ -27,6 +28,8 @@ import { CustomerReorderService } from './application/customer-reorder.service';
 // duplicates that resolution logic.
 @Module({
   imports: [
+    // RateLimitGuard on checkout, quote, order status and reward eligibility.
+    RateLimitModule,
     PrismaModule,
     LocationsModule,
     CustomersModule,

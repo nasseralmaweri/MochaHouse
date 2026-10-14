@@ -22,6 +22,7 @@ import { GiftCardsModule } from '../../gift-cards/gift-cards.module';
 import { signDevJwt } from '../../customer-auth/infrastructure/dev-jwt';
 import { CheckoutService } from '../application/checkout.service';
 import { PaymentModule } from '../../payment/payment.module';
+import { RateLimitModule } from '../../rate-limit/rate-limit.module';
 import { OrdersController } from './orders.controller';
 
 // Full HTTP integration test for POST /api/v1/orders' optional-auth
@@ -57,6 +58,8 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
         PromotionsModule,
         GiftCardsModule,
         PaymentModule,
+        // The controllers below apply RateLimitGuard (R1 / S3a).
+        RateLimitModule,
       ],
       controllers: [OrdersController],
       providers: [CheckoutService],
