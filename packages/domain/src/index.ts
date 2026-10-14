@@ -29,8 +29,34 @@ export function nextOrderStatus(current: OrderStatus): OrderStatus | null {
   return NEXT_ORDER_STATUS[current];
 }
 
+// Every status is classified explicitly, so adding an OrderStatus value fails
+// to compile until someone decides whether it is active (work the shop still
+// has to do) or terminal (finished, leaves the queue). Nothing downstream may
+// assume "not COMPLETED" means active.
+const ORDER_STATUS_PHASE: Record<OrderStatus, "ACTIVE" | "TERMINAL"> = {
+  RECEIVED: "ACTIVE",
+  ACCEPTED: "ACTIVE",
+  PREPARING: "ACTIVE",
+  READY: "ACTIVE",
+  COMPLETED: "TERMINAL",
+};
+
+const ALL_ORDER_STATUSES = Object.keys(ORDER_STATUS_PHASE) as OrderStatus[];
+
+export const ACTIVE_ORDER_STATUSES: readonly OrderStatus[] =
+  ALL_ORDER_STATUSES.filter((status) => ORDER_STATUS_PHASE[status] === "ACTIVE");
+
+export const TERMINAL_ORDER_STATUSES: readonly OrderStatus[] =
+  ALL_ORDER_STATUSES.filter(
+    (status) => ORDER_STATUS_PHASE[status] === "TERMINAL",
+  );
+
 export function isActiveOrderStatus(status: OrderStatus): boolean {
-  return status !== "COMPLETED";
+  return ORDER_STATUS_PHASE[status] === "ACTIVE";
+}
+
+export function isTerminalOrderStatus(status: OrderStatus): boolean {
+  return ORDER_STATUS_PHASE[status] === "TERMINAL";
 }
 
 // Pure, framework-agnostic repricing/validation for a submitted cart against
