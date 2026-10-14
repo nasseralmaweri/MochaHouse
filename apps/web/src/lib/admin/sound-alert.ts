@@ -36,6 +36,7 @@ export interface GainLike {
   connect(destination: unknown): unknown;
 }
 export interface AudioContextLike {
+  close?(): Promise<void>;
   readonly state: string;
   readonly currentTime: number;
   readonly destination: unknown;
@@ -68,15 +69,26 @@ export function decideAlert(input: {
   return { play: input.state === 'on' && newIds.length > 0, newIds };
 }
 
+// How long to wait for the browser to start audio. A locked device or a
+// blocked context can leave resume() pending forever; the alert must then fall
+// back to "tap to turn sound on" promptly rather than chime minutes later.
+const DEFAULT_RESUME_TIMEOUT_MS = 1_500;
+
+export interface SoundAlertOptions {
+  resumeTimeoutMs?: number;
+}
+
 export class SoundAlertController {
   private readonly env: SoundEnv;
+  private readonly resumeTimeoutMs: number;
   private readonly listeners = new Set<() => void>();
   private context: AudioContextLike | null = null;
   private alerted = new Set<string>();
   private state: SoundState;
 
-  constructor(env: SoundEnv) {
+  constructor(env: SoundEnv, options: SoundAlertOptions = {}) {
     this.env = env;
+    this.resumeTimeoutMs = options.resumeTimeoutMs ?? DEFAULT_RESUME_TIMEOUT_MS;
     this.state = this.initialState();
   }
 
@@ -179,11 +191,32 @@ export class SoundAlertController {
     const context = this.ensureContext();
     if (context === null) return false;
     try {
-      if (context.state !== 'running') await context.resume();
+      if (context.state !== 'running') {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timedOut = new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, this.resumeTimeoutMs);
+        });
+        try {
+          await Promise.race([context.resume(), timedOut]);
+        } finally {
+          if (timer !== undefined) clearTimeout(timer);
+        }
+      }
     } catch {
       return false;
     }
     return context.state === 'running';
+  }
+
+  // Release the audio context (called when the screen goes away) so repeated
+  // visits never pile up open contexts. The saved preference is untouched, and
+  // a later call recreates the context lazily.
+  dispose(): void {
+    const context = this.context;
+    this.context = null;
+    if (context?.close) {
+      void context.close().catch(() => undefined);
+    }
   }
 
   // A short, gentle two-note chime made with the Web Audio API (no audio file

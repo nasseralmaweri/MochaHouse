@@ -73,6 +73,9 @@ export function describeTrackingConnection(
 ): TrackingConnectionNotice {
   switch (connection) {
     case 'live':
+    // A background tab or a slept device that is simply due a refresh is not
+    // an outage: say nothing alarming while it catches up.
+    case 'catching-up':
       return { label: 'Updating automatically', tone: 'ok' };
     case 'complete':
       return { label: 'This order is complete', tone: 'ok' };

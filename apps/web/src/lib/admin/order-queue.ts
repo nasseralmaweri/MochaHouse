@@ -110,6 +110,12 @@ export function describeConnection(
         tone: 'warning',
         actionsPausedReason: null,
       };
+    case 'catching-up':
+      return {
+        label: 'Updating…',
+        tone: 'warning',
+        actionsPausedReason: 'Order actions are paused while the list updates.',
+      };
     case 'stale':
       return {
         label: 'Connection lost — this list may be out of date',

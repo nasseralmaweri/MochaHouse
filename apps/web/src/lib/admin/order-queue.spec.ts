@@ -127,12 +127,14 @@ describe('describeConnection', () => {
   it('allows actions only while live or recovering with fresh data', () => {
     expect(describeConnection('live').actionsPausedReason).toBeNull();
     expect(describeConnection('degraded').actionsPausedReason).toBeNull();
-    for (const state of ['stale', 'offline', 'forbidden', 'failed', 'loading'] as const) {
+    for (const state of ['catching-up', 'stale', 'offline', 'forbidden', 'failed', 'loading', 'not-found'] as const) {
       expect(describeConnection(state).actionsPausedReason).not.toBeNull();
     }
   });
 
   it('never presents out-of-date data as live', () => {
+    expect(describeConnection('catching-up').label).toBe('Updating…');
+    expect(describeConnection('catching-up').label).not.toMatch(/lost|offline/i);
     expect(describeConnection('stale').label).toMatch(/out of date/);
     expect(describeConnection('offline').label).toMatch(/out of date/);
     expect(describeConnection('live').tone).toBe('ok');

@@ -36,8 +36,13 @@ export type ConnectionState =
   | 'live'
   // The last attempt failed but the data is still fresh enough to act on.
   | 'degraded'
-  // The data is older than the stale threshold.
+  // The data is older than the stale threshold and requests ARE failing (or
+  // none has been confirmed): the shop may be unreachable.
   | 'stale'
+  // The data is older than the stale threshold but nothing has failed: a
+  // refresh is simply due (a tab that was in the background, a device that
+  // slept). Not an outage — but the data is not trusted for actions.
+  | 'catching-up'
   // The browser reports no connectivity.
   | 'offline'
   // The server refused this caller; polling has stopped.
@@ -120,7 +125,9 @@ export function deriveConnection(input: {
     return input.failures > 0 ? 'failed' : 'loading';
   }
   if (!input.online) return 'offline';
-  if (input.now - input.lastSuccessAt >= input.staleAfterMs) return 'stale';
+  if (input.now - input.lastSuccessAt >= input.staleAfterMs) {
+    return input.failures > 0 ? 'stale' : 'catching-up';
+  }
   return input.failures > 0 ? 'degraded' : 'live';
 }
 

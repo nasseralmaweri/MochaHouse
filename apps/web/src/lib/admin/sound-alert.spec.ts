@@ -8,12 +8,18 @@ import {
 // A fake Web Audio context that counts the chimes it is asked to play.
 class FakeContext implements AudioContextLike {
   state = 'suspended';
+  closed = 0;
+  hangOnResume = false;
+  close = jest.fn(async () => {
+    this.closed += 1;
+  });
   currentTime = 0;
   destination = {};
   allowStart = true;
   oscillators = 0;
   failOnCreate = false;
   resume = jest.fn(async () => {
+    if (this.hangOnResume) return new Promise<void>(() => undefined);
     if (this.allowStart) this.state = 'running';
   });
   createGain = () => ({
@@ -249,5 +255,91 @@ describe('SoundAlertController', () => {
     expect(sound.getSnapshot()).toBe('on');
     expect(() => sound.disable()).not.toThrow();
     expect(sound.getSnapshot()).toBe('off');
+  });
+
+  describe('a browser that never answers resume()', () => {
+    it('falls back to "tap to turn sound on" promptly and never chimes late', async () => {
+      const { env, context } = makeEnv();
+      const sound = new SoundAlertController(env, { resumeTimeoutMs: 20 });
+      await sound.enable();
+      const afterEnable = context.oscillators;
+
+      // The device locks: audio is suspended and resume() never settles.
+      context.state = 'suspended';
+      context.hangOnResume = true;
+      const started = Date.now();
+      await expect(sound.notifyArrivals(['a'])).resolves.toBe(false);
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(sound.getSnapshot()).toBe('needs-gesture');
+      expect(context.oscillators).toBe(afterEnable);
+    });
+
+    it('enable() gives up on a hanging resume instead of waiting forever', async () => {
+      const { env, context } = makeEnv();
+      context.hangOnResume = true;
+      const sound = new SoundAlertController(env, { resumeTimeoutMs: 20 });
+      await expect(sound.enable()).resolves.toBe(false);
+      expect(sound.getSnapshot()).toBe('needs-gesture');
+    });
+
+    it('prepare() on mount does not hang either', async () => {
+      const { env, context } = makeEnv({ preference: true });
+      context.hangOnResume = true;
+      const sound = new SoundAlertController(env, { resumeTimeoutMs: 20 });
+      await sound.prepare();
+      expect(sound.getSnapshot()).toBe('needs-gesture');
+    });
+  });
+
+  describe('dispose', () => {
+    it('closes the audio context and keeps the saved preference', async () => {
+      const { env, context, stored } = makeEnv();
+      const sound = new SoundAlertController(env);
+      await sound.enable();
+      sound.dispose();
+      expect(context.closed).toBe(1);
+      expect(stored.value).toBe(true);
+    });
+
+    it('is safe to call twice or before any context exists', () => {
+      const { env, context } = makeEnv();
+      const sound = new SoundAlertController(env);
+      expect(() => sound.dispose()).not.toThrow();
+      expect(context.closed).toBe(0);
+    });
+
+    it('swallows a failing close()', async () => {
+      const { env, context } = makeEnv();
+      context.close = jest.fn(async () => {
+        throw new Error('close failed');
+      });
+      const sound = new SoundAlertController(env);
+      await sound.enable();
+      expect(() => sound.dispose()).not.toThrow();
+    });
+
+    it('can be used again after dispose (React StrictMode mounts twice)', async () => {
+      const { env, created } = makeEnv({ preference: true });
+      const sound = new SoundAlertController(env);
+      await sound.prepare();
+      sound.dispose();
+      await sound.prepare();
+      expect(created()).toBeLessThanOrEqual(2);
+      expect(await sound.notifyArrivals(['a'])).toBe(true);
+    });
+  });
+
+  it('remembers a bounded number of alerted arrivals', async () => {
+    const { env, context } = makeEnv();
+    const sound = new SoundAlertController(env);
+    await sound.enable();
+    const ids = Array.from({ length: 700 }, (_, i) => 'o' + i);
+    await sound.notifyArrivals(ids);
+    const afterBig = context.oscillators;
+    // A recent id is still remembered (no repeat chime)...
+    expect(await sound.notifyArrivals(['o699'])).toBe(false);
+    expect(context.oscillators).toBe(afterBig);
+    // ...and the memory did not grow without bound, so a very old id has aged out.
+    expect(await sound.notifyArrivals(['o0'])).toBe(true);
   });
 });

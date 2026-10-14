@@ -1,3 +1,7 @@
+import {
+  ACTIVE_ORDER_STATUSES,
+  TERMINAL_ORDER_STATUSES,
+} from "@mocha-house/domain";
 import type {
   AdminAdjustMochaBeansRequest,
   AdminApprovalRequest,
@@ -218,6 +222,11 @@ export async function submitCheckoutFromBrowser(
   return { outcome: "success", confirmation: (await response.json()) as OrderConfirmation };
 }
 
+const KNOWN_ORDER_STATUSES: ReadonlySet<string> = new Set([
+  ...ACTIVE_ORDER_STATUSES,
+  ...TERMINAL_ORDER_STATUSES,
+]);
+
 export type OrderStatusPollResult =
   | { outcome: "success"; status: OrderStatusResponse }
   | { outcome: "not-found" }
@@ -238,7 +247,7 @@ export async function pollOrderStatusFromBrowser(
   let response: Response;
   try {
     response = await fetch(
-      `${getPublicApiUrl()}/orders/${orderId}?accessToken=${encodeURIComponent(accessToken)}`,
+      `${getPublicApiUrl()}/orders/${encodeURIComponent(orderId)}?accessToken=${encodeURIComponent(accessToken)}`,
       { cache: "no-store", referrerPolicy: "no-referrer" },
     );
   } catch {
@@ -254,11 +263,20 @@ export async function pollOrderStatusFromBrowser(
 
   try {
     const body: unknown = await response.json();
+    // Anything that is not a well-formed order (including a status this page
+    // does not know) is a failed poll, never data the page could crash on.
+    const candidate = body as {
+      orderId?: unknown;
+      status?: unknown;
+      lines?: unknown;
+    } | null;
     if (
-      typeof body !== "object" ||
-      body === null ||
-      typeof (body as { orderId?: unknown }).orderId !== "string" ||
-      typeof (body as { status?: unknown }).status !== "string"
+      typeof candidate !== "object" ||
+      candidate === null ||
+      typeof candidate.orderId !== "string" ||
+      typeof candidate.status !== "string" ||
+      !KNOWN_ORDER_STATUSES.has(candidate.status) ||
+      !Array.isArray(candidate.lines)
     ) {
       return { outcome: "error" };
     }

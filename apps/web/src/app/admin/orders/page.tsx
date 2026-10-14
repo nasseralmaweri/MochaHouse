@@ -196,6 +196,8 @@ function OrdersQueue({
   // if the browser refuses, the toggle asks for a tap.
   useEffect(() => {
     void sound.prepare();
+    // Release the audio context when the queue goes away.
+    return () => sound.dispose();
   }, [sound]);
 
   const orders = snapshot.data;

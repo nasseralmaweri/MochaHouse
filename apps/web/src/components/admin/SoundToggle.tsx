@@ -43,10 +43,16 @@ export function SoundToggle({
   if (state === "needs-gesture") {
     return (
       <span className="flex flex-col items-end gap-1">
-        <Button onClick={() => void controller.enable()}>
+        <Button
+          onClick={() => void controller.enable()}
+          aria-describedby="sound-needs-tap"
+        >
           Tap to turn sound on
         </Button>
-        <span className="max-w-56 text-right text-xs text-text-muted">
+        <span
+          id="sound-needs-tap"
+          className="max-w-56 text-right text-xs text-text-muted"
+        >
           Sound was on, but this browser needs a tap before it will play.
         </span>
       </span>

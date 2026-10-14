@@ -477,7 +477,12 @@ describe('deriveConnection', () => {
   it('classifies each state', () => {
     expect(deriveConnection(base)).toBe('live');
     expect(deriveConnection({ ...base, failures: 1 })).toBe('degraded');
-    expect(deriveConnection({ ...base, lastSuccessAt: 70_000 })).toBe('stale');
+    // Old data with nothing failing is "catching up", not an outage...
+    expect(deriveConnection({ ...base, lastSuccessAt: 70_000 })).toBe('catching-up');
+    // ...old data while requests are failing is "stale".
+    expect(
+      deriveConnection({ ...base, lastSuccessAt: 70_000, failures: 1 }),
+    ).toBe('stale');
     expect(deriveConnection({ ...base, online: false })).toBe('offline');
     expect(deriveConnection({ ...base, forbidden: true })).toBe('forbidden');
     expect(deriveConnection({ ...base, lastSuccessAt: null })).toBe('loading');
@@ -488,24 +493,28 @@ describe('deriveConnection', () => {
 });
 
 describe('PollingController: stale and resume edge cases', () => {
-  it('goes stale on the timer alone when the next poll is further away than the threshold', async () => {
+  it('is only ever "catching up" (never "stale") on the timer alone when the next poll is further away than the threshold', async () => {
     const env = new FakeEnv();
     const c = make(env, async () => ok(['a']));
+    const seen: string[] = [];
+    c.subscribe(() => seen.push(c.getSnapshot().connection));
     c.start();
     await flush();
     // A hidden tab polls every 30 s, which is not below the 30 s threshold, so
-    // the data goes stale between polls without any failed request.
+    // the data is briefly older than the threshold between polls — with no
+    // failed request, which is "catching up", never "stale".
     env.setVisible(false);
     await env.advance(29_999);
     expect(c.getSnapshot().connection).toBe('live');
     await env.advance(1);
-    // The stale timer and the next poll fire at the same instant; the poll
-    // then succeeds and the data is live again.
-    expect(['stale', 'live']).toContain(c.getSnapshot().connection);
+    // The stale timer and the next poll fire together; the poll succeeds and
+    // the data is live again. It must never have been reported as an outage.
+    expect(c.getSnapshot().connection).toBe('live');
+    expect(seen).not.toContain('stale');
     c.stop();
   });
 
-  it('shows stale immediately when a long-frozen tab becomes visible, before the refetch lands', async () => {
+  it('shows "catching up" (actions paused, no outage claimed) when a long-frozen tab becomes visible, before the refetch lands', async () => {
     const env = new FakeEnv();
     const hang = deferred<PollOutcome<string[]>>();
     const fetch = jest
@@ -520,7 +529,7 @@ describe('PollingController: stale and resume edge cases', () => {
     env.time += 600_000;
     env.setVisible(true);
     expect(c.getSnapshot()).toMatchObject({
-      connection: 'stale',
+      connection: 'catching-up',
       actionsAllowed: false,
       data: ['a'],
     });

@@ -44,13 +44,19 @@ describe('trackingDocumentTitle', () => {
 
 describe('describeTrackingConnection', () => {
   const states: ConnectionState[] = [
-    'loading', 'failed', 'live', 'degraded', 'stale', 'offline', 'forbidden', 'not-found', 'complete',
+    'loading', 'failed', 'live', 'catching-up', 'degraded', 'stale', 'offline', 'forbidden', 'not-found', 'complete',
   ];
 
   it('has wording for every connection state', () => {
     for (const state of states) {
       expect(describeTrackingConnection(state).label.length).toBeGreaterThan(0);
     }
+  });
+
+  it('does not cry outage while a tab or device is simply catching up', () => {
+    expect(describeTrackingConnection('catching-up')).toEqual(
+      describeTrackingConnection('live'),
+    );
   });
 
   it('never presents an out-of-date status as current', () => {
