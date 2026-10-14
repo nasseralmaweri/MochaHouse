@@ -283,8 +283,11 @@ export async function getActiveStoreOrdersFromBrowser(
 ): Promise<StoreOrdersResult> {
   let response: Response;
   try {
+    // no-store: this list is polled, and a cached response would present old
+    // orders as live.
     response = await fetch(
       `${INTERNAL_ADMIN_PROXY}/orders?locationId=${encodeURIComponent(locationId)}`,
+      { cache: "no-store" },
     );
   } catch {
     return { outcome: "error" };
@@ -299,10 +302,15 @@ export async function getActiveStoreOrdersFromBrowser(
   if (!response.ok) {
     return { outcome: "error" };
   }
-  return {
-    outcome: "success",
-    orders: (await response.json()) as StoreOrderSummary[],
-  };
+  try {
+    return {
+      outcome: "success",
+      orders: (await response.json()) as StoreOrderSummary[],
+    };
+  } catch {
+    // A truncated or non-JSON body is a failed poll, not a crash.
+    return { outcome: "error" };
+  }
 }
 
 export type StoreOrderDetailResult =
