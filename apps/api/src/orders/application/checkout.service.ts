@@ -45,6 +45,11 @@ import type { CustomerIdentity } from '../../customer-auth/infrastructure/custom
 import { assertValidCheckoutLines } from './validate-checkout-lines';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import {
+  chargeAttempt,
+  heldStateOf,
+  HELD_PAYMENT_MESSAGE,
+} from '../../payment/payment-charge';
+import {
   generateOrderAccessToken,
   generateOrderNumber,
 } from '../infrastructure/order-identifiers';
@@ -128,7 +133,7 @@ export class CheckoutService {
     });
 
     if (existingAttempt) {
-      return this.replayOwned(existingAttempt, tenant);
+      return this.replayOwned(existingAttempt, tenant, request.locationId);
     }
 
     // Resolved once, up front, alongside the other pre-payment steps —
@@ -271,7 +276,7 @@ export class CheckoutService {
       // fall back to whatever that request's outcome resolves to (for this
       // tenant only — the winner is ownership-checked exactly like an
       // attempt found up front).
-      return this.replayOwned(created.attempt, tenant);
+      return this.replayOwned(created.attempt, tenant, request.locationId);
     }
 
     const attempt = created.attempt;
@@ -285,38 +290,36 @@ export class CheckoutService {
       // in createOrderTransactionally below.
       await this.prisma.paymentAttempt.update({
         where: { id: attempt.id },
-        data: { status: 'SUCCEEDED', providerReference: 'no-charge' },
+        data: {
+          status: 'SUCCEEDED',
+          paymentState: 'SUCCEEDED',
+          providerReference: 'no-charge',
+        },
       });
     } else {
-      const chargeResult = await this.paymentProvider.charge({
-        idempotencyKey: request.idempotencyKey,
-        amount: chargeAmount,
-        currency: priced.currency,
-        metadata: { guestPhone: request.guest.phone },
-      });
+      // ESP-03 PR 2 — CHARGING is committed before the provider is called;
+      // a throw / timeout / pending result is held (never FAILED, never
+      // retried here); definitive outcomes are persisted conditionally.
+      const charged = await chargeAttempt(
+        this.prisma,
+        this.paymentProvider,
+        attempt,
+        {
+          amount: chargeAmount,
+          currency: priced.currency,
+          metadata: { guestPhone: request.guest.phone },
+        },
+      );
 
-      if (chargeResult.outcome !== 'succeeded') {
-        await this.prisma.paymentAttempt.update({
-          where: { id: attempt.id },
-          data: {
-            status:
-              chargeResult.outcome === 'declined' ? 'DECLINED' : 'FAILED',
-            failureReason: chargeResult.reason,
-          },
-        });
+      if (charged.kind === 'declined' || charged.kind === 'failed') {
         throw new HttpException(
-          { outcome: chargeResult.outcome, message: chargeResult.reason },
+          { outcome: charged.kind, message: charged.reason },
           HttpStatus.PAYMENT_REQUIRED,
         );
       }
-
-      await this.prisma.paymentAttempt.update({
-        where: { id: attempt.id },
-        data: {
-          status: 'SUCCEEDED',
-          providerReference: chargeResult.providerReference,
-        },
-      });
+      if (charged.kind === 'held' || charged.kind === 'not-claimed') {
+        throw new ConflictException(HELD_PAYMENT_MESSAGE);
+      }
     }
 
     let order: OrderWithRelations;
@@ -539,10 +542,7 @@ export class CheckoutService {
         tenantId,
       );
       if (gc.outcome === 'usable') {
-        const applied = Math.max(
-          0,
-          Math.min(gc.balanceMinorUnits, total),
-        );
+        const applied = Math.max(0, Math.min(gc.balanceMinorUnits, total));
         if (applied === 0) {
           giftCardStatus = 'no_balance';
           giftCardMessage =
@@ -720,7 +720,9 @@ export class CheckoutService {
       (typeof request.loyaltyRewardId !== 'string' ||
         request.loyaltyRewardId.trim().length === 0)
     ) {
-      throw new BadRequestException('loyaltyRewardId must be a reward id or null.');
+      throw new BadRequestException(
+        'loyaltyRewardId must be a reward id or null.',
+      );
     }
     if (
       request.couponCode !== undefined &&
@@ -747,16 +749,34 @@ export class CheckoutService {
   private async replayOwned(
     attempt: PaymentAttemptRow,
     tenant: TenantContext,
+    requestedLocationId: string,
   ): Promise<OrderConfirmation> {
     if (attempt.tenantId !== tenant.tenantId) {
       throw new ConflictException(
         'This idempotency key cannot be used. Start a new checkout.',
       );
     }
+    // ESP-03 PR 2 — a key is bound to the request that created it. The
+    // Location is the part of that request persisted on the attempt; a
+    // replay naming a different one is a different request reusing the key
+    // and is refused before its outcome (or any order) is revealed.
+    // (Binding the cart / guest details too needs a persisted request
+    // fingerprint, which needs a schema change — deferred.)
+    if (attempt.locationId !== requestedLocationId) {
+      throw new ConflictException(
+        'This idempotency key was already used for a different checkout. Start a new checkout.',
+      );
+    }
     return this.replay(attempt);
   }
 
   private async replay(attempt: PaymentAttemptRow): Promise<OrderConfirmation> {
+    // ESP-03 PR 2 — a charge whose outcome is not final is held: the client
+    // is told the payment is being confirmed and is never charged again.
+    if (heldStateOf(attempt) !== null) {
+      throw new ConflictException(HELD_PAYMENT_MESSAGE);
+    }
+
     if (attempt.status === 'PENDING') {
       throw new ConflictException(
         'A checkout with this idempotency key is already being processed.',
@@ -845,6 +865,7 @@ export class CheckoutService {
           locationId,
           amount,
           currency,
+          paymentState: 'NOT_SENT',
         },
       });
       return { wasCreatedByThisRequest: true, attempt };
@@ -1241,7 +1262,7 @@ function regularRewardContext(
     merchandiseAfterRegularMinorUnits: merchandiseAfterRegular,
     regularFreeItemLineIndex:
       regularPlan.discountType === 'FREE_ITEM'
-        ? regularPlan.freeItem?.lineIndex ?? null
+        ? (regularPlan.freeItem?.lineIndex ?? null)
         : null,
   };
 }
@@ -1294,7 +1315,10 @@ function orderLevelDiscountBuckets(
     });
   }
   if (rewardPlan?.rewardType === 'FIXED_AMOUNT' && rewardDiscount > 0) {
-    buckets.push({ amountMinorUnits: rewardDiscount, eligibleProductIds: null });
+    buckets.push({
+      amountMinorUnits: rewardDiscount,
+      eligibleProductIds: null,
+    });
   }
   return buckets;
 }
