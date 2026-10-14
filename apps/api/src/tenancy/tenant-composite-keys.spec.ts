@@ -20,6 +20,11 @@ import {
   type MigrationProject,
   type ScratchDatabase,
 } from '@mocha-house/testing';
+import {
+  MODELS_ADDED_LATER,
+  TENANT_RELATIONSHIPS_BEFORE_LATER_MODELS,
+} from './models-added-later';
+import { TABLES_ADDED_AFTER_4C, dataChecksum } from './historical-state';
 
 // Security 4C-2 — composite tenant keys.
 //
@@ -64,7 +69,11 @@ const PARENTS = [
       (r) => (r as { target: string }).target,
     ),
   ),
-].sort();
+]
+  // Pinned to Security 4C-2: a parent introduced later (ESP-03's
+  // PaymentReconciliationCase) was not part of that migration.
+  .filter((table) => !MODELS_ADDED_LATER.has(table))
+  .sort();
 
 // The statements inside the file's single DO block — null unless the file
 // (comments aside) is exactly one `DO $tag$ BEGIN ... END $tag$;` block.
@@ -109,29 +118,16 @@ async function tablesWithCompositeKey(url: string): Promise<string[]> {
             = ARRAY['tenantId', 'id']::name[]
       ORDER BY 1`,
   );
-  return rows.map((r) => r.table);
+  // Pinned to Security 4C-2: a parent table created later is not one of its keys.
+  return rows
+    .map((r) => r.table)
+    .filter((table) => !TABLES_ADDED_AFTER_4C.has(table));
 }
 
 // Every index and constraint definition in the public schema.
 const catalog = databaseCatalog;
 
 // A checksum of every row of every table (excluding Prisma's own history).
-async function dataChecksum(url: string): Promise<string> {
-  return withScratchClient(url, async (client) => {
-    const { rows: tables } = await client.query<{ name: string }>(
-      `SELECT tablename AS name FROM pg_tables
-        WHERE schemaname = 'public' AND tablename <> '_prisma_migrations' ORDER BY 1`,
-    );
-    const parts: string[] = [];
-    for (const { name } of tables) {
-      const { rows } = await client.query<{ sum: string }>(
-        `SELECT md5(coalesce(string_agg(t::text, '|' ORDER BY t::text), '')) AS sum FROM "${name}" t`,
-      );
-      parts.push(`${name}:${rows[0].sum}`);
-    }
-    return parts.join(',');
-  });
-}
 
 // Fictional two-business data in the parent tables the fixture touches.
 const FIXTURE = `
@@ -163,6 +159,7 @@ describe('Composite tenant keys (Security 4C-2)', () => {
     const declared = [...schema.matchAll(/^model (\w+) \{\n([\s\S]*?)^\}/gm)]
       .filter((m) => /@@unique\(\[tenantId, id\]\)/.test(m[2]))
       .map((m) => m[1])
+      .filter((table) => !MODELS_ADDED_LATER.has(table))
       .sort();
     expect(declared).toEqual(PARENTS);
   });
@@ -297,7 +294,10 @@ describe('Composite tenant keys (Security 4C-2)', () => {
       await relink('ck-loc-b');
       try {
         const report = await withScratchClient(scratch.url, (client) =>
-          checkTenantIntegrity(client, { sampleLimit: 1 }),
+          checkTenantIntegrity(client, {
+            sampleLimit: 1,
+            relationships: TENANT_RELATIONSHIPS_BEFORE_LATER_MODELS,
+          }),
         );
         expect(
           report.findings.map(

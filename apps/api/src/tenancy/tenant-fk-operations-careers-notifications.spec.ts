@@ -25,6 +25,7 @@ import {
   type MigrationProject,
   type ScratchDatabase,
 } from '@mocha-house/testing';
+import { dataChecksum } from './historical-state';
 
 // Security 4C-7 — PostgreSQL-enforced tenant isolation for the remaining
 // operational records (checklists, tasks, careers, franchising and
@@ -491,22 +492,6 @@ async function loadFixture(url: string) {
 }
 
 // A checksum of every row of every table (excluding Prisma's own history).
-async function dataChecksum(url: string): Promise<string> {
-  return withScratchClient(url, async (client) => {
-    const { rows: tables } = await client.query<{ name: string }>(
-      `SELECT tablename AS name FROM pg_tables
-        WHERE schemaname = 'public' AND tablename <> '_prisma_migrations' ORDER BY 1`,
-    );
-    const parts: string[] = [];
-    for (const { name } of tables) {
-      const { rows } = await client.query<{ sum: string }>(
-        `SELECT md5(coalesce(string_agg(t::text, '|' ORDER BY t::text), '')) AS sum FROM "${name}" t`,
-      );
-      parts.push(`${name}:${rows[0].sum}`);
-    }
-    return parts.join(',');
-  });
-}
 
 // Runs `sql` in a transaction that is always rolled back; returns 'ok' or
 // the PostgreSQL error code and constraint.
@@ -1530,8 +1515,14 @@ describe('Tenant-enforced operations, careers, franchising and notifications (Se
         (r) =>
           `${r.finished ? 'finished' : 'unfinished'}${r.rolled_back ? '+rolled-back' : ''}`,
       );
-    const noDrift = async (url: string) =>
-      (
+    // schema.prisma describes the NEWEST migration, so any later one (ESP-03's
+    // payment recovery foundation) is applied first by the real runner — the
+    // same approach as the Security 4C-6 suite — and then the database and the
+    // schema must agree exactly.
+    const noDrift = async (url: string) => {
+      const later = await prisma(url, ['migrate', 'deploy']);
+      if (later.code !== 0) return later.code;
+      return (
         await prisma(url, [
           'migrate',
           'diff',
@@ -1541,6 +1532,7 @@ describe('Tenant-enforced operations, careers, franchising and notifications (Se
           '--exit-code',
         ])
       ).code;
+    };
     const enforcement = (url: string) =>
       withScratchClient(url, tenantEnforcement);
 

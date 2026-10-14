@@ -25,6 +25,7 @@ import {
   type MigrationProject,
   type ScratchDatabase,
 } from '@mocha-house/testing';
+import { dataChecksum } from './historical-state';
 
 // Security 4C-6 — PostgreSQL-enforced tenant isolation for the catalog
 // (categories, products, modifiers, menus, location menus and overrides),
@@ -501,6 +502,7 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
   });
   // Orders and their product snapshots.
   await prisma.paymentAttempt.create({
+    select: { id: true },
     data: {
       id: i('pay'),
       tenantId,
@@ -615,22 +617,6 @@ async function loadFixture(url: string) {
 }
 
 // A checksum of every row of every table (excluding Prisma's own history).
-async function dataChecksum(url: string): Promise<string> {
-  return withScratchClient(url, async (client) => {
-    const { rows: tables } = await client.query<{ name: string }>(
-      `SELECT tablename AS name FROM pg_tables
-        WHERE schemaname = 'public' AND tablename <> '_prisma_migrations' ORDER BY 1`,
-    );
-    const parts: string[] = [];
-    for (const { name } of tables) {
-      const { rows } = await client.query<{ sum: string }>(
-        `SELECT md5(coalesce(string_agg(t::text, '|' ORDER BY t::text), '')) AS sum FROM "${name}" t`,
-      );
-      parts.push(`${name}:${rows[0].sum}`);
-    }
-    return parts.join(',');
-  });
-}
 
 // Prices, availability, menus and the product snapshots of every order.
 async function catalogState(url: string): Promise<string> {
