@@ -239,6 +239,7 @@ describe('Admin internal user access assignment (integration)', () => {
       'locations.view',
       'orders.view',
       'orders.manage_status',
+      'orders.cancel',
       'catalog.overrides.manage',
       'locations.manage_digital_ordering',
       'operations.view',
@@ -404,6 +405,8 @@ describe('Admin internal user access assignment (integration)', () => {
         'operations.exceptions.manage',
         'orders.manage_status',
         'orders.view',
+        // R1 / S5b
+        'orders.cancel',
       ].sort(),
     );
   });

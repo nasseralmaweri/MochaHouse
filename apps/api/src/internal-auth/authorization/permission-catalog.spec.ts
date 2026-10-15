@@ -20,6 +20,8 @@ describe('internal permission catalog', () => {
         'locations.manage_digital_ordering',
         'orders.manage_status',
         'orders.view',
+        // R1 / S5b
+        'orders.cancel',
         // Milestone 5E-1
         'users.view',
         // Milestone 5E-2
@@ -188,6 +190,8 @@ describe('internal permission catalog', () => {
     for (const key of [
       'orders.view',
       'orders.manage_status',
+      // R1 / S5b — a store manager may reject / cancel at their locations.
+      'orders.cancel',
       'catalog.overrides.manage',
       'locations.view',
       'locations.manage_digital_ordering',

@@ -13,6 +13,19 @@ export class PermanentNotificationError extends Error {
   }
 }
 
+// R1 / S5b — the message must deliberately NOT be sent, because what it
+// announces is no longer true (a READY notice for an order that was rejected
+// or cancelled). Not a failure: the event is completed without sending.
+export class SuppressedNotification extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'SuppressedNotification';
+  }
+}
+
 // The email provider ANSWERED and refused the message, so nothing was sent.
 // `retryable` separates throttling / outages (try again) from a rejection that
 // will never succeed (invalid parameter, rejected message).

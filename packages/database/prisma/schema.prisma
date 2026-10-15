@@ -797,6 +797,10 @@ model Order {
   giftCardRedemption      OrderGiftCardRedemption?
   giftCardTransactions    GiftCardTransaction[]
   // R1 / S5a — present only on a REJECTED / CANCELLED order (written by S5b).
+  // R1 / S5b — an Order can never be INSERTED already REJECTED / CANCELLED
+  // (BEFORE INSERT trigger Order_insert_not_closed, migration
+  // 20261020090000_order_closure_writer_guards): those statuses are reached
+  // only by the closure workflow updating an existing order.
   closure                 OrderClosure?
   refundObligation        OrderRefundObligation?
 
@@ -888,6 +892,13 @@ model OrderClosure {
 // (order, closure, attempt, amount, currency, tenant) is immutable and a
 // REFUNDED row is frozen, both enforced by triggers. A gift-card tender is
 // never refunded here; it is restored to the card by a ledger entry.
+//
+// R1 / S5b (migration 20261020090000_order_closure_writer_guards): a
+// MANUAL_EXTERNAL settlement also needs `settlementReference` (the evidence;
+// CHECK OrderRefundObligation_manual_evidence_check) and must be recorded by
+// someone other than the staff member who closed the order (trigger
+// OrderRefundObligation_settler_not_closer). The S5b writer creates
+// obligations DUE and never settles them.
 model OrderRefundObligation {
   id                      String         @id @default(uuid(7))
   orderId                 String         @unique

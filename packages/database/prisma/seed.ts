@@ -443,6 +443,11 @@ async function seedMochaHouseBusinessData(
     'locations.view',
     'orders.view',
     'orders.manage_status',
+    // R1 / S5b — a Store Manager may reject or cancel an order at the
+    // locations they run. Seeded only for a NEW role (create-once, like every
+    // key here); an existing deployment grants it through the Administration
+    // UI. Inert while ORDER_CLOSURE_ENABLED is off.
+    'orders.cancel',
     'catalog.overrides.manage',
     'locations.manage_digital_ordering',
     // Milestone 6A — a Store Manager's home is the Store Operations
