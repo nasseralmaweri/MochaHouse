@@ -1,10 +1,12 @@
 import { GIFT_CARD_MAX_VALUE_MINOR_UNITS } from "@mocha-house/contracts";
 import type {
   AdjustGiftCardBalanceRequest,
+  AdminGiftCardDetail,
   IssueGiftCardRequest,
   UpdateGiftCardConfigurationRequest,
 } from "@mocha-house/contracts";
-import { parseDollarInput } from "@/lib/money";
+import type { GiftCardMutationResult } from "@/lib/api-client";
+import { formatPrice, parseDollarInput } from "@/lib/money";
 
 // The ONE place the HQ gift-card forms' client-side validation and request
 // shaping live (Milestone 7F). The API
@@ -88,6 +90,99 @@ export function correctionWouldBeOutOfRange(
 ): boolean {
   const next = currentBalanceMinorUnits + deltaMinorUnits;
   return next < 0 || next > GIFT_CARD_MAX_VALUE_MINOR_UNITS;
+}
+
+// SC0.5c — the API's stable code for an operationKey already applied to a
+// DIFFERENT correction (another card, amount, direction or reason).
+export const GIFT_CARD_OPERATION_KEY_CONFLICT =
+  "GIFT_CARD_OPERATION_KEY_CONFLICT";
+
+// SC0.5d — what the correction form does after a submission's result. Pure,
+// so every branch is unit-tested; the form only applies it. It never
+// resubmits: the next request only ever comes from the operator.
+//
+//   success          -> new key (the next correction is a new operation),
+//                       inputs cleared, card refreshed.
+//   key conflict     -> the key is spent on a correction that is NOT this
+//                       one: new key, inputs KEPT, card refreshed so the
+//                       ledger shows what was really applied, and the
+//                       operator must confirm they reviewed it first.
+//   anything else    -> the SAME key and inputs. A network error, timeout or
+//   (incl. network,     5xx may have been applied server-side; resubmitting
+//    timeout, 5xx)      with the same key is then a safe replay, never a
+//                       second correction.
+export interface CorrectionStep {
+  operationKey: string;
+  clearInputs: boolean;
+  refresh: boolean;
+  reviewRequired: boolean;
+  error: string | null;
+  notice: string | null;
+}
+
+export function correctionStepAfter(
+  result: GiftCardMutationResult<AdminGiftCardDetail>,
+  currentOperationKey: string,
+  newOperationKey: () => string,
+): CorrectionStep {
+  const keep = {
+    operationKey: currentOperationKey,
+    clearInputs: false,
+    refresh: false,
+    reviewRequired: false,
+    notice: null,
+  };
+  switch (result.outcome) {
+    case "success":
+      return {
+        operationKey: newOperationKey(),
+        clearInputs: true,
+        refresh: true,
+        reviewRequired: false,
+        error: null,
+        notice: `Balance is now ${formatPrice(
+          result.data.giftCard.balanceMinorUnits,
+          result.data.giftCard.currency,
+        )}.`,
+      };
+    case "conflict":
+      if (result.code === GIFT_CARD_OPERATION_KEY_CONFLICT) {
+        return {
+          operationKey: newOperationKey(),
+          clearInputs: false,
+          refresh: true,
+          reviewRequired: true,
+          error: result.message,
+          notice: null,
+        };
+      }
+      return { ...keep, error: result.message };
+    case "forbidden":
+      return {
+        ...keep,
+        error: "You don't have permission to correct gift-card balances.",
+      };
+    case "not-found":
+      return { ...keep, error: "This gift card no longer exists." };
+    default:
+      // invalid / error carry a business-safe message.
+      return { ...keep, error: result.message };
+  }
+}
+
+// After a key conflict the operator must confirm they reviewed the refreshed
+// balance and ledger — only once the refresh has actually landed — before
+// the form will submit again.
+export function canSubmitCorrection(state: {
+  pending: boolean;
+  reviewRequired: boolean;
+  reviewed: boolean;
+  refreshing: boolean;
+}): boolean {
+  if (state.pending) {
+    return false;
+  }
+  return !state.reviewRequired || (state.reviewed && !state.refreshing);
 }
 
 // --- Configuration ----------------------------------------------
