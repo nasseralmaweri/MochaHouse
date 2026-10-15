@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
+import { OutboxConfigModule } from '../outbox/outbox-config.module';
 import { Test, TestingModule } from '@nestjs/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import {
@@ -101,7 +102,7 @@ describe('Notification business branding', () => {
 
     beforeAll(async () => {
       moduleRef = await Test.createTestingModule({
-        imports: [PrismaModule],
+        imports: [PrismaModule, OutboxConfigModule],
         providers: [
           NotificationDispatchService,
           NotificationRecipientResolver,

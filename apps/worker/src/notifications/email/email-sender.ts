@@ -12,12 +12,21 @@ export interface SendEmailInput {
   subject: string;
   html: string;
   text: string;
+  // R1 / S4b — aborted by the caller when the attempt outruns its timeout. An
+  // aborted send is an AMBIGUOUS outcome: the provider may have accepted it.
+  abortSignal?: AbortSignal;
 }
 
 export interface SendEmailResult {
   providerMessageId?: string;
 }
 
+// Contract for failures (R1 / S4b): throw EmailProviderRejection when the
+// provider ANSWERED and did not accept the message (or when the send was refused
+// before any request left the process) — that is a DEFINITE failure and nothing
+// was sent. Any other thrown error (timeout, connection loss, an unrecognised
+// failure) is treated by the worker as AMBIGUOUS. A resolved promise means the
+// provider ACCEPTED the message; it does not mean the recipient received it.
 export interface EmailSender {
   send(input: SendEmailInput): Promise<SendEmailResult>;
 }

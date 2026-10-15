@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
+import { OutboxStore } from '../outbox/outbox-store';
+import { OutboxConfigModule } from '../outbox/outbox-config.module';
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   TENANT_1_MOCHA_HOUSE_ID,
@@ -46,7 +48,7 @@ describe('Worker TenantContext (integration)', () => {
       process.env.SINGLE_TENANT_ID = tenantId;
     }
     return Test.createTestingModule({
-      imports: [PrismaModule, WorkerTenancyModule],
+      imports: [PrismaModule, WorkerTenancyModule, OutboxConfigModule],
       providers: (extra.providers ?? []) as never[],
     })
       .overrideProvider(PrismaService)
@@ -154,13 +156,21 @@ describe('Worker TenantContext (integration)', () => {
       const seen = new Map<string, TenantContext | undefined>();
       const dispatch = jest.fn((event: { id: string }) => {
         seen.set(event.id, getCurrentTenantContext());
-        return Promise.resolve();
+        return Promise.resolve({ kind: 'no-handler' });
       });
 
       const moduleRef = await compileWith(TENANT_1_MOCHA_HOUSE_ID, {
         providers: [
+          OutboxStore,
           OutboxProcessorService,
-          { provide: NotificationDispatchService, useValue: { dispatch } },
+          {
+            provide: NotificationDispatchService,
+            useValue: {
+              dispatch,
+              hasAcceptedDelivery: () => Promise.resolve(false),
+              failDelivery: () => Promise.resolve(),
+            },
+          },
         ],
       });
       const processor = moduleRef.get(OutboxProcessorService);
