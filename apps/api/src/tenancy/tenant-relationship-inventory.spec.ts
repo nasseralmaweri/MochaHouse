@@ -262,7 +262,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(relationsBetweenBusinessRecords).toHaveLength(90);
+    expect(relationsBetweenBusinessRecords).toHaveLength(96);
     expect(
       relationsBetweenBusinessRecords
         .filter((r) => !isTenantEnforced(r))
@@ -347,6 +347,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'Order.customerId',
       'Order.locationId',
       'Order.paymentAttemptId',
+      'OrderClosure.actorInternalUserId',
+      'OrderClosure.orderId',
       'OrderGiftCardRedemption.orderId',
       'OrderLine.orderId',
       'OrderLoyaltyBonus.orderId',
@@ -354,6 +356,10 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'OrderLoyaltyRewardRedemption.orderId',
       'OrderPromotionRedemption.customerId',
       'OrderPromotionRedemption.orderId',
+      'OrderRefundObligation.closureId',
+      'OrderRefundObligation.orderId',
+      'OrderRefundObligation.paymentAttemptId',
+      'OrderRefundObligation.settledByInternalUserId',
       'OrderStatusHistory.orderId',
       'PaymentAttempt.locationId',
       'PaymentReconciliationCase.assigneeInternalUserId',
@@ -398,7 +404,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(plainIdColumns).toHaveLength(13);
+    expect(plainIdColumns).toHaveLength(14);
   });
 
   it('classifies every JSON column on business-owned records', () => {
@@ -499,13 +505,13 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       external: count((r) => r.kind === 'external-identifier'),
       total: TENANT_RELATIONSHIPS.length,
     }).toEqual({
-      compositeWithForeignKey: 90,
+      compositeWithForeignKey: 96,
       compositeWithoutForeignKey: 0,
       historicalSnapshot: 8,
       polymorphic: 4,
       json: 7,
-      external: 1,
-      total: 110,
+      external: 2,
+      total: 117,
     });
     // Optional relationships are present and marked optional.
     const optionalForeignKeys = relationsBetweenBusinessRecords.filter(

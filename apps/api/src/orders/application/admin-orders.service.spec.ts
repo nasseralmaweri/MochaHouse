@@ -447,6 +447,94 @@ describe('AdminOrdersService (integration)', () => {
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
+  // R1 / S5a: nothing writes REJECTED / CANCELLED yet, so an order is moved
+  // there directly (as the S5b writer will) to prove the existing paths treat
+  // it as terminal: no advance, no queue, and the customer can still read it.
+  it.each(['REJECTED', 'CANCELLED'] as const)(
+    'never advances a %s order, hides it from the queue, and still reports it to the customer',
+    async (closed) => {
+      const confirmation = await createOrder();
+      // Nothing writes a closed status yet (S5b), and a real closure is
+      // append-only (it would pin this fixture order forever). So the status
+      // is set with the database's own closure/freeze triggers bypassed for
+      // this one transaction, exactly the state the S5b writer will produce.
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `SET LOCAL session_replication_role = replica`,
+        );
+        await tx.order.update({
+          where: { id: confirmation.orderId },
+          data: { status: closed },
+        });
+      });
+      const historyBefore = await prisma.orderStatusHistory.count({
+        where: { orderId: confirmation.orderId },
+      });
+
+      // The caller names the closed status it saw: still no step to take.
+      await expect(
+        adminOrdersService.advance(
+          confirmation.orderId,
+          locationId,
+          closed,
+          corporate,
+          t1,
+        ),
+      ).rejects.toThrow(new RegExp(`already ${closed.toLowerCase()}`));
+      // A stale caller naming any pipeline status is a plain conflict.
+      for (const stale of ['RECEIVED', 'ACCEPTED', 'PREPARING', 'READY']) {
+        await expect(
+          adminOrdersService.advance(
+            confirmation.orderId,
+            locationId,
+            stale,
+            corporate,
+            t1,
+          ),
+        ).rejects.toBeInstanceOf(ConflictException);
+      }
+
+      const after = await prisma.order.findUniqueOrThrow({
+        where: { id: confirmation.orderId },
+      });
+      expect(after.status).toBe(closed);
+      expect(
+        await prisma.orderStatusHistory.count({
+          where: { orderId: confirmation.orderId },
+        }),
+      ).toBe(historyBefore);
+
+      const activeOrders = await adminOrdersService.listActive(
+        locationId,
+        corporate,
+        t1,
+      );
+      expect(activeOrders.some((o) => o.orderId === confirmation.orderId)).toBe(
+        false,
+      );
+
+      const status = await checkoutService.getStatus(
+        confirmation.orderId,
+        confirmation.accessToken,
+        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      );
+      expect(status.status).toBe(closed);
+      expect(status.paymentStatus).toBe('SUCCEEDED');
+    },
+  );
+
+  it('a client can never name REJECTED or CANCELLED as a target: advance only ever steps the pipeline', async () => {
+    const confirmation = await createOrder();
+    const result = await adminOrdersService.advance(
+      confirmation.orderId,
+      locationId,
+      'RECEIVED',
+      corporate,
+      t1,
+    );
+    expect(result.status).toBe('ACCEPTED');
+  });
+
   it('a retried advance call with the same expectedStatus does not duplicate history', async () => {
     const confirmation = await createOrder();
 

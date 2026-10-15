@@ -46,6 +46,16 @@ describe('pollOrderStatusFromBrowser', () => {
     expect(result).toEqual({ outcome: 'success', status: validOrder });
   });
 
+  it.each(['REJECTED', 'CANCELLED'])(
+    'accepts a %s order as a successful poll, not a failed one',
+    async (status) => {
+      const closed = { ...validOrder, status };
+      fetchMock.mockResolvedValue(respond(200, closed));
+      const result = await pollOrderStatusFromBrowser('o1');
+      expect(result).toEqual({ outcome: 'success', status: closed });
+    },
+  );
+
   it('polls the same-origin route with no credential in the URL, no caching, no Referer', async () => {
     fetchMock.mockResolvedValue(respond(200, validOrder));
     await pollOrderStatusFromBrowser('../x/y');

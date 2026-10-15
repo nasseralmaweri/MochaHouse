@@ -9,7 +9,11 @@ import type {
   StoreOrderDetail,
   StoreOrderSummary,
 } from '@mocha-house/contracts';
-import { ACTIVE_ORDER_STATUSES, nextOrderStatus } from '@mocha-house/domain';
+import {
+  ACTIVE_ORDER_STATUSES,
+  ALL_ORDER_STATUSES,
+  nextOrderStatus,
+} from '@mocha-house/domain';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma, type TenantContext } from '@mocha-house/database';
 import {
@@ -24,13 +28,14 @@ import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 
 type OrderWithLines = Prisma.OrderGetPayload<{ include: { lines: true } }>;
 
-const VALID_ORDER_STATUSES: ReadonlySet<string> = new Set([
-  'RECEIVED',
-  'ACCEPTED',
-  'PREPARING',
-  'READY',
-  'COMPLETED',
-]);
+// The statuses a client may NAME as the status it last saw (the
+// optimistic-concurrency token of "advance"). REJECTED and CANCELLED are real
+// statuses an order can hold once S5b ships, but they are terminal: nothing
+// advances from them, so a client naming one is told the order already moved
+// (409) by the normal "expected status" mismatch, never accepted as a step.
+const VALID_ORDER_STATUSES: ReadonlySet<string> = new Set<OrderStatus>(
+  ALL_ORDER_STATUSES,
+);
 
 function assertValidOrderStatus(value: string): asserts value is OrderStatus {
   if (!VALID_ORDER_STATUSES.has(value)) {
@@ -199,7 +204,10 @@ export class AdminOrdersService {
 
     const target = nextOrderStatus(order.status);
     if (target === null) {
-      throw new ConflictException('Order is already completed.');
+      // COMPLETED, REJECTED or CANCELLED: all terminal, none advances.
+      throw new ConflictException(
+        `Order is already ${order.status.toLowerCase()}.`,
+      );
     }
 
     const result = await this.prisma.$transaction(async (tx) => {

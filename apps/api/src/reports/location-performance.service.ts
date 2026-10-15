@@ -5,6 +5,7 @@ import type {
   OrderStatus,
 } from '@mocha-house/contracts';
 import type { TenantContext } from '@mocha-house/database';
+import { isCommercialSaleOrderStatus } from '@mocha-house/domain';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthorizationContext } from '../internal-auth/authorization/authorization-context';
 import {
@@ -81,16 +82,21 @@ export class LocationPerformanceReportService {
         completedOrders: 0,
         digitalSalesMinorUnits: 0,
       };
-      const count = group._count._all;
-      const netForGroup =
-        (group._sum.subtotal ?? 0) -
-        (group._sum.promotionDiscountMinorUnits ?? 0) -
-        (group._sum.rewardDiscountMinorUnits ?? 0);
+      // A location with only rejected / cancelled orders still has history in
+      // the period (so an inactive one still appears), but those orders are not
+      // sales: they add nothing to the counts or the money.
+      if (isCommercialSaleOrderStatus(group.status)) {
+        const count = group._count._all;
+        const netForGroup =
+          (group._sum.subtotal ?? 0) -
+          (group._sum.promotionDiscountMinorUnits ?? 0) -
+          (group._sum.rewardDiscountMinorUnits ?? 0);
 
-      current.totalOrders += count;
-      current.digitalSalesMinorUnits += netForGroup;
-      if ((group.status as OrderStatus) === 'COMPLETED') {
-        current.completedOrders += count;
+        current.totalOrders += count;
+        current.digitalSalesMinorUnits += netForGroup;
+        if ((group.status as OrderStatus) === 'COMPLETED') {
+          current.completedOrders += count;
+        }
       }
       totalsByLocation.set(group.locationId, current);
     }

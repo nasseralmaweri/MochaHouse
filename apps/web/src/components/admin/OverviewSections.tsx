@@ -100,6 +100,8 @@ const STATUS_ORDER: OrderStatus[] = [
   "PREPARING",
   "READY",
   "COMPLETED",
+  "REJECTED",
+  "CANCELLED",
 ];
 
 // A ramp of the accent for in-progress statuses, the full accent for
@@ -116,6 +118,13 @@ const STATUS_BAR_STYLE: Record<OrderStatus, React.CSSProperties> = {
   },
   READY: { background: "color-mix(in srgb, var(--accent) 62%, transparent)" },
   COMPLETED: { background: "var(--accent)" },
+  // Closed orders are not progress toward a sale: a neutral, non-accent tone.
+  REJECTED: {
+    background: "color-mix(in srgb, var(--text-muted) 35%, transparent)",
+  },
+  CANCELLED: {
+    background: "color-mix(in srgb, var(--text-muted) 22%, transparent)",
+  },
 };
 
 function Figure({

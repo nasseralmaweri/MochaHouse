@@ -6,6 +6,7 @@ import type {
   AdminReportDataSource,
   OrderStatus,
 } from '@mocha-house/contracts';
+import { ALL_ORDER_STATUSES } from '@mocha-house/domain';
 import { escapeCsvCell, numericCsvCell } from './csv-serializer';
 
 // Milestone 9E — pure, side-effect-free mappers from an already-computed,
@@ -60,13 +61,7 @@ function minorUnitsToDecimalString(minorUnits: number): string {
   return `${sign}${whole}.${String(cents).padStart(2, '0')}`;
 }
 
-const ORDER_STATUS_ORDER: readonly OrderStatus[] = [
-  'RECEIVED',
-  'ACCEPTED',
-  'PREPARING',
-  'READY',
-  'COMPLETED',
-];
+const ORDER_STATUS_ORDER: readonly OrderStatus[] = ALL_ORDER_STATUSES;
 
 const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   RECEIVED: 'Received',
@@ -74,6 +69,8 @@ const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   PREPARING: 'Preparing',
   READY: 'Ready',
   COMPLETED: 'Completed',
+  REJECTED: 'Rejected',
+  CANCELLED: 'Cancelled',
 };
 
 // Milestone 9A — Digital Sales & Orders. Not tabular in the JSON, so the
@@ -118,6 +115,19 @@ export function ordersOverviewCsvRows(
       escapeCsvCell(ORDER_STATUS_LABEL[status]),
       numericCsvCell(report.statusBreakdown[status]),
     ]),
+    // Only when it matters (R1 / S5a): the breakdown above lists every order,
+    // the figures above it are commercial sales only.
+    ...(report.statusBreakdown.REJECTED + report.statusBreakdown.CANCELLED > 0
+      ? [
+          BLANK_ROW,
+          [
+            escapeCsvCell('Note'),
+            escapeCsvCell(
+              'Total Orders, Digital Sales and Average Order Value exclude Rejected and Cancelled orders.',
+            ),
+          ],
+        ]
+      : []),
   ];
 }
 

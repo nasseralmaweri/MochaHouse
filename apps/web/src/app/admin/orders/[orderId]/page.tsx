@@ -28,6 +28,9 @@ const NEXT_ACTION_LABEL: Record<OrderStatus, string | null> = {
   PREPARING: "Mark ready",
   READY: "Complete",
   COMPLETED: null,
+  // Closed orders are terminal: nothing advances from them.
+  REJECTED: null,
+  CANCELLED: null,
 };
 
 // Order detail, inside the shared Admin shell. Location comes from the

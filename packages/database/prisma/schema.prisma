@@ -75,6 +75,8 @@ model Tenant {
   paymentAttempts                      PaymentAttempt[]
   paymentReconciliationCases           PaymentReconciliationCase[]
   paymentReconciliationEvents          PaymentReconciliationEvent[]
+  orderClosures                        OrderClosure[]
+  orderRefundObligations               OrderRefundObligation[]
   orders                               Order[]
   orderLines                           OrderLine[]
   orderStatusHistories                 OrderStatusHistory[]
@@ -532,6 +534,16 @@ enum OrderStatus {
   PREPARING
   READY
   COMPLETED
+  // R1 / S5a — terminal states for an order the shop turned away (REJECTED,
+  // only from RECEIVED) or called off after accepting it (CANCELLED, from
+  // ACCEPTED / PREPARING / READY). Both are TERMINAL like COMPLETED. S5a only
+  // adds the values and the records around them (OrderClosure,
+  // OrderRefundObligation, the ledger reversal types): NOTHING writes either
+  // status yet, no API can reach them, and no benefit is reversed. The writer
+  // arrives in S5b. Postgres cannot remove an enum value, so rolling back
+  // means "stop using them", never "drop them".
+  REJECTED
+  CANCELLED
 }
 
 enum OutboxEventStatus {
@@ -612,6 +624,8 @@ model PaymentAttempt {
   // table — declarative cross-table enforcement, not programmer convention.
   order            Order?
   reconciliationCase PaymentReconciliationCase?
+  // R1 / S5a — at most one refund obligation, through its Order.
+  refundObligations OrderRefundObligation[]
   // Security 4C-3 — the checkout location, now a composite foreign key: a
   // payment attempt can only name a Location of its own business. Locations
   // are never deleted while a payment references them (Restrict, like
@@ -782,6 +796,9 @@ model Order {
   promotionRedemption     OrderPromotionRedemption?
   giftCardRedemption      OrderGiftCardRedemption?
   giftCardTransactions    GiftCardTransaction[]
+  // R1 / S5a — present only on a REJECTED / CANCELLED order (written by S5b).
+  closure                 OrderClosure?
+  refundObligation        OrderRefundObligation?
 
   // Milestone S0D-1 / S0D-2C-1 — the owning tenant. REQUIRED since
   // S0D-2C-1: copied from its PaymentAttempt, whose tenant is that of the
@@ -799,6 +816,116 @@ model Order {
   @@index([locationId])
   @@index([customerId])
   @@index([tenantId])
+}
+
+// --- R1 / S5a, order closure foundation ---------------------------
+// The permanent record that an order was REJECTED (turned away while still
+// RECEIVED) or CANCELLED (called off after acceptance). ONE immutable row per
+// order, written by the S5b closure writer in the SAME transaction as the
+// Order.status change, the status-history row and every benefit reversal.
+// In S5a NOTHING writes it: the table, its constraints and its triggers are
+// the foundation only.
+//
+// It is a summary SNAPSHOT, never a source of truth for money: the ledgers
+// (GiftCardTransaction, MochaBeanLedgerEntry) and the refund obligation hold
+// the actual movements. `refundDueMinorUnits` is the externally charged
+// amount owed back; `giftCardRestoredMinorUnits` the gift-card tender returned
+// to the card; `loyaltyShortfallBeans` the Beans that could not be recovered
+// because the customer had already spent them (see MochaBeanEntryType).
+//
+// Database guarantees (migration 20261019090100_order_closure_foundation):
+//   - append-only: every UPDATE and DELETE is rejected;
+//   - composite tenant keys to the Order and the acting InternalUser, plus an
+//     immutable-tenant trigger;
+//   - a deferred check that the Order's status equals `kind` and that a
+//     refund obligation exists exactly when refundDueMinorUnits > 0, with the
+//     same amount (so the summary can never disagree with the obligation).
+model OrderClosure {
+  id                         String   @id @default(uuid(7))
+  orderId                    String   @unique
+  order                      Order    @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  // REJECTED | CANCELLED (CHECK). Equals Order.status of a closed order.
+  kind                       String
+  // The status the order held when it was closed: RECEIVED for a rejection,
+  // ACCEPTED / PREPARING / READY for a cancellation (CHECK).
+  fromStatus                 OrderStatus
+  // UPPER_SNAKE machine code (CHECK); the staff-visible wording lives in code.
+  reasonCode                 String
+  // Optional free text for the audit trail, 1-500 characters (CHECK).
+  note                       String?
+  actorInternalUserId        String
+  actor                      InternalUser @relation("OrderClosureActor", fields: [tenantId, actorInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  refundDueMinorUnits        Int      @default(0)
+  giftCardRestoredMinorUnits Int      @default(0)
+  loyaltyShortfallBeans      Int      @default(0)
+  createdAt                  DateTime @default(now())
+
+  refundObligation OrderRefundObligation?
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, orderId])
+  @@index([tenantId, createdAt])
+  @@index([actorInternalUserId])
+}
+
+// R1 / S5a — money owed back to the customer on an external (card) payment
+// of a rejected or cancelled order. There is NO refund capability in the
+// payment provider yet, so an obligation is created DUE and stays DUE until a
+// person records an out-of-band refund (MANUAL_EXTERNAL) or, later, a real
+// processor refund (PROCESSOR, S5c). Nothing here moves money and nothing
+// may mark a refund REFUNDED silently: REFUNDED requires a method, a time
+// and either the staff member who recorded it or the processor's refund id
+// (CHECKs), and is terminal (trigger).
+//
+// Why not PaymentReconciliationCase: that case is unique per payment attempt
+// and describes an unresolved CHARGE; reusing it could hide an owed refund
+// behind a resolved case. This is a different obligation with its own life.
+//
+// Not append-only (it is the one mutable row of the closure): its identity
+// (order, closure, attempt, amount, currency, tenant) is immutable and a
+// REFUNDED row is frozen, both enforced by triggers. A gift-card tender is
+// never refunded here; it is restored to the card by a ledger entry.
+model OrderRefundObligation {
+  id                      String         @id @default(uuid(7))
+  orderId                 String         @unique
+  order                   Order          @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  closureId               String         @unique
+  closure                 OrderClosure   @relation(fields: [tenantId, closureId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  paymentAttemptId        String
+  paymentAttempt          PaymentAttempt @relation(fields: [tenantId, paymentAttemptId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  // Positive integer minor units (CHECK): the externally charged amount to
+  // return. Never exceeds what was charged; the writer enforces that against
+  // PaymentAttempt.amount.
+  amountMinorUnits        Int
+  currency                String
+  // DUE | PROCESSING | REFUNDED | FAILED (CHECK).
+  status                  String         @default("DUE")
+  // MANUAL_EXTERNAL | PROCESSOR; set exactly when status is REFUNDED (CHECK).
+  settlementMethod        String?
+  // Short staff note for a manual refund (a receipt or reference), 1-200.
+  settlementReference     String?
+  // The processor's refund id: PROCESSING / REFUNDED / FAILED only; unique
+  // per business so one processor refund cannot settle two obligations.
+  processorRefundId       String?
+  settledAt               DateTime?
+  settledByInternalUserId String?
+  settledBy               InternalUser?  @relation("OrderRefundObligationSettledBy", fields: [tenantId, settledByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, orderId])
+  @@unique([tenantId, closureId])
+  @@unique([tenantId, processorRefundId])
+  @@index([tenantId, status])
+  @@index([paymentAttemptId])
+  @@index([settledByInternalUserId])
 }
 
 // Immutable line snapshot captured at order-creation time: prices and
@@ -1089,6 +1216,10 @@ model InternalUser {
   auditEventsActed              InternalAuditEvent[]         @relation("InternalAuditEventActor")
   reconciliationCasesAssigned   PaymentReconciliationCase[]  @relation("PaymentReconciliationAssignee")
   reconciliationEventsActed     PaymentReconciliationEvent[] @relation("PaymentReconciliationEventActor")
+  // R1 / S5a — the order closures this user performed and the refund
+  // obligations this user settled by hand.
+  orderClosuresActed            OrderClosure[]               @relation("OrderClosureActor")
+  orderRefundsSettled           OrderRefundObligation[]      @relation("OrderRefundObligationSettledBy")
   // Milestone 7A — the manual Mocha Bean adjustments this HQ user performed.
   // onDelete: Restrict (see MochaBeanLedgerEntry) so an internal user who
   // has moved customer Beans cannot be hard-deleted and orphan that record.
@@ -1541,6 +1672,24 @@ enum MochaBeanEntryType {
   // exactly-once per order. It is separate from EARN so HQ accounting can
   // see standard vs promotional earning at a glance.
   BONUS_EARN
+  // R1 / S5a — the three reversals a rejected or cancelled order can need.
+  // Each is exactly-once per order through @@unique([type, orderId]); each
+  // has `orderId` and `actorInternalUserId` set. They are separate types
+  // (not one generic reversal) because that unique key allows one row per
+  // type per order. NOTHING writes them in S5a.
+  //   REDEEM_REVERSAL     Beans RETURNED to the customer for a redeemed
+  //                       reward; `amount` is positive.
+  //   EARN_REVERSAL       Beans RECOVERED that the order had earned;
+  //                       `amount` is negative.
+  //   BONUS_EARN_REVERSAL Bonus Beans RECOVERED; `amount` is negative.
+  // A recovery is clamped at the account's current balance (it never goes
+  // below zero); the part that could not be recovered is the SHORTFALL,
+  // recorded on OrderClosure.loyaltyShortfallBeans so the ledger, the
+  // balance and the closure always reconcile (earned - recovered =
+  // shortfall) instead of leaving an unexplained difference.
+  REDEEM_REVERSAL
+  EARN_REVERSAL
+  BONUS_EARN_REVERSAL
 }
 
 // One row per Customer. `balance` is a materialized projection of the sum
@@ -2319,6 +2468,14 @@ enum GiftCardTransactionType {
   // the OrderGiftCardRedemption snapshot. The partial unique index on
   // (orderId) WHERE type = 'REDEMPTION' makes it exactly-once per order.
   REDEMPTION
+  // R1 / S5a — value RESTORED to the card because the order it paid for was
+  // rejected or cancelled. `amountMinorUnits` is positive (exactly the order's
+  // OrderGiftCardRedemption amount), `orderId` and `actorInternalUserId` are
+  // set, and a partial unique index on (orderId) WHERE type =
+  // 'REDEMPTION_REVERSAL' makes it exactly-once per order. NOTHING writes it
+  // in S5a; the closure writer (S5b) does, in the same transaction as the
+  // status change.
+  REDEMPTION_REVERSAL
 }
 
 // One gift card. `codeHash` is the ONLY lookup path: the human code is
@@ -2393,6 +2550,8 @@ model GiftCard {
 //   - UNIQUE (orderId) WHERE type = 'REDEMPTION' — Milestone 7G: exactly one
 //     redemption entry per order, so a checkout replay can never spend the
 //     card twice.
+//   - UNIQUE (orderId) WHERE type = 'REDEMPTION_REVERSAL' — R1 / S5a: at most one
+//     restoration per order (migration 20261019090100_order_closure_foundation).
 model GiftCardTransaction {
   id                     String                  @id @default(uuid(7))
   giftCardId             String

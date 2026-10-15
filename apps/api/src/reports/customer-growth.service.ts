@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { AdminCustomerGrowthReport } from '@mocha-house/contracts';
 import type { TenantContext } from '@mocha-house/database';
+import { NON_SALE_ORDER_STATUSES } from '@mocha-house/domain';
 import { PrismaService } from '../prisma/prisma.service';
 import { businessDisplayName } from '../tenancy/business-name';
 import type { AuthorizationContext } from '../internal-auth/authorization/authorization-context';
@@ -80,6 +81,9 @@ export class CustomerGrowthReportService {
         where: {
           tenantId: tenant.tenantId,
           createdAt: { gte: start, lt: endExclusive },
+          // A rejected or cancelled order is not a purchase: it must not make
+          // a customer "with orders" or a "repeat" customer.
+          status: { notIn: [...NON_SALE_ORDER_STATUSES] },
         },
         _count: { _all: true },
       }),

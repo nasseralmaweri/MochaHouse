@@ -1,6 +1,9 @@
 import {
   ACTIVE_ORDER_STATUSES,
+  ALL_ORDER_STATUSES,
+  NON_SALE_ORDER_STATUSES,
   TERMINAL_ORDER_STATUSES,
+  isCommercialSaleOrderStatus,
   isActiveOrderStatus,
   isTerminalOrderStatus,
   nextOrderStatus,
@@ -17,15 +20,26 @@ describe('nextOrderStatus', () => {
   it('has no next status once COMPLETED', () => {
     expect(nextOrderStatus('COMPLETED')).toBeNull();
   });
+
+  it('can never advance into, or out of, REJECTED or CANCELLED', () => {
+    expect(nextOrderStatus('REJECTED')).toBeNull();
+    expect(nextOrderStatus('CANCELLED')).toBeNull();
+    for (const status of ALL_ORDER_STATUSES) {
+      expect(nextOrderStatus(status)).not.toBe('REJECTED');
+      expect(nextOrderStatus(status)).not.toBe('CANCELLED');
+    }
+  });
 });
 
 describe('isActiveOrderStatus', () => {
-  it('is true for every status except COMPLETED', () => {
+  it('is true for every in-progress status, false for every terminal one', () => {
     expect(isActiveOrderStatus('RECEIVED')).toBe(true);
     expect(isActiveOrderStatus('ACCEPTED')).toBe(true);
     expect(isActiveOrderStatus('PREPARING')).toBe(true);
     expect(isActiveOrderStatus('READY')).toBe(true);
     expect(isActiveOrderStatus('COMPLETED')).toBe(false);
+    expect(isActiveOrderStatus('REJECTED')).toBe(false);
+    expect(isActiveOrderStatus('CANCELLED')).toBe(false);
   });
 });
 
@@ -39,12 +53,50 @@ describe('active and terminal status classification', () => {
     }
     expect(
       [...ACTIVE_ORDER_STATUSES, ...TERMINAL_ORDER_STATUSES].sort(),
-    ).toEqual(['ACCEPTED', 'COMPLETED', 'PREPARING', 'READY', 'RECEIVED']);
+    ).toEqual([
+      'ACCEPTED',
+      'CANCELLED',
+      'COMPLETED',
+      'PREPARING',
+      'READY',
+      'RECEIVED',
+      'REJECTED',
+    ]);
+    expect([...ALL_ORDER_STATUSES].sort()).toEqual(
+      [...ACTIVE_ORDER_STATUSES, ...TERMINAL_ORDER_STATUSES].sort(),
+    );
   });
 
-  it('only COMPLETED is terminal today, and it is not queue work', () => {
-    expect([...TERMINAL_ORDER_STATUSES]).toEqual(['COMPLETED']);
-    expect(isTerminalOrderStatus('COMPLETED')).toBe(true);
+  it('COMPLETED, REJECTED and CANCELLED are terminal and none is queue work', () => {
+    expect([...TERMINAL_ORDER_STATUSES]).toEqual([
+      'COMPLETED',
+      'REJECTED',
+      'CANCELLED',
+    ]);
+    for (const status of TERMINAL_ORDER_STATUSES) {
+      expect(isTerminalOrderStatus(status)).toBe(true);
+      expect(isActiveOrderStatus(status)).toBe(false);
+    }
     expect(isActiveOrderStatus('READY')).toBe(true);
+  });
+});
+
+describe('commercial-sale classification', () => {
+  it('counts every in-progress and completed order as a sale, never a rejected or cancelled one', () => {
+    for (const status of [
+      'RECEIVED',
+      'ACCEPTED',
+      'PREPARING',
+      'READY',
+      'COMPLETED',
+    ] as const) {
+      expect(isCommercialSaleOrderStatus(status)).toBe(true);
+    }
+    expect(isCommercialSaleOrderStatus('REJECTED')).toBe(false);
+    expect(isCommercialSaleOrderStatus('CANCELLED')).toBe(false);
+    expect([...NON_SALE_ORDER_STATUSES].sort()).toEqual([
+      'CANCELLED',
+      'REJECTED',
+    ]);
   });
 });

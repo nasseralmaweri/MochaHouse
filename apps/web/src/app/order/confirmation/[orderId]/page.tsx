@@ -190,7 +190,10 @@ function OrderTracking({ orderId }: { orderId: string }) {
   );
 
   const status = snapshot.data;
-  const notice = describeTrackingConnection(snapshot.connection);
+  const notice = describeTrackingConnection(
+    snapshot.connection,
+    status?.status,
+  );
 
   // The tab title carries the status, so a customer on another tab can see
   // "Ready" at a glance. Order number and status only.

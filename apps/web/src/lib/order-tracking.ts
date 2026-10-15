@@ -18,7 +18,8 @@ export const TRACKING_POLL = {
   maxBackoffMs: 60_000,
 } as const;
 
-// A completed order cannot change again, so polling stops.
+// A completed, rejected or cancelled order cannot change again, so polling
+// stops.
 export function isTrackingFinal(order: OrderStatusResponse): boolean {
   return isTerminalOrderStatus(order.status);
 }
@@ -29,6 +30,8 @@ export const TRACKING_STATUS_LABEL: Record<OrderStatus, string> = {
   PREPARING: 'Preparing',
   READY: 'Ready',
   COMPLETED: 'Completed',
+  REJECTED: 'Not accepted',
+  CANCELLED: 'Cancelled',
 };
 
 const HEADLINE: Record<OrderStatus, string> = {
@@ -37,7 +40,15 @@ const HEADLINE: Record<OrderStatus, string> = {
   PREPARING: 'Your order is being prepared',
   READY: 'Your order is ready for pickup',
   COMPLETED: 'Your order is complete',
+  REJECTED: "The shop couldn't take your order",
+  CANCELLED: 'Your order was cancelled',
 };
+
+// REJECTED and CANCELLED are final like COMPLETED but are not "complete": the
+// order was not fulfilled, so the connection line must not say it was.
+export function isClosedWithoutFulfilment(status: OrderStatus): boolean {
+  return status === 'REJECTED' || status === 'CANCELLED';
+}
 
 export function statusHeadline(status: OrderStatus): string {
   return HEADLINE[status];
@@ -70,6 +81,7 @@ export interface TrackingConnectionNotice {
 // said plainly, so a stale status is never read as current.
 export function describeTrackingConnection(
   connection: ConnectionState,
+  status?: OrderStatus,
 ): TrackingConnectionNotice {
   switch (connection) {
     case 'live':
@@ -78,7 +90,13 @@ export function describeTrackingConnection(
     case 'catching-up':
       return { label: 'Updating automatically', tone: 'ok' };
     case 'complete':
-      return { label: 'This order is complete', tone: 'ok' };
+      return {
+        label:
+          status !== undefined && isClosedWithoutFulfilment(status)
+            ? 'This order is closed'
+            : 'This order is complete',
+        tone: 'ok',
+      };
     case 'degraded':
       return {
         label: 'Reconnecting… showing the latest status we have',

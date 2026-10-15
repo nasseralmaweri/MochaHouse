@@ -363,10 +363,58 @@ describe('Admin reports — orders overview (integration)', () => {
     const day = '2026-09-15';
     let locationA: string;
     let locationB: string;
+    // R1 / S5a — a separate day and locations, so the fixtures above are untouched.
+    const closedDay = '2026-09-20';
+    let locationClosedMix: string;
+    let locationClosedOnly: string;
 
     beforeAll(async () => {
       locationA = await makeLocation(`Fixture A ${suffix}`);
       locationB = await makeLocation(`Fixture B ${suffix}`);
+      locationClosedMix = await makeLocation(`Fixture Closed Mix ${suffix}`);
+      locationClosedOnly = await makeLocation(`Fixture Closed Only ${suffix}`);
+      const closedAt = new Date(
+        businessDateStartInstant(closedDay).getTime() + 60 * 60 * 1000,
+      );
+      await makeOrder({
+        locationId: locationClosedMix,
+        subtotal: 1000,
+        status: 'RECEIVED',
+        createdAt: closedAt,
+      });
+      await makeOrder({
+        locationId: locationClosedMix,
+        subtotal: 500,
+        status: 'COMPLETED',
+        createdAt: closedAt,
+      });
+      await makeOrder({
+        locationId: locationClosedMix,
+        subtotal: 7000,
+        promotionDiscountMinorUnits: 200,
+        status: 'REJECTED',
+        createdAt: closedAt,
+      });
+      await makeOrder({
+        locationId: locationClosedMix,
+        subtotal: 3000,
+        rewardDiscountMinorUnits: 100,
+        giftCardTenderMinorUnits: 100,
+        status: 'CANCELLED',
+        createdAt: closedAt,
+      });
+      await makeOrder({
+        locationId: locationClosedOnly,
+        subtotal: 4000,
+        status: 'REJECTED',
+        createdAt: closedAt,
+      });
+      await makeOrder({
+        locationId: locationClosedOnly,
+        subtotal: 2000,
+        status: 'CANCELLED',
+        createdAt: closedAt,
+      });
       const createdAt = businessDateStartInstant('2026-09-15'); // start of the business day, in-range
       const oneHourIn = new Date(createdAt.getTime() + 60 * 60 * 1000);
 
@@ -497,6 +545,51 @@ describe('Admin reports — orders overview (integration)', () => {
         PREPARING: 0,
         READY: 0,
         COMPLETED: 2,
+        REJECTED: 0,
+        CANCELLED: 0,
+      });
+    });
+
+    // R1 / S5a: REJECTED / CANCELLED orders are not sales. They stay visible in
+    // the breakdown but add nothing to the order count, the sales total or the
+    // average. (No code writes these statuses yet; fixtures set them directly.)
+    describe('rejected and cancelled orders', () => {
+      it('are left out of orders, sales and average order value, but shown in the breakdown', async () => {
+        const res = await getOverview(`viewer-${suffix}`, {
+          startDate: closedDay,
+          endDate: closedDay,
+          locationId: locationClosedMix,
+        }).expect(200);
+        const body = res.body as AdminOrdersOverviewReport;
+        // RECEIVED 1000 + COMPLETED 500 count; REJECTED 7000 and CANCELLED 3000 do not.
+        expect(body.totalOrders).toBe(2);
+        expect(body.completedOrders).toBe(1);
+        expect(body.digitalSalesMinorUnits).toBe(1500);
+        expect(body.averageOrderValueMinorUnits).toBe(750);
+        expect(body.statusBreakdown).toEqual({
+          RECEIVED: 1,
+          ACCEPTED: 0,
+          PREPARING: 0,
+          READY: 0,
+          COMPLETED: 1,
+          REJECTED: 1,
+          CANCELLED: 1,
+        });
+      });
+
+      it('a location with only closed orders has no sales and no average (and no division by zero)', async () => {
+        const res = await getOverview(`viewer-${suffix}`, {
+          startDate: closedDay,
+          endDate: closedDay,
+          locationId: locationClosedOnly,
+        }).expect(200);
+        const body = res.body as AdminOrdersOverviewReport;
+        expect(body.totalOrders).toBe(0);
+        expect(body.completedOrders).toBe(0);
+        expect(body.digitalSalesMinorUnits).toBe(0);
+        expect(body.averageOrderValueMinorUnits).toBe(0);
+        expect(body.statusBreakdown.REJECTED).toBe(1);
+        expect(body.statusBreakdown.CANCELLED).toBe(1);
       });
     });
 

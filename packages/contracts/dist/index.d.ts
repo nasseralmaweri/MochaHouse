@@ -182,7 +182,7 @@ export interface AdminLocationMenuResponse {
     products: AdminLocationMenuProduct[];
 }
 export type PaymentAttemptStatus = "PENDING" | "SUCCEEDED" | "DECLINED" | "FAILED";
-export type OrderStatus = "RECEIVED" | "ACCEPTED" | "PREPARING" | "READY" | "COMPLETED";
+export type OrderStatus = "RECEIVED" | "ACCEPTED" | "PREPARING" | "READY" | "COMPLETED" | "REJECTED" | "CANCELLED";
 export interface GuestContactInput {
     name: string;
     phone: string;
@@ -985,7 +985,7 @@ export interface RenameOpeningChecklistTemplateSectionRequest {
     from: string;
     to: string;
 }
-export type MochaBeanLedgerEntryType = "EARN" | "MANUAL_ADJUSTMENT" | "REDEEM" | "BONUS_EARN";
+export type MochaBeanLedgerEntryType = "EARN" | "MANUAL_ADJUSTMENT" | "REDEEM" | "BONUS_EARN" | "REDEEM_REVERSAL" | "EARN_REVERSAL" | "BONUS_EARN_REVERSAL";
 export interface AdminMochaBeanLedgerEntry {
     id: string;
     type: MochaBeanLedgerEntryType;
@@ -1016,7 +1016,7 @@ export interface AdminAdjustMochaBeansRequest {
 }
 export declare const GIFT_CARD_MAX_VALUE_MINOR_UNITS = 200000;
 export type GiftCardStatus = "ACTIVE" | "INACTIVE";
-export type GiftCardTransactionType = "ISSUANCE" | "ADJUSTMENT" | "REDEMPTION";
+export type GiftCardTransactionType = "ISSUANCE" | "ADJUSTMENT" | "REDEMPTION" | "REDEMPTION_REVERSAL";
 export interface AdminGiftCard {
     id: string;
     maskedCode: string;

@@ -10,6 +10,10 @@ import {
   businessDateRangeToUtcInstants,
   MOCHA_HOUSE_TIME_ZONE,
 } from '../operations/application/business-date';
+import {
+  ALL_ORDER_STATUSES,
+  isCommercialSaleOrderStatus,
+} from '@mocha-house/domain';
 import { requireReportDateRange } from './report-date-range';
 
 export interface OrdersOverviewQuery {
@@ -17,14 +21,6 @@ export interface OrdersOverviewQuery {
   endDate?: string;
   locationId?: string;
 }
-
-const ORDER_STATUSES: readonly OrderStatus[] = [
-  'RECEIVED',
-  'ACCEPTED',
-  'PREPARING',
-  'READY',
-  'COMPLETED',
-];
 
 // Milestone 9A — HQ Digital Sales & Orders overview. Read-only. This is
 // deliberately a digital-platform report: there is no KwickPOS integration
@@ -95,14 +91,20 @@ export class OrdersOverviewReportService {
       },
     });
 
-    const totalOrders = orders.length;
+    // REJECTED and CANCELLED orders are not sales: they are left out of the
+    // order count, the sales total and the average (they stay visible in
+    // statusBreakdown below).
+    const saleOrders = orders.filter((order) =>
+      isCommercialSaleOrderStatus(order.status),
+    );
+    const totalOrders = saleOrders.length;
     const completedOrders = orders.filter(
       (order) => order.status === 'COMPLETED',
     ).length;
     // Gift card tender is a payment method, not a discount — deliberately
     // NOT subtracted. Tax, tips and refunds are excluded because they are
     // not modelled in the current Order schema, not because they are zero.
-    const digitalSalesMinorUnits = orders.reduce(
+    const digitalSalesMinorUnits = saleOrders.reduce(
       (sum, order) =>
         sum +
         order.subtotal -
@@ -116,7 +118,7 @@ export class OrdersOverviewReportService {
         : Math.round(digitalSalesMinorUnits / totalOrders);
 
     const statusBreakdown = Object.fromEntries(
-      ORDER_STATUSES.map((status) => [
+      ALL_ORDER_STATUSES.map((status) => [
         status,
         orders.filter((order) => order.status === status).length,
       ]),

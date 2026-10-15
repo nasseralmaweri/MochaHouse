@@ -22,6 +22,7 @@ const LEDGER_TYPE_LABEL: Record<GiftCardTransactionType, string> = {
   ISSUANCE: "Issued",
   ADJUSTMENT: "Manual correction",
   REDEMPTION: "Redeemed at checkout",
+  REDEMPTION_REVERSAL: "Restored (order closed)",
 };
 
 // Admin → Gift Cards (Milestone 7F). The HQ financial + administrative
@@ -240,7 +241,8 @@ async function GiftCardDetail({
                       )}
                     </td>
                     <td className="py-2 pr-3 text-text-secondary">
-                      {entry.type === "REDEMPTION"
+                      {entry.type === "REDEMPTION" ||
+                      entry.type === "REDEMPTION_REVERSAL"
                         ? entry.orderNumber
                           ? `Order #${entry.orderNumber}`
                           : "Order"

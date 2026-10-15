@@ -338,8 +338,46 @@ describe('Admin reports — location performance (integration)', () => {
     let inactiveWithOrders: string;
     let inactiveNoOrders: string;
     let digitalOrderingDisabled: string;
+    // R1 / S5a — rejected / cancelled orders are not sales.
+    let activeClosedMix: string;
+    let inactiveClosedOnly: string;
 
     beforeAll(async () => {
+      activeClosedMix = await makeLocation(`BBB Closed Mix ${suffix}`);
+      inactiveClosedOnly = await makeLocation(
+        `Inactive Closed Only ${suffix}`,
+        { isActive: false },
+      );
+      {
+        const at = new Date(
+          businessDateStartInstant('2026-09-15').getTime() + 60 * 60 * 1000,
+        );
+        await makeOrder({
+          locationId: activeClosedMix,
+          subtotal: 1000,
+          status: 'COMPLETED',
+          createdAt: at,
+        });
+        await makeOrder({
+          locationId: activeClosedMix,
+          subtotal: 5000,
+          status: 'CANCELLED',
+          createdAt: at,
+        });
+        await makeOrder({
+          locationId: activeClosedMix,
+          subtotal: 4000,
+          promotionDiscountMinorUnits: 400,
+          status: 'REJECTED',
+          createdAt: at,
+        });
+        await makeOrder({
+          locationId: inactiveClosedOnly,
+          subtotal: 9000,
+          status: 'CANCELLED',
+          createdAt: at,
+        });
+      }
       activeZeroOrder = await makeLocation(`ZZZ Active Zero ${suffix}`);
       activeWithOrders = await makeLocation(`AAA Active Orders ${suffix}`);
       inactiveWithOrders = await makeLocation(`Inactive History ${suffix}`, {
@@ -443,6 +481,43 @@ describe('Admin reports — location performance (integration)', () => {
       expect(row!.isActive).toBe(false);
       expect(row!.totalOrders).toBe(1);
       expect(row!.digitalSalesMinorUnits).toBe(300);
+    });
+
+    it('counts neither rejected nor cancelled orders as orders, sales or completion', async () => {
+      const res = await getReport(`viewer-${suffix}`, {
+        startDate: day,
+        endDate: day,
+      }).expect(200);
+      const row = rowFor(
+        res.body as AdminLocationPerformanceReport,
+        activeClosedMix,
+      );
+      expect(row).toMatchObject({
+        totalOrders: 1,
+        completedOrders: 1,
+        completedPercent: 100,
+        digitalSalesMinorUnits: 1000,
+        averageOrderValueMinorUnits: 1000,
+      });
+    });
+
+    it('still lists an inactive location whose only orders were closed, with zero orders and sales', async () => {
+      const res = await getReport(`viewer-${suffix}`, {
+        startDate: day,
+        endDate: day,
+      }).expect(200);
+      const row = rowFor(
+        res.body as AdminLocationPerformanceReport,
+        inactiveClosedOnly,
+      );
+      expect(row).toMatchObject({
+        isActive: false,
+        totalOrders: 0,
+        completedOrders: 0,
+        completedPercent: 0,
+        digitalSalesMinorUnits: 0,
+        averageOrderValueMinorUnits: 0,
+      });
     });
 
     it('excludes an inactive location with zero orders in the selected period', async () => {

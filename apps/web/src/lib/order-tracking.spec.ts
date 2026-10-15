@@ -3,6 +3,8 @@ import type { ConnectionState } from '@/lib/polling/polling-controller';
 import {
   TRACKING_POLL,
   describeTrackingConnection,
+  TRACKING_STATUS_LABEL,
+  isClosedWithoutFulfilment,
   isTrackingFinal,
   statusChangeAnnouncement,
   statusHeadline,
@@ -12,11 +14,51 @@ import {
 const order = (status: OrderStatus) => ({ status }) as OrderStatusResponse;
 
 describe('isTrackingFinal', () => {
-  it('stops polling only once the order is completed', () => {
+  it('stops polling once the order is completed, rejected or cancelled', () => {
     for (const status of ['RECEIVED', 'ACCEPTED', 'PREPARING', 'READY'] as const) {
       expect(isTrackingFinal(order(status))).toBe(false);
     }
-    expect(isTrackingFinal(order('COMPLETED'))).toBe(true);
+    for (const status of ['COMPLETED', 'REJECTED', 'CANCELLED'] as const) {
+      expect(isTrackingFinal(order(status))).toBe(true);
+    }
+  });
+});
+
+describe('rejected and cancelled orders (R1 / S5a)', () => {
+  const all: OrderStatus[] = ['RECEIVED', 'ACCEPTED', 'PREPARING', 'READY', 'COMPLETED', 'REJECTED', 'CANCELLED'];
+
+  it('have a plain label and headline for every status, never a raw enum value', () => {
+    for (const status of all) {
+      expect(TRACKING_STATUS_LABEL[status]).toMatch(/^[A-Z][a-z ]+$/);
+      expect(statusHeadline(status).length).toBeGreaterThan(0);
+    }
+    expect(statusHeadline('REJECTED')).toBe("The shop couldn't take your order");
+    expect(statusHeadline('CANCELLED')).toBe('Your order was cancelled');
+  });
+
+  it('are closed without fulfilment; COMPLETED is not', () => {
+    expect(isClosedWithoutFulfilment('REJECTED')).toBe(true);
+    expect(isClosedWithoutFulfilment('CANCELLED')).toBe(true);
+    for (const status of ['RECEIVED', 'ACCEPTED', 'PREPARING', 'READY', 'COMPLETED'] as const) {
+      expect(isClosedWithoutFulfilment(status)).toBe(false);
+    }
+  });
+
+  it('never tell the customer a closed order is complete', () => {
+    expect(describeTrackingConnection('complete', 'REJECTED').label).toBe('This order is closed');
+    expect(describeTrackingConnection('complete', 'CANCELLED').label).toBe('This order is closed');
+    expect(describeTrackingConnection('complete', 'COMPLETED').label).toBe('This order is complete');
+    // Without a status (not yet loaded) the existing wording is unchanged.
+    expect(describeTrackingConnection('complete').label).toBe('This order is complete');
+  });
+
+  it('announce the change when a live order is turned away', () => {
+    expect(statusChangeAnnouncement('RECEIVED', 'REJECTED')).toBe(statusHeadline('REJECTED'));
+    expect(statusChangeAnnouncement('PREPARING', 'CANCELLED')).toBe('Your order was cancelled');
+  });
+
+  it('title the tab with the status', () => {
+    expect(trackingDocumentTitle('D4PWM7', 'CANCELLED')).toBe('Order #D4PWM7 · Cancelled');
   });
 });
 

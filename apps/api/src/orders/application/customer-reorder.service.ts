@@ -25,8 +25,10 @@ import { LocationsService } from '../../locations/application/locations.service'
 // Any Order row is eligible regardless of fulfillment status: an Order is
 // only ever created inside CheckoutService's post-payment transaction, so
 // every row is a legitimately paid, customer-requested order with durable
-// snapshots. There is no CANCELLED/failed Order state to exclude — failed
-// or declined payments never produce an Order at all.
+// snapshots. Failed or declined payments never produce an Order at all.
+// A REJECTED or CANCELLED order (R1 / S5a; nothing writes them yet) is still
+// reorderable here: its lines are an unchanged snapshot, and reordering
+// re-prices against the live menu. S5b may decide otherwise.
 @Injectable()
 export class CustomerReorderService {
   constructor(
