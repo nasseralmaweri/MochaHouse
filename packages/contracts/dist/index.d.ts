@@ -679,6 +679,45 @@ export interface StoreOrderDetail extends StoreOrderSummary {
     loyaltyReward: OrderLoyaltyRewardSummary | null;
     loyaltyBonus: OrderLoyaltyBonusSummary | null;
     orderGiftCard: OrderGiftCardSummary | null;
+    closure: StoreOrderClosureSummary | null;
+}
+export declare const ORDER_REJECTION_REASON_CODES: readonly ["ITEM_UNAVAILABLE", "STORE_TOO_BUSY", "STORE_CLOSING", "DUPLICATE_ORDER", "SUSPECTED_FRAUD", "OTHER"];
+export type OrderRejectionReasonCode = (typeof ORDER_REJECTION_REASON_CODES)[number];
+export declare const ORDER_CANCELLATION_REASON_CODES: readonly ["CUSTOMER_REQUEST", "ITEM_UNAVAILABLE", "EQUIPMENT_FAILURE", "STORE_CLOSING", "DUPLICATE_ORDER", "SUSPECTED_FRAUD", "OTHER"];
+export type OrderCancellationReasonCode = (typeof ORDER_CANCELLATION_REASON_CODES)[number];
+export type OrderClosureReasonCode = OrderRejectionReasonCode | OrderCancellationReasonCode;
+export declare const ORDER_CLOSURE_REASON_LABELS: Record<OrderClosureReasonCode, string>;
+export declare const ORDER_CLOSURE_NOTE_MAX_LENGTH = 500;
+export type OrderClosureKind = "REJECTED" | "CANCELLED";
+export type OrderRefundObligationStatus = "DUE" | "PROCESSING" | "REFUNDED" | "FAILED";
+export interface StoreOrderClosureSummary {
+    kind: OrderClosureKind;
+    fromStatus: OrderStatus;
+    reasonCode: string;
+    reasonLabel: string;
+    note: string | null;
+    closedAt: string;
+    refundDueMinorUnits: number;
+    refundStatus: OrderRefundObligationStatus | null;
+    giftCardRestoredMinorUnits: number;
+    loyaltyShortfallBeans: number;
+}
+export interface RejectOrderRequest {
+    locationId: string;
+    reasonCode: OrderRejectionReasonCode;
+    note?: string | null;
+}
+export interface CancelOrderRequest {
+    locationId: string;
+    expectedStatus: OrderStatus;
+    reasonCode: OrderCancellationReasonCode;
+    note?: string | null;
+}
+export interface CloseOrderResponse {
+    orderId: string;
+    status: OrderStatus;
+    closed: boolean;
+    closure: StoreOrderClosureSummary;
 }
 export interface AdvanceOrderStatusRequest {
     locationId: string;
@@ -862,7 +901,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "notifications.routing.view", "notifications.routing.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide", "reports.view"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "orders.cancel", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "notifications.routing.view", "notifications.routing.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide", "reports.view"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];

@@ -41,6 +41,12 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Update order status at their locations',
     definition: 'Update order status',
   },
+  'orders.cancel': {
+    group: 'Orders',
+    effectiveAll: 'Reject and cancel orders at all locations',
+    effectiveScoped: 'Reject and cancel orders at their locations',
+    definition: 'Reject and cancel orders',
+  },
   'operations.view': {
     group: 'Operations',
     effectiveAll: 'View store operations at all locations',
@@ -356,6 +362,7 @@ const GROUP_ORDER = [
 const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'orders.view',
   'orders.manage_status',
+  'orders.cancel',
   'operations.view',
   'operations.tasks.complete',
   'operations.exceptions.manage',

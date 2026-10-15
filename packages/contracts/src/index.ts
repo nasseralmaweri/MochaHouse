@@ -1306,6 +1306,125 @@ export interface StoreOrderDetail extends StoreOrderSummary {
   loyaltyBonus: OrderLoyaltyBonusSummary | null;
   // Milestone 7G — the redeemed gift-card snapshot (last4 + amount), or null.
   orderGiftCard: OrderGiftCardSummary | null;
+  // R1 / S5b — how a REJECTED / CANCELLED order was closed; null for every
+  // other order. Staff-only: the internal note never appears in any customer
+  // response.
+  closure: StoreOrderClosureSummary | null;
+}
+
+// --- Order rejection and cancellation (R1 / S5b) -------------------------
+// REJECTED: the shop turns away an order it has not accepted (RECEIVED only).
+// CANCELLED: the shop calls off an order it already accepted (ACCEPTED,
+// PREPARING or READY). Both are terminal. Closing an order reverses what the
+// order consumed — the gift-card tender is restored to the card, redeemed
+// Mocha Beans are returned, earned Beans are recovered (any part the customer
+// already spent is recorded as a shortfall), promotion usage is released — and
+// the card-paid amount becomes a refund OBLIGATION that stays DUE until a
+// person records a refund. Nothing here moves money on a card.
+
+// Machine reason codes (UPPER_SNAKE, stored on OrderClosure.reasonCode). The
+// staff-facing wording lives in ORDER_CLOSURE_REASON_LABELS. OTHER requires a
+// note.
+export const ORDER_REJECTION_REASON_CODES = [
+  "ITEM_UNAVAILABLE",
+  "STORE_TOO_BUSY",
+  "STORE_CLOSING",
+  "DUPLICATE_ORDER",
+  "SUSPECTED_FRAUD",
+  "OTHER",
+] as const;
+export type OrderRejectionReasonCode =
+  (typeof ORDER_REJECTION_REASON_CODES)[number];
+
+export const ORDER_CANCELLATION_REASON_CODES = [
+  "CUSTOMER_REQUEST",
+  "ITEM_UNAVAILABLE",
+  "EQUIPMENT_FAILURE",
+  "STORE_CLOSING",
+  "DUPLICATE_ORDER",
+  "SUSPECTED_FRAUD",
+  "OTHER",
+] as const;
+export type OrderCancellationReasonCode =
+  (typeof ORDER_CANCELLATION_REASON_CODES)[number];
+
+export type OrderClosureReasonCode =
+  | OrderRejectionReasonCode
+  | OrderCancellationReasonCode;
+
+export const ORDER_CLOSURE_REASON_LABELS: Record<
+  OrderClosureReasonCode,
+  string
+> = {
+  ITEM_UNAVAILABLE: "An item is unavailable",
+  STORE_TOO_BUSY: "The store is too busy",
+  STORE_CLOSING: "The store is closing",
+  DUPLICATE_ORDER: "Duplicate order",
+  SUSPECTED_FRAUD: "Suspected fraud",
+  CUSTOMER_REQUEST: "The customer asked to cancel",
+  EQUIPMENT_FAILURE: "Equipment failure",
+  OTHER: "Other (see note)",
+};
+
+// The longest internal staff note accepted (matches the database CHECK).
+export const ORDER_CLOSURE_NOTE_MAX_LENGTH = 500;
+
+export type OrderClosureKind = "REJECTED" | "CANCELLED";
+
+// DUE until a person records an out-of-band refund; PROCESSING / FAILED are
+// reserved for a future processor integration. REFUNDED is never set
+// automatically.
+export type OrderRefundObligationStatus =
+  | "DUE"
+  | "PROCESSING"
+  | "REFUNDED"
+  | "FAILED";
+
+export interface StoreOrderClosureSummary {
+  kind: OrderClosureKind;
+  fromStatus: OrderStatus;
+  reasonCode: string;
+  reasonLabel: string;
+  // Internal staff note, or null. Staff-only.
+  note: string | null;
+  closedAt: string;
+  // Integer minor units owed back on the card payment (0 when nothing was
+  // charged to a card).
+  refundDueMinorUnits: number;
+  // Status of that card refund, or null when nothing is owed.
+  refundStatus: OrderRefundObligationStatus | null;
+  // Gift-card tender restored to the card, integer minor units.
+  giftCardRestoredMinorUnits: number;
+  // Earned Mocha Beans that could not be recovered because the customer had
+  // already spent them.
+  loyaltyShortfallBeans: number;
+}
+
+export interface RejectOrderRequest {
+  locationId: string;
+  reasonCode: OrderRejectionReasonCode;
+  // Optional internal note (1-500 characters after trimming). Required when
+  // reasonCode is OTHER. Never shown to the customer.
+  note?: string | null;
+}
+
+export interface CancelOrderRequest {
+  locationId: string;
+  // Optimistic-concurrency guard: the status the staff member saw (ACCEPTED,
+  // PREPARING or READY). If the order has moved since, the request is
+  // refused with 409 and nothing changes.
+  expectedStatus: OrderStatus;
+  reasonCode: OrderCancellationReasonCode;
+  note?: string | null;
+}
+
+export interface CloseOrderResponse {
+  orderId: string;
+  status: OrderStatus;
+  // false when the order was already closed the same way (an idempotent
+  // replay): nothing was reversed or written a second time.
+  closed: boolean;
+  closure: StoreOrderClosureSummary;
 }
 
 export interface AdvanceOrderStatusRequest {
@@ -1707,6 +1826,10 @@ export interface AdminUpdateInternalUserStatusRequest {
 export const INTERNAL_PERMISSION_KEYS = [
   "orders.view",
   "orders.manage_status",
+  // R1 / S5b — reject or cancel an order. Separate from manage_status on
+  // purpose: closing an order reverses gift-card, loyalty and promotion
+  // effects and creates a refund obligation, so it is granted explicitly.
+  "orders.cancel",
   "catalog.products.edit",
   "catalog.menu.manage",
   "catalog.overrides.manage",
@@ -1877,6 +2000,12 @@ export const INTERNAL_PERMISSION_METADATA: Record<
   "orders.manage_status": {
     key: "orders.manage_status",
     description: "Advance an order through its operational lifecycle.",
+    allowedScopeTypes: ["CORPORATE", "LOCATION"],
+  },
+  "orders.cancel": {
+    key: "orders.cancel",
+    description:
+      "Reject a new order or cancel an accepted one. Restores gift-card value, reverses Mocha Beans and promotion usage, and records any card refund as owed (never refunds a card itself).",
     allowedScopeTypes: ["CORPORATE", "LOCATION"],
   },
   "catalog.products.edit": {
