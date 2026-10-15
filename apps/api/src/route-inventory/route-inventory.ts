@@ -64,6 +64,7 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'GET /api/v1/admin/marketing/campaigns/options': { scope: 'tenant' },
   'GET /api/v1/admin/media': { scope: 'tenant' },
   'GET /api/v1/admin/media/:mediaAssetId': { scope: 'tenant' },
+  'GET /api/v1/admin/notifications/health': { scope: 'tenant' },
   'GET /api/v1/admin/notifications/recipients': { scope: 'tenant' },
   'GET /api/v1/admin/operations/closing-checklist/template': {
     scope: 'tenant',

@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Put, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Put,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import type { UpdateNotificationRecipientRequest } from '@mocha-house/contracts';
 import type { TenantContext } from '@mocha-house/database';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
@@ -20,7 +28,9 @@ import { NotificationRecipientConfigurationService } from '../application/notifi
 @UseGuards(InternalAuthGuard, PermissionGuard)
 @Controller('api/v1/admin/notifications/recipients')
 export class AdminNotificationRecipientsController {
-  constructor(private readonly service: NotificationRecipientConfigurationService) {}
+  constructor(
+    private readonly service: NotificationRecipientConfigurationService,
+  ) {}
 
   @RequirePermission('notifications.routing.view')
   @Get()

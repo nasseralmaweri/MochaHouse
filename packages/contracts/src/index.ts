@@ -2091,7 +2091,7 @@ export const INTERNAL_PERMISSION_METADATA: Record<
   "notifications.routing.view": {
     key: "notifications.routing.view",
     description:
-      "View the current tenant's configured notification recipients (which address receives a Careers/Franchising business notification). A corporate capability.",
+      "View the current tenant's configured notification recipients (which address receives a Careers/Franchising business notification) and the read-only health of notification delivery. A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
   "notifications.routing.manage": {
@@ -3864,4 +3864,104 @@ export interface AdminCustomerGrowthReport {
   // registered customer."
   guestOrders: number;
   source: AdminReportDataSource;
+}
+
+// --- R1 / S4c, notification health -------------------------------------
+// GET /api/v1/admin/notifications/health (notifications.routing.view,
+// CORPORATE-only; strictly the caller's own business). A read-only summary of
+// where this business's notifications stand, built from the outbox:
+//   waiting         due now, picked up within the delay threshold
+//   inProgress      leased by a worker right now
+//   scheduledRetry  failed an attempt, waiting out its backoff
+//   delayed         due for longer than the delay threshold and still not
+//                   picked up (the worker may be stopped or held back)
+//   failed          dead-lettered: permanent failure, retries exhausted,
+//                   expired, or a crash loop (events an operator closed on
+//                   purpose are reported separately and never alert)
+//   accepted        the email provider accepted the message (this does NOT
+//                   mean it reached the inbox)
+// Carries no recipient address, message text, token or provider detail:
+// only counts, ages, machine-readable reason codes and the customer-visible
+// order number.
+export type NotificationHealthStatus = "ok" | "warning" | "critical";
+export type NotificationAttentionSeverity = "info" | "warning" | "critical";
+export type NotificationHealthItemState =
+  | "dead-lettered"
+  | "delayed"
+  | "retrying";
+
+export interface NotificationHealthReasonCount {
+  code: string;
+  count: number;
+}
+
+export interface NotificationHealthAttention {
+  // Stable machine key: DEAD_LETTERED, DELAYED, REPEATED_FAILURES,
+  // POSSIBLE_DUPLICATES.
+  key: string;
+  severity: NotificationAttentionSeverity;
+  title: string;
+  detail: string;
+  count: number;
+}
+
+export interface NotificationHealthItem {
+  eventId: string;
+  eventType: string;
+  state: NotificationHealthItemState;
+  attempts: number;
+  reasonCode: string | null;
+  createdAt: string;
+  // When the next attempt is due (retrying / delayed), else null.
+  nextAttemptAt: string | null;
+  // When it was dead-lettered, else null.
+  failedAt: string | null;
+  // The order number for an order notification, else null.
+  reference: string | null;
+  // An earlier send ended without an answer and was retried: the customer
+  // may have received it twice.
+  possibleDuplicate: boolean;
+}
+
+export interface NotificationHealthResponse {
+  generatedAt: string;
+  status: NotificationHealthStatus;
+  thresholds: {
+    delayedAfterSeconds: number;
+    criticalDelaySeconds: number;
+    repeatedFailureAttempts: number;
+  };
+  pending: {
+    total: number;
+    waiting: number;
+    inProgress: number;
+    scheduledRetry: number;
+    delayed: number;
+    // Pending notifications that have failed at least this many times.
+    repeatedlyFailing: number;
+    // Age of the oldest notification still pending, in seconds.
+    oldestPendingAgeSeconds: number | null;
+    // Age of the oldest notification that has already failed once and is
+    // still pending (a retry in progress), in seconds.
+    oldestRetryingAgeSeconds: number | null;
+    // How long the longest-overdue notification has been due, in seconds.
+    oldestOverdueSeconds: number | null;
+    retryReasons: NotificationHealthReasonCount[];
+  };
+  failed: {
+    total: number;
+    last24h: number;
+    last7d: number;
+    reasons: NotificationHealthReasonCount[];
+    // Events an operator closed on purpose at a cut-over (HISTORICAL_NOT_SENT):
+    // not failures, so they are counted here and never raise an alert.
+    closedDeliberately: number;
+  };
+  accepted: { last24h: number; last7d: number };
+  possibleDuplicatesLast7d: number;
+  attention: NotificationHealthAttention[];
+  items: NotificationHealthItem[];
+  // True when more problem notifications exist than the list shows (it is
+  // capped; dead letters first, then the longest-overdue).
+  itemsTruncated: boolean;
 }
