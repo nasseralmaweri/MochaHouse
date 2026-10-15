@@ -93,3 +93,6 @@ customer-visible reason, and the exact promotion-counter treatment.
   is why it does not block this PR. S5b must add a database-level `INSERT` guard (or extend
   the commit-time check to `INSERT`) with a test, and must not enable rejection or
   cancellation, the `orders.cancel` grant or the feature flag until it ships.
+  **Now enforced (S5b):** migration `20261020090000_order_closure_writer_guards` adds the
+  BEFORE INSERT row trigger `Order_insert_not_closed` (covers INSERT, INSERT … SELECT,
+  INSERT … ON CONFLICT and COPY), with tests. See `order-closure.md`.
