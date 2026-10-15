@@ -419,32 +419,17 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
       body: 'Fictional note',
     },
   });
+  // S4a: this fixture is loaded into a database migrated only to BEFORE 4C-7,
+  // so before the S4a columns exist; a Prisma create() would read back columns
+  // that are not there yet. Explicit-column SQL touches only the original ones.
   for (const name of ['event', 'event-spare']) {
-    await prisma.outboxEvent.create({
-      data: {
-        id: i(name),
-        tenantId,
-        aggregateType: 'FranchiseInquiry',
-        aggregateId: i('inquiry'),
-        eventType: 'franchise_inquiry.submitted',
-        payload: {},
-        status: 'PROCESSED',
-      },
-    });
+    await prisma.$executeRaw`
+      INSERT INTO "OutboxEvent" ("id", "tenantId", "aggregateType", "aggregateId", "eventType", "payload", "status")
+      VALUES (${i(name)}, ${tenantId}, 'FranchiseInquiry', ${i('inquiry')}, 'franchise_inquiry.submitted', '{}'::jsonb, 'PROCESSED')`;
   }
-  await prisma.notificationDelivery.create({
-    data: {
-      id: i('delivery'),
-      tenantId,
-      outboxEventId: i('event'),
-      channel: 'EMAIL',
-      recipient: `${tag}.ops@example.test`,
-      templateKey: 'franchise_inquiry_received',
-      status: 'SENT',
-      aggregateType: 'FranchiseInquiry',
-      aggregateId: i('inquiry'),
-    },
-  });
+  await prisma.$executeRaw`
+    INSERT INTO "NotificationDelivery" ("id", "tenantId", "outboxEventId", "channel", "recipient", "templateKey", "status", "aggregateType", "aggregateId")
+    VALUES (${i('delivery')}, ${tenantId}, ${i('event')}, 'EMAIL', ${`${tag}.ops@example.test`}, 'franchise_inquiry_received', 'SENT', 'FranchiseInquiry', ${i('inquiry')})`;
   await prisma.notificationRecipient.create({
     data: {
       id: i('recipient'),

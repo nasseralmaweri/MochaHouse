@@ -872,6 +872,45 @@ model OutboxEvent {
   createdAt     DateTime          @default(now())
   processedAt   DateTime?
 
+  // S4a — notification reliability foundation. ADDITIVE ONLY: nothing reads or
+  // writes these columns yet (the live worker is unchanged), so behaviour is
+  // identical until S4b. They give the future worker a PostgreSQL lease,
+  // scheduled retries and a dead-letter state:
+  //   PENDING   = not finished: waiting for its first attempt or a retry; it is
+  //               "in progress" while leaseExpiresAt is in the future
+  //   PROCESSED = handled successfully (the email provider ACCEPTED the message,
+  //               or the event type has no handler). This is NOT a guarantee
+  //               that the message reached the customer's inbox.
+  //   FAILED    = permanent failure or exhausted retries (the dead letter);
+  //               failedAt is set and lastError(Code) say why
+  // All timestamps are UTC (timestamp without time zone, as everywhere else);
+  // compare them with timezone('utc', now()), never a bare now() (see the
+  // migration). attemptCount is bumped by every claim. A worker id alone does
+  // NOT identify a claim (a worker can lose a lease and re-claim the same
+  // event): S4b must fence later writes on (id, tenantId, leaseOwner,
+  // attemptCount) or use a unique per-claim token as leaseOwner.
+  // Constraints and the two partial indexes are in the migration SQL, which
+  // Prisma cannot express; they are listed here so they are not lost:
+  //   CHECKs: attemptCount >= 0; leaseOwner and leaseExpiresAt both set or both
+  //   null; leaseOwner 1-200 chars; only PENDING rows hold a lease; failedAt is
+  //   set exactly when status is FAILED; lastError <= 2000 chars; lastErrorCode
+  //   is UPPER_SNAKE; expiresAt not before createdAt.
+  //   INDEXES: OutboxEvent_pending_due_idx (nextAttemptAt, createdAt)
+  //   WHERE status = 'PENDING'; OutboxEvent_failed_idx (tenantId, failedAt)
+  //   WHERE status = 'FAILED'.
+  attemptCount   Int       @default(0)
+  nextAttemptAt  DateTime  @default(dbgenerated("timezone('utc'::text, now())"))
+  lastAttemptAt  DateTime?
+  leaseOwner     String?
+  leaseExpiresAt DateTime?
+  // Event-specific staleness: NULL = never goes stale. S4b decides per
+  // eventType whether to set it (and how long it lasts); there is no global
+  // cut-off in the schema.
+  expiresAt     DateTime?
+  lastErrorCode String?
+  lastError     String?
+  failedAt      DateTime?
+
   // Milestone 8H — the worker's notification dispatch is one more consumer
   // of this same row (see NotificationDelivery below); this relation is
   // just the FK side of that, not a second outbox.
@@ -921,6 +960,14 @@ model NotificationDelivery {
   failureReason     String?
   createdAt         DateTime                   @default(now())
   sentAt            DateTime?
+
+  // S4a — durable send intent, written by the future worker BEFORE it calls
+  // the provider. sendStartedAt set with sentAt still null after the lease has
+  // expired means the outcome is AMBIGUOUS (the provider may have accepted it);
+  // a retry of an ambiguous attempt sets possibleDuplicate. Unused until S4b.
+  // CHECK (migration): possibleDuplicate requires sendStartedAt.
+  sendStartedAt     DateTime?
+  possibleDuplicate Boolean                    @default(false)
 
   // Milestone S0D-1 / S0D-2C-2 — the owning tenant. REQUIRED since
   // S0D-2C-2: copied from the triggering OutboxEvent's own tenantId (the
