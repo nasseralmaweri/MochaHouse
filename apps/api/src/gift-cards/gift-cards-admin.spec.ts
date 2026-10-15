@@ -17,6 +17,7 @@ import { CustomerAuthModule } from '../customer-auth/customer-auth.module';
 import { InternalAuthModule } from '../internal-auth/internal-auth.module';
 import { signInternalDevJwt } from '../internal-auth/infrastructure/internal-dev-jwt';
 import { GiftCardsModule } from './gift-cards.module';
+import { GIFT_CARD_OPERATION_KEY_CONFLICT } from './application/gift-cards-admin.service';
 
 type Scope = { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null };
 
@@ -570,6 +571,158 @@ describe('Gift Card administration (integration)', () => {
     );
     expect(winnerAudit).toHaveLength(1);
     expect(loserAudit).toHaveLength(0);
+  });
+
+  // --- SC0.5c: same operationKey, different correction ----------
+  // A key is a replay only for the very same correction (card, signed
+  // amount, reason). Anything else is a stable 409 and writes nothing.
+
+  describe('operationKey reused with different details (SC0.5c)', () => {
+    const corrected = (id: string) =>
+      prisma.giftCardTransaction.count({
+        where: { giftCardId: id, type: 'ADJUSTMENT' },
+      });
+    const correctionAudits = async (id: string) =>
+      (await auditFor(id)).filter(
+        (e) => e.action === 'giftcards.balance_corrected',
+      ).length;
+
+    // Applies { +750, 'One-off' } once, then checks that `retry` with the
+    // same key is refused with the stable code and changes nothing.
+    async function expectConflictAfter(retry: {
+      deltaMinorUnits: number;
+      reason: string;
+    }) {
+      const { giftCard } = await issueCard('hq', 5000);
+      const operationKey = randomUUID();
+      await correct('hq', giftCard.id, {
+        deltaMinorUnits: 750,
+        reason: 'One-off',
+        operationKey,
+      }).expect(201);
+
+      const res = await correct('hq', giftCard.id, {
+        ...retry,
+        operationKey,
+      }).expect(409);
+      // A stable shape; the stored correction (amount, reason) is never
+      // echoed back.
+      expect(Object.keys(res.body as object).sort()).toEqual([
+        'code',
+        'error',
+        'message',
+        'statusCode',
+      ]);
+      expect(res.body).toMatchObject({
+        statusCode: 409,
+        error: 'Conflict',
+        code: GIFT_CARD_OPERATION_KEY_CONFLICT,
+      });
+      const text = JSON.stringify(res.body);
+      expect(text).not.toContain('One-off');
+      expect(text).not.toMatch(/7\.50|750/);
+
+      const stored = await prisma.giftCard.findUniqueOrThrow({
+        where: { id: giftCard.id },
+      });
+      expect(stored.balanceMinorUnits).toBe(5750);
+      expect(await ledgerSum(giftCard.id)).toBe(5750);
+      expect(await corrected(giftCard.id)).toBe(1);
+      expect(await correctionAudits(giftCard.id)).toBe(1);
+    }
+
+    it('a different amount is a 409 conflict, not a silent replay', async () => {
+      await expectConflictAfter({ deltaMinorUnits: 900, reason: 'One-off' });
+    });
+
+    it('the opposite direction (same magnitude) is a 409 conflict', async () => {
+      await expectConflictAfter({ deltaMinorUnits: -750, reason: 'One-off' });
+    });
+
+    it('a different reason is a 409 conflict', async () => {
+      await expectConflictAfter({ deltaMinorUnits: 750, reason: 'Other' });
+    });
+
+    it('an identical replay (reason differing only by surrounding whitespace) returns the original result', async () => {
+      const { giftCard } = await issueCard('hq', 5000);
+      const operationKey = randomUUID();
+      const first = (
+        await correct('hq', giftCard.id, {
+          deltaMinorUnits: 750,
+          reason: 'One-off',
+          operationKey,
+        }).expect(201)
+      ).body as AdminGiftCardDetail;
+      const replay = (
+        await correct('hq', giftCard.id, {
+          deltaMinorUnits: 750,
+          reason: '  One-off  ',
+          operationKey,
+        }).expect(201)
+      ).body as AdminGiftCardDetail;
+      expect(replay).toEqual(first);
+      expect(await corrected(giftCard.id)).toBe(1);
+      expect(await correctionAudits(giftCard.id)).toBe(1);
+    });
+
+    it('another card with the same key carries the same stable code', async () => {
+      const a = await issueCard('hq', 5000);
+      const b = await issueCard('hq', 5000);
+      const operationKey = randomUUID();
+      await correct('hq', a.giftCard.id, {
+        deltaMinorUnits: 100,
+        reason: 'same',
+        operationKey,
+      }).expect(201);
+      const res = await correct('hq', b.giftCard.id, {
+        deltaMinorUnits: 100,
+        reason: 'same',
+        operationKey,
+      }).expect(409);
+      expect((res.body as { code: string }).code).toBe(
+        GIFT_CARD_OPERATION_KEY_CONFLICT,
+      );
+      expect(await corrected(b.giftCard.id)).toBe(0);
+      expect(await ledgerSum(b.giftCard.id)).toBe(5000);
+    });
+
+    it('concurrent same-key requests with different amounts apply exactly one; the rest replay or conflict', async () => {
+      const { giftCard } = await issueCard('hq', 5000);
+      const operationKey = randomUUID();
+      const deltas = [500, 600, 500, 600];
+      const results = await Promise.all(
+        deltas.map((deltaMinorUnits) =>
+          correct('hq', giftCard.id, {
+            deltaMinorUnits,
+            reason: 'Race',
+            operationKey,
+          }),
+        ),
+      );
+      const rows = await prisma.giftCardTransaction.findMany({
+        where: { giftCardId: giftCard.id, type: 'ADJUSTMENT' },
+      });
+      expect(rows).toHaveLength(1);
+      const applied = rows[0].amountMinorUnits;
+      // Every request asking for the applied amount is a replay (201);
+      // every other is a conflict (409).
+      results.forEach((res, i) => {
+        if (deltas[i] === applied) {
+          expect(res.status).toBe(201);
+        } else {
+          expect(res.status).toBe(409);
+          expect((res.body as { code: string }).code).toBe(
+            GIFT_CARD_OPERATION_KEY_CONFLICT,
+          );
+        }
+      });
+      const stored = await prisma.giftCard.findUniqueOrThrow({
+        where: { id: giftCard.id },
+      });
+      expect(stored.balanceMinorUnits).toBe(5000 + applied);
+      expect(await ledgerSum(giftCard.id)).toBe(5000 + applied);
+      expect(await correctionAudits(giftCard.id)).toBe(1);
+    });
   });
 
   // --- STATUS --------------------------------------------------

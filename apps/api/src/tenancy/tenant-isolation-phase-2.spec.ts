@@ -1023,6 +1023,15 @@ describe('Tenant isolation phase 2 (integration)', () => {
     expect(JSON.stringify(resB.body)).not.toContain(cardA);
     await correct('b-admin', TENANT_B, cardB, shared, -300).expect(201);
     expect(await balanceOf(cardB)).toBe(2200);
+    // SC0.5c — inside B, the same key with another amount is a conflict
+    // judged against B's own correction only (A's +100 plays no part).
+    const conflictB = await correct('b-admin', TENANT_B, cardB, shared, 100);
+    expect(conflictB.status).toBe(409);
+    expect((conflictB.body as { code: string }).code).toBe(
+      'GIFT_CARD_OPERATION_KEY_CONFLICT',
+    );
+    expect(await balanceOf(cardB)).toBe(2200);
+    expect(await balanceOf(cardA)).toBe(2600);
 
     // B can neither correct nor see A's card or A's correction with it.
     await correct('b-admin', TENANT_B, cardA, shared, -2600).expect(404);
