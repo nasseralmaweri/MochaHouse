@@ -564,6 +564,8 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
             eventType: 'fixture.event',
             payload: {},
             status,
+            // S4a: a FAILED event (dead letter) always records when it failed.
+            ...(status === 'FAILED' ? { failedAt: new Date() } : {}),
           },
         });
       const pendingMissing = await outbox(

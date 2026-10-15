@@ -80,6 +80,8 @@ describe('AdminOrdersService queue visibility (integration)', () => {
           eventType: 'order.received',
           payload: { orderId: order.id },
           status: outbox,
+          // S4a: a FAILED event (dead letter) always records when it failed.
+          ...(outbox === 'FAILED' ? { failedAt: new Date() } : {}),
         },
       });
     }

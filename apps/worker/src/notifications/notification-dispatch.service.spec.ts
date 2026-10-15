@@ -382,6 +382,10 @@ describe('NotificationDispatchService (integration)', () => {
         // Milestone S0D-1 — the owning tenant (ownership metadata, not
         // message content).
         'tenantId',
+        // S4a — send-intent timestamp and duplicate flag (delivery state, not
+        // message content).
+        'sendStartedAt',
+        'possibleDuplicate',
       ].sort(),
     );
   });
