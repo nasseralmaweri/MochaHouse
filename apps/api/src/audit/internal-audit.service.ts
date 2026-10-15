@@ -128,6 +128,57 @@ export class InternalAuditService {
     });
   }
 
+  // R1 / S5b — an order was rejected or cancelled. Call with the SAME `tx`
+  // that changed the status and wrote the OrderClosure and every reversal.
+  // The payload carries only codes and amounts: the internal staff note lives
+  // on OrderClosure alone and is never copied here (only whether one exists).
+  // targetType 'order' is a new polymorphic target; the Admin Activity Log
+  // ignores it like the other non-`internal_user` targets.
+  async recordOrderClosed(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      orderId: string;
+      kind: 'REJECTED' | 'CANCELLED';
+      fromStatus: string;
+      reasonCode: string;
+      reasonLabel: string;
+      hasNote: boolean;
+      refundDueMinorUnits: number;
+      giftCardRestoredMinorUnits: number;
+      beansReturned: number;
+      beansRecovered: number;
+      loyaltyShortfallBeans: number;
+      promotionUsageReleased: boolean;
+      customerPromotionUsageReleased: boolean;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action:
+          input.kind === 'REJECTED' ? 'order.rejected' : 'order.cancelled',
+        targetType: 'order',
+        targetId: input.orderId,
+        beforeData: { status: input.fromStatus },
+        afterData: {
+          status: input.kind,
+          reasonCode: input.reasonCode,
+          hasNote: input.hasNote,
+          refundDueMinorUnits: input.refundDueMinorUnits,
+          giftCardRestoredMinorUnits: input.giftCardRestoredMinorUnits,
+          beansReturned: input.beansReturned,
+          beansRecovered: input.beansRecovered,
+          loyaltyShortfallBeans: input.loyaltyShortfallBeans,
+          promotionUsageReleased: input.promotionUsageReleased,
+          customerPromotionUsageReleased: input.customerPromotionUsageReleased,
+        },
+        reason: input.reasonLabel,
+      },
+    });
+  }
+
   // Records a completed manual HQ Mocha Bean adjustment (Milestone 7A).
   // Manually moving a customer's Bean balance is a sensitive HQ action, so
   // it is administrative history in addition to the authoritative

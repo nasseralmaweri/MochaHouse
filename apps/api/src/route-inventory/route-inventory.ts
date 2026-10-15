@@ -250,6 +250,10 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/admin/operations/tasks/:taskId/delete': { scope: 'location' },
   'POST /api/v1/admin/operations/tasks/:taskId/reopen': { scope: 'location' },
   'POST /api/v1/admin/orders/:orderId/advance': { scope: 'location' },
+  // R1 / S5b — orders.cancel at the order's location; off unless
+  // ORDER_CLOSURE_ENABLED=1.
+  'POST /api/v1/admin/orders/:orderId/cancel': { scope: 'location' },
+  'POST /api/v1/admin/orders/:orderId/reject': { scope: 'location' },
   'PUT /api/v1/admin/catalog/locations/:locationId/menus/:menuId/products/:productId/availability-override':
     { scope: 'location' },
   'PUT /api/v1/admin/catalog/locations/:locationId/menus/:menuId/products/:productId/price-override':

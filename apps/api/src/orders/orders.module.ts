@@ -16,6 +16,8 @@ import { CheckoutService } from './application/checkout.service';
 import { AdminOrdersService } from './application/admin-orders.service';
 import { CustomerOrdersService } from './application/customer-orders.service';
 import { CustomerReorderService } from './application/customer-reorder.service';
+import { OrderClosureService } from './application/order-closure.service';
+import { AuditModule } from '../audit/audit.module';
 
 // apps/api stays synchronous request/response only — OutboxEvent rows are
 // written here (see CheckoutService) and read here (see
@@ -41,6 +43,8 @@ import { CustomerReorderService } from './application/customer-reorder.service';
     // The payment boundary binding (Milestone 7H) — CheckoutService depends
     // only on the PaymentProvider interface via PAYMENT_PROVIDER.
     PaymentModule,
+    // R1 / S5b — the closure writer records its audit event in-transaction.
+    AuditModule,
   ],
   controllers: [
     OrdersController,
@@ -53,6 +57,7 @@ import { CustomerReorderService } from './application/customer-reorder.service';
     AdminOrdersService,
     CustomerOrdersService,
     CustomerReorderService,
+    OrderClosureService,
   ],
   // PaymentModule — re-exported so the Milestone 5G platform-status read
   // keeps reaching the payment-integration posture through OrdersModule

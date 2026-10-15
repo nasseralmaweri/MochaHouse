@@ -25,6 +25,7 @@ import {
 } from '../infrastructure/order-line-mapper';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
+import { toClosureSummary } from './order-closure.service';
 
 type OrderWithLines = Prisma.OrderGetPayload<{ include: { lines: true } }>;
 
@@ -97,14 +98,19 @@ export class AdminOrdersService {
     }
     authorization.assertCanActOnLocation('orders.view', locationId);
 
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
+    // R1 / S5b — tenant-scoped in the query itself, so another business's
+    // order (and its closure note) is never even loaded.
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, tenantId: tenant.tenantId },
       include: {
         lines: true,
         promotionRedemption: true,
         loyaltyRewardRedemption: true,
         loyaltyBonus: { include: { items: true } },
         giftCardRedemption: true,
+        closure: {
+          include: { refundObligation: { select: { status: true } } },
+        },
       },
     });
 
@@ -136,6 +142,14 @@ export class AdminOrdersService {
       loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
       loyaltyBonus: toOrderLoyaltyBonusSummary(order.loyaltyBonus),
       orderGiftCard: toOrderGiftCardSummary(order.giftCardRedemption),
+      // The internal staff note is shown only to people who may close
+      // orders at this location; everyone else sees the closure without it.
+      closure: order.closure
+        ? toClosureSummary(
+            order.closure,
+            authorization.canActOnLocation('orders.cancel', locationId),
+          )
+        : null,
     };
   }
 
@@ -217,10 +231,22 @@ export class AdminOrdersService {
       });
 
       if (updated.count === 0) {
-        // Lost a race against a concurrent advance of the same order —
-        // someone else's request already made this exact transition.
-        // Idempotent no-op: no duplicate history row.
-        return { advanced: false };
+        // The order left `expectedStatus` between the read above and this
+        // conditional update. Only if it is now exactly where THIS request
+        // would have put it did a concurrent advance make the same
+        // transition (an idempotent no-op, no duplicate history row).
+        // Anything else — above all a concurrent rejection or cancellation
+        // (R1 / S5b) — is a genuine conflict, never reported as success.
+        const now = await tx.order.findUnique({
+          where: { id: orderId },
+          select: { status: true },
+        });
+        if (now?.status === target) {
+          return { advanced: false };
+        }
+        throw new ConflictException(
+          `Order status changed since this action was requested (now ${now?.status ?? 'unknown'}). Refresh and try again.`,
+        );
       }
 
       await tx.orderStatusHistory.create({

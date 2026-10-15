@@ -1337,6 +1337,8 @@ const AUDIT_TARGETS = {
   loyalty_reward: 'LoyaltyReward',
   media_asset: 'MediaAsset',
   menu: 'Menu',
+  // R1 / S5b — order.rejected / order.cancelled.
+  order: 'Order',
   product: 'Product',
   promotion: 'Promotion',
 } as const satisfies Record<string, TenantOwnedModel>;
