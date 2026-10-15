@@ -1,4 +1,6 @@
 import type { NextConfig } from "next";
+import { buildHeaderRules } from "./src/lib/security/headers";
+import { parseAllowedOrigins } from "./src/lib/security/request-origin";
 
 // Milestone 8F — next/image needs an explicit allowlist of remote image
 // hosts. We derive exactly ONE remote pattern from the configured public
@@ -27,6 +29,22 @@ function mediaImageRemotePatterns(): NonNullable<NextConfig["images"]>["remotePa
 }
 
 const nextConfig: NextConfig = {
+  // Do not advertise the framework (R1 / S3b).
+  poweredByHeader: false,
+  // Baseline security headers on every response (lib/security/headers.ts).
+  async headers() {
+    return buildHeaderRules();
+  },
+  experimental: {
+    // Server Actions already refuse a cross-origin Origin; hosts listed in
+    // CSRF_ALLOWED_ORIGINS (the same list the /api proxies accept) are the only
+    // extra ones, e.g. a trusted front proxy host. Empty by default.
+    serverActions: {
+      allowedOrigins: parseAllowedOrigins(process.env.CSRF_ALLOWED_ORIGINS).map(
+        (origin) => new URL(origin).host,
+      ),
+    },
+  },
   images: {
     remotePatterns: mediaImageRemotePatterns(),
     // Next's image optimizer refuses to fetch a hostname that resolves to

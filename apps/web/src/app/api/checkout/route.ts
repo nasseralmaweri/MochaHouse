@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 import { CUSTOMER_SESSION_COOKIE } from "@/lib/auth/session";
 import { signedClientIpHeaders } from "@/lib/client-ip-forwarding";
 import { passthroughHeaders } from "@/lib/rate-limit-message";
@@ -27,6 +28,9 @@ function getApiUrl(): string {
 // checkout reaches the API exactly as before this slice. The response is
 // passed through unchanged (status and body) in either case.
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const untrusted = rejectUntrustedOrigin(request);
+  if (untrusted) return untrusted as NextResponse;
+
   const token = request.cookies.get(CUSTOMER_SESSION_COOKIE)?.value;
   const body = await request.text();
 

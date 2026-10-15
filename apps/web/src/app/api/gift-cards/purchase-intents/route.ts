@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 import { CUSTOMER_SESSION_COOKIE } from "@/lib/auth/session";
 
 function getApiUrl(): string {
@@ -20,6 +21,9 @@ function getApiUrl(): string {
 // recoveryCredential in the response is passed straight through to the
 // client, which keeps it in memory only.
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const untrusted = rejectUntrustedOrigin(request);
+  if (untrusted) return untrusted as NextResponse;
+
   const token = request.cookies.get(CUSTOMER_SESSION_COOKIE)?.value;
   const body = await request.text();
 

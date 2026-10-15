@@ -1,12 +1,14 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { clearLegacySessionCookie, clearSessionCookie, sessionCookieOptions } from "@/lib/security/cookies";
 import { redirect } from "next/navigation";
 import {
   ADMIN_BUSINESS_COOKIE,
+  ADMIN_BUSINESS_COOKIE_BASE,
   getAccessibleBusinesses,
 } from "./active-business";
-import { getInternalSessionToken, ADMIN_LOCATION_COOKIE } from "./session";
+import { getInternalSessionToken, ADMIN_LOCATION_COOKIE_BASE } from "./session";
 
 const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
 
@@ -47,14 +49,9 @@ export async function switchBusinessAction(
   }
 
   const cookieStore = await cookies();
-  cookieStore.set(ADMIN_BUSINESS_COOKIE, businessId, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: ONE_YEAR_SECONDS,
-  });
-  cookieStore.delete(ADMIN_LOCATION_COOKIE);
+  clearLegacySessionCookie(cookieStore, ADMIN_BUSINESS_COOKIE_BASE);
+  cookieStore.set(ADMIN_BUSINESS_COOKIE, businessId, sessionCookieOptions(ONE_YEAR_SECONDS));
+  clearSessionCookie(cookieStore, ADMIN_LOCATION_COOKIE_BASE);
 
   redirect("/admin");
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;
@@ -17,6 +18,9 @@ function getApiUrl(): string {
 // and returns nothing customer-specific. GiftCardBalanceService is
 // authoritative.
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const untrusted = rejectUntrustedOrigin(request);
+  if (untrusted) return untrusted as NextResponse;
+
   const body = await request.text();
 
   let response: Response;

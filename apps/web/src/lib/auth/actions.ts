@@ -1,6 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { clearLegacySessionCookie, clearSessionCookie, sessionCookieOptions } from "@/lib/security/cookies";
 import { serverActionClientIpHeaders } from "@/lib/client-ip-forwarding";
 import { TOO_MANY_ATTEMPTS_MESSAGE } from "@/lib/rate-limit-message";
 import { redirect } from "next/navigation";
@@ -18,7 +19,11 @@ import type {
   CustomerVerifyRequest,
   CustomerVerifyResponse,
 } from "@mocha-house/contracts";
-import { CUSTOMER_SESSION_COOKIE, getCustomerSessionToken } from "./session";
+import {
+  CUSTOMER_SESSION_COOKIE,
+  CUSTOMER_SESSION_COOKIE_BASE,
+  getCustomerSessionToken,
+} from "./session";
 import { updateCustomerProfile } from "./profile";
 import {
   addPreferredLocation,
@@ -85,13 +90,8 @@ export async function signInAction(
   const result = (await response.json()) as CustomerSignInResponse;
 
   const cookieStore = await cookies();
-  cookieStore.set(CUSTOMER_SESSION_COOKIE, result.idToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: result.expiresInSeconds,
-  });
+  clearLegacySessionCookie(cookieStore, CUSTOMER_SESSION_COOKIE_BASE);
+  cookieStore.set(CUSTOMER_SESSION_COOKIE, result.idToken, sessionCookieOptions(result.expiresInSeconds));
 
   redirect("/account");
 }
@@ -526,6 +526,6 @@ export async function updatePreferencesAction(
 // GlobalSignOut) is deliberately deferred to a later Milestone 4 slice.
 export async function signOutAction(): Promise<void> {
   const cookieStore = await cookies();
-  cookieStore.delete(CUSTOMER_SESSION_COOKIE);
+  clearSessionCookie(cookieStore, CUSTOMER_SESSION_COOKIE_BASE);
   redirect("/account/sign-in");
 }
