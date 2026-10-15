@@ -2555,9 +2555,12 @@ model GiftCard {
 // and are documented here):
 //   - UNIQUE (giftCardId) WHERE type = 'ISSUANCE' — exactly one issuance
 //     entry per card.
-//   - UNIQUE (operationKey) WHERE type = 'ADJUSTMENT' — a manual correction
-//     is idempotent on its caller-supplied operationKey; a retry with the
-//     same key returns the existing outcome instead of applying it twice.
+//   - UNIQUE (tenantId, operationKey) WHERE type = 'ADJUSTMENT' — a manual
+//     correction is idempotent on its caller-supplied operationKey within
+//     its business; a retry with the same key returns the existing outcome
+//     instead of applying it twice. Per business since SC0.5b (migration
+//     20261021090000_tenant_giftcard_adjustment_operation_key; was global),
+//     so one business's key never blocks or reveals another's.
 //   - UNIQUE (orderId) WHERE type = 'REDEMPTION' — Milestone 7G: exactly one
 //     redemption entry per order, so a checkout replay can never spend the
 //     card twice.

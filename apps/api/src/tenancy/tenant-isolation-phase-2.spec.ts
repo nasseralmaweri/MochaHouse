@@ -960,6 +960,159 @@ describe('Tenant isolation phase 2 (integration)', () => {
     ]);
   });
 
+  // --- (5b) SC0.5b: gift-card correction keys are per business ------------
+
+  it('(5b) a correction operationKey is idempotent within one business and independent across businesses', async () => {
+    const issue = async (key: string, tenantId: string) => {
+      const res = await admin('post', key, tenantId, '/gift-cards', {
+        originalValueMinorUnits: 2500,
+      }).expect(201);
+      return bodyOf<{ giftCard: Row }>(res).giftCard.id;
+    };
+    const cardA = await issue('a-admin', TENANT_A);
+    const cardA2 = await issue('a-admin', TENANT_A);
+    created.giftCards.push(cardA, cardA2);
+    const cardB = await issue('b-admin', TENANT_B);
+
+    const correct = (
+      key: string,
+      tenantId: string,
+      cardId: string,
+      operationKey: string,
+      deltaMinorUnits: number,
+    ) =>
+      admin('post', key, tenantId, `/gift-cards/${cardId}/corrections`, {
+        deltaMinorUnits,
+        reason: 'SC0.5b',
+        operationKey,
+      });
+    const ledger = (cardId: string) =>
+      prisma.giftCardTransaction.findMany({
+        where: { giftCardId: cardId },
+        orderBy: { createdAt: 'asc' },
+      });
+    const balanceOf = async (cardId: string) =>
+      (await prisma.giftCard.findUniqueOrThrow({ where: { id: cardId } }))
+        .balanceMinorUnits;
+    // The ledger always accounts for the materialized balance exactly.
+    const expectLedgerMatchesBalance = async (cardId: string) => {
+      const entries = await ledger(cardId);
+      const sum = entries.reduce((t, e) => t + e.amountMinorUnits, 0);
+      expect(sum).toBe(await balanceOf(cardId));
+      expect(entries.at(-1)?.balanceAfterMinorUnits).toBe(
+        await balanceOf(cardId),
+      );
+    };
+
+    const shared = `sc05b-${randomUUID()}`;
+
+    // Business A applies a correction; a retry with the same key is a
+    // replay, never a second correction.
+    await correct('a-admin', TENANT_A, cardA, shared, 100).expect(201);
+    await correct('a-admin', TENANT_A, cardA, shared, 100).expect(201);
+    expect(await balanceOf(cardA)).toBe(2600);
+    // Inside A, the key cannot be reused for a different card.
+    await correct('a-admin', TENANT_A, cardA2, shared, 100).expect(409);
+    expect(await balanceOf(cardA2)).toBe(2500);
+
+    // Business B uses the SAME key for its own card: applied (it used to be
+    // refused as "already used for a different gift card"), and replayed
+    // idempotently inside B.
+    const resB = await correct('b-admin', TENANT_B, cardB, shared, -300);
+    expect(resB.status).toBe(201);
+    expect(JSON.stringify(resB.body)).not.toContain(cardA);
+    await correct('b-admin', TENANT_B, cardB, shared, -300).expect(201);
+    expect(await balanceOf(cardB)).toBe(2200);
+
+    // B can neither correct nor see A's card or A's correction with it.
+    await correct('b-admin', TENANT_B, cardA, shared, -2600).expect(404);
+    await correct(
+      'b-admin',
+      TENANT_B,
+      cardA,
+      `sc05b-${randomUUID()}`,
+      -1,
+    ).expect(404);
+    expect(await balanceOf(cardA)).toBe(2600);
+
+    // Exactly one ADJUSTMENT per business carries the key, each on its own
+    // card and in its own business.
+    const withKey = await prisma.giftCardTransaction.findMany({
+      where: { type: 'ADJUSTMENT', operationKey: shared },
+      select: { giftCardId: true, tenantId: true, amountMinorUnits: true },
+      orderBy: { tenantId: 'asc' },
+    });
+    expect(
+      withKey.map((e) => [e.tenantId, e.giftCardId, e.amountMinorUnits]),
+    ).toEqual(
+      [
+        [TENANT_A, cardA, 100],
+        [TENANT_B, cardB, -300],
+      ].sort((x, y) => String(x[0]).localeCompare(String(y[0]))),
+    );
+
+    // Concurrent retries inside one business still apply exactly once
+    // (the per-business unique index decides the race).
+    const raced = `sc05b-race-${randomUUID()}`;
+    const results = await Promise.all([
+      correct('a-admin', TENANT_A, cardA2, raced, 50),
+      correct('a-admin', TENANT_A, cardA2, raced, 50),
+      correct('a-admin', TENANT_A, cardA2, raced, 50),
+    ]);
+    expect(results.map((r) => r.status)).toEqual([201, 201, 201]);
+    expect(await balanceOf(cardA2)).toBe(2550);
+    // ... and two businesses racing on one fresh key each apply once.
+    const both = `sc05b-both-${randomUUID()}`;
+    const [ra, rb] = await Promise.all([
+      correct('a-admin', TENANT_A, cardA, both, 10),
+      correct('b-admin', TENANT_B, cardB, both, 10),
+    ]);
+    expect([ra.status, rb.status]).toEqual([201, 201]);
+    expect(await balanceOf(cardA)).toBe(2610);
+    expect(await balanceOf(cardB)).toBe(2210);
+    // ... and one business racing one fresh key on TWO of its cards: exactly
+    // one card is corrected, the other request is refused (409) unchanged.
+    const split = `sc05b-split-${randomUUID()}`;
+    const [r1, r2] = await Promise.all([
+      correct('a-admin', TENANT_A, cardA, split, 5),
+      correct('a-admin', TENANT_A, cardA2, split, 5),
+    ]);
+    expect([r1.status, r2.status].sort()).toEqual([201, 409]);
+    expect((await balanceOf(cardA)) + (await balanceOf(cardA2))).toBe(
+      2610 + 2550 + 5,
+    );
+    expect(
+      await prisma.giftCardTransaction.count({
+        where: { tenantId: TENANT_A, type: 'ADJUSTMENT', operationKey: split },
+      }),
+    ).toBe(1);
+
+    // A unique violation with no entry of this business behind it is never
+    // reported as a successful (replayed) correction.
+    const orphan = `sc05b-orphan-${randomUUID()}`;
+    const spy = jest
+      .spyOn(prisma, '$transaction')
+      .mockRejectedValueOnce(
+        Object.assign(new Error('unique'), { code: 'P2002' }),
+      );
+    try {
+      const res = await correct('a-admin', TENANT_A, cardA, orphan, 7);
+      expect(res.status).toBe(500);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await balanceOf(cardA)).toBe(2610 + (r1.status === 201 ? 5 : 0));
+    expect(
+      await prisma.giftCardTransaction.count({
+        where: { operationKey: orphan },
+      }),
+    ).toBe(0);
+
+    for (const cardId of [cardA, cardA2, cardB]) {
+      await expectLedgerMatchesBalance(cardId);
+    }
+  });
+
   // --- (6) marketing, approvals, media ------------------------------------
 
   it('(6) campaigns, approvals and media never cross businesses', async () => {
