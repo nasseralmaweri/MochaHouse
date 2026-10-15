@@ -1,7 +1,69 @@
 import { Injectable } from '@nestjs/common';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { headerText } from './header-text';
-import type { EmailSender, SendEmailInput, SendEmailResult } from './email-sender';
+import type {
+  EmailSender,
+  SendEmailInput,
+  SendEmailResult,
+} from './email-sender';
+import { EmailProviderRejection } from '../delivery-errors';
+
+// R1 / S4b — SES answers synchronously: a 200 means the message was accepted for
+// delivery. Any HTTP error response means it was not. These are the error names
+// worth retrying (throttling, outages, account or domain problems an operator can
+// fix); everything else with a response (MessageRejected, InvalidParameterValue,
+// ...) will never succeed for this message.
+const RETRYABLE_SES_ERRORS = new Set([
+  'Throttling',
+  'ThrottlingException',
+  'TooManyRequestsException',
+  'RequestLimitExceeded',
+  'LimitExceededException',
+  'ServiceUnavailable',
+  'ServiceUnavailableException',
+  'InternalFailure',
+  'InternalServerError',
+  'AccountSendingPausedException',
+  'MailFromDomainNotVerifiedException',
+  'CredentialsProviderError',
+  // Credential / permission problems an operator can fix; dead-lettering the
+  // queue because a key expired would lose notifications that could be sent.
+  'AccessDenied',
+  'AccessDeniedException',
+  'ExpiredToken',
+  'ExpiredTokenException',
+  'InvalidClientTokenId',
+  'UnrecognizedClientException',
+  'SignatureDoesNotMatch',
+]);
+
+// Network failures that happen BEFORE a request can have been delivered (the
+// connection was refused, the name did not resolve). Nothing was sent, so they
+// are definite and safe to retry without the duplicate caveat. Resets and
+// timeouts are NOT in this list: they can happen after SES received the request.
+const PRE_REQUEST_NETWORK_ERRORS = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+]);
+
+function networkErrorCode(error: unknown): string | undefined {
+  const direct = (error as { code?: unknown } | null)?.code;
+  if (typeof direct === 'string') return direct;
+  const cause = (error as { cause?: { code?: unknown } } | null)?.cause?.code;
+  return typeof cause === 'string' ? cause : undefined;
+}
+
+function isRetryableSesError(
+  name: string,
+  status: number | undefined,
+): boolean {
+  return (
+    RETRYABLE_SES_ERRORS.has(name) ||
+    status === 429 ||
+    (status !== undefined && status >= 500)
+  );
+}
 
 // Milestone 8H — the production EmailSender. Credentials are resolved
 // through the normal AWS SDK provider chain (environment variables, a
@@ -39,20 +101,63 @@ export class SesEmailSender implements EmailSender {
   }
 
   async send(input: SendEmailInput): Promise<SendEmailResult> {
-    const response = await this.getClient().send(
-      new SendEmailCommand({
-        Source: formatSource(this.getFromAddress(), input.fromName),
-        Destination: { ToAddresses: [input.to] },
-        Message: {
-          Subject: { Data: input.subject },
-          Body: {
-            Html: { Data: input.html },
-            Text: { Data: input.text },
+    // Missing configuration is refused before any request is made: definitely
+    // not sent, and fixable by an operator (so retryable).
+    let source: string;
+    try {
+      source = formatSource(this.getFromAddress(), input.fromName);
+    } catch (error) {
+      throw new EmailProviderRejection(
+        'SES_NOT_CONFIGURED',
+        error instanceof Error ? error.message : 'SES is not configured.',
+        true,
+      );
+    }
+    try {
+      const response = await this.getClient().send(
+        new SendEmailCommand({
+          Source: source,
+          Destination: { ToAddresses: [input.to] },
+          Message: {
+            Subject: { Data: input.subject },
+            Body: {
+              Html: { Data: input.html },
+              Text: { Data: input.text },
+            },
           },
-        },
-      }),
-    );
-    return { providerMessageId: response.MessageId };
+        }),
+        input.abortSignal ? { abortSignal: input.abortSignal } : undefined,
+      );
+      return { providerMessageId: response.MessageId };
+    } catch (error) {
+      // An error WITH an HTTP status means SES answered and refused the message.
+      // No status (timeout, abort, connection loss) is left as-is: ambiguous.
+      const status = (error as { $metadata?: { httpStatusCode?: number } })
+        .$metadata?.httpStatusCode;
+      const name = error instanceof Error ? error.name : 'Error';
+      const netCode = networkErrorCode(error);
+      if (netCode && PRE_REQUEST_NETWORK_ERRORS.has(netCode)) {
+        throw new EmailProviderRejection(
+          netCode,
+          `Could not reach the email provider (${netCode}).`,
+          true,
+        );
+      }
+      // Only an HTTP ERROR status is a refusal. A 2xx with an exception (for
+      // example a response we failed to parse) may well have been accepted:
+      // ambiguous, so it is left as-is.
+      if (
+        (status !== undefined && status >= 400) ||
+        name === 'CredentialsProviderError'
+      ) {
+        throw new EmailProviderRejection(
+          name,
+          error instanceof Error ? error.message : 'SES rejected the message.',
+          isRetryableSesError(name, status),
+        );
+      }
+      throw error;
+    }
   }
 }
 

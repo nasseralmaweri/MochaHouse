@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
+import { OutboxStore } from '../outbox/outbox-store';
+import { OutboxConfigModule } from '../outbox/outbox-config.module';
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   TENANT_1_MOCHA_HOUSE_ID,
@@ -35,8 +37,9 @@ describe('S0D-2C-2 two-tenant outbox -> worker -> notification pipeline (integra
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({
-      imports: [PrismaModule, WorkerTenancyModule],
+      imports: [PrismaModule, WorkerTenancyModule, OutboxConfigModule],
       providers: [
+        OutboxStore,
         OutboxProcessorService,
         NotificationDispatchService,
         NotificationRecipientResolver,
@@ -186,7 +189,7 @@ describe('S0D-2C-2 two-tenant outbox -> worker -> notification pipeline (integra
     expect(sentTo).toContain(guestEmailB);
   });
 
-  it('a deliberately mismatched event (Tenant A claiming a Tenant B order) fails closed: PROCESSED outbox, FAILED delivery, no email, no disclosure', async () => {
+  it('a deliberately mismatched event (Tenant A claiming a Tenant B order) fails closed: dead-lettered outbox, FAILED delivery, no email, no disclosure', async () => {
     const guestEmailB = `tenant-b-mismatch-${randomUUID()}@example.com`;
     const orderB = await makeOrderFixture(TEST_TENANT_B_ID, guestEmailB);
     // The event itself claims Tenant #1 even though the Order it names is
@@ -197,7 +200,14 @@ describe('S0D-2C-2 two-tenant outbox -> worker -> notification pipeline (integra
       orderB.id,
     );
 
-    await waitUntilProcessed(mismatchedEvent);
+    // R1 / S4b: a permanent failure is dead-lettered (FAILED), never PROCESSED.
+    for (let attempt = 0; attempt < 25; attempt++) {
+      await processor.processPendingBatch(200);
+      const current = await prisma.outboxEvent.findUniqueOrThrow({
+        where: { id: mismatchedEvent },
+      });
+      if (current.status !== 'PENDING') break;
+    }
 
     const delivery = await prisma.notificationDelivery.findFirstOrThrow({
       where: { outboxEventId: mismatchedEvent },
@@ -207,13 +217,14 @@ describe('S0D-2C-2 two-tenant outbox -> worker -> notification pipeline (integra
     expect(delivery.recipient).not.toBe(guestEmailB);
     expect(sender.getSent().map((m) => m.to)).not.toContain(guestEmailB);
 
-    // The outbox claim itself is unaffected by the downstream failure —
-    // same invariant as every other dispatch failure (see
-    // outbox-processor.service.ts: notification outcome never reopens the
-    // claim).
+    // The event is dead-lettered with a machine-readable reason; it is not
+    // retried (a missing order will not appear) and nothing was sent.
     const event = await prisma.outboxEvent.findUniqueOrThrow({
       where: { id: mismatchedEvent },
     });
-    expect(event.status).toBe('PROCESSED');
+    expect(event.status).toBe('FAILED');
+    expect(event.lastErrorCode).toBe('ORDER_NOT_FOUND');
+    expect(event.failedAt).not.toBeNull();
+    expect(event.leaseOwner).toBeNull();
   });
 });

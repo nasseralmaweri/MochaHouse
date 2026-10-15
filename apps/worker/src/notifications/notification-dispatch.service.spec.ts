@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
+import { OutboxConfigModule } from '../outbox/outbox-config.module';
 import { Test, TestingModule } from '@nestjs/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import type { NotificationRecipientPurpose } from '@mocha-house/contracts';
@@ -14,6 +15,7 @@ import { EMAIL_SENDER } from './email/email-sender';
 import { LoggingEmailSender } from './email/logging-email-sender';
 import { NotificationDispatchService } from './notification-dispatch.service';
 import { NotificationRecipientResolver } from './notification-recipient-resolver.service';
+import { EmailProviderRejection } from './delivery-errors';
 
 // Milestone 8H — integration test against the real local Postgres instance,
 // exercising NotificationDispatchService exactly as OutboxProcessorService
@@ -49,7 +51,7 @@ describe('NotificationDispatchService (integration)', () => {
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({
-      imports: [PrismaModule],
+      imports: [PrismaModule, OutboxConfigModule],
       providers: [
         NotificationDispatchService,
         NotificationRecipientResolver,
@@ -1062,7 +1064,7 @@ describe('NotificationDispatchService (integration)', () => {
     });
 
     const failingModuleRef = await Test.createTestingModule({
-      imports: [PrismaModule],
+      imports: [PrismaModule, OutboxConfigModule],
       providers: [
         NotificationDispatchService,
         NotificationRecipientResolver,
@@ -1078,22 +1080,78 @@ describe('NotificationDispatchService (integration)', () => {
     }).compile();
     const failingDispatch = failingModuleRef.get(NotificationDispatchService);
 
-    await expect(
-      failingDispatch.dispatch({
+    // R1 / S4b: an error with no answer from the provider is AMBIGUOUS: the
+    // dispatch reports a retry (bounded reason), never throws, and leaves the
+    // delivery PENDING with its send intent recorded.
+    const outcome = await failingDispatch.dispatch({
+      id: eventId,
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
+      aggregateType: 'Order',
+      aggregateId: orderId,
+      eventType: 'order.checkout.completed',
+    });
+    expect(outcome).toMatchObject({ kind: 'retry', ambiguous: true });
+    expect((outcome as { reason: string }).reason.length).toBeLessThanOrEqual(
+      500,
+    );
+
+    const delivery = await prisma.notificationDelivery.findUniqueOrThrow({
+      where: {
+        outboxEventId_channel: { outboxEventId: eventId, channel: 'EMAIL' },
+      },
+    });
+    expect(delivery.status).toBe('PENDING');
+    expect(delivery.sendStartedAt).not.toBeNull();
+    expect(delivery.sentAt).toBeNull();
+
+    await failingModuleRef.close();
+  });
+
+  it('records a permanent provider refusal as FAILED with a bounded reason', async () => {
+    const locationId = await makeLocation();
+    const guestEmail = `guest-${randomUUID()}@example.com`;
+    const { orderId } = await makeOrder({ locationId, guestEmail });
+    const eventId = await makeOutboxEvent({
+      aggregateType: 'Order',
+      aggregateId: orderId,
+      eventType: 'order.checkout.completed',
+    });
+    const refusingModuleRef = await Test.createTestingModule({
+      imports: [PrismaModule, OutboxConfigModule],
+      providers: [
+        NotificationDispatchService,
+        NotificationRecipientResolver,
+        {
+          provide: EMAIL_SENDER,
+          useValue: {
+            send: async () => {
+              throw new EmailProviderRejection(
+                'MessageRejected',
+                'y'.repeat(1000),
+                false,
+              );
+            },
+          },
+        },
+      ],
+    }).compile();
+    const outcome = await refusingModuleRef
+      .get(NotificationDispatchService)
+      .dispatch({
         id: eventId,
         tenantId: TENANT_1_MOCHA_HOUSE_ID,
         aggregateType: 'Order',
         aggregateId: orderId,
         eventType: 'order.checkout.completed',
-      }),
-    ).resolves.not.toThrow();
-
+      });
+    expect(outcome).toMatchObject({ kind: 'dead', code: 'MessageRejected' });
     const delivery = await prisma.notificationDelivery.findUniqueOrThrow({
-      where: { outboxEventId_channel: { outboxEventId: eventId, channel: 'EMAIL' } },
+      where: {
+        outboxEventId_channel: { outboxEventId: eventId, channel: 'EMAIL' },
+      },
     });
     expect(delivery.status).toBe('FAILED');
     expect(delivery.failureReason!.length).toBeLessThanOrEqual(500);
-
-    await failingModuleRef.close();
+    await refusingModuleRef.close();
   });
 });
