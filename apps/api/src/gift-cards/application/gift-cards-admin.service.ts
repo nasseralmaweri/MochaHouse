@@ -62,6 +62,37 @@ type GiftCardTransactionRow = Prisma.GiftCardTransactionGetPayload<{
   };
 }>;
 
+// SC0.5c — a manual correction's operationKey was already applied with
+// different details (another card, amount/direction or reason). Stable for
+// clients; the message stays business-safe.
+export const GIFT_CARD_OPERATION_KEY_CONFLICT =
+  'GIFT_CARD_OPERATION_KEY_CONFLICT';
+
+// What the stored ADJUSTMENT row says was applied, and what this request
+// asks for — compared field by field to tell a replay from a conflict.
+const APPLIED_CORRECTION_SELECT = {
+  giftCardId: true,
+  amountMinorUnits: true,
+  reason: true,
+} as const;
+type AppliedCorrection = Prisma.GiftCardTransactionGetPayload<{
+  select: typeof APPLIED_CORRECTION_SELECT;
+}>;
+interface RequestedCorrection {
+  giftCardId: string;
+  deltaMinorUnits: number;
+  reason: string;
+}
+
+function operationKeyConflict(message: string): ConflictException {
+  return new ConflictException({
+    statusCode: 409,
+    error: 'Conflict',
+    code: GIFT_CARD_OPERATION_KEY_CONFLICT,
+    message,
+  });
+}
+
 @Injectable()
 export class GiftCardsAdminService {
   constructor(
@@ -209,7 +240,11 @@ export class GiftCardsAdminService {
   // Authorized manual balance correction. `reason` required (trimmed,
   // non-empty). `deltaMinorUnits` a non-zero whole integer. `operationKey`
   // a caller-supplied idempotency key: a retry with the same key never
-  // applies the change twice. The resulting balance may never fall below 0
+  // applies the change twice. SC0.5c — a retry is a replay only when it
+  // asks for the SAME correction (same card, same signed amount, same
+  // reason); the same key with any other details is refused with 409
+  // GIFT_CARD_OPERATION_KEY_CONFLICT and nothing is written.
+  // The resulting balance may never fall below 0
   // or exceed GIFT_CARD_MAX_VALUE_MINOR_UNITS. Permitted on an INACTIVE
   // card (an accounting fix is not blocked by status). The ledger entry,
   // the materialized balance and the InternalAuditEvent are written in the
@@ -226,6 +261,11 @@ export class GiftCardsAdminService {
     const deltaMinorUnits = this.validateDelta(request?.deltaMinorUnits);
     const reason = this.validateReason(request?.reason);
     const operationKey = this.validateOperationKey(request?.operationKey);
+    const requested: RequestedCorrection = {
+      giftCardId,
+      deltaMinorUnits,
+      reason,
+    };
 
     // Only the active business's cards can be corrected: another
     // business's card is reported exactly like a missing one, before any
@@ -245,7 +285,7 @@ export class GiftCardsAdminService {
       tenant,
     );
     if (preexisting) {
-      this.assertOperationKeyOwnedBy(preexisting, giftCardId);
+      this.assertSameCorrection(preexisting, requested);
       return this.buildDetail(giftCardId, tenant);
     }
 
@@ -266,14 +306,10 @@ export class GiftCardsAdminService {
             type: 'ADJUSTMENT',
             operationKey,
           },
-          select: { giftCardId: true },
+          select: APPLIED_CORRECTION_SELECT,
         });
         if (applied) {
-          if (applied.giftCardId !== giftCardId) {
-            throw new ConflictException(
-              'That operation key has already been used for a different gift card.',
-            );
-          }
+          this.assertSameCorrection(applied, requested);
           return;
         }
 
@@ -326,11 +362,12 @@ export class GiftCardsAdminService {
       // A concurrent request with the same operationKey beat us to the
       // unique ADJUSTMENT ledger row (the partial unique index fired). By
       // the time a P2002 surfaces the winning transaction has committed, so
-      // re-query and let the SAME ownership rule as the fast path decide:
-      //   - same gift card  -> the idempotent replay it is; return detail.
-      //   - different card  -> a genuine cross-card key clash; 409, with no
-      //                        further balance/ledger/audit write on either
-      //                        card (this transaction already rolled back).
+      // re-query and let the SAME rule as the fast path decide:
+      //   - same correction -> the idempotent replay it is; return detail.
+      //   - anything else   -> (another card, amount or reason) a genuine
+      //                        key clash; 409, with no further balance/
+      //                        ledger/audit write on either card (this
+      //                        transaction already rolled back).
       //   - no entry in this business -> not an idempotent replay at all;
       //                        surface the error rather than report a
       //                        correction that was never applied.
@@ -342,7 +379,7 @@ export class GiftCardsAdminService {
         if (!winner) {
           throw error;
         }
-        this.assertOperationKeyOwnedBy(winner, giftCardId);
+        this.assertSameCorrection(winner, requested);
         return this.buildDetail(giftCardId, tenant);
       }
       throw error;
@@ -432,20 +469,32 @@ export class GiftCardsAdminService {
   private async findCorrectionByOperationKey(
     operationKey: string,
     tenant: TenantContext,
-  ): Promise<{ giftCardId: string } | null> {
+  ): Promise<AppliedCorrection | null> {
     return this.prisma.giftCardTransaction.findFirst({
       where: { tenantId: tenant.tenantId, type: 'ADJUSTMENT', operationKey },
-      select: { giftCardId: true },
+      select: APPLIED_CORRECTION_SELECT,
     });
   }
 
-  private assertOperationKeyOwnedBy(
-    entry: { giftCardId: string },
-    giftCardId: string,
+  // SC0.5c — a key that was already applied is a replay only for the very
+  // same correction. Compared against the stored ledger row: the card, the
+  // signed amount (its sign is the direction) and the reason as validated
+  // (trimmed) and stored. The response never echoes the stored details.
+  private assertSameCorrection(
+    applied: AppliedCorrection,
+    requested: RequestedCorrection,
   ): void {
-    if (entry.giftCardId !== giftCardId) {
-      throw new ConflictException(
+    if (applied.giftCardId !== requested.giftCardId) {
+      throw operationKeyConflict(
         'That operation key has already been used for a different gift card.',
+      );
+    }
+    if (
+      applied.amountMinorUnits !== requested.deltaMinorUnits ||
+      applied.reason !== requested.reason
+    ) {
+      throw operationKeyConflict(
+        'That operation key has already been used for a different correction on this gift card. Refresh the page and check the gift card ledger before entering a new correction.',
       );
     }
   }
