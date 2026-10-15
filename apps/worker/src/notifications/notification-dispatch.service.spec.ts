@@ -1124,13 +1124,14 @@ describe('NotificationDispatchService (integration)', () => {
         {
           provide: EMAIL_SENDER,
           useValue: {
-            send: async () => {
-              throw new EmailProviderRejection(
-                'MessageRejected',
-                'y'.repeat(1000),
-                false,
-              );
-            },
+            send: () =>
+              Promise.reject(
+                new EmailProviderRejection(
+                  'MessageRejected',
+                  'y'.repeat(1000),
+                  false,
+                ),
+              ),
           },
         },
       ],
