@@ -84,7 +84,11 @@ export class NotificationRecipientConfigurationService {
 
     if (current?.email === email) {
       // No-op — nothing changed, nothing to audit.
-      return { purpose, email: current.email, updatedAt: current.updatedAt.toISOString() };
+      return {
+        purpose,
+        email: current.email,
+        updatedAt: current.updatedAt.toISOString(),
+      };
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {

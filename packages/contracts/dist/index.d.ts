@@ -1742,4 +1742,66 @@ export interface AdminCustomerGrowthReport {
     guestOrders: number;
     source: AdminReportDataSource;
 }
+export type NotificationHealthStatus = "ok" | "warning" | "critical";
+export type NotificationAttentionSeverity = "info" | "warning" | "critical";
+export type NotificationHealthItemState = "dead-lettered" | "delayed" | "retrying";
+export interface NotificationHealthReasonCount {
+    code: string;
+    count: number;
+}
+export interface NotificationHealthAttention {
+    key: string;
+    severity: NotificationAttentionSeverity;
+    title: string;
+    detail: string;
+    count: number;
+}
+export interface NotificationHealthItem {
+    eventId: string;
+    eventType: string;
+    state: NotificationHealthItemState;
+    attempts: number;
+    reasonCode: string | null;
+    createdAt: string;
+    nextAttemptAt: string | null;
+    failedAt: string | null;
+    reference: string | null;
+    possibleDuplicate: boolean;
+}
+export interface NotificationHealthResponse {
+    generatedAt: string;
+    status: NotificationHealthStatus;
+    thresholds: {
+        delayedAfterSeconds: number;
+        criticalDelaySeconds: number;
+        repeatedFailureAttempts: number;
+    };
+    pending: {
+        total: number;
+        waiting: number;
+        inProgress: number;
+        scheduledRetry: number;
+        delayed: number;
+        repeatedlyFailing: number;
+        oldestPendingAgeSeconds: number | null;
+        oldestRetryingAgeSeconds: number | null;
+        oldestOverdueSeconds: number | null;
+        retryReasons: NotificationHealthReasonCount[];
+    };
+    failed: {
+        total: number;
+        last24h: number;
+        last7d: number;
+        reasons: NotificationHealthReasonCount[];
+        closedDeliberately: number;
+    };
+    accepted: {
+        last24h: number;
+        last7d: number;
+    };
+    possibleDuplicatesLast7d: number;
+    attention: NotificationHealthAttention[];
+    items: NotificationHealthItem[];
+    itemsTruncated: boolean;
+}
 //# sourceMappingURL=index.d.ts.map

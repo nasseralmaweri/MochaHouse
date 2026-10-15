@@ -47,7 +47,9 @@ describe('S0D-2C-3 notification recipient routing (integration)', () => {
       return;
     }
     const existing = await prisma.notificationRecipient.findUnique({
-      where: { tenantId_purpose: { tenantId: TENANT_1_MOCHA_HOUSE_ID, purpose } },
+      where: {
+        tenantId_purpose: { tenantId: TENANT_1_MOCHA_HOUSE_ID, purpose },
+      },
       select: { email: true },
     });
     tenant1Snapshots.set(purpose, existing);

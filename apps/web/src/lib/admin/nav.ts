@@ -136,6 +136,16 @@ export function adminNavItems(
     });
   }
 
+  // Notifications (R1 / S4c — read-only delivery health). Shown only if the
+  // user effectively holds `notifications.routing.view` (CORPORATE-only).
+  if (can(capabilities, "notifications.routing.view")) {
+    items.push({
+      key: "notifications",
+      label: "Notifications",
+      href: "/admin/notifications",
+    });
+  }
+
   // Content (Milestone 8E — CMS foundation). Shown only if the user
   // effectively holds `cms.view` (CORPORATE-only). Save draft / publish
   // controls inside re-check `cms.manage`.
@@ -288,7 +298,7 @@ const NAV_GROUPS: ReadonlyArray<{
     key: "company",
     label: "Company",
     tier: "collapsible",
-    itemKeys: ["approvals", "careers", "franchising"],
+    itemKeys: ["approvals", "careers", "franchising", "notifications"],
   },
   { key: "admin", label: null, tier: "footer", itemKeys: ["administration"] },
 ];

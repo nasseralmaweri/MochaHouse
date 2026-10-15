@@ -100,7 +100,7 @@ describe('capability presentation (Milestone 5E)', () => {
         "Change an inquiry's status and add internal notes",
       ]);
       expect(groups.find((g) => g.group === 'Notifications')?.items).toEqual([
-        'View configured notification recipients',
+        'View notification recipients and delivery health',
         'Configure notification recipients',
       ]);
       expect(groups.find((g) => g.group === 'Content')?.items).toEqual([

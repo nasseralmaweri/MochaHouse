@@ -253,9 +253,9 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
   // two phrasings are the same.
   'notifications.routing.view': {
     group: 'Notifications',
-    effectiveAll: 'View configured notification recipients',
-    effectiveScoped: 'View configured notification recipients',
-    definition: 'View configured notification recipients',
+    effectiveAll: 'View notification recipients and delivery health',
+    effectiveScoped: 'View notification recipients and delivery health',
+    definition: 'View notification recipients and delivery health',
   },
   'notifications.routing.manage': {
     group: 'Notifications',

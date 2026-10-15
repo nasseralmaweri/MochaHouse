@@ -250,6 +250,26 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(manageOnly.map((i) => i.key)).not.toContain("franchising");
   });
 
+  it("shows Notifications only when the user holds notifications.routing.view (R1 / S4c)", () => {
+    const withView = adminNavItems({
+      "notifications.routing.view": { corporate: true, locationIds: [] },
+    });
+    expect(withView.map((i) => i.key)).toEqual(["dashboard", "notifications"]);
+    expect(withView.find((i) => i.key === "notifications")?.href).toBe(
+      "/admin/notifications",
+    );
+
+    const manageOnly = adminNavItems({
+      "notifications.routing.manage": { corporate: true, locationIds: [] },
+    });
+    expect(manageOnly.map((i) => i.key)).not.toContain("notifications");
+
+    const grouped = groupAdminNavItems(withView);
+    expect(grouped.find((g) => g.key === "company")?.items.map((i) => i.key)).toEqual([
+      "notifications",
+    ]);
+  });
+
   it("orders Franchising immediately after Careers, before Locations", () => {
     const items = adminNavItems({
       "careers.view": { corporate: true, locationIds: [] },
