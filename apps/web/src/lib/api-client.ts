@@ -346,7 +346,7 @@ export async function fetchGuestShareToken(
   }
 }
 
-async function safeJson(response: Response): Promise<{ outcome?: string; message?: string } | null> {
+async function safeJson(response: Response): Promise<{ outcome?: string; message?: string; code?: unknown } | null> {
   try {
     return await response.json();
   } catch {
@@ -1704,7 +1704,10 @@ export type GiftCardMutationResult<T> =
   | { outcome: "forbidden" }
   | { outcome: "not-found" }
   | { outcome: "invalid"; message: string }
-  | { outcome: "conflict"; message: string }
+  // `code` — the API's stable error code when it sends one (SC0.5c:
+  // GIFT_CARD_OPERATION_KEY_CONFLICT for a correction key already applied
+  // to a different correction).
+  | { outcome: "conflict"; message: string; code?: string }
   | { outcome: "error"; message: string };
 
 async function giftCardRequest<T>(
@@ -1745,9 +1748,11 @@ async function giftCardRequest<T>(
   }
   if (response.status === 409) {
     const parsed = await safeJson(response);
+    const code = typeof parsed?.code === "string" ? parsed.code : undefined;
     return {
       outcome: "conflict",
       message: parsed?.message ?? "That isn't possible right now.",
+      ...(code ? { code } : {}),
     };
   }
   if (!response.ok) {
@@ -1757,7 +1762,19 @@ async function giftCardRequest<T>(
       message: parsed?.message ?? `Something went wrong (${response.status}).`,
     };
   }
-  return { outcome: "success", data: (await response.json()) as T };
+  // SC0.5d — a 2xx whose body cannot be read is an UNKNOWN outcome (the
+  // change may well have been applied): report it as an error so the caller
+  // keeps its idempotency key, never as a thrown rejection that leaves a
+  // form stuck mid-submission.
+  try {
+    return { outcome: "success", data: (await response.json()) as T };
+  } catch {
+    return {
+      outcome: "error",
+      message:
+        "The server's answer could not be read. Check the gift card before trying again.",
+    };
+  }
 }
 
 export function searchGiftCardFromBrowser(
