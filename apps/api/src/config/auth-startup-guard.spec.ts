@@ -634,3 +634,108 @@ describe('dev auth startup validation (ESP-02)', () => {
     });
   });
 });
+
+// SC1a — the CENTERIVO platform-operator boundary joins the same fail-closed
+// startup validation as the customer and tenant-staff boundaries.
+describe('platform-operator boundary (SC1a)', () => {
+  const PLATFORM_SECRET = 'platform-dev-secret-for-local-use-0003';
+  const PLATFORM_POOL = {
+    PLATFORM_COGNITO_USER_POOL_ID: 'us-east-1_plat789',
+    PLATFORM_COGNITO_CLIENT_ID: 'platformclientid',
+  };
+
+  it('a local machine may opt the platform boundary into dev with its own strong secret', () => {
+    expect(
+      problems({
+        ...LOCAL,
+        PLATFORM_AUTH_PROVIDER: 'dev',
+        PLATFORM_AUTH_DEV_JWT_SECRET: PLATFORM_SECRET,
+      }),
+    ).toEqual([]);
+  });
+
+  it('PLATFORM_AUTH_PROVIDER must be exactly "cognito" or "dev"', () => {
+    expect(problems({ ...LOCAL, PLATFORM_AUTH_PROVIDER: 'Dev' })).toEqual([
+      expect.stringContaining('PLATFORM_AUTH_PROVIDER must be exactly'),
+    ]);
+  });
+
+  it.each(['AUTH_DEV_JWT_SECRET', 'INTERNAL_AUTH_DEV_JWT_SECRET'])(
+    'the platform dev secret may not equal %s',
+    (other) => {
+      expect(
+        problems({
+          ...LOCAL,
+          PLATFORM_AUTH_PROVIDER: 'dev',
+          PLATFORM_AUTH_DEV_JWT_SECRET: LOCAL[other],
+        }),
+      ).toEqual([
+        expect.stringMatching(
+          new RegExp(`${other} and PLATFORM_AUTH_DEV_JWT_SECRET must differ`),
+        ),
+      ]);
+    },
+  );
+
+  it('a weak or missing platform dev secret is refused', () => {
+    expect(refuses({ ...LOCAL, PLATFORM_AUTH_PROVIDER: 'dev' })).toBe(true);
+    expect(
+      refuses({
+        ...LOCAL,
+        PLATFORM_AUTH_PROVIDER: 'dev',
+        PLATFORM_AUTH_DEV_JWT_SECRET: 'short',
+      }),
+    ).toBe(true);
+  });
+
+  it('production can never select the dev platform provider, nor keep its secret', () => {
+    const found = problems({
+      ...PRODUCTION,
+      ...PLATFORM_POOL,
+      PLATFORM_AUTH_PROVIDER: 'dev',
+      PLATFORM_AUTH_DEV_JWT_SECRET: PLATFORM_SECRET,
+    });
+    expect(found).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('PLATFORM_AUTH_PROVIDER=dev'),
+        expect.stringContaining(
+          'PLATFORM_AUTH_DEV_JWT_SECRET must not be set in a production-like environment',
+        ),
+      ]),
+    );
+    expect(found.join('\n')).not.toContain(PLATFORM_SECRET);
+  });
+
+  it('production starts without a platform pool (the platform routes fail closed instead), and with a dedicated one', () => {
+    expect(problems(PRODUCTION)).toEqual([]);
+    expect(problems({ ...PRODUCTION, ...PLATFORM_POOL })).toEqual([]);
+  });
+
+  it('a platform pool or client set without its pair is refused', () => {
+    expect(
+      problems({
+        ...PRODUCTION,
+        PLATFORM_COGNITO_USER_POOL_ID: 'us-east-1_plat789',
+      }),
+    ).toEqual([
+      'PLATFORM_COGNITO_USER_POOL_ID and PLATFORM_COGNITO_CLIENT_ID must be set together.',
+    ]);
+  });
+
+  it.each([
+    ['COGNITO_USER_POOL_ID', 'PLATFORM_COGNITO_USER_POOL_ID'],
+    ['INTERNAL_COGNITO_USER_POOL_ID', 'PLATFORM_COGNITO_USER_POOL_ID'],
+    ['COGNITO_CLIENT_ID', 'PLATFORM_COGNITO_CLIENT_ID'],
+    ['INTERNAL_COGNITO_CLIENT_ID', 'PLATFORM_COGNITO_CLIENT_ID'],
+  ])(
+    'a platform pool/client shared with %s is refused, in every environment',
+    (other, platform) => {
+      for (const base of [PRODUCTION, { ...COGNITO }]) {
+        const env = { ...base, ...PLATFORM_POOL, [platform]: base[other] };
+        expect(problems(env)).toEqual([
+          `${platform} must differ from ${other}.`,
+        ]);
+      }
+    },
+  );
+});

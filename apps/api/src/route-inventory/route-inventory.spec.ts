@@ -55,12 +55,12 @@ describe('API route inventory', () => {
     ).toEqual([]);
   });
 
-  it('Admin routes are tenant-, location- or platform-scoped and sit behind the Admin guards', () => {
+  it('Admin routes are tenant- or location-scoped and sit behind the Admin guards', () => {
     const violations = routes
       .filter(isAdmin)
       .filter(
         (r) =>
-          !['tenant', 'location', 'platform'].includes(scopeOf(r) ?? '') ||
+          !['tenant', 'location'].includes(scopeOf(r) ?? '') ||
           !r.guards.includes('InternalAuthGuard') ||
           !r.guards.includes('PermissionGuard'),
       )
@@ -68,12 +68,41 @@ describe('API route inventory', () => {
     expect(violations).toEqual([]);
   });
 
-  it('location and platform scopes are only used on guarded internal routes', () => {
+  it('the location scope is only used on guarded internal routes', () => {
     const violations = routes
-      .filter((r) => ['location', 'platform'].includes(scopeOf(r) ?? ''))
+      .filter((r) => scopeOf(r) === 'location')
       .filter((r) => !isAdmin(r) || !r.guards.includes('InternalAuthGuard'))
       .map((r) => r.key);
     expect(violations).toEqual([]);
+  });
+
+  // SC1a — the CENTERIVO platform-operator boundary. A platform route lives
+  // under /api/v1/platform/, is guarded by PlatformAuthGuard and by NO tenant
+  // or customer guard (a tenant credential can never be what admits it);
+  // and every route under /api/v1/platform/ is classified 'platform'.
+  it('platform routes sit under /api/v1/platform/ behind PlatformAuthGuard only', () => {
+    const isPlatformPath = (r: DiscoveredRoute) =>
+      r.path === '/api/v1/platform' || r.path.startsWith('/api/v1/platform/');
+    const violations = routes
+      .filter((r) => scopeOf(r) === 'platform' || isPlatformPath(r))
+      .filter(
+        (r) =>
+          scopeOf(r) !== 'platform' ||
+          !isPlatformPath(r) ||
+          !r.guards.includes('PlatformAuthGuard') ||
+          r.guards.some((guard) =>
+            [
+              'InternalAuthGuard',
+              'InternalIdentityGuard',
+              'PermissionGuard',
+              'CustomerAuthGuard',
+              'OptionalCustomerAuthGuard',
+            ].includes(guard),
+          ),
+      )
+      .map((r) => `${r.key} [${scopeOf(r)}] guards=${r.guards.join(',')}`);
+    expect(violations).toEqual([]);
+    expect(routes.some((r) => scopeOf(r) === 'platform')).toBe(true);
   });
 
   it('public-auth, token and system routes never expose Admin paths', () => {

@@ -31,6 +31,15 @@ export const MEMBER_TENANT_ROUTES = [
   { path: 'api/v1/internal/{*path}', method: RequestMethod.ALL },
 ];
 
+// SC1a — the CENTERIVO platform-operator routes. They belong to NO tenant:
+// PlatformAuthGuard authenticates the operator and never establishes a
+// TenantContext, so neither the deployment's storefront tenant nor its
+// suspension gate (SC0.5a) may apply to them.
+export const PLATFORM_ROUTES = [
+  { path: 'api/v1/platform', method: RequestMethod.ALL },
+  { path: 'api/v1/platform/{*path}', method: RequestMethod.ALL },
+];
+
 // Milestone S0C — the API's tenant foundation. Importing this module:
 //   - validates SINGLE_TENANT_ID against the Tenant table at startup
 //     (startup fails otherwise);
@@ -69,7 +78,7 @@ export class TenancyModule implements NestModule {
       .forRoutes({ path: '{*path}', method: RequestMethod.ALL });
     consumer
       .apply(TenantContextMiddleware)
-      .exclude(...MEMBER_TENANT_ROUTES)
+      .exclude(...MEMBER_TENANT_ROUTES, ...PLATFORM_ROUTES)
       .forRoutes({ path: '{*path}', method: RequestMethod.ALL });
   }
 }
