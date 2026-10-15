@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
+import { markOrderClosedForTest } from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -25,6 +26,11 @@ type Status = 'INVITED' | 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
 // every other Milestone 5-9 read-only Admin surface, mathematically
 // correct against deterministic fixtures (integer minor units throughout),
 // and honest about its digital-platform-only scope.
+const isClosed = (
+  status: string | undefined,
+): status is 'REJECTED' | 'CANCELLED' =>
+  status === 'REJECTED' || status === 'CANCELLED';
+
 describe('Admin reports — orders overview (integration)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -94,7 +100,12 @@ describe('Admin reports — orders overview (integration)', () => {
     scope: { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null },
   ) {
     await prisma.internalUserRoleAssignment.create({
-      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: userId, roleId, ...scope },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        internalUserId: userId,
+        roleId,
+        ...scope,
+      },
     });
   }
 
@@ -163,11 +174,20 @@ describe('Admin reports — orders overview (integration)', () => {
         promotionDiscountMinorUnits: options.promotionDiscountMinorUnits ?? 0,
         rewardDiscountMinorUnits: options.rewardDiscountMinorUnits ?? 0,
         giftCardTenderMinorUnits: options.giftCardTenderMinorUnits ?? 0,
-        status: options.status ?? 'RECEIVED',
+        status: isClosed(options.status)
+          ? 'RECEIVED'
+          : (options.status ?? 'RECEIVED'),
         ...(options.createdAt ? { createdAt: options.createdAt } : {}),
       },
     });
     orderIds.push(order.id);
+    // R1 / S5b — an order can no longer be INSERTED closed (Invariant 2), nor
+    // closed without the closure workflow. This read-side fixture only needs a
+    // closed status to count, and must stay deletable, so it is created open
+    // and flipped by the test-only helper (disposable test database only).
+    if (isClosed(options.status)) {
+      await markOrderClosedForTest(order.id, options.status);
+    }
     return order.id;
   }
 
@@ -504,7 +524,10 @@ describe('Admin reports — orders overview (integration)', () => {
       expect(body.completedOrders).toBe(0);
       expect(body.digitalSalesMinorUnits).toBe(300);
       expect(body.averageOrderValueMinorUnits).toBe(300);
-      expect(body.location).toEqual({ id: locationB, name: `Fixture B ${suffix}` });
+      expect(body.location).toEqual({
+        id: locationB,
+        name: `Fixture B ${suffix}`,
+      });
       expect(body.filters.locationId).toBe(locationB);
     });
 
@@ -636,7 +659,9 @@ describe('Admin reports — orders overview (integration)', () => {
       }).expect(200);
       const body = res.body as AdminOrdersOverviewReport;
       expect(body.source.scope).toBe('DIGITAL_PLATFORM_ONLY');
-      expect(body.source.scopeLabel.toLowerCase()).toContain('digital-platform');
+      expect(body.source.scopeLabel.toLowerCase()).toContain(
+        'digital-platform',
+      );
       expect(body.source.scopeLabel.toLowerCase()).toContain('pos');
       expect(body.source.freshnessLabel).toBe('Live platform data');
     });
@@ -646,11 +671,21 @@ describe('Admin reports — orders overview (integration)', () => {
 
   it('Platform Administrator has reports.view; Store Manager does not', async () => {
     const pa = await prisma.internalRole.findUniqueOrThrow({
-      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'platform-administrator' } },
+      where: {
+        tenantId_key: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          key: 'platform-administrator',
+        },
+      },
       include: { permissions: true },
     });
     const sm = await prisma.internalRole.findUniqueOrThrow({
-      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
+      where: {
+        tenantId_key: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          key: 'store-manager',
+        },
+      },
       include: { permissions: true },
     });
     expect(pa.permissions.map((p) => p.permissionKey)).toContain(

@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
+import { markOrderClosedForTest } from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -26,6 +27,11 @@ type Status = 'INVITED' | 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
 // Customer.createdAt and Order.createdAt are real timestamps, so date
 // filtering reuses the exact 9A/9B instant-range strategy
 // (businessDateRangeToUtcInstants), not 9C's @db.Date range.
+const isClosed = (
+  status: string | undefined,
+): status is 'REJECTED' | 'CANCELLED' =>
+  status === 'REJECTED' || status === 'CANCELLED';
+
 describe('Admin reports — customer growth & ordering (integration)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -95,7 +101,12 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
     scope: { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null },
   ) {
     await prisma.internalUserRoleAssignment.create({
-      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: userId, roleId, ...scope },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        internalUserId: userId,
+        roleId,
+        ...scope,
+      },
     });
   }
 
@@ -158,11 +169,20 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
         guestPhone: '5550000000',
         currency: 'USD',
         subtotal: 500,
-        status: options.status ?? 'RECEIVED',
+        status: isClosed(options.status)
+          ? 'RECEIVED'
+          : (options.status ?? 'RECEIVED'),
         createdAt: options.createdAt,
       },
     });
     orderIds.push(order.id);
+    // R1 / S5b — an order can no longer be INSERTED closed (Invariant 2), nor
+    // closed without the closure workflow. This read-side fixture only needs a
+    // closed status to count, and must stay deletable, so it is created open
+    // and flipped by the test-only helper (disposable test database only).
+    if (isClosed(options.status)) {
+      await markOrderClosedForTest(order.id, options.status);
+    }
     return order.id;
   }
 
@@ -288,9 +308,7 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
   // ---- Query validation -----------------------------------------
 
   it('requires startDate', async () => {
-    await getReport(`viewer-${suffix}`, { endDate: '2020-01-01' }).expect(
-      400,
-    );
+    await getReport(`viewer-${suffix}`, { endDate: '2020-01-01' }).expect(400);
   });
 
   it('requires endDate', async () => {
@@ -353,29 +371,81 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
 
       // --- Order/customer separation + repeat fixtures ---
       customerOneOrder = await makeCustomer(beforeRange);
-      await makeOrder({ locationId: location, customerId: customerOneOrder, createdAt: midRange });
+      await makeOrder({
+        locationId: location,
+        customerId: customerOneOrder,
+        createdAt: midRange,
+      });
 
       customerTwoOrders = await makeCustomer(beforeRange);
-      await makeOrder({ locationId: location, customerId: customerTwoOrders, createdAt: midRange });
-      await makeOrder({ locationId: location, customerId: customerTwoOrders, createdAt: midRange });
+      await makeOrder({
+        locationId: location,
+        customerId: customerTwoOrders,
+        createdAt: midRange,
+      });
+      await makeOrder({
+        locationId: location,
+        customerId: customerTwoOrders,
+        createdAt: midRange,
+      });
 
       customerThreeOrders = await makeCustomer(beforeRange);
-      await makeOrder({ locationId: location, customerId: customerThreeOrders, createdAt: midRange });
-      await makeOrder({ locationId: location, customerId: customerThreeOrders, createdAt: midRange });
-      await makeOrder({ locationId: location, customerId: customerThreeOrders, createdAt: midRange });
+      await makeOrder({
+        locationId: location,
+        customerId: customerThreeOrders,
+        createdAt: midRange,
+      });
+      await makeOrder({
+        locationId: location,
+        customerId: customerThreeOrders,
+        createdAt: midRange,
+      });
+      await makeOrder({
+        locationId: location,
+        customerId: customerThreeOrders,
+        createdAt: midRange,
+      });
 
       customerOldPlusOneInRange = await makeCustomer(beforeRange);
-      await makeOrder({ locationId: location, customerId: customerOldPlusOneInRange, createdAt: beforeRange });
-      await makeOrder({ locationId: location, customerId: customerOldPlusOneInRange, createdAt: midRange });
+      await makeOrder({
+        locationId: location,
+        customerId: customerOldPlusOneInRange,
+        createdAt: beforeRange,
+      });
+      await makeOrder({
+        locationId: location,
+        customerId: customerOldPlusOneInRange,
+        createdAt: midRange,
+      });
 
       customerTwoInRangePlusOld = await makeCustomer(beforeRange);
-      await makeOrder({ locationId: location, customerId: customerTwoInRangePlusOld, createdAt: beforeRange });
-      await makeOrder({ locationId: location, customerId: customerTwoInRangePlusOld, createdAt: midRange });
-      await makeOrder({ locationId: location, customerId: customerTwoInRangePlusOld, createdAt: midRange });
+      await makeOrder({
+        locationId: location,
+        customerId: customerTwoInRangePlusOld,
+        createdAt: beforeRange,
+      });
+      await makeOrder({
+        locationId: location,
+        customerId: customerTwoInRangePlusOld,
+        createdAt: midRange,
+      });
+      await makeOrder({
+        locationId: location,
+        customerId: customerTwoInRangePlusOld,
+        createdAt: midRange,
+      });
 
       // Guest orders in range — must never contribute to registered counts.
-      await makeOrder({ locationId: location, customerId: null, createdAt: midRange });
-      await makeOrder({ locationId: location, customerId: null, createdAt: midRange });
+      await makeOrder({
+        locationId: location,
+        customerId: null,
+        createdAt: midRange,
+      });
+      await makeOrder({
+        locationId: location,
+        customerId: null,
+        createdAt: midRange,
+      });
 
       // Boundary orders (all for a fresh customer, so they don't pollute
       // the repeat/with-orders counts above).
@@ -639,7 +709,9 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
       const body = await getBody();
       expect(body.source.scope).toBe('CUSTOMER_PLATFORM');
       expect(body.source.scopeLabel.toLowerCase()).toContain('customer');
-      expect(body.source.scopeLabel.toLowerCase()).toContain('digital-platform');
+      expect(body.source.scopeLabel.toLowerCase()).toContain(
+        'digital-platform',
+      );
       expect(body.source.scopeLabel.toLowerCase()).not.toContain('pos');
       expect(body.source.scopeLabel.toLowerCase()).not.toContain('in-store');
       expect(body.source.freshnessLabel).toBe('Live platform data');
@@ -719,11 +791,21 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
 
   it('Platform Administrator has reports.view; Store Manager does not (shared with 9A/9B/9C)', async () => {
     const pa = await prisma.internalRole.findUniqueOrThrow({
-      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'platform-administrator' } },
+      where: {
+        tenantId_key: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          key: 'platform-administrator',
+        },
+      },
       include: { permissions: true },
     });
     const sm = await prisma.internalRole.findUniqueOrThrow({
-      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
+      where: {
+        tenantId_key: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          key: 'store-manager',
+        },
+      },
       include: { permissions: true },
     });
     expect(pa.permissions.map((p) => p.permissionKey)).toContain(

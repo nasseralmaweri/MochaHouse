@@ -9,6 +9,7 @@ import {
   removeTestTenantB,
   tenantContextFor,
   TEST_TENANT_B_ID,
+  markOrderClosedForTest,
 } from '@mocha-house/testing';
 import { ACTIVE_ORDER_STATUSES } from '@mocha-house/domain';
 import { PrismaModule } from '../../prisma/prisma.module';
@@ -26,6 +27,9 @@ const corporate = AuthorizationContext.of({
   'orders.view': [{ scopeType: 'CORPORATE', scopeId: null }],
   'orders.manage_status': [{ scopeType: 'CORPORATE', scopeId: null }],
 });
+
+const isClosed = (status: string): status is 'REJECTED' | 'CANCELLED' =>
+  status === 'REJECTED' || status === 'CANCELLED';
 
 describe('AdminOrdersService queue visibility (integration)', () => {
   let moduleRef: TestingModule;
@@ -62,7 +66,7 @@ describe('AdminOrdersService queue visibility (integration)', () => {
         tenantId,
         orderNumber: `S1-${randomUUID().slice(0, 12)}`,
         accessToken: randomUUID(),
-        status,
+        status: isClosed(status) ? 'RECEIVED' : status,
         locationId,
         paymentAttemptId: attempt.id,
         guestName: 'Queue Guest',
@@ -72,6 +76,13 @@ describe('AdminOrdersService queue visibility (integration)', () => {
       },
     });
     orderIds.push(order.id);
+    // R1 / S5b — an order can no longer be INSERTED closed (Invariant 2), nor
+    // closed without the closure workflow. This read-side fixture only needs a
+    // closed status to count, and must stay deletable, so it is created open
+    // and flipped by the test-only helper (disposable test database only).
+    if (isClosed(status)) {
+      await markOrderClosedForTest(order.id, status);
+    }
     if (outbox !== 'NONE') {
       await prisma.outboxEvent.create({
         data: {

@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
+import { markOrderClosedForTest } from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -26,6 +27,11 @@ type Status = 'INVITED' | 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
 // the approved active/inactive inclusion rule, and stays honest about its
 // digital-platform-only scope — this compares locations against EACH
 // OTHER, never against a total-store/POS figure.
+const isClosed = (
+  status: string | undefined,
+): status is 'REJECTED' | 'CANCELLED' =>
+  status === 'REJECTED' || status === 'CANCELLED';
+
 describe('Admin reports — location performance (integration)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -95,7 +101,12 @@ describe('Admin reports — location performance (integration)', () => {
     scope: { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null },
   ) {
     await prisma.internalUserRoleAssignment.create({
-      data: { tenantId: TENANT_1_MOCHA_HOUSE_ID, internalUserId: userId, roleId, ...scope },
+      data: {
+        tenantId: TENANT_1_MOCHA_HOUSE_ID,
+        internalUserId: userId,
+        roleId,
+        ...scope,
+      },
     });
   }
 
@@ -167,11 +178,20 @@ describe('Admin reports — location performance (integration)', () => {
         promotionDiscountMinorUnits: options.promotionDiscountMinorUnits ?? 0,
         rewardDiscountMinorUnits: options.rewardDiscountMinorUnits ?? 0,
         giftCardTenderMinorUnits: options.giftCardTenderMinorUnits ?? 0,
-        status: options.status ?? 'RECEIVED',
+        status: isClosed(options.status)
+          ? 'RECEIVED'
+          : (options.status ?? 'RECEIVED'),
         ...(options.createdAt ? { createdAt: options.createdAt } : {}),
       },
     });
     orderIds.push(order.id);
+    // R1 / S5b — an order can no longer be INSERTED closed (Invariant 2), nor
+    // closed without the closure workflow. This read-side fixture only needs a
+    // closed status to count, and must stay deletable, so it is created open
+    // and flipped by the test-only helper (disposable test database only).
+    if (isClosed(options.status)) {
+      await markOrderClosedForTest(order.id, options.status);
+    }
     return order.id;
   }
 
@@ -297,9 +317,7 @@ describe('Admin reports — location performance (integration)', () => {
   // ---- Query validation -----------------------------------------
 
   it('requires startDate', async () => {
-    await getReport(`viewer-${suffix}`, { endDate: '2026-01-01' }).expect(
-      400,
-    );
+    await getReport(`viewer-${suffix}`, { endDate: '2026-01-01' }).expect(400);
   });
 
   it('requires endDate', async () => {
@@ -597,9 +615,9 @@ describe('Admin reports — location performance (integration)', () => {
       expect(names).toEqual(sorted);
       // AAA sorts before ZZZ alphabetically — digital sales would sort the
       // other way if this were secretly a ranking.
-      expect(
-        names.indexOf(`AAA Active Orders ${suffix}`),
-      ).toBeLessThan(names.indexOf(`ZZZ Active Zero ${suffix}`));
+      expect(names.indexOf(`AAA Active Orders ${suffix}`)).toBeLessThan(
+        names.indexOf(`ZZZ Active Zero ${suffix}`),
+      );
     });
 
     it('states the digital-platform-only source scope (identical to 9A)', async () => {
@@ -609,7 +627,9 @@ describe('Admin reports — location performance (integration)', () => {
       }).expect(200);
       const body = res.body as AdminLocationPerformanceReport;
       expect(body.source.scope).toBe('DIGITAL_PLATFORM_ONLY');
-      expect(body.source.scopeLabel.toLowerCase()).toContain('digital-platform');
+      expect(body.source.scopeLabel.toLowerCase()).toContain(
+        'digital-platform',
+      );
       expect(body.source.scopeLabel.toLowerCase()).toContain('pos');
       expect(body.source.freshnessLabel).toBe('Live platform data');
     });
@@ -630,11 +650,21 @@ describe('Admin reports — location performance (integration)', () => {
 
   it('Platform Administrator has reports.view; Store Manager does not (shared with 9A)', async () => {
     const pa = await prisma.internalRole.findUniqueOrThrow({
-      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'platform-administrator' } },
+      where: {
+        tenantId_key: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          key: 'platform-administrator',
+        },
+      },
       include: { permissions: true },
     });
     const sm = await prisma.internalRole.findUniqueOrThrow({
-      where: { tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'store-manager' } },
+      where: {
+        tenantId_key: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          key: 'store-manager',
+        },
+      },
       include: { permissions: true },
     });
     expect(pa.permissions.map((p) => p.permissionKey)).toContain(

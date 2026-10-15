@@ -26,6 +26,7 @@ export {
   type ScratchDatabase,
 } from "./scratch-database";
 export { TENANT_ID_REQUIRED_MODELS } from './tenant-conversion';
+export { markOrderClosedForTest } from "./closed-orders";
 export {
   DISPOSABLE_NAME_SETTING,
   DISPOSABLE_TOKEN_SETTING,
