@@ -219,10 +219,18 @@ BEGIN
     FOR EACH ROW EXECUTE FUNCTION "reject_order_closure_change"();
 
   -- An obligation can move through its states but never change what it IS, a
-  -- REFUNDED one is frozen, and none can be deleted.
+  -- REFUNDED one is frozen, and none can be deleted. Every obligation is born DUE
+  -- (a refund is never created already in progress or settled).
   CREATE FUNCTION "guard_order_refund_obligation_change"() RETURNS trigger
   LANGUAGE plpgsql AS $fn$
   BEGIN
+    IF TG_OP = 'INSERT' THEN
+      IF NEW."status" <> 'DUE' THEN
+        RAISE EXCEPTION 'OrderRefundObligation % must be created DUE, not %.', NEW."id", NEW."status"
+          USING ERRCODE = 'restrict_violation';
+      END IF;
+      RETURN NEW;
+    END IF;
     IF TG_OP = 'DELETE' THEN
       RAISE EXCEPTION 'OrderRefundObligation cannot be deleted.'
         USING ERRCODE = 'restrict_violation';
@@ -259,7 +267,7 @@ BEGIN
     RETURN NEW;
   END;
   $fn$;
-  CREATE TRIGGER "OrderRefundObligation_guard" BEFORE UPDATE OR DELETE ON "OrderRefundObligation"
+  CREATE TRIGGER "OrderRefundObligation_guard" BEFORE INSERT OR UPDATE OR DELETE ON "OrderRefundObligation"
     FOR EACH ROW EXECUTE FUNCTION "guard_order_refund_obligation_change"();
 
   -- Checked at COMMIT (the closure, the status change and the obligation are written

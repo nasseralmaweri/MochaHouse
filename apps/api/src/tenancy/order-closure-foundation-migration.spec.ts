@@ -670,6 +670,24 @@ describe('R1 / S5a: order closure database foundation', () => {
       ).toBe('23001');
     });
 
+    it('only ever creates an obligation DUE (23001; DUE creation is exercised by every prime() above)', async () => {
+      // Every non-DUE initial status is refused by the guard before any other
+      // check, even one whose settlement fields would otherwise be consistent.
+      for (const extra of [
+        `status|'PROCESSING'`,
+        `status|'FAILED'`,
+        `status, "processorRefundId"|'PROCESSING', 're_new'`,
+        `status, "settlementMethod", "settledAt", "settledByInternalUserId"|'REFUNDED', 'MANUAL_EXTERNAL', now(), 'iu-a'`,
+      ]) {
+        expect(
+          await sqlState(
+            db.url,
+            obligation('8', 1500, extra).replace("'ob-8'", "'ob-8-new'"),
+          ),
+        ).toBe('23001');
+      }
+    });
+
     it('records a manual out-of-band refund only with the staff member who did it', async () => {
       await prime('10');
       expect(
