@@ -236,7 +236,9 @@ SELECT sum("amountMinorUnits") FROM "GiftCardTransaction";
   partial unique index (caller-generated idempotency keys). A business that
   reuses another business's key gets a 409 for its own card; nothing of the
   other business is returned. Make it per-business if keys ever become
-  predictable.
+  predictable. **Superseded by SC0.5b:** the index is now
+  `(tenantId, operationKey)` and the lookups are scoped to the business
+  (migration `20261021090000_tenant_giftcard_adjustment_operation_key`).
 * Production may hold rows the migration cannot place; it then aborts and
   the dry-run report lists them for an explicit ownership decision.
 * Storefront tenant resolution is still `SINGLE_TENANT_ID`; serving a

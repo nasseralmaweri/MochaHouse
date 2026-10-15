@@ -240,7 +240,10 @@ export class GiftCardsAdminService {
 
     // Fast-path idempotent replay for the common sequential retry. The
     // authoritative re-check happens again INSIDE the row lock below.
-    const preexisting = await this.findCorrectionByOperationKey(operationKey);
+    const preexisting = await this.findCorrectionByOperationKey(
+      operationKey,
+      tenant,
+    );
     if (preexisting) {
       this.assertOperationKeyOwnedBy(preexisting, giftCardId);
       return this.buildDetail(giftCardId, tenant);
@@ -254,8 +257,15 @@ export class GiftCardsAdminService {
         // Re-check idempotency inside the lock: a concurrent request with
         // this operationKey may have committed between the fast-path check
         // and our acquiring the lock.
+        // SC0.5b — keys are unique per business (the partial unique index is
+        // (tenantId, operationKey)), so is this lookup: another business's
+        // use of the same key is invisible here and blocks nothing.
         const applied = await tx.giftCardTransaction.findFirst({
-          where: { type: 'ADJUSTMENT', operationKey },
+          where: {
+            tenantId: tenant.tenantId,
+            type: 'ADJUSTMENT',
+            operationKey,
+          },
           select: { giftCardId: true },
         });
         if (applied) {
@@ -321,11 +331,18 @@ export class GiftCardsAdminService {
       //   - different card  -> a genuine cross-card key clash; 409, with no
       //                        further balance/ledger/audit write on either
       //                        card (this transaction already rolled back).
+      //   - no entry in this business -> not an idempotent replay at all;
+      //                        surface the error rather than report a
+      //                        correction that was never applied.
       if (isUniqueConstraintViolation(error)) {
-        const winner = await this.findCorrectionByOperationKey(operationKey);
-        if (winner) {
-          this.assertOperationKeyOwnedBy(winner, giftCardId);
+        const winner = await this.findCorrectionByOperationKey(
+          operationKey,
+          tenant,
+        );
+        if (!winner) {
+          throw error;
         }
+        this.assertOperationKeyOwnedBy(winner, giftCardId);
         return this.buildDetail(giftCardId, tenant);
       }
       throw error;
@@ -411,11 +428,13 @@ export class GiftCardsAdminService {
     };
   }
 
+  // SC0.5b — scoped to the active business, exactly like the unique index.
   private async findCorrectionByOperationKey(
     operationKey: string,
+    tenant: TenantContext,
   ): Promise<{ giftCardId: string } | null> {
     return this.prisma.giftCardTransaction.findFirst({
-      where: { type: 'ADJUSTMENT', operationKey },
+      where: { tenantId: tenant.tenantId, type: 'ADJUSTMENT', operationKey },
       select: { giftCardId: true },
     });
   }
