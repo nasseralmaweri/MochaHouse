@@ -675,12 +675,15 @@ describe('Checkout financial isolation (integration)', () => {
     // S3c — the header form (what the web tier sends) is bound the same way.
     await request(apps.a.getHttpServer())
       .get(`/api/v1/orders/${orderId}`)
-      .set("x-order-access-token", accessToken)
+      .set('x-order-access-token', accessToken)
       .expect(200);
     const foreignByHeader = await request(apps.b.getHttpServer())
       .get(`/api/v1/orders/${orderId}`)
-      .set("x-order-access-token", accessToken);
-    expect([foreignByHeader.status, foreignByHeader.body]).toEqual([404, absent.body]);
+      .set('x-order-access-token', accessToken);
+    expect([foreignByHeader.status, foreignByHeader.body]).toEqual([
+      404,
+      absent.body,
+    ]);
     // A wrong token on the right storefront reads the same as well.
     const wrong = await request(apps.a.getHttpServer()).get(
       `/api/v1/orders/${orderId}?accessToken=${randomUUID()}`,

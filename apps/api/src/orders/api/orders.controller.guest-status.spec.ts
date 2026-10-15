@@ -1,10 +1,14 @@
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
+import type { App } from 'supertest/types';
 import { NotFoundException } from '@nestjs/common';
 import request from 'supertest';
 import { OrdersController, pickAccessToken } from './orders.controller';
 import { CheckoutService } from '../application/checkout.service';
-import { RateLimitEnforcer, RateLimitGuard } from '../../rate-limit/rate-limit.guard';
+import {
+  RateLimitEnforcer,
+  RateLimitGuard,
+} from '../../rate-limit/rate-limit.guard';
 import { OptionalCustomerAuthGuard } from '../../customer-auth/infrastructure/optional-customer-auth.guard';
 
 // R1 / S3c — the guest status endpoint accepts the access token in the
@@ -14,8 +18,8 @@ import { OptionalCustomerAuthGuard } from '../../customer-auth/infrastructure/op
 // by the tenant storefront isolation specs); here the service is a stub that
 // records what the controller hands it.
 describe('GET /api/v1/orders/:orderId — guest token transport', () => {
-  let app: INestApplication;
-  const getStatus = jest.fn();
+  let app: INestApplication<App>;
+  const getStatus = jest.fn<Promise<unknown>, [string, string, unknown]>();
   const releaseOnSuccess = jest.fn().mockResolvedValue(undefined);
 
   beforeAll(async () => {
@@ -33,10 +37,12 @@ describe('GET /api/v1/orders/:orderId — guest token transport', () => {
       .compile();
     app = module.createNestApplication();
     // Stand in for the tenant middleware.
-    app.use((req: { tenantContext?: unknown }, _res: unknown, next: () => void) => {
-      req.tenantContext = { tenantId: 'tenant-1' };
-      next();
-    });
+    app.use(
+      (req: { tenantContext?: unknown }, _res: unknown, next: () => void) => {
+        req.tenantContext = { tenantId: 'tenant-1' };
+        next();
+      },
+    );
     await app.init();
   });
   afterAll(async () => {
@@ -62,7 +68,11 @@ describe('GET /api/v1/orders/:orderId — guest token transport', () => {
       .get('/api/v1/orders/o1')
       .query({ accessToken: 'query-token' })
       .expect(200);
-    expect(getStatus).toHaveBeenCalledWith('o1', 'query-token', expect.anything());
+    expect(getStatus).toHaveBeenCalledWith(
+      'o1',
+      'query-token',
+      expect.anything(),
+    );
   });
 
   it('prefers the header when both are sent', async () => {
