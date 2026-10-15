@@ -79,3 +79,17 @@ migration*) drops the tables, triggers, functions, ledger CHECKs and the partial
 The writer, the `orders.cancel` permission and its data grant, the reason catalogue, the
 lock order (Order → Promotion → PromotionCustomerUsage → GiftCard → LoyaltyAccount), the
 customer-visible reason, and the exact promotion-counter treatment.
+
+## Required safeguards before closure is enabled (S5b gate)
+
+* **Invariant 1 — enforced in S5a.** Every new `OrderRefundObligation` is created `DUE`
+  (the guard trigger also fires on `INSERT`; a regression test covers every non-`DUE`
+  initial status).
+* **Invariant 2 — deferred to S5b, REQUIRED before `REJECTED` / `CANCELLED` are enabled.**
+  An `Order` must not be **inserted** directly with status `REJECTED` or `CANCELLED`,
+  bypassing the controlled closure workflow. Today the closure-required constraint trigger
+  fires only on `UPDATE OF "status"`, so a direct `INSERT` of an already-closed order would
+  skip it. This is unreachable in S5a (nothing writes either status, and no API can), which
+  is why it does not block this PR. S5b must add a database-level `INSERT` guard (or extend
+  the commit-time check to `INSERT`) with a test, and must not enable rejection or
+  cancellation, the `orders.cancel` grant or the feature flag until it ships.
