@@ -349,6 +349,16 @@ export class OutboxProcessorService implements OnModuleInit, OnModuleDestroy {
         if (await this.store.complete(claim)) this.counters.noHandler += 1;
         else this.counters.lostClaims += 1;
         return;
+      // R1 / S5b — deliberately not sent (a READY notice for an order that was
+      // rejected or cancelled): the event is complete, nothing was sent, and
+      // it is not a failure, so it never alerts.
+      case 'suppressed':
+        if (await this.store.complete(claim)) this.counters.noHandler += 1;
+        else this.counters.lostClaims += 1;
+        this.logger.log(
+          `Outbox event ${claim.eventId} (${claim.eventType}) not sent: ${outcome.code}.`,
+        );
+        return;
       case 'accepted':
         if (await this.store.complete(claim)) this.counters.accepted += 1;
         else

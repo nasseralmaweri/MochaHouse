@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { OUTBOX_CONFIG, type OutboxConfig } from './outbox.config';
+import { orderClosedForReadyNotice } from '../notifications/order-closed-guard';
 
 // R1 / S4b — the ONLY place that touches the outbox lease and retry columns.
 //
@@ -178,11 +179,15 @@ export class OutboxStore {
   // Delivery intent. In ONE transaction: confirm this claim is still current and
   // has enough lease left to finish a send, then durably record that a send is
   // starting. Returns false (and writes nothing) when the claim was lost.
+  //
+  // R1 / S5b — for a READY notice it also re-reads the order under a row lock
+  // and answers 'order-closed' (recording no intent) when the order has been
+  // rejected or cancelled since it was resolved (see orderClosedForReadyNotice).
   async beginSend(
     claim: Claim,
     deliveryId: string,
     flagPossibleDuplicate: boolean,
-  ): Promise<boolean> {
+  ): Promise<boolean | 'order-closed'> {
     return this.prisma
       .$transaction(async (tx) => {
         const held = await tx.$executeRaw`
@@ -193,6 +198,7 @@ export class OutboxStore {
            AND status = 'PENDING'
            AND "leaseExpiresAt" > timezone('utc', now()) + (${this.config.minLeaseRemainingMs}::double precision * interval '1 millisecond')`;
         if (held !== 1) return false;
+        if (await orderClosedForReadyNotice(tx, claim)) return 'order-closed';
         const recorded = await tx.$executeRaw`
         UPDATE "NotificationDelivery"
            SET "sendStartedAt" = timezone('utc', now()),

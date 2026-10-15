@@ -14,8 +14,10 @@ import {
   EmailProviderRejection,
   PermanentNotificationError,
   SendTimeoutError,
+  SuppressedNotification,
 } from './delivery-errors';
 import { OUTBOX_CONFIG, type OutboxConfig } from '../outbox/outbox.config';
+import { orderClosedForReadyNotice } from './order-closed-guard';
 
 // Provider and database errors can quote the recipient's address; error text is
 // stored on the delivery and the event and logged, so addresses are removed.
@@ -63,6 +65,9 @@ export interface ClaimedOutboxEvent {
 export type DispatchOutcome =
   // The event type has no notification: nothing to send.
   | { kind: 'no-handler' }
+  // R1 / S5b — deliberately not sent (e.g. READY for an order that has since
+  // been rejected or cancelled). The event is complete; nothing was sent.
+  | { kind: 'suppressed'; code: string; reason: string }
   // The provider accepted the message (now, or on an earlier attempt whose
   // acceptance was recorded but whose event was not yet marked PROCESSED).
   // "Accepted" is not "delivered to the inbox".
@@ -79,12 +84,21 @@ export type DispatchOutcome =
 // Lets the processor make the "about to send" step conditional on still holding
 // the claim, atomically with recording the delivery intent. Absent for direct
 // callers (tests, tooling), which then record the intent unconditionally.
+// R1 / S5b — beginSend may also answer 'order-closed': the order a READY
+// notice is about was rejected or cancelled before the send could start (the
+// check runs under a row lock in the same transaction as the intent).
 export interface DispatchFence {
   beginSend(
     deliveryId: string,
     flagPossibleDuplicate: boolean,
-  ): Promise<boolean>;
+  ): Promise<boolean | 'order-closed'>;
 }
+
+// The order statuses after which a READY notice is stale.
+const CLOSED_ORDER_STATUSES: ReadonlySet<string> = new Set([
+  'REJECTED',
+  'CANCELLED',
+]);
 
 interface DeliveryRow {
   id: string;
@@ -179,6 +193,9 @@ export class NotificationDispatchService {
       rendered = resolved.rendered;
       fromName = resolved.businessName;
     } catch (error) {
+      if (error instanceof SuppressedNotification) {
+        return { kind: 'suppressed', code: error.code, reason: error.message };
+      }
       if (error instanceof PermanentNotificationError) {
         this.logger.error(
           `Notification cannot be delivered for outbox event ${event.id} (${event.eventType}): ${error.code}`,
@@ -209,11 +226,10 @@ export class NotificationDispatchService {
     try {
       const intentRecorded = fence
         ? await fence.beginSend(delivery.id, priorAmbiguous)
-        : await this.recordIntentUnfenced(
-            delivery.id,
-            event.tenantId,
-            priorAmbiguous,
-          );
+        : await this.recordIntentUnfenced(delivery.id, event, priorAmbiguous);
+      if (intentRecorded === 'order-closed') {
+        return this.suppressClosedOrder(event, delivery.id);
+      }
       if (!intentRecorded) {
         return { kind: 'lost-claim' };
       }
@@ -238,7 +254,13 @@ export class NotificationDispatchService {
       });
       providerMessageId = result.providerMessageId;
     } catch (error) {
-      return this.handleSendFailure(event, templateKey, delivery.id, error, fence);
+      return this.handleSendFailure(
+        event,
+        templateKey,
+        delivery.id,
+        error,
+        fence,
+      );
     }
 
     // 6. Record acceptance (before the event becomes PROCESSED).
@@ -389,15 +411,38 @@ export class NotificationDispatchService {
 
   private async recordIntentUnfenced(
     deliveryId: string,
-    tenantId: string,
+    event: ClaimedOutboxEvent,
     flagPossibleDuplicate: boolean,
-  ): Promise<boolean> {
-    const n = await this.prisma.$executeRaw`
-      UPDATE "NotificationDelivery"
-         SET "sendStartedAt" = timezone('utc', now()), "failureReason" = NULL,
-             "possibleDuplicate" = ("possibleDuplicate" OR ${flagPossibleDuplicate})
-       WHERE id = ${deliveryId} AND "tenantId" = ${tenantId} AND status = 'PENDING'`;
-    return n === 1;
+  ): Promise<boolean | 'order-closed'> {
+    return this.prisma.$transaction(async (tx) => {
+      if (await orderClosedForReadyNotice(tx, event)) {
+        return 'order-closed';
+      }
+      const n = await tx.$executeRaw`
+        UPDATE "NotificationDelivery"
+           SET "sendStartedAt" = timezone('utc', now()), "failureReason" = NULL,
+               "possibleDuplicate" = ("possibleDuplicate" OR ${flagPossibleDuplicate})
+         WHERE id = ${deliveryId} AND "tenantId" = ${event.tenantId} AND status = 'PENDING'`;
+      return n === 1;
+    });
+  }
+
+  // The order was closed after the recipient was resolved but before the send
+  // could start. The delivery row already exists: it is closed as not sent
+  // (with the reason), so nothing ever reads it as an outstanding send.
+  private async suppressClosedOrder(
+    event: ClaimedOutboxEvent,
+    deliveryId: string,
+  ): Promise<DispatchOutcome> {
+    const reason =
+      'The order was rejected or cancelled before this notification was sent.';
+    await this.prisma.notificationDelivery
+      .updateMany({
+        where: { id: deliveryId, tenantId: event.tenantId, status: 'PENDING' },
+        data: { status: 'FAILED', failureReason: `ORDER_CLOSED: ${reason}` },
+      })
+      .catch(() => undefined);
+    return { kind: 'suppressed', code: 'ORDER_CLOSED', reason };
   }
 
   private async sendWithTimeout(
@@ -441,7 +486,10 @@ export class NotificationDispatchService {
               status: 'PENDING',
             },
             data: {
-              failureReason: redactEmails(`${error.code}: ${reason}`).slice(0, 500),
+              failureReason: redactEmails(`${error.code}: ${reason}`).slice(
+                0,
+                500,
+              ),
             },
           })
           .catch(() => undefined);
@@ -513,6 +561,7 @@ export class NotificationDispatchService {
           where: { id: event.aggregateId, tenantId: event.tenantId },
           select: {
             orderNumber: true,
+            status: true,
             guestEmail: true,
             location: { select: { name: true } },
             customer: { select: { email: true } },
@@ -522,6 +571,18 @@ export class NotificationDispatchService {
           throw new PermanentNotificationError(
             'ORDER_NOT_FOUND',
             'Order not found for notification dispatch.',
+          );
+        }
+        // R1 / S5b — "your order is ready" for an order the shop has since
+        // rejected or cancelled is false: never sent. (Checked again under a
+        // row lock when the send begins; see orderClosedForReadyNotice.)
+        if (
+          templateKey === 'order.ready' &&
+          CLOSED_ORDER_STATUSES.has(order.status)
+        ) {
+          throw new SuppressedNotification(
+            'ORDER_CLOSED',
+            'The order was rejected or cancelled; its ready notification is not sent.',
           );
         }
         // Authoritative recipient: a signed-in customer's account email
