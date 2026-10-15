@@ -630,6 +630,20 @@ describe('R1 / S5a: order closure database foundation', () => {
           `UPDATE "OrderRefundObligation" SET status = 'PROCESSING', "processorRefundId" = 're_9', "updatedAt" = now() WHERE id = 'ob-9'`,
         ),
       ).toBeNull();
+      // The recorded processor refund id is write-once: it cannot be changed,
+      // cleared, or dropped by re-recording the refund as a manual one.
+      for (const set of [
+        `"processorRefundId" = 're_other'`,
+        `"processorRefundId" = NULL`,
+        `status = 'REFUNDED', "settlementMethod" = 'MANUAL_EXTERNAL', "settledAt" = now(), "settledByInternalUserId" = 'iu-a', "processorRefundId" = NULL`,
+      ]) {
+        expect(
+          await sqlState(
+            db.url,
+            `UPDATE "OrderRefundObligation" SET ${set}, "updatedAt" = now() WHERE id = 'ob-9'`,
+          ),
+        ).toBe('23001');
+      }
       expect(
         await sqlState(
           db.url,

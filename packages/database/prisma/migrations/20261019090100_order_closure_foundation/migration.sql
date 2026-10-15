@@ -248,6 +248,14 @@ BEGIN
       RAISE EXCEPTION 'OrderRefundObligation % identity is immutable.', OLD."id"
         USING ERRCODE = 'restrict_violation';
     END IF;
+    -- Write-once: once the processor's refund id is recorded it is the audit
+    -- trail of that refund. It cannot be changed or cleared, so a refund the
+    -- processor made cannot later be re-recorded as a manual one.
+    IF OLD."processorRefundId" IS NOT NULL
+       AND NEW."processorRefundId" IS DISTINCT FROM OLD."processorRefundId" THEN
+      RAISE EXCEPTION 'OrderRefundObligation % processorRefundId cannot change once recorded.', OLD."id"
+        USING ERRCODE = 'restrict_violation';
+    END IF;
     RETURN NEW;
   END;
   $fn$;
