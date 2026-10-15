@@ -41,6 +41,13 @@ const rollbackSql = readFileSync(
   ),
   'utf8',
 );
+const s5bRollbackSql = readFileSync(
+  join(
+    databasePackage,
+    'prisma/rollbacks/20261020090000_order_closure_writer_guards.down.sql',
+  ),
+  'utf8',
+);
 const baseUrl = process.env.DATABASE_URL!;
 
 const A = '01a0db02-f800-7000-8000-5a0000000a01';
@@ -1086,6 +1093,12 @@ describe('R1 / S5a: order closure database foundation', () => {
     it('rolls back the tables, triggers, functions and indexes; the enum values remain', async () => {
       const scratch = await fresh('s5a_rollback');
       await applyMigrations(scratch.url, migrations);
+      // R1 / S5b depends on this foundation: S5a's rollback refuses until the
+      // S5b guards are rolled back first.
+      await expect(applyMigrationSql(scratch.url, rollbackSql)).rejects.toThrow(
+        /roll back 20261020090000_order_closure_writer_guards first/,
+      );
+      await applyMigrationSql(scratch.url, s5bRollbackSql);
       await applyMigrationSql(scratch.url, rollbackSql);
       const left = await rows<{ n: string }>(
         scratch.url,

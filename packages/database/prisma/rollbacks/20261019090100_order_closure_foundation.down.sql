@@ -38,6 +38,13 @@ DECLARE
 BEGIN
   PERFORM set_config('lock_timeout', '5s', true);
 
+  -- R1 / S5b — roll back 20261020090000_order_closure_writer_guards FIRST; it
+  -- depends on this foundation, and leaving it behind would block re-applying
+  -- it later.
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'Order_insert_not_closed') THEN
+    RAISE EXCEPTION 'S5a rollback refused: roll back 20261020090000_order_closure_writer_guards first. Nothing was changed.';
+  END IF;
+
   LOCK TABLE "Order", "GiftCardTransaction", "MochaBeanLedgerEntry" IN ACCESS EXCLUSIVE MODE;
   IF to_regclass('public."OrderClosure"') IS NOT NULL THEN
     LOCK TABLE "OrderClosure" IN ACCESS EXCLUSIVE MODE;
