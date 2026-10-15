@@ -52,6 +52,9 @@ export interface OutboxSnapshot {
   // PENDING events held back by OUTBOX_HISTORICAL_CUTOFF (waiting for an
   // operator to classify them); never counted as "due".
   readonly heldByCutoff: number;
+  // SC0.5a — PENDING events of a business that is not ACTIVE: kept intact and
+  // not claimed until it is reactivated; never counted as "due".
+  readonly heldBySuspension: number;
 }
 
 interface ClaimRow {
@@ -139,6 +142,14 @@ export class OutboxStore {
   // Atomically takes the next due, unleased event, or null. Safe for any number
   // of concurrent workers: SKIP LOCKED hands each a different row, and the lease
   // is written in the same statement that selects the row.
+  //
+  // SC0.5a — only events of an ACTIVE business are ever claimed. A SUSPENDED
+  // business's events are simply not taken: they stay PENDING with their
+  // attemptCount, nextAttemptAt and last error untouched (no attempt consumed,
+  // no lease, no dead letter, no retry loop), and become due again the moment
+  // the business is reactivated. They still go through the normal staleness
+  // rules then (retry-policy), so a notice that went stale while held is
+  // dead-lettered as EVENT_EXPIRED, never sent late and never silently dropped.
   async claimNext(): Promise<Claim | null> {
     const owner = `${this.config.workerId}:${randomUUID()}`;
     const cutoff = this.config.historicalCutoff;
@@ -154,6 +165,8 @@ export class OutboxStore {
             AND "nextAttemptAt" <= timezone('utc', now())
             AND ("leaseExpiresAt" IS NULL OR "leaseExpiresAt" < timezone('utc', now()))
             AND (${cutoff}::timestamptz IS NULL OR "createdAt" >= (${cutoff}::timestamptz AT TIME ZONE 'utc'))
+            AND EXISTS (SELECT 1 FROM "Tenant" t
+                         WHERE t.id = "OutboxEvent"."tenantId" AND t.status = 'ACTIVE')
           ORDER BY "nextAttemptAt", "createdAt"
           LIMIT 1
           FOR UPDATE SKIP LOCKED)
@@ -174,6 +187,16 @@ export class OutboxStore {
       generation: Number(row.attemptCount),
       dbNow: row.dbNow,
     };
+  }
+
+  // SC0.5a — re-checked just before a claimed event is sent (see
+  // OutboxProcessorService.attempt). A missing business is not ACTIVE.
+  async isTenantActive(tenantId: string): Promise<boolean> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { status: true },
+    });
+    return tenant?.status === 'ACTIVE';
   }
 
   // Delivery intent. In ONE transaction: confirm this claim is still current and
@@ -288,21 +311,27 @@ export class OutboxStore {
         dead: bigint;
         dead_24h: bigint;
         held: bigint;
+        held_suspended: bigint;
       }>
     >`SELECT
-        count(*) FILTER (WHERE status = 'PENDING' AND "nextAttemptAt" <= timezone('utc', now())
-                          AND (${cutoff}::timestamptz IS NULL OR "createdAt" >= (${cutoff}::timestamptz AT TIME ZONE 'utc'))
-                          AND ("leaseExpiresAt" IS NULL OR "leaseExpiresAt" < timezone('utc', now()))) AS due_now,
-        count(*) FILTER (WHERE status = 'PENDING' AND ${cutoff}::timestamptz IS NOT NULL
-                          AND "createdAt" < (${cutoff}::timestamptz AT TIME ZONE 'utc')) AS held,
-        count(*) FILTER (WHERE status = 'PENDING' AND "attemptCount" > 0) AS retrying,
-        count(*) FILTER (WHERE status = 'PENDING' AND "leaseExpiresAt" >= timezone('utc', now())) AS leased,
-        extract(epoch FROM (timezone('utc', now()) - min("nextAttemptAt") FILTER (WHERE status = 'PENDING'
-                          AND "nextAttemptAt" <= timezone('utc', now())
-                          AND (${cutoff}::timestamptz IS NULL OR "createdAt" >= (${cutoff}::timestamptz AT TIME ZONE 'utc'))))) AS oldest_due_age,
-        count(*) FILTER (WHERE status = 'FAILED') AS dead,
-        count(*) FILTER (WHERE status = 'FAILED' AND "failedAt" > timezone('utc', now()) - interval '24 hours') AS dead_24h
-       FROM "OutboxEvent" WHERE status IN ('PENDING', 'FAILED')`;
+        count(*) FILTER (WHERE e.status = 'PENDING' AND e."nextAttemptAt" <= timezone('utc', now())
+                          AND (${cutoff}::timestamptz IS NULL OR e."createdAt" >= (${cutoff}::timestamptz AT TIME ZONE 'utc'))
+                          AND (e."leaseExpiresAt" IS NULL OR e."leaseExpiresAt" < timezone('utc', now()))
+                          AND t.status = 'ACTIVE') AS due_now,
+        count(*) FILTER (WHERE e.status = 'PENDING' AND ${cutoff}::timestamptz IS NOT NULL
+                          AND e."createdAt" < (${cutoff}::timestamptz AT TIME ZONE 'utc')) AS held,
+        count(*) FILTER (WHERE e.status = 'PENDING' AND t.status IS DISTINCT FROM 'ACTIVE') AS held_suspended,
+        count(*) FILTER (WHERE e.status = 'PENDING' AND e."attemptCount" > 0) AS retrying,
+        count(*) FILTER (WHERE e.status = 'PENDING' AND e."leaseExpiresAt" >= timezone('utc', now())) AS leased,
+        extract(epoch FROM (timezone('utc', now()) - min(e."nextAttemptAt") FILTER (WHERE e.status = 'PENDING'
+                          AND e."nextAttemptAt" <= timezone('utc', now())
+                          AND (${cutoff}::timestamptz IS NULL OR e."createdAt" >= (${cutoff}::timestamptz AT TIME ZONE 'utc'))
+                          AND t.status = 'ACTIVE'))) AS oldest_due_age,
+        count(*) FILTER (WHERE e.status = 'FAILED') AS dead,
+        count(*) FILTER (WHERE e.status = 'FAILED' AND e."failedAt" > timezone('utc', now()) - interval '24 hours') AS dead_24h
+       FROM "OutboxEvent" AS e
+       LEFT JOIN "Tenant" AS t ON t.id = e."tenantId"
+      WHERE e.status IN ('PENDING', 'FAILED')`;
     const r = rows[0];
     return {
       dueNow: Number(r.due_now),
@@ -313,6 +342,7 @@ export class OutboxStore {
       deadLettered: Number(r.dead),
       deadLetteredLast24h: Number(r.dead_24h),
       heldByCutoff: Number(r.held),
+      heldBySuspension: Number(r.held_suspended),
     };
   }
 }

@@ -211,6 +211,7 @@ export class OutboxProcessorService implements OnModuleInit, OnModuleDestroy {
       const active =
         c.claimed > 0 ||
         s.heldByCutoff > 0 ||
+        s.heldBySuspension > 0 ||
         s.dueNow > 0 ||
         s.retrying > 0 ||
         s.deadLetteredLast24h > 0;
@@ -218,7 +219,7 @@ export class OutboxProcessorService implements OnModuleInit, OnModuleDestroy {
       const line =
         `Outbox (last minute): claimed=${c.claimed} accepted=${c.accepted} retried=${c.retried} ` +
         `ambiguous=${c.ambiguous} dead=${c.deadLettered} lostClaims=${c.lostClaims}; ` +
-        `backlog: due=${s.dueNow} retrying=${s.retrying} leased=${s.leased} heldByCutoff=${s.heldByCutoff} ` +
+        `backlog: due=${s.dueNow} retrying=${s.retrying} leased=${s.leased} heldByCutoff=${s.heldByCutoff} heldBySuspension=${s.heldBySuspension} ` +
         `oldestDueSeconds=${s.oldestDueAgeSeconds === null ? 'n/a' : Math.round(s.oldestDueAgeSeconds)} ` +
         `deadLettered=${s.deadLettered} (24h: ${s.deadLetteredLast24h})`;
       if (s.deadLetteredLast24h > 0 || c.deadLettered > 0) {
@@ -328,6 +329,15 @@ export class OutboxProcessorService implements OnModuleInit, OnModuleDestroy {
 
     // Shutting down before anything was sent: hand the claim back untouched.
     if (this.stopping) {
+      if (await this.store.release(claim)) this.counters.released += 1;
+      return;
+    }
+
+    // SC0.5a — the business was suspended after this event was claimed: hand
+    // the claim back without using up an attempt (claimNext will not take it
+    // again until the business is ACTIVE). Only a send already past this point
+    // can still complete.
+    if (!(await this.store.isTenantActive(claim.tenantId))) {
       if (await this.store.release(claim)) this.counters.released += 1;
       return;
     }
