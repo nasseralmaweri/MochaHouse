@@ -595,17 +595,43 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
     it('does not count rejected or cancelled orders toward customers with orders, repeat customers or order totals', async () => {
       const before = await getBody();
       const onlyClosed = await makeCustomer(beforeRange);
-      await makeOrder({ locationId: location, customerId: onlyClosed, createdAt: midRange, status: 'CANCELLED' });
-      await makeOrder({ locationId: location, customerId: onlyClosed, createdAt: midRange, status: 'REJECTED' });
+      await makeOrder({
+        locationId: location,
+        customerId: onlyClosed,
+        createdAt: midRange,
+        status: 'CANCELLED',
+      });
+      await makeOrder({
+        locationId: location,
+        customerId: onlyClosed,
+        createdAt: midRange,
+        status: 'REJECTED',
+      });
       const oneRealOneClosed = await makeCustomer(beforeRange);
-      await makeOrder({ locationId: location, customerId: oneRealOneClosed, createdAt: midRange, status: 'COMPLETED' });
-      await makeOrder({ locationId: location, customerId: oneRealOneClosed, createdAt: midRange, status: 'CANCELLED' });
+      await makeOrder({
+        locationId: location,
+        customerId: oneRealOneClosed,
+        createdAt: midRange,
+        status: 'COMPLETED',
+      });
+      await makeOrder({
+        locationId: location,
+        customerId: oneRealOneClosed,
+        createdAt: midRange,
+        status: 'CANCELLED',
+      });
       const after = await getBody();
       // Only the real COMPLETED order counts: one new customer with an order,
       // no new repeat customer (two orders, one of them closed), one new order.
-      expect(after.registeredCustomersWithOrders).toBe(before.registeredCustomersWithOrders + 1);
-      expect(after.repeatRegisteredCustomers).toBe(before.repeatRegisteredCustomers);
-      expect(after.registeredCustomerOrders).toBe(before.registeredCustomerOrders + 1);
+      expect(after.registeredCustomersWithOrders).toBe(
+        before.registeredCustomersWithOrders + 1,
+      );
+      expect(after.repeatRegisteredCustomers).toBe(
+        before.repeatRegisteredCustomers,
+      );
+      expect(after.registeredCustomerOrders).toBe(
+        before.registeredCustomerOrders + 1,
+      );
       expect(after.guestOrders).toBe(before.guestOrders);
     });
 

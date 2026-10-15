@@ -10,7 +10,10 @@ import {
   businessDateRangeToUtcInstants,
   MOCHA_HOUSE_TIME_ZONE,
 } from '../operations/application/business-date';
-import { ALL_ORDER_STATUSES, isCommercialSaleOrderStatus } from '@mocha-house/domain';
+import {
+  ALL_ORDER_STATUSES,
+  isCommercialSaleOrderStatus,
+} from '@mocha-house/domain';
 import { requireReportDateRange } from './report-date-range';
 
 export interface OrdersOverviewQuery {
@@ -18,7 +21,6 @@ export interface OrdersOverviewQuery {
   endDate?: string;
   locationId?: string;
 }
-
 
 // Milestone 9A — HQ Digital Sales & Orders overview. Read-only. This is
 // deliberately a digital-platform report: there is no KwickPOS integration

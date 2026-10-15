@@ -85,7 +85,7 @@ export class LocationPerformanceReportService {
       // A location with only rejected / cancelled orders still has history in
       // the period (so an inactive one still appears), but those orders are not
       // sales: they add nothing to the counts or the money.
-      if (isCommercialSaleOrderStatus(group.status as OrderStatus)) {
+      if (isCommercialSaleOrderStatus(group.status)) {
         const count = group._count._all;
         const netForGroup =
           (group._sum.subtotal ?? 0) -

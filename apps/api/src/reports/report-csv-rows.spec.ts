@@ -47,9 +47,7 @@ describe('ordersOverviewCsvRows with closed orders', () => {
     const withClosed = cells(
       ordersOverviewCsvRows(report({ REJECTED: 1 })),
     ).join('\n');
-    expect(withClosed).toMatch(
-      /Note,.*exclude Rejected and Cancelled orders/,
-    );
+    expect(withClosed).toMatch(/Note,.*exclude Rejected and Cancelled orders/);
 
     const withoutClosed = cells(ordersOverviewCsvRows(report())).join('\n');
     expect(withoutClosed).not.toMatch(/exclude Rejected and Cancelled/);

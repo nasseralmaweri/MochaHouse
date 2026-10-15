@@ -372,9 +372,7 @@ describe('Admin reports — orders overview (integration)', () => {
       locationA = await makeLocation(`Fixture A ${suffix}`);
       locationB = await makeLocation(`Fixture B ${suffix}`);
       locationClosedMix = await makeLocation(`Fixture Closed Mix ${suffix}`);
-      locationClosedOnly = await makeLocation(
-        `Fixture Closed Only ${suffix}`,
-      );
+      locationClosedOnly = await makeLocation(`Fixture Closed Only ${suffix}`);
       const closedAt = new Date(
         businessDateStartInstant(closedDay).getTime() + 60 * 60 * 1000,
       );

@@ -599,12 +599,13 @@ describe('R1 / S5a: order closure database foundation', () => {
     });
 
     it('rejects a non-positive amount and a malformed currency on insert (23514)', async () => {
-      await expect(
-        run(
+      // (an UPDATE is stopped by the identity guard before any CHECK)
+      expect(
+        await sqlState(
           db.url,
           `UPDATE "OrderRefundObligation" SET "amountMinorUnits" = 0 WHERE id = 'ob-8'`,
         ),
-      ).rejects.toMatchObject({ code: expect.stringMatching(/23514|23001/) });
+      ).toBe('23001');
       expect(
         await txState(db.url, [
           setStatus('9', 'CANCELLED'),

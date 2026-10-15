@@ -488,7 +488,10 @@ describe('Admin reports — location performance (integration)', () => {
         startDate: day,
         endDate: day,
       }).expect(200);
-      const row = rowFor(res.body as AdminLocationPerformanceReport, activeClosedMix);
+      const row = rowFor(
+        res.body as AdminLocationPerformanceReport,
+        activeClosedMix,
+      );
       expect(row).toMatchObject({
         totalOrders: 1,
         completedOrders: 1,
@@ -503,7 +506,10 @@ describe('Admin reports — location performance (integration)', () => {
         startDate: day,
         endDate: day,
       }).expect(200);
-      const row = rowFor(res.body as AdminLocationPerformanceReport, inactiveClosedOnly);
+      const row = rowFor(
+        res.body as AdminLocationPerformanceReport,
+        inactiveClosedOnly,
+      );
       expect(row).toMatchObject({
         isActive: false,
         totalOrders: 0,
