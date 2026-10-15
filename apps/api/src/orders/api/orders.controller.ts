@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  Header,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -71,8 +73,14 @@ export class OrdersController {
     );
   }
 
-  // Guest order access: the id alone is not authorization, accessToken is
+  // Guest order access: the id alone is not authorization, the access token is
   // the actual credential (see CheckoutService.getStatus).
+  //
+  // R1 / S3c — the token is read from the X-Order-Access-Token header (the web
+  // tier sends it there, so it never lands in a request URL or its logs). The
+  // ?accessToken= query form is still accepted as a DEPRECATED compatibility
+  // path for existing callers; the header wins when both are present. The
+  // response is never cacheable.
   //
   // R1 / S3a — rate limited per order (generous: customer tracking polls every
   // 15 s per tab) and, separately, by RECENT FAILED lookups from one client. The
@@ -81,19 +89,31 @@ export class OrdersController {
   // succeeds, so a customer's successful polls never accumulate.
   @UseGuards(RateLimitGuard)
   @RateLimit('order-status')
+  @Header('Cache-Control', 'no-store')
   @Get(':orderId')
   async getStatus(
     @Param('orderId') orderId: string,
-    @Query('accessToken') accessToken: string,
+    @Headers('x-order-access-token') headerToken: string | undefined,
+    @Query('accessToken') queryToken: string | undefined,
     @CurrentTenantContext() tenant: TenantContext,
     @Req() request: CustomerAuthenticatedRequest,
   ) {
     const status = await this.checkoutService.getStatus(
       orderId,
-      accessToken ?? '',
+      pickAccessToken(headerToken, queryToken),
       tenant,
     );
     await this.rateLimits.releaseOnSuccess(request);
     return status;
   }
+}
+
+// Header wins; a repeated header or query parameter (array) is not a usable
+// credential, so it reads as no token and the normal not-found answer.
+export function pickAccessToken(
+  header: string | string[] | undefined,
+  query: string | string[] | undefined,
+): string {
+  const value = header ?? query;
+  return typeof value === 'string' ? value : '';
 }

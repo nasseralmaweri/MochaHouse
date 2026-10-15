@@ -1,9 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import type { OrderStatusResponse } from "@mocha-house/contracts";
-import { pollOrderStatusFromBrowser } from "@/lib/api-client";
+import {
+  fetchGuestShareToken,
+  pollOrderStatusFromBrowser,
+  startGuestSession,
+} from "@/lib/api-client";
+import {
+  buildShareUrl,
+  extractLinkCredential,
+  hasCredentialParams,
+} from "@/lib/guest-link";
 import { formatPrice } from "@/lib/money";
 import {
   PollingController,
@@ -41,44 +50,121 @@ function timeLabel(ms: number | null): string {
   });
 }
 
-// The URL (orderId + accessToken) is the only source of truth here — this
-// page never reads the cart or any client-side session state, so a reload,
-// a bookmark, or navigating away and back all resolve the same way: refetch
-// from the backend and render whatever it says right now. Keyed on the id and
-// token so a different order always starts with a fresh poller.
+// The order id in the URL plus the HttpOnly guest-session cookie are the only
+// sources of truth here — this page never reads the cart or any client-side
+// session state, so a reload, a bookmark, or navigating away and back all
+// resolve the same way: refetch from the backend and render whatever it says
+// right now. The tracking URL itself carries no credential (R1 / S3c).
 export default function OrderConfirmationPage() {
   const params = useParams<{ orderId: string }>();
-  const searchParams = useSearchParams();
-  const accessToken = searchParams.get("token") ?? "";
-
-  return (
-    <OrderTracking
-      key={`${params.orderId}:${accessToken}`}
-      orderId={params.orderId}
-      accessToken={accessToken}
-    />
-  );
+  return <GuestSessionGate key={params.orderId} orderId={params.orderId} />;
 }
 
-function OrderTracking({
-  orderId,
-  accessToken,
-}: {
-  orderId: string;
-  accessToken: string;
-}) {
+type GateState = "checking" | "ready" | "retry";
+
+// Converts a legacy ?token= link or a shared #t= fragment link into the
+// cookie session. The credential is removed from the address bar and history
+// IMMEDIATELY (before any network call, and whatever happens to the request),
+// and held only in memory for the exchange and any "Try again".
+function GuestSessionGate({ orderId }: { orderId: string }) {
+  const [state, setState] = useState<GateState>("checking");
+  const [attempt, setAttempt] = useState(0);
+  const credentialRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const { search, hash, pathname } = window.location;
+    const fromUrl = extractLinkCredential(search, hash);
+    if (fromUrl) credentialRef.current = fromUrl;
+    if (hasCredentialParams(search, hash)) {
+      window.history.replaceState(window.history.state, "", pathname);
+    }
+    const credential = credentialRef.current;
+    let cancelled = false;
+    (async () => {
+      const result = credential
+        ? await startGuestSession(orderId, credential)
+        : ({ outcome: "none" } as const);
+      if (cancelled) return;
+      if (result.outcome === "error") {
+        setState("retry");
+        return;
+      }
+      credentialRef.current = null;
+      setState("ready");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [orderId, attempt]);
+
+  if (state === "checking") {
+    return (
+      <main
+        role="status"
+        aria-live="polite"
+        className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8"
+      >
+        <PageHeader title="Opening your order…" />
+      </main>
+    );
+  }
+  if (state === "retry") {
+    return (
+      <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
+        <PageHeader
+          title="Couldn't open your order"
+          subtitle="We couldn't open your order just now. Please wait a moment, check your connection and try again."
+        />
+        <button
+          type="button"
+          onClick={() => {
+            setState("checking");
+            setAttempt((n) => n + 1);
+          }}
+          className="self-start text-sm font-medium text-text-primary underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+        >
+          Try again
+        </button>
+      </main>
+    );
+  }
+  return <OrderTracking key={orderId} orderId={orderId} />;
+}
+
+function OrderTracking({ orderId }: { orderId: string }) {
   const previousStatus = useRef<OrderStatusResponse["status"] | null>(null);
   // Alternates a trailing no-break space so two identical announcements in a
   // row still change the live region and are both spoken.
   const announceFlip = useRef(false);
   const [announcement, setAnnouncement] = useState("");
+  const [shareState, setShareState] = useState<"idle" | "copied" | "failed">(
+    "idle",
+  );
+
+  // Explicit user action: ask the server for this browser's credential and put
+  // it in a URL FRAGMENT, which no server or Referer ever sees.
+  async function copyTrackingLink() {
+    const token = await fetchGuestShareToken(orderId);
+    if (!token) {
+      setShareState("failed");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(
+        buildShareUrl(window.location.origin, orderId, token),
+      );
+      setShareState("copied");
+    } catch {
+      setShareState("failed");
+    }
+  }
 
   const { controller, snapshot } = usePollingController<OrderStatusResponse>(
     () =>
       new PollingController<OrderStatusResponse>({
         env: browserPollingEnv(),
         fetch: async () => {
-          const result = await pollOrderStatusFromBrowser(orderId, accessToken);
+          const result = await pollOrderStatusFromBrowser(orderId);
           if (result.outcome === "success") {
             return { outcome: "success", data: result.status };
           }
@@ -130,8 +216,8 @@ function OrderTracking({
     return (
       <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
         <PageHeader
-          title="Order not found"
-          subtitle="This confirmation link is invalid, or the access token doesn't match."
+          title="This order can't be opened here"
+          subtitle="We can't open this order on this device. Open it on the device where you placed the order and use Copy tracking link there, or start a new order."
         />
         <BackLink href="/order/location">Start a new order</BackLink>
       </main>
@@ -318,6 +404,23 @@ function OrderTracking({
           </span>
         </div>
       </Card>
+
+      <div className="flex flex-col gap-1 text-xs text-text-muted">
+        <button
+          type="button"
+          onClick={copyTrackingLink}
+          className="self-start font-medium text-text-primary underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+        >
+          Copy tracking link
+        </button>
+        <span role="status" aria-live="polite">
+          {shareState === "copied"
+            ? "Link copied. Anyone with it can see this order's status."
+            : shareState === "failed"
+              ? "Couldn't copy the link."
+              : "Open this link on another device to follow the order there."}
+        </span>
+      </div>
 
       <BackLink href="/order/location">Start a new order</BackLink>
     </main>

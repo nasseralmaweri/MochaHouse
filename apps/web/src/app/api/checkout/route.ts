@@ -1,4 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  GUEST_SESSION_COOKIE,
+  guestSessionCookieOptions,
+  isValidAccessToken,
+  isValidOrderId,
+  parseGuestSession,
+  serializeGuestSession,
+  withGuestOrder,
+} from "@/lib/security/guest-session";
 import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 import { CUSTOMER_SESSION_COOKIE } from "@/lib/auth/session";
 import { signedClientIpHeaders } from "@/lib/client-ip-forwarding";
@@ -57,8 +66,40 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const responseBody = await response.text();
-  return new NextResponse(responseBody, {
+  const result = new NextResponse(responseBody, {
     status: response.status,
     headers: passthroughHeaders(response),
   });
+
+  // R1 / S3c — a placed order starts the guest tracking session HERE, on the
+  // server: the access token goes into the HttpOnly guest-session cookie so the
+  // confirmation URL never needs to carry it. (The response body is unchanged,
+  // so existing clients keep working.)
+  if (response.ok) {
+    try {
+      const confirmation = JSON.parse(responseBody) as {
+        orderId?: unknown;
+        accessToken?: unknown;
+      };
+      if (
+        isValidOrderId(confirmation.orderId) &&
+        isValidAccessToken(confirmation.accessToken)
+      ) {
+        result.cookies.set(
+          GUEST_SESSION_COOKIE,
+          serializeGuestSession(
+            withGuestOrder(
+              parseGuestSession(request.cookies.get(GUEST_SESSION_COOKIE)?.value),
+              confirmation.orderId,
+              confirmation.accessToken,
+            ),
+          ),
+          guestSessionCookieOptions(),
+        );
+      }
+    } catch {
+      // Not JSON: nothing to bootstrap; the response is passed through as is.
+    }
+  }
+  return result;
 }
