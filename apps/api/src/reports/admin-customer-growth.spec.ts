@@ -5,7 +5,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
-import type { AdminCustomerGrowthReport } from '@mocha-house/contracts';
+import type {
+  AdminCustomerGrowthReport,
+  OrderStatus,
+} from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { CustomerAuthModule } from '../customer-auth/customer-auth.module';
@@ -128,6 +131,7 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
     locationId: string;
     customerId?: string | null;
     createdAt: Date;
+    status?: OrderStatus;
   }): Promise<string> {
     const attempt = await prisma.paymentAttempt.create({
       data: {
@@ -154,7 +158,7 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
         guestPhone: '5550000000',
         currency: 'USD',
         subtotal: 500,
-        status: 'RECEIVED',
+        status: options.status ?? 'RECEIVED',
         createdAt: options.createdAt,
       },
     });
@@ -585,6 +589,24 @@ describe('Admin reports — customer growth & ordering (integration)', () => {
       // land on endDate; the exact-end-exclusive-instant order belongs to
       // the NEXT business day and must not appear here.
       expect(narrowBody.registeredCustomerOrders).toBe(1);
+    });
+
+    // R1 / S5a: a rejected or cancelled order is not a purchase.
+    it('does not count rejected or cancelled orders toward customers with orders, repeat customers or order totals', async () => {
+      const before = await getBody();
+      const onlyClosed = await makeCustomer(beforeRange);
+      await makeOrder({ locationId: location, customerId: onlyClosed, createdAt: midRange, status: 'CANCELLED' });
+      await makeOrder({ locationId: location, customerId: onlyClosed, createdAt: midRange, status: 'REJECTED' });
+      const oneRealOneClosed = await makeCustomer(beforeRange);
+      await makeOrder({ locationId: location, customerId: oneRealOneClosed, createdAt: midRange, status: 'COMPLETED' });
+      await makeOrder({ locationId: location, customerId: oneRealOneClosed, createdAt: midRange, status: 'CANCELLED' });
+      const after = await getBody();
+      // Only the real COMPLETED order counts: one new customer with an order,
+      // no new repeat customer (two orders, one of them closed), one new order.
+      expect(after.registeredCustomersWithOrders).toBe(before.registeredCustomersWithOrders + 1);
+      expect(after.repeatRegisteredCustomers).toBe(before.repeatRegisteredCustomers);
+      expect(after.registeredCustomerOrders).toBe(before.registeredCustomerOrders + 1);
+      expect(after.guestOrders).toBe(before.guestOrders);
     });
 
     it('states the CUSTOMER_PLATFORM source scope with accurate wording', async () => {

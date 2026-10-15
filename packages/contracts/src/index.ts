@@ -323,9 +323,21 @@ export interface AdminLocationMenuResponse {
 
 export type PaymentAttemptStatus = "PENDING" | "SUCCEEDED" | "DECLINED" | "FAILED";
 
-// RECEIVED is the only status this slice creates. The remaining values name
-// the approved Store Queue pipeline so later slices don't need new ones.
-export type OrderStatus = "RECEIVED" | "ACCEPTED" | "PREPARING" | "READY" | "COMPLETED";
+// RECEIVED is the only status checkout creates. ACCEPTED..COMPLETED are the
+// approved Store Queue pipeline. REJECTED (turned away while still RECEIVED)
+// and CANCELLED (called off after acceptance) are the two terminal "closed"
+// states added in R1 / S5a: nothing writes either yet, so no order is ever in
+// one today, but every client must already understand them (an unknown status
+// must never read as a failed poll or as a sale). See `@mocha-house/domain`
+// for the classification (terminal, and not a commercial sale).
+export type OrderStatus =
+  | "RECEIVED"
+  | "ACCEPTED"
+  | "PREPARING"
+  | "READY"
+  | "COMPLETED"
+  | "REJECTED"
+  | "CANCELLED";
 
 export interface GuestContactInput {
   name: string;
@@ -2416,11 +2428,18 @@ export interface RenameOpeningChecklistTemplateSectionRequest {
 // EARN and REDEEM are automatic (order-driven); MANUAL_ADJUSTMENT is an HQ
 // action. REDEEM (Milestone 7C) is a negative entry for Beans spent on a
 // reward.
+//
+// R1 / S5a adds the three reversal types a rejected or cancelled order can
+// write (S5b): REDEEM_REVERSAL returns Beans (positive), EARN_REVERSAL and
+// BONUS_EARN_REVERSAL recover them (negative). Nothing writes them yet.
 export type MochaBeanLedgerEntryType =
   | "EARN"
   | "MANUAL_ADJUSTMENT"
   | "REDEEM"
-  | "BONUS_EARN";
+  | "BONUS_EARN"
+  | "REDEEM_REVERSAL"
+  | "EARN_REVERSAL"
+  | "BONUS_EARN_REVERSAL";
 
 // One row of the internal Mocha Bean ledger, projected for HQ. `amount` is
 // signed whole Beans. `actorLabel` is the HQ operator's name/email for a
@@ -2495,10 +2514,14 @@ export type GiftCardStatus = "ACTIVE" | "INACTIVE";
 // 7F writes ISSUANCE / ADJUSTMENT; Milestone 7G adds REDEMPTION (value spent
 // as tender on a successful order). REFUND is still added by the slice that
 // implements it.
+//
+// R1 / S5a adds REDEMPTION_REVERSAL: value restored to the card because the
+// order it paid for was rejected or cancelled (positive; S5b writes it).
 export type GiftCardTransactionType =
   | "ISSUANCE"
   | "ADJUSTMENT"
-  | "REDEMPTION";
+  | "REDEMPTION"
+  | "REDEMPTION_REVERSAL";
 
 // A gift card as it appears on the HQ surface. `maskedCode` is the only
 // code representation in a normal read (e.g. "•••• •••• •••• 4821");
@@ -3650,8 +3673,11 @@ export interface AdminOrdersOverviewReport {
   // `/admin/locations`, which needs `locations.view`) so `reports.view`
   // alone is sufficient to use this report.
   availableLocations: AdminReportLocationRef[];
-  // Every digital-platform order created in the selected period/location —
-  // regardless of its current status.
+  // Every digital-platform order created in the selected period/location
+  // that is a commercial order: regardless of its current status EXCEPT
+  // REJECTED and CANCELLED, which are never counted here, in
+  // digitalSalesMinorUnits or in averageOrderValueMinorUnits (they appear only
+  // in statusBreakdown).
   totalOrders: number;
   // Of those, the ones whose current status is COMPLETED.
   completedOrders: number;
@@ -3663,7 +3689,9 @@ export interface AdminOrdersOverviewReport {
   // digitalSalesMinorUnits / totalOrders, rounded to the nearest minor
   // unit; 0 when totalOrders is 0.
   averageOrderValueMinorUnits: number;
-  // Count per OrderStatus within the selected population (not completed-only).
+  // Count per OrderStatus within the selected period/location (not
+  // completed-only). Unlike totalOrders it INCLUDES REJECTED and CANCELLED, so
+  // the closed orders stay visible without counting as sales.
   statusBreakdown: Record<OrderStatus, number>;
   source: AdminReportDataSource;
 }
@@ -3705,15 +3733,16 @@ export interface AdminLocationPerformanceRow {
   locationName: string;
   isActive: boolean;
   isDigitalOrderingEnabled: boolean;
-  // Every digital-platform order created at this location in the selected
-  // period, regardless of status.
+  // Every commercial digital-platform order created at this location in the
+  // selected period, regardless of status EXCEPT REJECTED and CANCELLED, which
+  // are excluded here and from the sales and average-order figures below.
   totalOrders: number;
   // Of those, the ones whose current status is COMPLETED.
   completedOrders: number;
   // completedOrders / totalOrders * 100, rounded to one decimal place; 0
-  // when totalOrders is 0. NOTE: there is no CANCELLED status in the
-  // current OrderStatus vocabulary, so an order that isn't COMPLETED may
-  // simply still be in progress (RECEIVED/ACCEPTED/PREPARING/READY) — this
+  // when totalOrders is 0. NOTE: rejected and cancelled orders are excluded
+  // from totalOrders, so an order that isn't COMPLETED is still in progress
+  // (RECEIVED/ACCEPTED/PREPARING/READY) — this
   // figure is most meaningful for a period that has already ended, and the
   // UI must say so visibly (never only in a tooltip).
   completedPercent: number;

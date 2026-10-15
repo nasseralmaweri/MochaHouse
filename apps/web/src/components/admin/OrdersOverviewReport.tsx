@@ -25,6 +25,8 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   PREPARING: "Preparing",
   READY: "Ready",
   COMPLETED: "Completed",
+  REJECTED: "Rejected",
+  CANCELLED: "Cancelled",
 };
 
 const STATUS_ORDER: OrderStatus[] = [
@@ -33,6 +35,8 @@ const STATUS_ORDER: OrderStatus[] = [
   "PREPARING",
   "READY",
   "COMPLETED",
+  "REJECTED",
+  "CANCELLED",
 ];
 
 // HQ Digital Sales & Orders report (Milestone 9A). Filters live entirely in

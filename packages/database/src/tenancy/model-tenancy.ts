@@ -51,6 +51,9 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     // history, tenant-owned from inception.
     PaymentReconciliationCase: 'tenant',
     PaymentReconciliationEvent: 'tenant',
+    // R1 / S5a — order closure foundation.
+    OrderClosure: 'tenant',
+    OrderRefundObligation: 'tenant',
 
     // Internal users, authorization & audit (tenant-scoped per ADR-4)
     InternalUser: 'tenant',

@@ -10,6 +10,7 @@ import type {
   AdminLoyaltyCustomerDetail,
   AdminLoyaltyCustomerSearchResponse,
   AdminMochaBeanLedgerEntry,
+  MochaBeanLedgerEntryType,
 } from '@mocha-house/contracts';
 import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -369,7 +370,7 @@ export class LoyaltyAdminService {
 
   private toLedgerEntry(entry: {
     id: string;
-    type: 'EARN' | 'MANUAL_ADJUSTMENT' | 'REDEEM' | 'BONUS_EARN';
+    type: MochaBeanLedgerEntryType;
     amount: number;
     reason: string | null;
     createdAt: Date;

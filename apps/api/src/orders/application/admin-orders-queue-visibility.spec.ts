@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import type { OrderStatus } from '@mocha-house/contracts';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import {
   createTestTenantB,
@@ -41,7 +42,7 @@ describe('AdminOrdersService queue visibility (integration)', () => {
   async function makeOrder(
     tenantId: string,
     locationId: string,
-    status: 'RECEIVED' | 'ACCEPTED' | 'PREPARING' | 'READY' | 'COMPLETED',
+    status: OrderStatus,
     outbox: 'PENDING' | 'PROCESSED' | 'FAILED' | 'NONE',
   ): Promise<string> {
     const attempt = await prisma.paymentAttempt.create({
@@ -191,7 +192,12 @@ describe('AdminOrdersService queue visibility (integration)', () => {
 
     it('lists exactly the active statuses and never a terminal one', async () => {
       const made = new Map<string, string>();
-      for (const status of [...ACTIVE_ORDER_STATUSES, 'COMPLETED'] as const) {
+      for (const status of [
+        ...ACTIVE_ORDER_STATUSES,
+        'COMPLETED',
+        'REJECTED',
+        'CANCELLED',
+      ] as const) {
         made.set(
           status,
           await makeOrder(TENANT_1_MOCHA_HOUSE_ID, locationA2, status, 'NONE'),
@@ -201,7 +207,9 @@ describe('AdminOrdersService queue visibility (integration)', () => {
       for (const status of ACTIVE_ORDER_STATUSES) {
         expect(listed).toContain(made.get(status));
       }
-      expect(listed).not.toContain(made.get('COMPLETED'));
+      for (const terminal of ['COMPLETED', 'REJECTED', 'CANCELLED']) {
+        expect(listed).not.toContain(made.get(terminal));
+      }
     });
 
     it('lists oldest first', async () => {

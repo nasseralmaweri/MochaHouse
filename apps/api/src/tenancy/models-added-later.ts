@@ -11,10 +11,14 @@ import {
 //   NotificationRecipient        Milestone S0D-2C-3
 //   PaymentReconciliationCase    ESP-03 PR 1
 //   PaymentReconciliationEvent   ESP-03 PR 1
+//   OrderClosure                 R1 / S5a
+//   OrderRefundObligation        R1 / S5a
 export const MODELS_ADDED_LATER: ReadonlySet<string> = new Set([
   'NotificationRecipient',
   'PaymentReconciliationCase',
   'PaymentReconciliationEvent',
+  'OrderClosure',
+  'OrderRefundObligation',
 ]);
 
 // The relationship inventory as it applied to a database from BEFORE the models

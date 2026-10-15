@@ -14,6 +14,8 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   PREPARING: "Preparing",
   READY: "Ready",
   COMPLETED: "Completed",
+  REJECTED: "Not accepted",
+  CANCELLED: "Cancelled",
 };
 
 export default async function AccountOrdersPage() {

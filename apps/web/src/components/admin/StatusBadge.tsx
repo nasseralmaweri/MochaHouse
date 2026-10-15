@@ -34,6 +34,8 @@ const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   PREPARING: "Preparing",
   READY: "Ready",
   COMPLETED: "Completed",
+  REJECTED: "Rejected",
+  CANCELLED: "Cancelled",
 };
 
 // A small status pill. The label text is always present (not colour-only)

@@ -21,6 +21,11 @@ const NEXT_ORDER_STATUS: Record<OrderStatus, OrderStatus | null> = {
   PREPARING: "READY",
   READY: "COMPLETED",
   COMPLETED: null,
+  // R1 / S5a: the closed states are terminal and are never reached by
+  // "advance". Rejecting or cancelling is a separate, explicitly authorised
+  // action (S5b), not a step of the pipeline.
+  REJECTED: null,
+  CANCELLED: null,
 };
 
 // Returns the next status in the pipeline, or null if `current` is
@@ -39,9 +44,37 @@ const ORDER_STATUS_PHASE: Record<OrderStatus, "ACTIVE" | "TERMINAL"> = {
   PREPARING: "ACTIVE",
   READY: "ACTIVE",
   COMPLETED: "TERMINAL",
+  REJECTED: "TERMINAL",
+  CANCELLED: "TERMINAL",
 };
 
-const ALL_ORDER_STATUSES = Object.keys(ORDER_STATUS_PHASE) as OrderStatus[];
+// Whether an order in this status is a commercial sale for reporting. Every
+// status is classified explicitly (exhaustive Record), so a future status
+// fails to compile until someone decides. Orders in progress count — they are
+// real, paid orders the shop still owes — and a REJECTED or CANCELLED order
+// does not: the sale did not happen. Reports use this one definition, so sales,
+// average order value and order counts can never disagree about it.
+const ORDER_STATUS_IS_COMMERCIAL_SALE: Record<OrderStatus, boolean> = {
+  RECEIVED: true,
+  ACCEPTED: true,
+  PREPARING: true,
+  READY: true,
+  COMPLETED: true,
+  REJECTED: false,
+  CANCELLED: false,
+};
+
+export const ALL_ORDER_STATUSES: readonly OrderStatus[] = Object.keys(
+  ORDER_STATUS_PHASE,
+) as OrderStatus[];
+
+// The statuses a report must leave out of sales, order counts and averages.
+export const NON_SALE_ORDER_STATUSES: readonly OrderStatus[] =
+  ALL_ORDER_STATUSES.filter((status) => !ORDER_STATUS_IS_COMMERCIAL_SALE[status]);
+
+export function isCommercialSaleOrderStatus(status: OrderStatus): boolean {
+  return ORDER_STATUS_IS_COMMERCIAL_SALE[status];
+}
 
 export const ACTIVE_ORDER_STATUSES: readonly OrderStatus[] =
   ALL_ORDER_STATUSES.filter((status) => ORDER_STATUS_PHASE[status] === "ACTIVE");

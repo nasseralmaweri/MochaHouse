@@ -25,6 +25,9 @@ const LEDGER_TYPE_LABEL: Record<MochaBeanLedgerEntryType, string> = {
   BONUS_EARN: "Bonus earned",
   REDEEM: "Reward redeemed",
   MANUAL_ADJUSTMENT: "Manual adjustment",
+  REDEEM_REVERSAL: "Reward Beans returned (order closed)",
+  EARN_REVERSAL: "Earned Beans reversed (order closed)",
+  BONUS_EARN_REVERSAL: "Bonus Beans reversed (order closed)",
 };
 
 // Admin → Loyalty (Milestone 7A). The smallest HQ Mocha Beans surface:

@@ -18,6 +18,8 @@ import { Client } from 'pg';
 export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'PaymentReconciliationCase',
   'PaymentReconciliationEvent',
+  'OrderClosure',
+  'OrderRefundObligation',
 ]);
 
 // Columns added after the 4C-era migrations to tables that already existed.
