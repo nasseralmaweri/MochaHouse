@@ -364,6 +364,11 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
              JOIN pg_class cl ON cl.oid = c.conrelid
              JOIN pg_class pcl ON pcl.oid = c.confrelid
             WHERE c.contype = 'f' AND pcl.relname <> 'Tenant'
+              -- SC1a — the platform-operator tables are not business data
+              -- and are outside the inventory; their one foreign key
+              -- (audit event -> operator) is pinned in
+              -- tenant-relationship-inventory.spec.ts.
+              AND cl.relname NOT IN ('PlatformOperator', 'PlatformAuditEvent')
               AND cl.relnamespace = 'public'::regnamespace`,
           )
         ).rows,

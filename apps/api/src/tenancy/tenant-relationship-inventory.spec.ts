@@ -156,7 +156,20 @@ const effectiveOnDelete = (r: Relation) =>
 // under none of them, so this list is pinned HERE, in a security test: a new
 // global model fails CI until it is reviewed and added on purpose. A global
 // model may never hold a reference to a business record.
-const APPROVED_GLOBAL_MODELS = ['Tenant'];
+//
+// SC1a review — PlatformOperator and PlatformAuditEvent: the CENTERIVO
+// platform operators and their audit trail. Platform-wide by definition; no
+// tenantId, no reference to any business record (the only foreign key is
+// audit event -> operator, between the two platform-operator models).
+const APPROVED_GLOBAL_MODELS = [
+  'Tenant',
+  'PlatformOperator',
+  'PlatformAuditEvent',
+];
+// The ONLY references a global model may hold: between the platform-operator
+// models themselves. Tenant is deliberately not part of this set — a
+// reference to (or from) a business is never exempt.
+const PLATFORM_OPERATOR_MODELS = ['PlatformOperator', 'PlatformAuditEvent'];
 
 describe('Tenant relationship inventory (Security 4C-1)', () => {
   it('parses every relation and model in schema.prisma (no silent omissions)', () => {
@@ -206,14 +219,32 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
     });
     for (const name of APPROVED_GLOBAL_MODELS) {
       const model = models.get(name)!;
+      // A relation BETWEEN the platform-operator models (SC1a: audit event ->
+      // operator) is not a reference to a business record; its foreign-key
+      // column is then not a loose …Id either. Nothing else is exempt — in
+      // particular nothing from or to Tenant.
+      const globalRelations = model.relations.filter(
+        (r) =>
+          PLATFORM_OPERATOR_MODELS.includes(name) &&
+          PLATFORM_OPERATOR_MODELS.includes(r.target),
+      );
+      const globalFkColumns = new Set(globalRelations.flatMap((r) => r.fields));
       expect({
         model: name,
-        // Foreign-key relations from the global model, and plain …Id
-        // columns that could name a record without one.
+        // Foreign-key relations from the global model to anything that is
+        // not itself an approved global model, and plain …Id columns that
+        // could name a record without one.
         references: [
-          ...model.relations.map((r) => `${r.field} -> ${r.target}`),
+          ...model.relations
+            .filter((r) => !globalRelations.includes(r))
+            .map((r) => `${r.field} -> ${r.target}`),
           ...[...model.fields.values()]
-            .filter((f) => /Id$/.test(f.name) && f.name !== 'id')
+            .filter(
+              (f) =>
+                /Id$/.test(f.name) &&
+                f.name !== 'id' &&
+                !globalFkColumns.has(f.name),
+            )
             .map((f) => f.name),
         ],
       }).toEqual({ model: name, references: [] });

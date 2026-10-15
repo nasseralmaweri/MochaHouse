@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "integrity:check": "tsx prisma/scripts/check-tenant-integrity.ts"
+    "integrity:check": "tsx prisma/scripts/check-tenant-integrity.ts",
+    "platform:operator": "tsx prisma/scripts/platform-operator.ts"
   },
   "dependencies": {
     "@mocha-house/contracts": "workspace:*",

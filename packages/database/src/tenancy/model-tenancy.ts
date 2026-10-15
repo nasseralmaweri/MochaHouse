@@ -21,6 +21,11 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
   Object.freeze({
     // Platform plane
     Tenant: 'platform',
+    // SC1a — CENTERIVO platform operators and their audit trail. No tenantId
+    // and no reference to any business record (see the security test's
+    // APPROVED_GLOBAL_MODELS).
+    PlatformOperator: 'platform',
+    PlatformAuditEvent: 'platform',
 
     // Catalog & locations
     Location: 'tenant',
