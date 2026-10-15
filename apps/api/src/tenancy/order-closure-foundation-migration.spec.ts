@@ -588,14 +588,14 @@ describe('R1 / S5a: order closure database foundation', () => {
       ).toBe('23514');
     });
 
-    it('rejects an unknown status on insert (23514)', async () => {
+    it('rejects an unknown status on insert (23001: the DUE-only guard fires before the CHECK)', async () => {
       expect(
         await txState(db.url, [
           setStatus('12', 'CANCELLED'),
           closure('12', { refund: 1500 }),
           obligation('12', 1500, "status|'SETTLED'"),
         ]),
-      ).toBe('23514');
+      ).toBe('23001');
     });
 
     it('rejects a non-positive amount and a malformed currency on insert (23514)', async () => {
