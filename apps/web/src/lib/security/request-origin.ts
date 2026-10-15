@@ -108,7 +108,32 @@ export function checkRequestOrigin(input: OriginCheckInput): OriginDecision {
 interface OriginCheckableRequest {
   method: string;
   headers: HeaderReader;
-  nextUrl: { origin: string };
+  nextUrl: { origin: string; host?: string; protocol?: string };
+}
+
+const firstValue = (value: string | null): string | null => {
+  const first = value?.split(",")[0]?.trim();
+  return first ? first : null;
+};
+
+// The origin the browser addressed. Next's own request URL is NOT reliable for
+// this: it reports the server's configured hostname (for example it rewrites
+// 127.0.0.1 to localhost) and, behind a TLS-terminating proxy, the internal
+// scheme and host. So the host comes from X-Forwarded-Host (set by a proxy) or
+// the Host header the client sent, and the scheme from X-Forwarded-Proto or the
+// request URL. A cross-site page cannot set these headers without a CORS
+// preflight, and they are only ever compared with the browser-set Origin.
+export function ownOriginOf(request: OriginCheckableRequest): string {
+  const host =
+    firstValue(request.headers.get("x-forwarded-host")) ??
+    firstValue(request.headers.get("host")) ??
+    request.nextUrl.host;
+  const proto =
+    firstValue(request.headers.get("x-forwarded-proto")) ??
+    request.nextUrl.protocol?.replace(/:$/, "") ??
+    null;
+  if (!host || !proto) return request.nextUrl.origin;
+  return `${proto}://${host}`;
 }
 
 // For route handlers: returns a generic 403 to send, or null to continue.
@@ -121,7 +146,7 @@ export function rejectUntrustedOrigin(
   const decision = checkRequestOrigin({
     method: request.method,
     headers: request.headers,
-    ownOrigin: request.nextUrl.origin,
+    ownOrigin: ownOriginOf(request),
     allowedOrigins,
   });
   if (decision.ok) return null;

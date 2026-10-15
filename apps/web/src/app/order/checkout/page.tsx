@@ -247,7 +247,7 @@ export default function CheckoutPage() {
     if (result.outcome === "success") {
       cart.clearCart();
       router.push(
-        `/order/confirmation/${result.confirmation.orderId}?token=${result.confirmation.accessToken}`,
+        `/order/confirmation/${encodeURIComponent(result.confirmation.orderId)}`,
       );
       return;
     }

@@ -1,5 +1,6 @@
 import {
   REQUEST_MARKER_HEADER,
+  ownOriginOf,
   checkRequestOrigin,
   parseAllowedOrigins,
   rejectUntrustedOrigin,
@@ -179,6 +180,64 @@ describe("rejectUntrustedOrigin", () => {
           "sec-fetch-site": "same-origin",
           [REQUEST_MARKER_HEADER]: "1",
         }),
+        [],
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("ownOriginOf", () => {
+  const request = (values: Record<string, string>, nextUrl = { origin: "http://localhost:3000", host: "localhost:3000", protocol: "http:" }) => ({
+    method: "POST",
+    headers: headers(values),
+    nextUrl,
+  });
+
+  it("uses the Host the client addressed, not Next's normalised URL", () => {
+    expect(ownOriginOf(request({ host: "127.0.0.1:3000" }))).toBe("http://127.0.0.1:3000");
+  });
+  it("prefers proxy-provided forwarded host and scheme (first value)", () => {
+    expect(
+      ownOriginOf(
+        request({
+          host: "internal:3000",
+          "x-forwarded-host": "shop.example, proxy.internal",
+          "x-forwarded-proto": "https, http",
+        }),
+      ),
+    ).toBe("https://shop.example");
+  });
+  it("falls back to the request URL when no headers are available", () => {
+    expect(ownOriginOf(request({}))).toBe("http://localhost:3000");
+  });
+  it("still refuses a foreign Origin whatever Host says", () => {
+    const decision = rejectUntrustedOrigin(
+      {
+        method: "POST",
+        headers: headers({
+          host: "shop.example",
+          origin: "https://evil.example",
+          [REQUEST_MARKER_HEADER]: "1",
+        }),
+        nextUrl: { origin: "https://shop.example", host: "shop.example", protocol: "https:" },
+      },
+      [],
+    );
+    expect(decision?.status).toBe(403);
+  });
+  it("accepts the browser's own origin when Next reports a different host", () => {
+    expect(
+      rejectUntrustedOrigin(
+        {
+          method: "POST",
+          headers: headers({
+            host: "127.0.0.1:3000",
+            origin: "http://127.0.0.1:3000",
+            "sec-fetch-site": "same-origin",
+            [REQUEST_MARKER_HEADER]: "1",
+          }),
+          nextUrl: { origin: "http://localhost:3000", host: "localhost:3000", protocol: "http:" },
+        },
         [],
       ),
     ).toBeNull();

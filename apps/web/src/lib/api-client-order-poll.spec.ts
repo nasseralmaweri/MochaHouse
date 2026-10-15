@@ -1,8 +1,12 @@
-import { pollOrderStatusFromBrowser } from './api-client';
+import {
+  fetchGuestShareToken,
+  pollOrderStatusFromBrowser,
+  startGuestSession,
+} from './api-client';
 
 // The browser poll of a guest order's status: every non-success outcome must be
-// a distinct, harmless result, and the request itself must not widen how the
-// access token is exposed.
+// a distinct, harmless result, and the request carries NO credential at all
+// (S3c: the token lives in an HttpOnly cookie read by the same-origin route).
 describe('pollOrderStatusFromBrowser', () => {
   const originalFetch = global.fetch;
   const originalUrl = process.env.NEXT_PUBLIC_API_URL;
@@ -38,26 +42,26 @@ describe('pollOrderStatusFromBrowser', () => {
 
   it('returns the order on a well-formed 200', async () => {
     fetchMock.mockResolvedValue(respond(200, validOrder));
-    const result = await pollOrderStatusFromBrowser('o1', 'tok');
+    const result = await pollOrderStatusFromBrowser('o1');
     expect(result).toEqual({ outcome: 'success', status: validOrder });
   });
 
-  it('asks for no caching and sends no Referer, with the id and token encoded', async () => {
+  it('polls the same-origin route with no credential in the URL, no caching, no Referer', async () => {
     fetchMock.mockResolvedValue(respond(200, validOrder));
-    await pollOrderStatusFromBrowser('../x/y', 'a b&c');
+    await pollOrderStatusFromBrowser('../x/y');
     const [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe(
-      'http://api.test/api/v1/orders/..%2Fx%2Fy?accessToken=a%20b%26c',
-    );
+    expect(url).toBe('/api/orders/..%2Fx%2Fy/status');
+    expect(url).not.toMatch(/token|accessToken|\?/i);
     expect(options).toMatchObject({
       cache: 'no-store',
       referrerPolicy: 'no-referrer',
     });
+    expect(options.headers).toBeUndefined();
   });
 
   it('reports a 404 (wrong id or token) as not-found', async () => {
     fetchMock.mockResolvedValue(respond(404, {}));
-    expect(await pollOrderStatusFromBrowser('o1', 'bad')).toEqual({
+    expect(await pollOrderStatusFromBrowser('o1')).toEqual({
       outcome: 'not-found',
     });
   });
@@ -66,7 +70,7 @@ describe('pollOrderStatusFromBrowser', () => {
     'reports HTTP %i as a failed poll, not not-found',
     async (status) => {
       fetchMock.mockResolvedValue(respond(status, {}));
-      expect(await pollOrderStatusFromBrowser('o1', 't')).toEqual({
+      expect(await pollOrderStatusFromBrowser('o1')).toEqual({
         outcome: 'error',
       });
     },
@@ -74,17 +78,9 @@ describe('pollOrderStatusFromBrowser', () => {
 
   it('reports a network failure as a failed poll', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
-    expect(await pollOrderStatusFromBrowser('o1', 't')).toEqual({
+    expect(await pollOrderStatusFromBrowser('o1')).toEqual({
       outcome: 'error',
     });
-  });
-
-  it('reports a missing API URL configuration as a failed poll, not a crash', async () => {
-    delete process.env.NEXT_PUBLIC_API_URL;
-    expect(await pollOrderStatusFromBrowser('o1', 't')).toEqual({
-      outcome: 'error',
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -98,8 +94,59 @@ describe('pollOrderStatusFromBrowser', () => {
     ['a non-string id', respond(200, { ...validOrder, orderId: 7 })],
   ])('reports %s as a failed poll', async (_label, response) => {
     fetchMock.mockResolvedValue(response);
-    expect(await pollOrderStatusFromBrowser('o1', 't')).toEqual({
+    expect(await pollOrderStatusFromBrowser('o1')).toEqual({
       outcome: 'error',
     });
+  });
+});
+
+describe('startGuestSession', () => {
+  const originalFetch = global.fetch;
+  let fetchMock: jest.Mock;
+  beforeEach(() => {
+    fetchMock = jest.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+  });
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('posts the token in the BODY (never the URL) with the request marker', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    expect(await startGuestSession('o1', 'tok_en')).toEqual({ outcome: 'ok' });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/orders/o1/guest-session');
+    expect(url).not.toContain('tok_en');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({ token: 'tok_en' });
+    expect(new Headers(init.headers).get('x-centerivo-request')).toBe('1');
+    expect(init).toMatchObject({ cache: 'no-store', referrerPolicy: 'no-referrer' });
+  });
+
+  it('maps 404 to not-found and anything else, or a network failure, to error', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404 });
+    expect(await startGuestSession('o1', 't')).toEqual({ outcome: 'not-found' });
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 429 });
+    expect(await startGuestSession('o1', 't')).toEqual({ outcome: 'error' });
+    fetchMock.mockRejectedValueOnce(new TypeError('offline'));
+    expect(await startGuestSession('o1', 't')).toEqual({ outcome: 'error' });
+  });
+});
+
+describe('fetchGuestShareToken', () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+  it('returns the token on 200 and null otherwise', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ token: 'abc' }),
+    }) as unknown as typeof fetch;
+    expect(await fetchGuestShareToken('o1')).toBe('abc');
+    global.fetch = jest.fn().mockResolvedValue({ ok: false }) as unknown as typeof fetch;
+    expect(await fetchGuestShareToken('o1')).toBeNull();
+    global.fetch = jest.fn().mockRejectedValue(new Error('x')) as unknown as typeof fetch;
+    expect(await fetchGuestShareToken('o1')).toBeNull();
   });
 });

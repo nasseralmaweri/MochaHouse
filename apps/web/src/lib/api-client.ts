@@ -243,22 +243,23 @@ export type OrderStatusPollResult =
   | { outcome: "not-found" }
   | { outcome: "error" };
 
-// One poll of a guest order's status. The order id + access token in the URL
-// is the existing guest contract and is deliberately unchanged. Beyond it:
+// One poll of a guest order's status (R1 / S3c). The request is same-origin to
+// this app's own /api/orders/<id>/status route, which reads the access token
+// from the HttpOnly guest-session cookie: no credential is in the URL, a query
+// string or a header the page can see. Beyond that:
 //   - no-store, so a cached response can never present an old status as
 //     current, and nothing about the order is kept in the browser cache;
-//   - no Referer, so the token-bearing request URL is not echoed anywhere;
-//   - a 404 (wrong id or token) is a distinct outcome so polling can stop;
+//   - a 404 (no session for this order, wrong id or token) is a distinct
+//     outcome so polling can stop;
 //   - anything else that is not a well-formed order is a failed poll, never
 //     data the page could crash on.
 export async function pollOrderStatusFromBrowser(
   orderId: string,
-  accessToken: string,
 ): Promise<OrderStatusPollResult> {
   let response: Response;
   try {
     response = await fetch(
-      `${getPublicApiUrl()}/orders/${encodeURIComponent(orderId)}?accessToken=${encodeURIComponent(accessToken)}`,
+      `/api/orders/${encodeURIComponent(orderId)}/status`,
       { cache: "no-store", referrerPolicy: "no-referrer" },
     );
   } catch {
@@ -294,6 +295,54 @@ export async function pollOrderStatusFromBrowser(
     return { outcome: "success", status: body as OrderStatusResponse };
   } catch {
     return { outcome: "error" };
+  }
+}
+
+export type GuestSessionResult =
+  | { outcome: "ok" }
+  | { outcome: "not-found" }
+  | { outcome: "error" };
+
+// Exchanges a credential the visitor arrived with (a legacy ?token= link or a
+// shared #t= fragment link) for the HttpOnly guest-session cookie. The token is
+// sent in the POST body; the server verifies it for this order first.
+export async function startGuestSession(
+  orderId: string,
+  token: string,
+): Promise<GuestSessionResult> {
+  try {
+    const response = await fetch(
+      `/api/orders/${encodeURIComponent(orderId)}/guest-session`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+        cache: "no-store",
+        referrerPolicy: "no-referrer",
+      },
+    );
+    if (response.ok) return { outcome: "ok" };
+    if (response.status === 404) return { outcome: "not-found" };
+    return { outcome: "error" };
+  } catch {
+    return { outcome: "error" };
+  }
+}
+
+// For the explicit "Copy tracking link" action only.
+export async function fetchGuestShareToken(
+  orderId: string,
+): Promise<string | null> {
+  try {
+    const response = await fetch(
+      `/api/orders/${encodeURIComponent(orderId)}/share-link`,
+      { method: "POST", cache: "no-store", referrerPolicy: "no-referrer" },
+    );
+    if (!response.ok) return null;
+    const body = (await response.json()) as { token?: unknown };
+    return typeof body.token === "string" ? body.token : null;
+  } catch {
+    return null;
   }
 }
 
