@@ -29,6 +29,7 @@ import { ReportsModule } from './reports/reports.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PlatformAuthModule } from './platform-auth/platform-auth.module';
+import { PlatformTenantsModule } from './platform-tenants/platform-tenants.module';
 
 @Module({
   imports: [
@@ -65,6 +66,8 @@ import { PlatformAuthModule } from './platform-auth/platform-auth.module';
     // SC1a — CENTERIVO platform operators (/api/v1/platform/*), outside
     // every tenant boundary.
     PlatformAuthModule,
+    // SC1c — the read-only CENTERIVO tenant registry.
+    PlatformTenantsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

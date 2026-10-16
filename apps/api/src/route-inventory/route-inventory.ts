@@ -293,6 +293,20 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     scope: 'platform',
     note: 'SC1b — records the end of the operator session.',
   },
+  // SC1c — the read-only tenant registry: business registry records and a
+  // business's location summary; no customer, order or financial data.
+  'GET /api/v1/platform/tenants': {
+    scope: 'platform',
+    note: 'SC1c — every business on the platform, searchable and paged.',
+  },
+  'GET /api/v1/platform/tenants/:tenantId': {
+    scope: 'platform',
+    note: 'SC1c — one business: status and location counts.',
+  },
+  'GET /api/v1/platform/tenants/:tenantId/locations': {
+    scope: 'platform',
+    note: "SC1c — that business's locations only, paged.",
+  },
   // --- Internal/system.
   'GET /': {
     scope: 'system',
