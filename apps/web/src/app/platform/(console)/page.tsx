@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   PlatformCard,
@@ -7,10 +8,27 @@ import {
 } from "@/components/platform/PlatformCards";
 import { getPlatformSession } from "@/lib/platform-auth/session";
 import { PLATFORM_NAV_ITEMS, isAvailable } from "@/lib/platform/nav";
+import { getPlatformRegistryTotals } from "@/lib/platform/tenants-api";
+
+function RegistryMetric({ title, value }: { title: string; value: number }) {
+  return (
+    <PlatformCard title={title}>
+      <p className="text-2xl font-semibold text-text-primary">{value}</p>
+      <Link
+        href="/platform/tenants"
+        className="w-fit text-sm font-medium text-text-secondary underline-offset-4 hover:text-text-primary hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+      >
+        View tenants
+      </Link>
+    </PlatformCard>
+  );
+}
 
 // SC1b — the platform console's Overview. Only facts that a built API can
 // back are shown (the signed-in operator); every SaaS metric whose backend
 // does not exist yet says so instead of showing a number.
+// SC1c — business counts now come from the tenant registry (real records);
+// if it cannot be read, the cards say so rather than guess.
 export default async function PlatformOverviewPage() {
   const session = await getPlatformSession();
   if (session.state !== "signed-in") {
@@ -18,6 +36,8 @@ export default async function PlatformOverviewPage() {
   }
   const { operator } = session;
   const comingSoon = PLATFORM_NAV_ITEMS.filter((item) => !isAvailable(item));
+  const totals = await getPlatformRegistryTotals();
+  const registry = totals.state === "ok" ? totals.data.registry : null;
 
   return (
     <div className="flex flex-col gap-8">
@@ -27,14 +47,23 @@ export default async function PlatformOverviewPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <UnavailableMetric
-          title="Total businesses"
-          reason="Arrives with tenant administration."
-        />
-        <UnavailableMetric
-          title="Active businesses"
-          reason="Arrives with tenant administration."
-        />
+        {registry ? (
+          <>
+            <RegistryMetric title="Total businesses" value={registry.total} />
+            <RegistryMetric title="Active businesses" value={registry.active} />
+          </>
+        ) : (
+          <>
+            <UnavailableMetric
+              title="Total businesses"
+              reason="The tenant registry could not be loaded."
+            />
+            <UnavailableMetric
+              title="Active businesses"
+              reason="The tenant registry could not be loaded."
+            />
+          </>
+        )}
         <UnavailableMetric
           title="Active subscriptions"
           reason="Arrives with subscriptions."
