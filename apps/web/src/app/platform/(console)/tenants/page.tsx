@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { platformPrimaryButtonClassName } from "@/components/platform/PlatformAuthFrame";
 import {
   PlatformEmptyState,
   PlatformPageHeader,
@@ -34,7 +35,7 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-// SC1c — every business on CENTERIVO, from the read-only tenant registry
+// SC1c — every business on CENTERIVO, from the tenant registry
 // API: search, status filter, paging. Oldest business first, so the first
 // business on the platform (Mocha House, Tenant #1) leads. Real records
 // only; nothing here changes a business.
@@ -45,10 +46,16 @@ export default async function PlatformTenantsPage({
 }) {
   const { filters, searchError } = parseTenantListFilters(await searchParams);
   const header = (
-    <PlatformPageHeader
-      title="Tenants"
-      description="Every business on CENTERIVO, oldest first. Read-only: status changes and onboarding arrive in later releases."
-    />
+    <div className="flex flex-wrap items-start justify-between gap-4">
+      <PlatformPageHeader
+        title="Tenants"
+        description="Every business on CENTERIVO, oldest first. Status changes arrive in a later release."
+      />
+      {/* SC1d — provisioning. */}
+      <Link href="/platform/tenants/new" className={platformPrimaryButtonClassName}>
+        Add a business
+      </Link>
+    </div>
   );
 
   if (searchError) {
