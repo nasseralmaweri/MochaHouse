@@ -51,6 +51,10 @@ export const PLATFORM_AUDIT_ACTIONS = {
   billingReconciled: 'platform.billing.reconciled',
   billingCaseResolved: 'platform.billing.case_resolved',
   billingEnforcementSwept: 'platform.billing.enforcement_swept',
+  // SC3c-3 — a grace extension / exception and a billing contact assignment
+  // (target: the tenant).
+  billingGraceExtended: 'platform.billing.grace_extended',
+  billingContactAssigned: 'platform.billing.contact_assigned',
 } as const;
 
 @Injectable()

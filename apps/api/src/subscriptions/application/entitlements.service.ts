@@ -71,6 +71,7 @@ export class EntitlementsService {
       select: {
         billingMode: true,
         status: true,
+        graceExceptionEndsAt: true,
         planVersion: {
           select: {
             moduleKeys: true,

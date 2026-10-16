@@ -191,6 +191,9 @@ const APPROVED_GLOBAL_MODELS = [
   // SC3b — Checkout sessions and reconciliation cases.
   'BillingCheckoutSession',
   'BillingReconciliationCase',
+  // SC3c-3 — grace extensions and billing notices (platform data).
+  'BillingGraceExtension',
+  'BillingNotification',
 ];
 // SC2a review — identifiers issued by an OUTSIDE system (not a record of
 // ours): the SaaS billing provider's ids (SC3a).
@@ -258,6 +261,9 @@ const PLATFORM_OPERATOR_MODELS = [
   // SC3b — Checkout sessions and reconciliation cases.
   'BillingCheckoutSession',
   'BillingReconciliationCase',
+  // SC3c-3 — grace extensions and billing notices (platform data).
+  'BillingGraceExtension',
+  'BillingNotification',
 ];
 
 describe('Tenant relationship inventory (Security 4C-1)', () => {
@@ -394,7 +400,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(relationsBetweenBusinessRecords).toHaveLength(96);
+    expect(relationsBetweenBusinessRecords).toHaveLength(97);
     expect(
       relationsBetweenBusinessRecords
         .filter((r) => !isTenantEnforced(r))
@@ -509,6 +515,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'PromotionLocation.promotionId',
       'PromotionProduct.productId',
       'PromotionProduct.promotionId',
+      'TenantBillingContact.internalUserId',
     ]);
   });
 
@@ -637,13 +644,13 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       external: count((r) => r.kind === 'external-identifier'),
       total: TENANT_RELATIONSHIPS.length,
     }).toEqual({
-      compositeWithForeignKey: 96,
+      compositeWithForeignKey: 97,
       compositeWithoutForeignKey: 0,
       historicalSnapshot: 8,
       polymorphic: 4,
       json: 7,
       external: 2,
-      total: 117,
+      total: 118,
     });
     // Optional relationships are present and marked optional.
     const optionalForeignKeys = relationsBetweenBusinessRecords.filter(

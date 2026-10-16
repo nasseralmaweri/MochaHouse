@@ -127,6 +127,8 @@ model Tenant {
   campaignProducts                     CampaignProduct[]
   approvalRequests                     ApprovalRequest[]
   notificationRecipients               NotificationRecipient[]
+  // SC3c-3 — the business's designated billing contact.
+  billingContact                       TenantBillingContact?
 
   // SC2a — the business's SaaS subscription (platform data; at most one).
   subscription TenantSubscription? @relation("TenantSubscriptionSubscriber")
@@ -180,6 +182,7 @@ model PlatformOperator {
   billingPolicies              BillingPolicy[]               @relation("BillingPolicyActor")
   // SC3b — reconciliation cases this operator resolved.
   billingReconciliationCases   BillingReconciliationCase[]   @relation("BillingReconciliationCaseResolver")
+  billingGraceExtensions       BillingGraceExtension[]       @relation("BillingGraceExtensionActor")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -266,6 +269,11 @@ enum TenantSubscriptionEventType {
   // SC3c-2 — an ended subscription (expired trial or canceled) was replaced
   // by a new, PAID provider subscription through a restart Checkout.
   SUBSCRIPTION_REPLACED
+  // SC3c-3 — an operator extended a PAST_DUE grace period; granted / ended
+  // an UNPAID grace exception.
+  GRACE_EXTENDED
+  GRACE_EXCEPTION_GRANTED
+  GRACE_EXCEPTION_EXPIRED
 }
 
 // SC3a — who caused a subscription history entry.
@@ -382,6 +390,10 @@ model TenantSubscription {
   // SC3c — TRIAL_EXPIRED only: when the restricted recovery window ends (then
   // the business is suspended for billing and this is cleared).
   recoveryEndsAt               DateTime?
+  // SC3c-3 — UNPAID only: an operator's explicit, audited, time-limited
+  // grace EXCEPTION (temporary access). The subscription stays UNPAID — the
+  // provider's true state — and the debt stays outstanding.
+  graceExceptionEndsAt         DateTime?
   cancelAtPeriodEnd            Boolean               @default(false)
   canceledAt                   DateTime?
   // A plan change waiting to take effect: an upgrade waits for confirmed
@@ -404,6 +416,8 @@ model TenantSubscription {
   moduleGrants        TenantModuleGrant[]
   events              TenantSubscriptionEvent[]
   trialClaim          BillingTrialClaim?
+  graceExtensions     BillingGraceExtension[]
+  billingNotifications BillingNotification[]
   billingEvents       BillingProviderEvent[]
   checkoutSessions    BillingCheckoutSession[]
   reconciliationCases BillingReconciliationCase[]
@@ -1753,6 +1767,12 @@ model InternalUser {
   invitedAt           DateTime  @default(now())
   activatedAt         DateTime?
   lastAuthenticatedAt DateTime?
+  // SC3c-3 — the address the identity provider last asserted as VERIFIED
+  // for this person (lower-cased) and when. Billing email goes only to an
+  // address verified recently AND still equal to `email`; a historical
+  // sign-in alone is never permanent proof.
+  verifiedEmail       String?
+  emailVerifiedAt     DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1805,6 +1825,7 @@ model InternalUser {
   // that would hide who made which side of a decision.
   approvalRequestsMade          ApprovalRequest[]            @relation("ApprovalRequester")
   approvalRequestsDecided       ApprovalRequest[]            @relation("ApprovalDecider")
+  billingContactFor             TenantBillingContact?        @relation("TenantBillingContactUser")
 
   // Milestone S0D-2E — the owning tenant. REQUIRED: this is the internal
   // identity/authorization chain's root, converted together with
@@ -3789,4 +3810,80 @@ model ApprovalRequest {
   @@index([targetType, targetId, action])
   @@index([status])
   @@index([tenantId])
+}
+
+// SC3c-3 — a business's designated billing contact: ONE per business, a
+// staff member of THAT business (composite foreign key — never another
+// business's staff). Billing email goes to them when they are eligible at
+// delivery time (ACTIVE, billing.manage business-wide, recently verified
+// email); otherwise to the earliest eligible administrator. Reassigned only
+// by a platform operator (audited).
+model TenantBillingContact {
+  id             String   @id @default(uuid(7))
+  internalUserId String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenantId     String
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  internalUser InternalUser @relation("TenantBillingContactUser", fields: [tenantId, internalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId])
+  @@unique([tenantId, internalUserId])
+  @@unique([tenantId, id])
+}
+
+// SC3c-3 — every operator grace extension (PAST_DUE) or grace exception
+// (UNPAID): append-only (database trigger). At most 14 days each, at most 60
+// in total per unpaid episode (episodeStartedAt = the episode's first failed
+// payment). The debt is never touched.
+model BillingGraceExtension {
+  id                      String   @id @default(uuid(7))
+  subscriptionId          String
+  kind                    String
+  episodeStartedAt        DateTime
+  days                    Int
+  previousEndsAt          DateTime
+  newEndsAt               DateTime
+  reason                  String
+  actorPlatformOperatorId String
+  createdAt               DateTime @default(now())
+
+  subscription          TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actorPlatformOperator PlatformOperator   @relation("BillingGraceExtensionActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([subscriptionId, episodeStartedAt])
+  @@index([actorPlatformOperatorId])
+}
+
+// SC3c-3 — the platform billing notification queue (SEPARATE from the
+// restaurant OutboxEvent / NotificationDelivery pipeline). One row per
+// logical notice, deduplicated by `dedupeKey` (tied to the actual billing
+// event or unpaid episode). The worker leases rows, sends at most twice
+// (a provider timeout can still duplicate an email — never claimed
+// exactly-once), and hands failures to review. The recipient is chosen at
+// delivery time and never stored here.
+model BillingNotification {
+  id                String    @id @default(uuid(7))
+  subscriptionId    String
+  kind              String
+  dedupeKey         String    @unique
+  payload           Json
+  status            String    @default("PENDING")
+  attemptCount      Int       @default(0)
+  nextAttemptAt     DateTime  @default(now())
+  expiresAt         DateTime
+  leaseOwner        String?
+  leaseExpiresAt    DateTime?
+  sendStartedAt     DateTime?
+  possibleDuplicate Boolean   @default(false)
+  sentAt            DateTime?
+  finishedAt        DateTime?
+  lastErrorCode     String?
+  createdAt         DateTime  @default(now())
+
+  subscription TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([status, nextAttemptAt])
+  @@index([subscriptionId])
 }

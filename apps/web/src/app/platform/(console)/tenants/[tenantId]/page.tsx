@@ -13,6 +13,7 @@ import {
 import { TenantLifecyclePanel } from "@/components/platform/TenantLifecyclePanel";
 import { SubscriptionPanel } from "@/components/platform/SubscriptionPanel";
 import { BillingPanel } from "@/components/platform/BillingPanel";
+import { BillingOperationsPanel } from "@/components/platform/BillingOperationsPanel";
 import { assignableVersions } from "@/lib/platform/subscriptions";
 import {
   getPlatformTenant,
@@ -198,12 +199,17 @@ export default async function PlatformTenantPage({
               candidate.versions.some((version) => version.id === versionId),
             );
             return (
-              <BillingPanel
-                tenantId={tenant.id}
-                billing={billing.data.billing}
-                isFounding={plan?.key === "founding"}
-                prices={(plan?.prices ?? []).filter((price) => price.status === "ACTIVE")}
-              />
+              <>
+                <BillingPanel
+                  tenantId={tenant.id}
+                  billing={billing.data.billing}
+                  isFounding={plan?.key === "founding"}
+                  prices={(plan?.prices ?? []).filter((price) => price.status === "ACTIVE")}
+                />
+                {billing.data.billing && billing.data.billing.state !== "COMPLIMENTARY" ? (
+                  <BillingOperationsPanel tenantId={tenant.id} view={billing.data} />
+                ) : null}
+              </>
             );
           })()
         ) : (

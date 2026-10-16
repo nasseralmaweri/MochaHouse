@@ -27,6 +27,8 @@ import {
   type VerifiedBillingProviderEvent,
 } from '../provider/saas-billing-provider';
 import { billingEnforcementEnabled } from './billing-enforcement.config';
+import { enqueueBillingNotice } from './billing-notifications';
+import { PLATFORM_AUDIT_ACTIONS } from '../../platform-auth/application/platform-operators.service';
 
 // SC3b — what the provider says NOW about the thing an event concerns, read
 // BEFORE the database transaction (no provider call ever runs while rows are
@@ -133,7 +135,11 @@ export class BillingLifecycleError extends Error {
       | 'NOT_FOUND'
       | 'TRIALS_DISABLED'
       | 'TRIALS_UNAVAILABLE'
-      | 'CONCURRENT_CHANGE',
+      | 'CONCURRENT_CHANGE'
+      // SC3c-3 — grace extensions.
+      | 'NOT_EXTENDABLE'
+      | 'EXTENSION_LIMIT'
+      | 'NOT_RECOVERABLE',
   ) {
     super(`Billing change refused: ${reason}.`);
     this.name = 'BillingLifecycleError';
@@ -163,6 +169,7 @@ export function toBillingState(row: SubscriptionRow): BillingState {
     pastDueAt: row.pastDueAt,
     graceEndsAt: row.graceEndsAt,
     recoveryEndsAt: row.recoveryEndsAt,
+    graceExceptionEndsAt: row.graceExceptionEndsAt,
     cancelAtPeriodEnd: row.cancelAtPeriodEnd,
     canceledAt: row.canceledAt,
     pending:
@@ -192,6 +199,7 @@ function stateColumns(next: BillingState) {
     pastDueAt: next.pastDueAt,
     graceEndsAt: next.graceEndsAt,
     recoveryEndsAt: next.recoveryEndsAt,
+    graceExceptionEndsAt: next.graceExceptionEndsAt,
     cancelAtPeriodEnd: next.cancelAtPeriodEnd,
     canceledAt: next.canceledAt,
     pendingChangeKind: next.pending?.kind ?? null,
@@ -250,6 +258,21 @@ function retriesExhausted(ledger: { attempts: number; receivedAt: Date }) {
 // amounts, our Checkout id) — never a URL. See
 // docs/operations/billing-recovery.md.
 export const UNLINKED_REPLACEMENT_CASE = 'UNLINKED_REPLACEMENT';
+
+// SC3c-3 — the provider ended a subscription while an operator's grace
+// extension or exception was in force: nothing is presented as paid, the
+// extension's access ends, and an operator decides what next (complimentary
+// access is a separate, explicit action).
+export const EXTENSION_ENDED_BY_PROVIDER_CASE = 'EXTENSION_ENDED_BY_PROVIDER';
+
+// SC3c-3 — operator grace extension limits (owner decision D5).
+export const GRACE_EXTENSION_MAX_DAYS = 14;
+export const GRACE_EXTENSION_EPISODE_MAX_DAYS = 60;
+// SC3c-3 — reminders: a grace period / exception ending within this long,
+// a trial recovery window ending within RECOVERY_REMINDER_MS.
+const GRACE_REMINDER_MS = 3 * 24 * 60 * 60 * 1000;
+const RECOVERY_REMINDER_MS = 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function isUniqueViolation(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
@@ -1176,13 +1199,22 @@ export class BillingLifecycleService {
       },
       select: { id: true },
     });
-    await tx.billingReconciliationCase.create({
+    const created = await tx.billingReconciliationCase.create({
       data: {
         kind: UNLINKED_REPLACEMENT_CASE,
         subscriptionId: open ? null : facts.subscriptionId,
         billingProviderEventId: ledgerId,
         detail,
       },
+      select: { id: true },
+    });
+    // SC3c-3 — the business is told its restart is being reviewed (no
+    // second restart is possible meanwhile).
+    await enqueueBillingNotice(tx, {
+      subscriptionId: facts.subscriptionId,
+      kind: 'RESTART_UNDER_REVIEW',
+      subject: created.id,
+      caseId: created.id,
     });
   }
 
@@ -1536,6 +1568,7 @@ export class BillingLifecycleService {
         type:
           | 'GRACE_EXPIRED'
           | 'RECOVERY_EXPIRED'
+          | 'GRACE_EXCEPTION_EXPIRED'
           | 'UPGRADE_REQUESTED'
           | 'DOWNGRADE_SCHEDULED';
       }
@@ -1647,7 +1680,8 @@ export class BillingLifecycleService {
             data: { status: 'ACTIVE', suspensionReason: null },
           });
     if (count !== 1) return;
-    await tx.tenantSubscriptionEvent.create({
+    const recorded = await tx.tenantSubscriptionEvent.create({
+      select: { id: true },
       data: {
         subscriptionId: subscription.id,
         type:
@@ -1661,6 +1695,15 @@ export class BillingLifecycleService {
         actorPlatformOperatorId: origin.actorPlatformOperatorId,
       },
     });
+    // SC3c-3 — the business is told (deduplicated by this history entry).
+    await enqueueBillingNotice(tx, {
+      subscriptionId: subscription.id,
+      kind:
+        action === 'SUSPEND_BILLING' ? 'BILLING_SUSPENDED' : 'ACCESS_RESTORED',
+      subject: recorded.id,
+      deadline: action === 'LIFT_BILLING' ? next.graceExceptionEndsAt : null,
+      temporary: action === 'LIFT_BILLING' && next.status === 'UNPAID',
+    });
   }
 
   // SC3c-1 — the subscriptions whose grace period or trial recovery window
@@ -1669,9 +1712,12 @@ export class BillingLifecycleService {
     now: Date,
     limit: number,
   ): Promise<
-    { subscriptionId: string; event: 'GRACE_EXPIRED' | 'RECOVERY_EXPIRED' }[]
+    {
+      subscriptionId: string;
+      event: 'GRACE_EXPIRED' | 'RECOVERY_EXPIRED' | 'GRACE_EXCEPTION_EXPIRED';
+    }[]
   > {
-    const [grace, recovery] = await Promise.all([
+    const [grace, recovery, exceptions] = await Promise.all([
       this.prisma.tenantSubscription.findMany({
         where: {
           billingMode: 'BILLED',
@@ -1692,6 +1738,17 @@ export class BillingLifecycleService {
         take: limit,
         select: { id: true },
       }),
+      // SC3c-3 — an UNPAID subscription's grace exception is over.
+      this.prisma.tenantSubscription.findMany({
+        where: {
+          billingMode: 'BILLED',
+          status: 'UNPAID',
+          graceExceptionEndsAt: { lte: now },
+        },
+        orderBy: { graceExceptionEndsAt: 'asc' },
+        take: limit,
+        select: { id: true },
+      }),
     ]);
     return [
       ...grace.map((row) => ({
@@ -1702,7 +1759,255 @@ export class BillingLifecycleService {
         subscriptionId: row.id,
         event: 'RECOVERY_EXPIRED' as const,
       })),
+      ...exceptions.map((row) => ({
+        subscriptionId: row.id,
+        event: 'GRACE_EXCEPTION_EXPIRED' as const,
+      })),
     ];
+  }
+
+  // SC3c-3 — reminders before a deadline (the enforcement sweep queues
+  // them): a grace period or grace exception ending within 3 days, a trial
+  // recovery window ending within 1 day. Deduplicated by the deadline, so
+  // repeated sweeps queue each once (a NEW deadline — an extension — gets
+  // its own reminder).
+  async queueReminders(now: Date, limit: number): Promise<number> {
+    const graceUntil = new Date(now.getTime() + GRACE_REMINDER_MS);
+    const recoveryUntil = new Date(now.getTime() + RECOVERY_REMINDER_MS);
+    const [grace, exceptions, recovery] = await Promise.all([
+      this.prisma.tenantSubscription.findMany({
+        where: {
+          billingMode: 'BILLED',
+          status: 'PAST_DUE',
+          graceEndsAt: { gt: now, lte: graceUntil },
+        },
+        take: limit,
+        select: { id: true, graceEndsAt: true },
+      }),
+      this.prisma.tenantSubscription.findMany({
+        where: {
+          billingMode: 'BILLED',
+          status: 'UNPAID',
+          graceExceptionEndsAt: { gt: now, lte: graceUntil },
+        },
+        take: limit,
+        select: { id: true, graceExceptionEndsAt: true },
+      }),
+      this.prisma.tenantSubscription.findMany({
+        where: {
+          billingMode: 'BILLED',
+          status: 'TRIAL_EXPIRED',
+          recoveryEndsAt: { gt: now, lte: recoveryUntil },
+        },
+        take: limit,
+        select: { id: true, recoveryEndsAt: true },
+      }),
+    ]);
+    const reminders = [
+      ...grace.map((row) => ({
+        id: row.id,
+        kind: 'GRACE_ENDING' as const,
+        deadline: row.graceEndsAt!,
+      })),
+      ...exceptions.map((row) => ({
+        id: row.id,
+        kind: 'GRACE_ENDING' as const,
+        deadline: row.graceExceptionEndsAt!,
+      })),
+      ...recovery.map((row) => ({
+        id: row.id,
+        kind: 'TRIAL_RECOVERY_ENDING' as const,
+        deadline: row.recoveryEndsAt!,
+      })),
+    ];
+    for (const reminder of reminders) {
+      await this.prisma.$transaction((tx) =>
+        enqueueBillingNotice(tx, {
+          subscriptionId: reminder.id,
+          kind: reminder.kind,
+          subject: reminder.deadline.toISOString(),
+          deadline: reminder.deadline,
+          now,
+        }),
+      );
+    }
+    return reminders.length;
+  }
+
+  // SC3c-3 — an operator extends a PAST_DUE grace period, or grants (or
+  // extends) an UNPAID subscription's grace exception, by `days` (1-14),
+  // within 60 days per unpaid episode (the episode starts at its first
+  // failed payment). The caller has verified LIVE that the provider's
+  // subscription can still be recovered (never inside this transaction).
+  // One serializable transaction: the subscription change (compare-and-set),
+  // its history, the append-only extension record, the platform audit and
+  // the effect on the business (an UNPAID exception lifts ONLY a BILLING
+  // suspension — never SECURITY or an administrative one). Nothing is paid,
+  // charged, refunded or changed at the provider; the debt stays.
+  async extendGrace(
+    subscriptionId: string,
+    expected: { externalSubscriptionId: string; status: 'PAST_DUE' | 'UNPAID' },
+    input: { days: number; reason: string },
+    actorPlatformOperatorId: string,
+    requestReference: string | null,
+    now: Date = new Date(),
+  ): Promise<void> {
+    await runSerializable(this.prisma, async (tx) => {
+      const subscription = await this.load(tx, subscriptionId);
+      if (
+        subscription.billingMode !== 'BILLED' ||
+        subscription.status !== expected.status ||
+        subscription.externalSubscriptionId !==
+          expected.externalSubscriptionId ||
+        subscription.pastDueAt === null
+      ) {
+        throw new BillingLifecycleError('NOT_EXTENDABLE');
+      }
+      const episodeStartedAt = subscription.pastDueAt;
+      const used = await tx.billingGraceExtension.aggregate({
+        where: { subscriptionId, episodeStartedAt },
+        _sum: { days: true },
+      });
+      if (
+        (used._sum.days ?? 0) + input.days >
+        GRACE_EXTENSION_EPISODE_MAX_DAYS
+      ) {
+        throw new BillingLifecycleError('EXTENSION_LIMIT');
+      }
+      const state = toBillingState(subscription);
+      const current =
+        subscription.status === 'PAST_DUE'
+          ? subscription.graceEndsAt
+          : subscription.graceExceptionEndsAt;
+      const previousEndsAt = current !== null && current > now ? current : now;
+      const endsAt = new Date(previousEndsAt.getTime() + input.days * DAY_MS);
+      const result = transition(
+        state,
+        subscription.status === 'PAST_DUE'
+          ? { type: 'GRACE_EXTENDED', at: now, endsAt }
+          : { type: 'GRACE_EXCEPTION_GRANTED', at: now, endsAt },
+      );
+      if (!result.ok) {
+        throw new BillingLifecycleError(
+          result.reason === 'INVALID_EXTENSION'
+            ? 'EXTENSION_LIMIT'
+            : 'NOT_EXTENDABLE',
+        );
+      }
+      await this.write(
+        tx,
+        subscription,
+        result.next,
+        subscription.lastBillingEventAt,
+      );
+      const origin = {
+        source: 'OPERATOR' as const,
+        billingProviderEventId: null,
+        actorPlatformOperatorId,
+      };
+      await this.history(tx, subscription.id, result.history, origin);
+      await tx.billingGraceExtension.create({
+        data: {
+          subscriptionId,
+          kind:
+            subscription.status === 'PAST_DUE'
+              ? 'GRACE_EXTENDED'
+              : 'GRACE_EXCEPTION',
+          episodeStartedAt,
+          days: input.days,
+          previousEndsAt,
+          newEndsAt: endsAt,
+          reason: input.reason,
+          actorPlatformOperatorId,
+        },
+      });
+      await tx.platformAuditEvent.create({
+        data: {
+          action: PLATFORM_AUDIT_ACTIONS.billingGraceExtended,
+          outcome: 'SUCCEEDED',
+          reasonCode:
+            subscription.status === 'PAST_DUE'
+              ? 'GRACE_EXTENDED'
+              : 'GRACE_EXCEPTION',
+          actorPlatformOperatorId,
+          targetType: 'tenant',
+          targetId: subscription.subscriberTenantId,
+          requestReference,
+        },
+      });
+      await this.enforce(
+        tx,
+        subscription,
+        result.next,
+        result.suspension,
+        origin,
+      );
+    });
+  }
+
+  // SC3c-3 — what follows from a subscription change, in its transaction:
+  // the business's billing notices, and a review case when the provider
+  // ended a subscription during an operator's extension or exception.
+  private async afterChange(
+    tx: Tx,
+    current: SubscriptionRow,
+    next: BillingState,
+    linked: string | undefined,
+  ): Promise<void> {
+    if (
+      current.status !== 'PAST_DUE' &&
+      next.status === 'PAST_DUE' &&
+      next.pastDueAt
+    ) {
+      await enqueueBillingNotice(tx, {
+        subscriptionId: current.id,
+        kind: 'PAYMENT_FAILED',
+        subject: next.pastDueAt.toISOString(),
+        deadline: next.graceEndsAt,
+      });
+    }
+    if (current.status !== 'TRIAL_EXPIRED' && next.status === 'TRIAL_EXPIRED') {
+      await enqueueBillingNotice(tx, {
+        subscriptionId: current.id,
+        kind: 'TRIAL_EXPIRED',
+        subject: (next.recoveryEndsAt ?? new Date()).toISOString(),
+        deadline: next.recoveryEndsAt,
+      });
+    }
+    if (
+      linked !== undefined &&
+      (current.status === 'TRIAL_EXPIRED' || current.status === 'CANCELED') &&
+      next.status === 'ACTIVE'
+    ) {
+      await enqueueBillingNotice(tx, {
+        subscriptionId: current.id,
+        kind: 'RESTART_CONFIRMED',
+        subject: linked,
+      });
+    }
+    if (current.status !== 'CANCELED' && next.status === 'CANCELED') {
+      const extended =
+        current.graceExceptionEndsAt !== null ||
+        (current.status === 'PAST_DUE' &&
+          current.pastDueAt !== null &&
+          (await tx.billingGraceExtension.count({
+            where: {
+              subscriptionId: current.id,
+              episodeStartedAt: current.pastDueAt,
+            },
+          })) > 0);
+      if (extended) {
+        await this.openCase(
+          tx,
+          EXTENSION_ENDED_BY_PROVIDER_CASE,
+          current.id,
+          null,
+          `The provider ended the subscription while it was ${current.status} under an operator grace ${
+            current.graceExceptionEndsAt !== null ? 'exception' : 'extension'
+          }. Not paid; the extension's access has ended; nothing was changed at the provider.`,
+        );
+      }
+    }
   }
 
   // --- shared ----------------------------------------------------------------
@@ -1743,6 +2048,7 @@ export class BillingLifecycleService {
       },
     });
     if (count !== 1) throw new ConcurrentBillingChange('CONCURRENT_CHANGE');
+    await this.afterChange(tx, current, next, link.externalSubscriptionId);
   }
 
   private async history(

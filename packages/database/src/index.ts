@@ -17,3 +17,7 @@ export * from './integrity';
 // the deployment variables), used by the seed guard and the API's startup and
 // request-time gates for dev authentication and simulated payments.
 export * from './runtime-environment';
+
+// SC3c-3 — the shared billing email recipient rule (API view and worker
+// delivery apply the same one).
+export * from './billing/billing-recipient';

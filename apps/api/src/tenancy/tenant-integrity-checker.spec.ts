@@ -377,7 +377,8 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
                                      'TenantModuleGrant', 'TenantSubscriptionEvent',
                                      'SubscriptionPlanPrice', 'BillingPolicy', 'BillingTrialClaim',
                                      'BillingProviderEvent', 'BillingCheckoutSession',
-                                     'BillingReconciliationCase')
+                                     'BillingReconciliationCase',
+                                     'BillingGraceExtension', 'BillingNotification')
               AND cl.relnamespace = 'public'::regnamespace`,
           )
         ).rows,
@@ -424,7 +425,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     expect(summarize(report)).toEqual([]);
     expect(report.violations).toBe(0);
     expect(report.warnings).toBe(0);
-    expect(report.relationshipsChecked).toBe(110);
+    expect(report.relationshipsChecked).toBe(111);
     expect(report.verdict).toBe('clean');
     expect(report.uncheckedRows).toBe(0);
     // Only the documented by-design exclusions, none holding unchecked rows.
@@ -700,8 +701,8 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     it('summarizes violations by relationship type', () => {
       expect(report.byKind).toEqual({
         'composite-fk-candidate': {
-          relationships: 96,
-          checked: 96,
+          relationships: 97,
+          checked: 97,
           violations: 8,
           warnings: 0,
         },

@@ -90,11 +90,17 @@ export class SesEmailSender implements EmailSender {
     return this.client;
   }
 
+  // SC3c-3 — which variable holds the sender address. The restaurant
+  // notification sender keeps NOTIFICATIONS_SES_FROM_EMAIL; the CENTERIVO
+  // billing sender (BillingSesEmailSender) uses BILLING_EMAIL_FROM.
+  protected readonly fromAddressEnv: string = 'NOTIFICATIONS_SES_FROM_EMAIL';
+  protected readonly providerEnv: string = 'NOTIFICATIONS_EMAIL_PROVIDER';
+
   private getFromAddress(): string {
-    const from = process.env.NOTIFICATIONS_SES_FROM_EMAIL;
+    const from = process.env[this.fromAddressEnv];
     if (!from) {
       throw new Error(
-        'NOTIFICATIONS_SES_FROM_EMAIL is not set. Required when NOTIFICATIONS_EMAIL_PROVIDER=ses.',
+        `${this.fromAddressEnv} is not set. Required when ${this.providerEnv}=ses.`,
       );
     }
     return from;

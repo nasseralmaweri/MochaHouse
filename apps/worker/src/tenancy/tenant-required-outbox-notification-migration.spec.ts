@@ -86,7 +86,9 @@ const tenantTables = Object.entries(MODEL_TENANCY)
       model !== 'PaymentReconciliationEvent' &&
       // R1 / S5a added the order closure models after this migration.
       model !== 'OrderClosure' &&
-      model !== 'OrderRefundObligation',
+      model !== 'OrderRefundObligation' &&
+      // SC3c-3 added the billing contact after this migration.
+      model !== 'TenantBillingContact',
   );
 
 const baseUrl = process.env.DATABASE_URL!;

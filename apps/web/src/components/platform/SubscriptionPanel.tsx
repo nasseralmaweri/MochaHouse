@@ -62,6 +62,9 @@ const EVENT_LABELS: Record<PlatformSubscriptionEventType, string> = {
   RECOVERY_EXPIRED: "Trial recovery period ended",
   BILLING_SUSPENDED: "Business suspended for billing",
   BILLING_SUSPENSION_LIFTED: "Billing suspension lifted after payment",
+  GRACE_EXTENDED: "Grace period extended",
+  GRACE_EXCEPTION_GRANTED: "Grace exception granted",
+  GRACE_EXCEPTION_EXPIRED: "Grace exception ended",
   SUBSCRIPTION_REPLACED: "Subscription restarted (paid)",
 };
 

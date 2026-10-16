@@ -133,6 +133,7 @@ export class InternalUsersService {
   ): Promise<InternalUserRow | null> {
     const shouldBindSubject =
       !!identity.subject && user.externalSubject !== identity.subject;
+    const emailStamp = verifiedEmailStamp(user, identity);
 
     // Security 4A — binding is compare-and-set: it only succeeds while the
     // row is still unbound, so two logins racing for the same invitation
@@ -150,6 +151,7 @@ export class InternalUsersService {
         data: {
           lastAuthenticatedAt: new Date(),
           externalSubject: identity.subject,
+          ...emailStamp,
         },
       });
       return bound.count === 1
@@ -159,7 +161,29 @@ export class InternalUsersService {
 
     return this.prisma.internalUser.update({
       where: { id: user.id },
-      data: { lastAuthenticatedAt: new Date() },
+      data: { lastAuthenticatedAt: new Date(), ...emailStamp },
     });
   }
+}
+
+// SC3c-3 — observational: records that the identity provider asserted, at
+// THIS sign-in, that the person's stored email is verified (billing email
+// goes only to a recently verified address). An explicit assertion that the
+// address is unverified, or a different address, clears it; a sign-in
+// without an email claim leaves it as it was. Never widens access.
+export function verifiedEmailStamp(
+  user: { email: string },
+  identity: Pick<InternalIdentity, 'email' | 'emailVerified'>,
+): Partial<{ verifiedEmail: string | null; emailVerifiedAt: Date | null }> {
+  if (!identity.email) return {};
+  const stored = user.email.trim().toLowerCase();
+  if (
+    identity.emailVerified === true &&
+    identity.email.trim().toLowerCase() === stored &&
+    stored.length >= 3 &&
+    stored.length <= 320
+  ) {
+    return { verifiedEmail: stored, emailVerifiedAt: new Date() };
+  }
+  return { verifiedEmail: null, emailVerifiedAt: null };
 }

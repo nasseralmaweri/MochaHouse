@@ -83,6 +83,10 @@ async function removeSubscription(
           WHERE g."subscriptionId" = s."id" AND s."subscriberTenantId" = '${tenantId}';
         DELETE FROM "TenantSubscription" WHERE "subscriberTenantId" = '${tenantId}';
       END IF;
+      -- SC3c-3 — the business's billing contact (references its staff).
+      IF to_regclass('public."TenantBillingContact"') IS NOT NULL THEN
+        DELETE FROM "TenantBillingContact" WHERE "tenantId" = '${tenantId}';
+      END IF;
     END
     $test_subscription_removal$`);
 }

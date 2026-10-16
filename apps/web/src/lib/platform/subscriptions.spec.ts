@@ -97,3 +97,18 @@ describe("reading the API's answer", () => {
     expect(long.kind === "error" && long.message.length).toBe(200);
   });
 });
+
+// SC3c-3 — grace extension and billing contact refusals are explained in
+// plain words (never server detail).
+describe("SC3c-3 billing operations refusals", () => {
+  it.each([
+    ["BILLING_NOT_EXTENDABLE", /unpaid invoice/],
+    ["BILLING_EXTENSION_LIMIT", /14 days at a time and 60 days/],
+    ["BILLING_NOT_RECOVERABLE", /ended this subscription/],
+    ["BILLING_CONTACT_NOT_ELIGIBLE", /can manage billing/],
+  ])("%s", (code, message) => {
+    const outcome = interpretChange(409, { code, message: "server detail" });
+    expect(outcome.kind).toBe("error");
+    expect(outcome.kind === "error" && outcome.message).toMatch(message);
+  });
+});

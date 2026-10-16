@@ -445,6 +445,8 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
   const tenantId = TENANTS[tag];
   const i = (name: string) => id(tag, name);
   await prisma.internalUser.create({
+    // Only the id back: an older-migration database lacks later columns.
+    select: { id: true },
     data: {
       id: i('staff'),
       tenantId,

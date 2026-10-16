@@ -45,6 +45,9 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     // cases.
     BillingCheckoutSession: 'platform',
     BillingReconciliationCase: 'platform',
+    // SC3c-3 — grace extensions and the billing notification queue.
+    BillingGraceExtension: 'platform',
+    BillingNotification: 'platform',
 
     // Catalog & locations
     Location: 'tenant',
@@ -71,6 +74,8 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     OutboxEvent: 'tenant',
     NotificationDelivery: 'tenant',
     NotificationRecipient: 'tenant',
+    // SC3c-3 — the business's designated billing contact (its own staff).
+    TenantBillingContact: 'tenant',
     // ESP-03 — payment recovery: reconciliation cases and their append-only
     // history, tenant-owned from inception.
     PaymentReconciliationCase: 'tenant',

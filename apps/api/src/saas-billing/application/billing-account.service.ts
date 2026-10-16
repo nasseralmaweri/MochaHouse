@@ -31,6 +31,7 @@ import { InternalAuditService } from '../../audit/internal-audit.service';
 import { UNLINKED_REPLACEMENT_CASE } from './billing-lifecycle.service';
 import { portalConfigurationRefusal } from '../provider/portal-configuration';
 import { entitledToPlanModules } from '../domain/billing-lifecycle';
+import { billingOperationsView } from './billing-operations.service';
 import { billingEnforcementEnabled } from './billing-enforcement.config';
 import { runSerializable } from '../../prisma/serializable-transaction';
 import { PLATFORM_AUDIT_ACTIONS } from '../../platform-auth/application/platform-operators.service';
@@ -155,6 +156,7 @@ export function billingSummary(row: SubscriptionView): BusinessBillingSummary {
     currentPeriodEnd: row.currentPeriodEnd?.toISOString() ?? null,
     graceEndsAt: row.graceEndsAt?.toISOString() ?? null,
     recoveryEndsAt: row.recoveryEndsAt?.toISOString() ?? null,
+    graceExceptionEndsAt: row.graceExceptionEndsAt?.toISOString() ?? null,
     enforced,
     premiumPaused:
       enforced && row.billingMode === 'BILLED' && !entitledToPlanModules(row),
@@ -364,7 +366,11 @@ export class BillingAccountService {
       select: { id: true },
     });
     if (!tenant) throw new NotFoundException('Business not found.');
-    return { tenantId, billing: await this.summaryForTenant(tenantId) };
+    return {
+      tenantId,
+      billing: await this.summaryForTenant(tenantId),
+      ...(await billingOperationsView(this.prisma, tenantId)),
+    };
   }
 
   // --- operator: start billing ------------------------------------------------
@@ -424,6 +430,14 @@ export class BillingAccountService {
           PLATFORM_ALREADY_BILLED,
           'This business is already billed.',
         );
+      }
+      // SC3c-3 — the business's billing contact starts as its first owner
+      // (when ACTIVE); an operator may reassign it. Never replaces one.
+      if (owner.status === 'ACTIVE') {
+        await tx.tenantBillingContact.createMany({
+          data: [{ tenantId, internalUserId: owner.id }],
+          skipDuplicates: true,
+        });
       }
       await tx.platformAuditEvent.create({
         data: {
@@ -486,12 +500,16 @@ export class BillingAccountService {
         },
       },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      select: { email: true },
+      select: { id: true, email: true, status: true },
     });
     if (!owner?.email) {
       throw conflict(PLATFORM_NO_OWNER, 'This business has no owner to bill.');
     }
-    return { subscription, owner: { email: owner.email }, price };
+    return {
+      subscription,
+      owner: { id: owner.id, email: owner.email, status: owner.status },
+      price,
+    };
   }
 
   // --- owner: payment setup (hosted Checkout) ----------------------------------

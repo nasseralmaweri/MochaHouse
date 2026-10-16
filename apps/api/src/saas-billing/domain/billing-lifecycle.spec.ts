@@ -28,6 +28,7 @@ function billed(over: Partial<BillingState> = {}): BillingState {
     pastDueAt: null,
     graceEndsAt: null,
     recoveryEndsAt: null,
+    graceExceptionEndsAt: null,
     cancelAtPeriodEnd: false,
     canceledAt: null,
     pending: null,
@@ -610,5 +611,171 @@ describe('SC3a billing lifecycle', () => {
       transition(billed(), { type: 'PAYMENT_AUTHORIZED', at: day(1) }),
     );
     expect(r.next.recurringPaymentAuthorizedAt).toEqual(day(1));
+  });
+});
+
+// SC3c-3 — operator grace extensions (PAST_DUE) and grace exceptions
+// (UNPAID): bounded, never a payment, ended with the unpaid episode.
+describe('SC3c-3 grace extensions and exceptions', () => {
+  const overdue = (over: Partial<BillingState> = {}) =>
+    authorized({
+      status: 'PAST_DUE',
+      pastDueAt: day(0),
+      graceEndsAt: day(14),
+      ...over,
+    });
+  const unpaid = (over: Partial<BillingState> = {}) =>
+    authorized({
+      status: 'UNPAID',
+      pastDueAt: day(0),
+      graceEndsAt: day(14),
+      ...over,
+    });
+
+  it('extends a PAST_DUE grace period by at most 14 days past its current end', () => {
+    const result = ok(
+      transition(overdue(), {
+        type: 'GRACE_EXTENDED',
+        at: day(10),
+        endsAt: day(21),
+      }),
+    );
+    expect(result.next).toMatchObject({
+      status: 'PAST_DUE',
+      graceEndsAt: day(21),
+      pastDueAt: day(0),
+    });
+    expect(result.history.map((h) => h.type)).toEqual(['GRACE_EXTENDED']);
+    expect(result.suspension).toBe('NONE');
+    expect(
+      transition(overdue(), {
+        type: 'GRACE_EXTENDED',
+        at: day(10),
+        endsAt: day(29),
+      }),
+    ).toEqual({
+      ok: false,
+      reason: 'INVALID_EXTENSION',
+    });
+    expect(
+      transition(overdue(), {
+        type: 'GRACE_EXTENDED',
+        at: day(10),
+        endsAt: day(13),
+      }),
+    ).toEqual({
+      ok: false,
+      reason: 'INVALID_EXTENSION',
+    });
+    expect(
+      transition(unpaid(), {
+        type: 'GRACE_EXTENDED',
+        at: day(20),
+        endsAt: day(25),
+      }),
+    ).toEqual({
+      ok: false,
+      reason: 'NOT_PAST_DUE',
+    });
+  });
+
+  it('an UNPAID grace exception gives temporary access (lifting only a billing suspension) and stays UNPAID', () => {
+    const result = ok(
+      transition(unpaid(), {
+        type: 'GRACE_EXCEPTION_GRANTED',
+        at: day(20),
+        endsAt: day(27),
+      }),
+    );
+    expect(result.next).toMatchObject({
+      status: 'UNPAID',
+      graceExceptionEndsAt: day(27),
+    });
+    expect(result.history.map((h) => h.type)).toEqual([
+      'GRACE_EXCEPTION_GRANTED',
+    ]);
+    expect(result.suspension).toBe('LIFT_BILLING_SUSPENSION');
+    expect(
+      decideSuspension(result.suspension, {
+        status: 'SUSPENDED',
+        suspensionReason: 'SECURITY',
+      }),
+    ).toBe('NONE');
+    expect(entitledToPlanModules(result.next, day(26))).toBe(true);
+    expect(entitledToPlanModules(result.next, day(27))).toBe(false);
+    expect(
+      transition(overdue(), {
+        type: 'GRACE_EXCEPTION_GRANTED',
+        at: day(1),
+        endsAt: day(5),
+      }),
+    ).toEqual({
+      ok: false,
+      reason: 'NOT_UNPAID',
+    });
+    expect(
+      transition(unpaid({ graceExceptionEndsAt: day(27) }), {
+        type: 'GRACE_EXCEPTION_GRANTED',
+        at: day(20),
+        endsAt: day(42),
+      }),
+    ).toEqual({ ok: false, reason: 'INVALID_EXTENSION' });
+  });
+
+  it('the exception expires only at its end, suspending for billing again', () => {
+    const state = unpaid({ graceExceptionEndsAt: day(27) });
+    expect(
+      transition(state, { type: 'GRACE_EXCEPTION_EXPIRED', at: day(26) }),
+    ).toEqual({
+      ok: false,
+      reason: 'GRACE_EXCEPTION_NOT_OVER',
+    });
+    const result = ok(
+      transition(state, { type: 'GRACE_EXCEPTION_EXPIRED', at: day(27) }),
+    );
+    expect(result.next).toMatchObject({
+      status: 'UNPAID',
+      graceExceptionEndsAt: null,
+    });
+    expect(result.suspension).toBe('SUSPEND_FOR_BILLING');
+    expect(
+      transition(unpaid(), { type: 'GRACE_EXCEPTION_EXPIRED', at: day(30) }),
+    ).toEqual({
+      ok: false,
+      reason: 'NO_GRACE_EXCEPTION',
+    });
+  });
+
+  it('leaving UNPAID ends the exception; the provider ending the subscription returns the billing suspension', () => {
+    const state = unpaid({ graceExceptionEndsAt: day(27) });
+    const recovered = ok(
+      transition(state, { type: 'RECOVERY_CONFIRMED', at: day(21) }),
+    );
+    expect(recovered.next).toMatchObject({
+      status: 'ACTIVE',
+      graceExceptionEndsAt: null,
+    });
+    const ended = ok(
+      transition(state, {
+        type: 'SUBSCRIPTION_ENDED',
+        at: day(21),
+        trialRecoveryDays: 3,
+      }),
+    );
+    expect(ended.next).toMatchObject({
+      status: 'CANCELED',
+      graceExceptionEndsAt: null,
+    });
+    expect(ended.suspension).toBe('SUSPEND_FOR_BILLING');
+    // Without an exception the provider ending it changes no suspension (E7).
+    expect(
+      ok(
+        transition(unpaid(), {
+          type: 'SUBSCRIPTION_ENDED',
+          at: day(21),
+          trialRecoveryDays: 3,
+        }),
+      ).suspension,
+    ).toBe('NONE');
   });
 });
