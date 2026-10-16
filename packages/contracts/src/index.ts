@@ -1633,6 +1633,63 @@ export interface PlatformSessionResponse {
   expiresInSeconds: number;
 }
 
+// --- CENTERIVO platform: tenant registry (SC1c) -------------------------
+// Read-only, platform operators only (PlatformAuthGuard). A business's
+// registry record and its location summary — never its customers, orders,
+// payments, gift cards, loyalty balances or staff.
+
+export type PlatformTenantStatus = "ACTIVE" | "SUSPENDED";
+export type PlatformTenantSuspensionReason = "SECURITY" | "BILLING" | "REQUESTED";
+
+export interface PlatformTenantSummary {
+  id: string;
+  slug: string;
+  name: string;
+  status: PlatformTenantStatus;
+  suspensionReason: PlatformTenantSuspensionReason | null;
+  createdAt: string;
+  locationCount: number;
+}
+
+// GET /api/v1/platform/tenants?q=&status=&page=&pageSize=
+// Oldest business first. `q` (1–80 characters: letters, digits, spaces and
+// - ' & . ,) matches the name or slug, case-insensitively; `status` is
+// ACTIVE or SUSPENDED; page 1–1000; pageSize 1–50 (default 20). Anything
+// else is a 400. `total` counts the filtered results; `registry` counts
+// every business on the platform, unfiltered.
+export interface PlatformTenantListResponse {
+  tenants: PlatformTenantSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+  registry: { total: number; active: number; suspended: number };
+}
+
+// GET /api/v1/platform/tenants/:tenantId — 404 for an unknown id.
+export interface PlatformTenantDetailResponse {
+  tenant: Omit<PlatformTenantSummary, "locationCount"> & { updatedAt: string };
+  locations: { total: number; active: number; digitalOrderingEnabled: number };
+}
+
+export interface PlatformTenantLocation {
+  id: string;
+  name: string;
+  slug: string;
+  isActive: boolean;
+  isDigitalOrderingEnabled: boolean;
+  createdAt: string;
+}
+
+// GET /api/v1/platform/tenants/:tenantId/locations?page=&pageSize=
+// That business's locations only, by name. Same paging bounds; 404 for an
+// unknown business.
+export interface PlatformTenantLocationListResponse {
+  locations: PlatformTenantLocation[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
 // --- Admin: internal user access review (Milestone 5E-1) --------------
 // The business-facing read model for the Administration → Users screens.
 // Served only from `/api/v1/admin/internal-users*` (InternalAuthGuard +

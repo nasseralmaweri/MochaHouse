@@ -801,6 +801,52 @@ export interface PlatformSessionResponse {
     idToken: string;
     expiresInSeconds: number;
 }
+export type PlatformTenantStatus = "ACTIVE" | "SUSPENDED";
+export type PlatformTenantSuspensionReason = "SECURITY" | "BILLING" | "REQUESTED";
+export interface PlatformTenantSummary {
+    id: string;
+    slug: string;
+    name: string;
+    status: PlatformTenantStatus;
+    suspensionReason: PlatformTenantSuspensionReason | null;
+    createdAt: string;
+    locationCount: number;
+}
+export interface PlatformTenantListResponse {
+    tenants: PlatformTenantSummary[];
+    page: number;
+    pageSize: number;
+    total: number;
+    registry: {
+        total: number;
+        active: number;
+        suspended: number;
+    };
+}
+export interface PlatformTenantDetailResponse {
+    tenant: Omit<PlatformTenantSummary, "locationCount"> & {
+        updatedAt: string;
+    };
+    locations: {
+        total: number;
+        active: number;
+        digitalOrderingEnabled: number;
+    };
+}
+export interface PlatformTenantLocation {
+    id: string;
+    name: string;
+    slug: string;
+    isActive: boolean;
+    isDigitalOrderingEnabled: boolean;
+    createdAt: string;
+}
+export interface PlatformTenantLocationListResponse {
+    locations: PlatformTenantLocation[];
+    page: number;
+    pageSize: number;
+    total: number;
+}
 export type AdminUserLocationAccess = {
     kind: "all";
 } | {

@@ -34,6 +34,13 @@ import { PlatformDevSignInProvider } from './sign-in/platform-dev-sign-in.provid
     PlatformCognitoSignInProvider,
     PlatformDevSignInProvider,
   ],
-  exports: [PlatformAuthGuard, PlatformOperatorsService],
+  // SC1c — the guard is instantiated in each platform module that uses it,
+  // so its own dependencies are exported with it.
+  exports: [
+    PlatformAuthGuard,
+    PlatformOperatorsService,
+    PlatformCognitoTokenVerifier,
+    PlatformLocalDevTokenVerifier,
+  ],
 })
 export class PlatformAuthModule {}

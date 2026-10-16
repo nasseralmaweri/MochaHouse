@@ -28,7 +28,7 @@ export const PLATFORM_NAV_ITEMS: readonly PlatformNavItem[] = [
   {
     key: "tenants",
     label: "Tenants",
-    href: null,
+    href: "/platform/tenants",
     description: "Businesses on CENTERIVO and their lifecycle.",
   },
   {
@@ -65,4 +65,15 @@ export const PLATFORM_NAV_ITEMS: readonly PlatformNavItem[] = [
 
 export function isAvailable(item: PlatformNavItem): boolean {
   return item.href !== null;
+}
+
+// SC1c — Overview is current only on /platform itself; a module stays current
+// on its own sub-pages (e.g. a tenant's detail page under Tenants).
+export function isCurrentNavItem(
+  item: PlatformNavItem,
+  pathname: string | null,
+): boolean {
+  if (!item.href || !pathname) return false;
+  if (item.href === "/platform") return pathname === "/platform";
+  return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }

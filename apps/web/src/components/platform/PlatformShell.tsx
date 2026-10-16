@@ -21,6 +21,7 @@ import { platformSignOutAction } from "@/lib/platform-auth/actions";
 import {
   PLATFORM_NAV_ITEMS,
   isAvailable,
+  isCurrentNavItem,
   type PlatformNavKey,
 } from "@/lib/platform/nav";
 
@@ -65,7 +66,7 @@ function PlatformNav({ onNavigate }: { onNavigate?: () => void }) {
             </p>
           );
         }
-        const active = pathname === item.href;
+        const active = isCurrentNavItem(item, pathname);
         return (
           <Link
             key={item.key}
