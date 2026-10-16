@@ -1,6 +1,7 @@
 import "server-only";
 import type {
   PlatformTenantDetailResponse,
+  PlatformTenantLifecycleResponse,
   PlatformTenantListResponse,
   PlatformTenantLocationListResponse,
 } from "@mocha-house/contracts";
@@ -62,6 +63,13 @@ export function getPlatformTenant(
   tenantId: string,
 ): Promise<RegistryResult<PlatformTenantDetailResponse>> {
   return readRegistry(`/tenants/${encodeURIComponent(tenantId)}`);
+}
+
+// SC1e — status, first owner and suspension impact counts.
+export function getPlatformTenantLifecycle(
+  tenantId: string,
+): Promise<RegistryResult<PlatformTenantLifecycleResponse>> {
+  return readRegistry(`/tenants/${encodeURIComponent(tenantId)}/lifecycle`);
 }
 
 export function listPlatformTenantLocations(
