@@ -41,6 +41,7 @@ function snapshot(
     status: 'trialing',
     livemode: false,
     hasPaymentMethod: false,
+    paymentMethodSource: null,
     cancelAtPeriodEnd: false,
     trialStart: T0,
     trialEnd: day(14),

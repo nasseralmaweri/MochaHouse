@@ -16,17 +16,20 @@ export const metadata: Metadata = {
 // What each case kind means, in plain words.
 const CASE_LABELS: Record<string, string> = {
   STATE_MISMATCH: "Billing status differs from the payment provider",
-  PAYMENT_METHOD_MISMATCH: "Payment method differs from the payment provider",
+  PAYMENT_METHOD_NOT_RECORDED: "Payment provider has a payment method we haven't recorded",
+  PAYMENT_METHOD_MISSING: "Payment method removed at the payment provider",
   CANCELLATION_MISMATCH: "Scheduled cancellation differs from the payment provider",
   CUSTOMER_MISMATCH: "Provider subscription belongs to another customer",
   CHECKOUT_CUSTOMER_MISMATCH: "Payment setup completed for another customer",
   CHECKOUT_LINKED_ELSEWHERE: "Payment setup completed after another subscription was linked",
   CHECKOUT_NOT_LINKED: "Payment setup completed but was never linked",
-  UNEXPECTED_TRIAL: "Provider started a trial we did not offer",
+  UNEXPECTED_TRIAL: "Provider started a trial we did not offer, or one already used",
   INVOICE_MISMATCH: "Invoice does not belong to this business",
   INVOICE_NOT_PAID: "Payment reported but the invoice is not paid",
   SUBSCRIPTION_MISMATCH: "Provider subscription does not match our records",
   EVENT_NOT_APPLIED: "A billing event could not be applied",
+  EVENT_RETRIES_EXHAUSTED: "A billing event kept failing and was set aside",
+  CHECKOUT_NOT_RECORDED: "A payment page was created but could not be recorded",
   PROVIDER_UNREADABLE: "The payment provider could not be read",
 };
 

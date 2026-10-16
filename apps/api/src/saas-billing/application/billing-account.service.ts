@@ -10,6 +10,7 @@ import {
   BILLING_CHECKOUT_IN_PROGRESS,
   BILLING_CHECKOUT_PROCESSING,
   BILLING_NOT_BILLED,
+  BILLING_TRIAL_PENDING_ELSEWHERE,
   BILLING_UNAVAILABLE,
   PLATFORM_ALREADY_BILLED,
   PLATFORM_FOUNDING_COMPLIMENTARY,
@@ -46,8 +47,6 @@ import {
 // product/price ids from our rows. Nothing provider-side is taken from the
 // client. No money moves here: Checkout is the provider's hosted page.
 
-type Tx = Prisma.TransactionClient;
-
 const SUBSCRIPTION_INCLUDE = {
   planVersion: { include: { plan: true } },
   planPrice: true,
@@ -69,6 +68,13 @@ function conflict(code: string, message: string): ConflictException {
     code,
     message,
   });
+}
+
+function trialPendingElsewhere(): ConflictException {
+  return conflict(
+    BILLING_TRIAL_PENDING_ELSEWHERE,
+    "A free trial is being set up for another of this owner's businesses. Finish or leave that payment setup, then try again.",
+  );
 }
 
 function unavailable(): ServiceUnavailableException {
@@ -320,24 +326,31 @@ export class BillingAccountService {
 
     // Our row first: the partial unique index allows ONE open Checkout per
     // subscription, so concurrent requests cannot both create one.
+    // Opening Checkout never consumes the one-time trial: the row only HOLDS
+    // the owner's claim while it is OPEN (a second partial unique index
+    // allows one such hold per claim). The claim is recorded when the
+    // provider has verifiably created the trial subscription (webhook).
     let checkoutId: string;
     try {
-      checkoutId = await runSerializable(this.prisma, async (tx) => {
-        if (trial.claimKey !== null) {
-          await this.reserveTrialClaim(tx, subscription.id, trial.claimKey);
-        }
-        const row = await tx.billingCheckoutSession.create({
-          data: {
-            subscriptionId: subscription.id,
-            planPriceId: subscription.planPrice!.id,
-            trialDays: trial.trialDays,
-            requiresPaymentMethod: trial.requiresPaymentMethod,
-          },
-        });
-        return row.id;
+      const row = await this.prisma.billingCheckoutSession.create({
+        data: {
+          subscriptionId: subscription.id,
+          planPriceId: subscription.planPrice.id,
+          trialDays: trial.trialDays,
+          requiresPaymentMethod: trial.requiresPaymentMethod,
+          trialClaimKey: trial.claimKey,
+        },
       });
+      checkoutId = row.id;
     } catch (error) {
       if (isUniqueViolation(error)) {
+        if (
+          trial.claimKey !== null &&
+          (await this.trialHeldElsewhere(trial.claimKey, subscription.id)) ===
+            'HELD'
+        ) {
+          throw trialPendingElsewhere();
+        }
         throw conflict(
           BILLING_CHECKOUT_IN_PROGRESS,
           'Payment setup is already being prepared. Try again in a moment.',
@@ -440,6 +453,52 @@ export class BillingAccountService {
     return null;
   }
 
+  // Whether ANOTHER business's open Checkout holds this trial claim. A hold
+  // whose provider session expired (or was never created) is released here;
+  // one the owner completed means the trial is being created there.
+  private async trialHeldElsewhere(
+    claimKey: string,
+    subscriptionId: string,
+  ): Promise<'FREE' | 'HELD' | 'USED'> {
+    const hold = await this.prisma.billingCheckoutSession.findFirst({
+      where: {
+        trialClaimKey: claimKey,
+        status: 'OPEN',
+        subscriptionId: { not: subscriptionId },
+      },
+    });
+    if (!hold) return 'FREE';
+    if (hold.externalSessionId === null) {
+      if (Date.now() - hold.createdAt.getTime() < ABANDONED_CREATION_MS) {
+        return 'HELD';
+      }
+      await this.expire(hold.id);
+      return 'FREE';
+    }
+    let session: ProviderCheckoutSession;
+    try {
+      session = await this.provider.retrieveCheckoutSession(
+        hold.externalSessionId,
+      );
+    } catch (error) {
+      // A session the provider no longer has holds nothing; any other
+      // provider error is transient (try again later).
+      if (
+        error instanceof SaasBillingProviderError &&
+        error.code === 'resource_missing'
+      ) {
+        await this.expire(hold.id);
+        return 'FREE';
+      }
+      if (error instanceof SaasBillingProviderError) throw unavailable();
+      throw error;
+    }
+    if (session.status === 'open') return 'HELD';
+    if (session.status === 'complete') return 'USED';
+    await this.expire(hold.id);
+    return 'FREE';
+  }
+
   private async expire(checkoutId: string): Promise<void> {
     await this.prisma.billingCheckoutSession.updateMany({
       where: { id: checkoutId, status: 'OPEN' },
@@ -530,26 +589,17 @@ export class BillingAccountService {
       select: { claimKey: true },
     });
     if (mine && mine.claimKey !== claimKey) return none;
+    // Another business of the same owner is in the middle of its trial
+    // Checkout: asked to finish (or abandon) that first — never silently
+    // offered no trial, never offered a second one.
+    const elsewhere = await this.trialHeldElsewhere(claimKey, subscription.id);
+    if (elsewhere === 'HELD') throw trialPendingElsewhere();
+    if (elsewhere === 'USED') return none;
     return {
       trialDays: policy.trialDays,
       requiresPaymentMethod: policy.trialRequiresPaymentMethod,
       claimKey,
     };
-  }
-
-  // Reserved with the Checkout (append-only; re-opening Checkout for the
-  // same subscription reuses its own claim).
-  private async reserveTrialClaim(
-    tx: Tx,
-    subscriptionId: string,
-    claimKey: string,
-  ): Promise<void> {
-    const mine = await tx.billingTrialClaim.findUnique({
-      where: { subscriptionId },
-      select: { claimKey: true },
-    });
-    if (mine) return;
-    await tx.billingTrialClaim.create({ data: { subscriptionId, claimKey } });
   }
 }
 

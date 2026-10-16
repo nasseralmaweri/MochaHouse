@@ -989,6 +989,7 @@ export declare const BILLING_NOT_BILLED = "BILLING_NOT_BILLED";
 export declare const BILLING_ALREADY_SET_UP = "BILLING_ALREADY_SET_UP";
 export declare const BILLING_CHECKOUT_IN_PROGRESS = "BILLING_CHECKOUT_IN_PROGRESS";
 export declare const BILLING_CHECKOUT_PROCESSING = "BILLING_CHECKOUT_PROCESSING";
+export declare const BILLING_TRIAL_PENDING_ELSEWHERE = "BILLING_TRIAL_PENDING_ELSEWHERE";
 export interface AdminBillingResponse {
     billing: BusinessBillingSummary;
     canSetUpPayment: boolean;

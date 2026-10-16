@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import Stripe from 'stripe';
 import type {
+  PaymentMethodSource,
   ProviderSubscriptionSnapshot,
   ProviderSubscriptionStatus,
 } from '../domain/provider-sync';
@@ -48,6 +49,37 @@ function productId(planId: string): string {
 
 function priceLookupKey(priceId: string): string {
   return `centerivo_price_${priceId}`;
+}
+
+// Where the payment method Stripe will charge automatically comes from.
+// Checkout (subscription mode) records the method it collected as the
+// subscription's default_payment_method; when a subscription has none,
+// Stripe charges the customer's default (invoice_settings
+// .default_payment_method, or a legacy default source). A send_invoice
+// subscription is never charged automatically.
+function paymentMethodSource(sub: Stripe.Subscription): PaymentMethodSource {
+  if (sub.collection_method === 'send_invoice') return null;
+  if (
+    id(sub.default_payment_method) !== null ||
+    id(sub.default_source) !== null
+  ) {
+    return 'SUBSCRIPTION';
+  }
+  const customer = sub.customer;
+  if (
+    typeof customer === 'object' &&
+    customer !== null &&
+    !('deleted' in customer && customer.deleted === true)
+  ) {
+    const live = customer;
+    if (
+      id(live.invoice_settings?.default_payment_method) !== null ||
+      id(live.default_source) !== null
+    ) {
+      return 'CUSTOMER_DEFAULT';
+    }
+  }
+  return null;
 }
 
 function id(value: unknown): string | null {
@@ -326,10 +358,16 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
     externalSubscriptionId: string,
   ): Promise<ProviderSubscriptionSnapshot> {
     try {
+      // The customer is expanded: its default payment method counts too.
       const sub = await this.stripe.subscriptions.retrieve(
         externalSubscriptionId,
+        { expand: ['customer'] },
       );
       this.assertTestMode(sub.livemode);
+      if (typeof sub.customer === 'object' && 'livemode' in sub.customer) {
+        this.assertTestMode(sub.customer.livemode);
+      }
+      const source = paymentMethodSource(sub);
       const status = SUBSCRIPTION_STATUSES.includes(
         sub.status as ProviderSubscriptionStatus,
       )
@@ -343,9 +381,8 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
         externalCustomerId: customer,
         status,
         livemode: sub.livemode,
-        hasPaymentMethod:
-          id(sub.default_payment_method) !== null ||
-          id(sub.default_source) !== null,
+        hasPaymentMethod: source !== null,
+        paymentMethodSource: source,
         cancelAtPeriodEnd: sub.cancel_at_period_end === true,
         trialStart: date(sub.trial_start),
         trialEnd: date(sub.trial_end),

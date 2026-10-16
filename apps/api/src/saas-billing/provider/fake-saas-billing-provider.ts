@@ -254,6 +254,7 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
       status: trial ? 'trialing' : 'active',
       livemode: false,
       hasPaymentMethod: opts.hasPaymentMethod,
+      paymentMethodSource: opts.hasPaymentMethod ? 'SUBSCRIPTION' : null,
       cancelAtPeriodEnd: false,
       trialStart: trial ? now : null,
       trialEnd: trial
@@ -271,7 +272,16 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
     change: Partial<ProviderSubscriptionSnapshot>,
   ): void {
     const current = this.subscriptions.get(externalSubscriptionId)!;
-    this.subscriptions.set(externalSubscriptionId, { ...current, ...change });
+    const next = { ...current, ...change };
+    // The two payment-method fields stay consistent, as the real adapter's.
+    if (change.paymentMethodSource !== undefined) {
+      next.hasPaymentMethod = change.paymentMethodSource !== null;
+    } else if (change.hasPaymentMethod !== undefined) {
+      next.paymentMethodSource = change.hasPaymentMethod
+        ? 'SUBSCRIPTION'
+        : null;
+    }
+    this.subscriptions.set(externalSubscriptionId, next);
   }
 
   setInvoice(

@@ -21,6 +21,8 @@ export type ProviderSubscriptionStatus =
   | 'incomplete_expired'
   | 'paused';
 
+export type PaymentMethodSource = 'SUBSCRIPTION' | 'CUSTOMER_DEFAULT' | null;
+
 export interface ProviderSubscriptionSnapshot {
   externalSubscriptionId: string;
   externalCustomerId: string;
@@ -28,6 +30,10 @@ export interface ProviderSubscriptionSnapshot {
   livemode: boolean;
   // A payment method the provider will charge automatically.
   hasPaymentMethod: boolean;
+  // Where it comes from: the subscription's own default (what Checkout
+  // records) or the customer's default (charged when the subscription has
+  // none) — both legitimate. null when there is none.
+  paymentMethodSource: PaymentMethodSource;
   cancelAtPeriodEnd: boolean;
   trialStart: Date | null;
   trialEnd: Date | null;

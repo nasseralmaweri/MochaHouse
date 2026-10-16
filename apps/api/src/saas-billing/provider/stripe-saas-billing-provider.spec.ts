@@ -453,6 +453,105 @@ describe('SC3b Stripe adapter (mocked HTTP)', () => {
     await expect(provider.retrieveInvoice('in_missing')).resolves.toBeNull();
   });
 
+  describe('payment method the provider will charge (Checkout and customer defaults)', () => {
+    const subscription = (over: Record<string, unknown>) => ({
+      id: 'sub_pm',
+      object: 'subscription',
+      customer: {
+        id: 'cus_1',
+        object: 'customer',
+        livemode: false,
+        default_source: null,
+        invoice_settings: { default_payment_method: null },
+      },
+      status: 'active',
+      livemode: false,
+      collection_method: 'charge_automatically',
+      default_payment_method: null,
+      default_source: null,
+      cancel_at_period_end: false,
+      trial_start: null,
+      trial_end: null,
+      ...over,
+    });
+    const read = async (body: Record<string, unknown>) => {
+      const { provider, sent } = harness({
+        'GET /v1/subscriptions/sub_pm': () => [200, body],
+      });
+      const snapshot = await provider.retrieveSubscription('sub_pm');
+      return { snapshot, sent };
+    };
+
+    it("Checkout's method on the subscription counts, and the customer is expanded", async () => {
+      const { snapshot, sent } = await read(
+        subscription({ default_payment_method: 'pm_checkout' }),
+      );
+      expect(snapshot).toMatchObject({
+        externalCustomerId: 'cus_1',
+        hasPaymentMethod: true,
+        paymentMethodSource: 'SUBSCRIPTION',
+      });
+      expect([...sent[0].body.values()]).toContain('customer');
+    });
+
+    it("the customer's default method (or legacy default source) counts too", async () => {
+      for (const customer of [
+        {
+          id: 'cus_1',
+          object: 'customer',
+          livemode: false,
+          default_source: null,
+          invoice_settings: { default_payment_method: 'pm_customer' },
+        },
+        {
+          id: 'cus_1',
+          object: 'customer',
+          livemode: false,
+          default_source: 'card_legacy',
+          invoice_settings: { default_payment_method: null },
+        },
+      ]) {
+        const { snapshot } = await read(subscription({ customer }));
+        expect(snapshot).toMatchObject({
+          hasPaymentMethod: true,
+          paymentMethodSource: 'CUSTOMER_DEFAULT',
+        });
+      }
+    });
+
+    it('none: no default anywhere, a deleted customer, or an invoice-only subscription', async () => {
+      for (const over of [
+        {},
+        { customer: { id: 'cus_1', object: 'customer', deleted: true } },
+        {
+          collection_method: 'send_invoice',
+          default_payment_method: 'pm_checkout',
+        },
+      ]) {
+        const { snapshot } = await read(subscription(over));
+        expect(snapshot).toMatchObject({
+          hasPaymentMethod: false,
+          paymentMethodSource: null,
+        });
+      }
+    });
+
+    it('a live-mode customer is refused', async () => {
+      await expect(
+        read(
+          subscription({
+            customer: {
+              id: 'cus_1',
+              object: 'customer',
+              livemode: true,
+              invoice_settings: { default_payment_method: null },
+            },
+          }),
+        ),
+      ).rejects.toBeInstanceOf(SaasBillingProviderError);
+    });
+  });
+
   it('configuration: test keys only, never live keys, never in production', () => {
     const env = {
       SAAS_BILLING_PROVIDER: 'stripe',

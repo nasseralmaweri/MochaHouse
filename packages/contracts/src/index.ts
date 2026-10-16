@@ -1950,6 +1950,9 @@ export const BILLING_NOT_BILLED = "BILLING_NOT_BILLED";
 export const BILLING_ALREADY_SET_UP = "BILLING_ALREADY_SET_UP";
 export const BILLING_CHECKOUT_IN_PROGRESS = "BILLING_CHECKOUT_IN_PROGRESS";
 export const BILLING_CHECKOUT_PROCESSING = "BILLING_CHECKOUT_PROCESSING";
+// Another business of the same owner holds the one-time trial in an open
+// Checkout: finish or leave that one first.
+export const BILLING_TRIAL_PENDING_ELSEWHERE = "BILLING_TRIAL_PENDING_ELSEWHERE";
 
 // GET /api/v1/admin/billing (billing.view) — the signed-in business's own.
 export interface AdminBillingResponse {
@@ -1963,7 +1966,8 @@ export interface AdminBillingResponse {
 // the provider's hosted Checkout page for this business (an open one is
 // reused; at most one at a time).
 //   409 BILLING_NOT_BILLED / BILLING_ALREADY_SET_UP /
-//       BILLING_CHECKOUT_IN_PROGRESS / BILLING_CHECKOUT_PROCESSING
+//       BILLING_CHECKOUT_IN_PROGRESS / BILLING_CHECKOUT_PROCESSING /
+//       BILLING_TRIAL_PENDING_ELSEWHERE
 //   503 BILLING_UNAVAILABLE
 export interface AdminBillingCheckoutResponse {
   url: string;

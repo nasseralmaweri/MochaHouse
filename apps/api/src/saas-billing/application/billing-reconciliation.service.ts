@@ -15,7 +15,10 @@ import { runSerializable } from '../../prisma/serializable-transaction';
 import { PLATFORM_AUDIT_ACTIONS } from '../../platform-auth/application/platform-operators.service';
 import type { PlatformOperatorRow } from '../../platform-auth/infrastructure/platform-identity';
 import { isUuid } from '../../platform-subscriptions/application/plan-input';
-import type { ProviderSubscriptionStatus } from '../domain/provider-sync';
+import type {
+  ProviderSubscriptionSnapshot,
+  ProviderSubscriptionStatus,
+} from '../domain/provider-sync';
 import {
   SAAS_BILLING_PROVIDER,
   type SaasBillingProvider,
@@ -29,6 +32,34 @@ import { BillingLifecycleService } from './billing-lifecycle.service';
 // Checkout EXPIRED when the provider says it expired (housekeeping).
 
 // What our status should be for the provider's (null: no expectation).
+// SC3b — payment methods. Legitimate arrangements are NOT cases: the
+// subscription's own default (what Checkout records) and the customer's
+// default (Stripe charges it when the subscription has none) both count; an
+// ended subscription (ours or the provider's) needs none; a cardless trial
+// has none and is not authorized. Only a real disagreement is reviewed:
+//   PAYMENT_METHOD_NOT_RECORDED — the provider will charge one, ours has no
+//     authorization recorded;
+//   PAYMENT_METHOD_MISSING — ours is authorized, the provider has nothing to
+//     charge (it was removed): the next charge will fail.
+export function paymentMethodCase(
+  live: Pick<ProviderSubscriptionSnapshot, 'status' | 'hasPaymentMethod'>,
+  ourStatus: string,
+  authorized: boolean,
+): 'PAYMENT_METHOD_NOT_RECORDED' | 'PAYMENT_METHOD_MISSING' | null {
+  if (
+    live.status === 'canceled' ||
+    live.status === 'incomplete_expired' ||
+    ourStatus === 'CANCELED' ||
+    ourStatus === 'TRIAL_EXPIRED'
+  ) {
+    return null;
+  }
+  if (live.hasPaymentMethod && !authorized)
+    return 'PAYMENT_METHOD_NOT_RECORDED';
+  if (!live.hasPaymentMethod && authorized) return 'PAYMENT_METHOD_MISSING';
+  return null;
+}
+
 const EXPECTED: Readonly<
   Record<ProviderSubscriptionStatus, readonly string[] | null>
 > = {
@@ -86,6 +117,11 @@ export class BillingReconciliationService {
             subscription.externalSubscriptionId!,
           );
           const expected = EXPECTED[live.status];
+          const paymentMethod = paymentMethodCase(
+            live,
+            subscription.status,
+            subscription.recurringPaymentAuthorizedAt !== null,
+          );
           if (live.externalCustomerId !== subscription.externalCustomerId) {
             kind = 'CUSTOMER_MISMATCH';
             detail = 'The provider subscription belongs to another customer.';
@@ -95,16 +131,16 @@ export class BillingReconciliationService {
           ) {
             kind = 'STATE_MISMATCH';
             detail = `Ours ${subscription.status}; provider ${live.status}.`;
-          } else if (
-            live.hasPaymentMethod !==
-            (subscription.recurringPaymentAuthorizedAt !== null)
-          ) {
-            kind = 'PAYMENT_METHOD_MISMATCH';
-            detail = `Ours ${
-              subscription.recurringPaymentAuthorizedAt
-                ? 'authorized'
-                : 'not authorized'
-            }; provider ${live.hasPaymentMethod ? 'has' : 'has no'} payment method.`;
+          } else if (paymentMethod !== null) {
+            kind = paymentMethod;
+            detail =
+              kind === 'PAYMENT_METHOD_NOT_RECORDED'
+                ? `The provider will charge a payment method (${
+                    live.paymentMethodSource === 'CUSTOMER_DEFAULT'
+                      ? "the customer's default"
+                      : "the subscription's"
+                  }); ours has no authorization recorded.`
+                : 'Ours is authorized to charge, but the provider has no payment method to charge.';
           } else if (
             live.cancelAtPeriodEnd !== subscription.cancelAtPeriodEnd
           ) {

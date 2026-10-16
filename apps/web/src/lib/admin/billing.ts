@@ -49,6 +49,8 @@ export const BILLING_MESSAGES = {
   alreadySetUp: "Payment is already set up. This page will show the latest status.",
   inProgress: "Payment setup is already being prepared. Try again in a moment.",
   processing: "We're confirming your payment setup. Refresh this page in a minute — you don't need to set it up again.",
+  trialPendingElsewhere:
+    "A free trial is being set up for another of your businesses. Finish or leave that payment setup, then try again.",
   forbidden: "Only the business owner can set up payment.",
   sessionEnded: "Your session has ended. Sign in again to continue.",
   tooMany: "Too many attempts. Wait a few minutes, then try again.",
@@ -59,6 +61,7 @@ const CONFLICTS: Record<string, string> = {
   BILLING_ALREADY_SET_UP: BILLING_MESSAGES.alreadySetUp,
   BILLING_CHECKOUT_IN_PROGRESS: BILLING_MESSAGES.inProgress,
   BILLING_CHECKOUT_PROCESSING: BILLING_MESSAGES.processing,
+  BILLING_TRIAL_PENDING_ELSEWHERE: BILLING_MESSAGES.trialPendingElsewhere,
 };
 
 // The message for a refused "open Checkout" answer (never a server detail).

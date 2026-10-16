@@ -31,6 +31,7 @@ const ROLLBACK = join(
 );
 const THIS = '20261026090000_stripe_billing_test_mode';
 const FOUNDING_PLAN = '01a0db02-f800-7000-8000-00000000f001';
+const CLAIM_KEY = 'a'.repeat(64);
 const OTHER_TENANT = '01a0db02-f800-7000-8000-7e5700003b01';
 
 async function prepare(label: string): Promise<ScratchDatabase> {
@@ -122,13 +123,33 @@ describe('SC3b Stripe billing (test mode) migration (scratch database)', () => {
     const insert = () =>
       sql((c) =>
         c.query<{ id: string }>(
-          `INSERT INTO "BillingCheckoutSession" (id, "subscriptionId", "planPriceId", "trialDays", "requiresPaymentMethod")
-           VALUES (gen_random_uuid()::text, $1, $2, 14, false) RETURNING id`,
-          [subscriptionId, priceId],
+          `INSERT INTO "BillingCheckoutSession" (id, "subscriptionId", "planPriceId", "trialDays", "requiresPaymentMethod", "trialClaimKey")
+           VALUES (gen_random_uuid()::text, $1, $2, 14, false, $3) RETURNING id`,
+          [subscriptionId, priceId, CLAIM_KEY],
         ),
       );
+    // A trial is offered only under a well-formed claim key, and only then.
+    await expectRefused(
+      `INSERT INTO "BillingCheckoutSession" (id, "subscriptionId", "planPriceId", "trialDays", "requiresPaymentMethod")
+       VALUES (gen_random_uuid()::text, $1, $2, 14, false)`,
+      [subscriptionId, priceId],
+    );
+    await expectRefused(
+      `INSERT INTO "BillingCheckoutSession" (id, "subscriptionId", "planPriceId", "trialDays", "requiresPaymentMethod", "trialClaimKey")
+       VALUES (gen_random_uuid()::text, $1, $2, 0, true, $3)`,
+      [subscriptionId, priceId, CLAIM_KEY],
+    );
+    await expectRefused(
+      `INSERT INTO "BillingCheckoutSession" (id, "subscriptionId", "planPriceId", "trialDays", "requiresPaymentMethod", "trialClaimKey")
+       VALUES (gen_random_uuid()::text, $1, $2, 14, false, 'not-a-key')`,
+      [subscriptionId, priceId],
+    );
     const id = (await insert()).rows[0].id;
     await expect(insert()).rejects.toThrow();
+    await expectRefused(
+      `UPDATE "BillingCheckoutSession" SET "trialClaimKey" = $2 WHERE id = $1`,
+      [id, 'b'.repeat(64)],
+    );
     await sql((c) =>
       c.query(
         `UPDATE "BillingCheckoutSession" SET "externalSessionId" = 'cs_1' WHERE id = $1`,
@@ -157,7 +178,34 @@ describe('SC3b Stripe billing (test mode) migration (scratch database)', () => {
       id,
     ]);
     // Completed: a new one may open.
-    await insert();
+    const reopened = (await insert()).rows[0].id;
+
+    // The same trial claim is held by at most ONE open Checkout, across
+    // businesses (another business of the same owner must wait).
+    const tenantOneSubscription = (
+      await sql((c) =>
+        c.query<{ id: string }>(
+          `SELECT id FROM "TenantSubscription" WHERE "subscriberTenantId" = $1`,
+          [TENANT_1_MOCHA_HOUSE_ID],
+        ),
+      )
+    ).rows[0].id;
+    const holdElsewhere = () =>
+      sql((c) =>
+        c.query(
+          `INSERT INTO "BillingCheckoutSession" (id, "subscriptionId", "planPriceId", "trialDays", "requiresPaymentMethod", "trialClaimKey")
+           VALUES (gen_random_uuid()::text, $1, $2, 14, false, $3)`,
+          [tenantOneSubscription, priceId, CLAIM_KEY],
+        ),
+      );
+    await expect(holdElsewhere()).rejects.toThrow();
+    await sql((c) =>
+      c.query(
+        `UPDATE "BillingCheckoutSession" SET status = 'EXPIRED' WHERE id = $1`,
+        [reopened],
+      ),
+    );
+    await holdElsewhere();
   });
 
   it('keeps one open case per subject and kind; a case is resolved once and never deleted', async () => {
@@ -214,7 +262,114 @@ describe('SC3b Stripe billing (test mode) migration (scratch database)', () => {
           )
         ).rows,
     );
-    expect(count).toBe('2');
+    expect(count).toBe('3');
+  });
+
+  it("grants billing.view/billing.manage to every existing tenant's built-in administrator role only, idempotently", async () => {
+    const before = await createScratchDatabase(
+      process.env.DATABASE_URL!,
+      'sc3b_backfill',
+    );
+    try {
+      const all = listMigrations(MIGRATIONS);
+      const at = all.findIndex((migration) => migration.name === THIS);
+      await applyMigrations(before.url, all.slice(0, at));
+      const roles = await withScratchClient(before.url, async (c) => {
+        await c.query(
+          `INSERT INTO "Tenant" (id, slug, name, status, "updatedAt") VALUES ($1, 'sc3b-backfill', 'Backfill', 'ACTIVE', now())`,
+          [OTHER_TENANT],
+        );
+        const role = async (
+          tenantId: string,
+          key: string,
+          isSystem: boolean,
+          permissions: string[],
+        ) => {
+          const id = (
+            await c.query<{ id: string }>(
+              `INSERT INTO "InternalRole" (id, "tenantId", key, "displayName", "isSystem", "updatedAt")
+               VALUES (gen_random_uuid()::text, $1, $2, $2, $3, now()) RETURNING id`,
+              [tenantId, key, isSystem],
+            )
+          ).rows[0].id;
+          for (const permissionKey of permissions) {
+            await c.query(
+              `INSERT INTO "InternalRolePermission" ("roleId", "permissionKey", "tenantId") VALUES ($1, $2, $3)`,
+              [id, permissionKey, tenantId],
+            );
+          }
+          return id;
+        };
+        return {
+          adminOne: await role(
+            TENANT_1_MOCHA_HOUSE_ID,
+            'platform-administrator',
+            true,
+            ['orders.view'],
+          ),
+          // Already holds one of them: kept as it is, never duplicated.
+          adminOther: await role(OTHER_TENANT, 'platform-administrator', true, [
+            'billing.view',
+          ]),
+          storeManager: await role(
+            TENANT_1_MOCHA_HOUSE_ID,
+            'store-manager',
+            true,
+            ['orders.view'],
+          ),
+          custom: await role(OTHER_TENANT, 'finance', false, ['reports.view']),
+        };
+      });
+
+      await applyMigrations(before.url, [all[at]]);
+      const grants = () =>
+        withScratchClient(before.url, async (c) =>
+          (
+            await c.query<{ roleId: string; permissionKey: string }>(
+              `SELECT "roleId", "permissionKey" FROM "InternalRolePermission" WHERE "permissionKey" LIKE 'billing.%'`,
+            )
+          ).rows
+            .map((r) => `${r.roleId} ${r.permissionKey}`)
+            .sort(),
+        );
+      const expected = [
+        `${roles.adminOne} billing.manage`,
+        `${roles.adminOne} billing.view`,
+        `${roles.adminOther} billing.manage`,
+        `${roles.adminOther} billing.view`,
+      ].sort();
+      expect(await grants()).toEqual(expected);
+
+      // Running the backfill again changes nothing.
+      const migration = readFileSync(
+        join(MIGRATIONS, THIS, 'migration.sql'),
+        'utf8',
+      );
+      await applyMigrationSql(
+        before.url,
+        migration.slice(
+          migration.indexOf('INSERT INTO "InternalRolePermission"'),
+        ),
+      );
+      expect(await grants()).toEqual(expected);
+      // Unrelated roles keep exactly what they had.
+      const others = await withScratchClient(before.url, async (c) =>
+        (
+          await c.query<{ roleId: string; permissionKey: string }>(
+            `SELECT "roleId", "permissionKey" FROM "InternalRolePermission" WHERE "roleId" = ANY($1)`,
+            [[roles.storeManager, roles.custom]],
+          )
+        ).rows
+          .map(
+            (r) =>
+              `${r.roleId === roles.custom ? 'custom' : 'store'} ${r.permissionKey}`,
+          )
+          .sort(),
+      );
+      expect(others).toEqual(['custom reports.view', 'store orders.view']);
+    } finally {
+      await before.drop();
+    }
   });
 
   it('the rollback restores the SC3a shape when no Stripe billing data exists', async () => {

@@ -12,6 +12,12 @@
 -- operator, Checkout not yet completed by the owner). No existing row
 -- changes; every existing subscription is COMPLIMENTARY and unaffected.
 --
+-- One data backfill (idempotent): every tenant's built-in administrator
+-- role (key 'platform-administrator', isSystem) receives the two new
+-- permissions billing.view and billing.manage — the role is defined as
+-- holding every permission, and new tenants get them at provisioning. No
+-- other role is touched.
+--
 -- Rollback (never automatic):
 -- prisma/rollbacks/20261026090000_stripe_billing_test_mode.down.sql.
 
@@ -28,6 +34,7 @@ CREATE TABLE "BillingCheckoutSession" (
     "status" "BillingCheckoutSessionStatus" NOT NULL DEFAULT 'OPEN',
     "trialDays" INTEGER NOT NULL,
     "requiresPaymentMethod" BOOLEAN NOT NULL,
+    "trialClaimKey" TEXT,
     "expiresAt" TIMESTAMP(3),
     "completedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -58,6 +65,13 @@ CREATE INDEX "BillingCheckoutSession_planPriceId_idx" ON "BillingCheckoutSession
 -- requests cannot create a second one.
 CREATE UNIQUE INDEX "BillingCheckoutSession_one_open_key"
   ON "BillingCheckoutSession"("subscriptionId") WHERE "status" = 'OPEN';
+-- At most one OPEN Checkout offering a trial per one-trial claim (owner
+-- email): two businesses of one owner cannot both be offered the trial at
+-- once. Only a HOLD — the claim itself (BillingTrialClaim) is recorded when
+-- the provider has verifiably created the trial subscription.
+CREATE UNIQUE INDEX "BillingCheckoutSession_one_open_trial_key"
+  ON "BillingCheckoutSession"("trialClaimKey")
+  WHERE "status" = 'OPEN' AND "trialClaimKey" IS NOT NULL;
 CREATE INDEX "BillingReconciliationCase_status_createdAt_idx" ON "BillingReconciliationCase"("status", "createdAt");
 CREATE INDEX "BillingReconciliationCase_subscriptionId_idx" ON "BillingReconciliationCase"("subscriptionId");
 CREATE INDEX "BillingReconciliationCase_billingProviderEventId_idx" ON "BillingReconciliationCase"("billingProviderEventId");
@@ -102,6 +116,8 @@ ALTER TABLE "SubscriptionPlan" ADD CONSTRAINT "SubscriptionPlan_externalProductI
 ALTER TABLE "BillingCheckoutSession" ADD CONSTRAINT "BillingCheckoutSession_shape_check"
   CHECK (
     "trialDays" BETWEEN 0 AND 90
+    AND (("trialDays" > 0) = ("trialClaimKey" IS NOT NULL))
+    AND ("trialClaimKey" IS NULL OR "trialClaimKey" ~ '^[0-9a-f]{64}$')
     AND ("externalSessionId" IS NULL OR length("externalSessionId") BETWEEN 1 AND 255)
     AND ("status" = 'COMPLETED') = ("completedAt" IS NOT NULL)
     AND ("status" = 'OPEN' OR "externalSessionId" IS NOT NULL OR "status" = 'EXPIRED')
@@ -148,6 +164,7 @@ BEGIN
      OR NEW."planPriceId" <> OLD."planPriceId"
      OR NEW."trialDays" <> OLD."trialDays"
      OR NEW."requiresPaymentMethod" <> OLD."requiresPaymentMethod"
+     OR NEW."trialClaimKey" IS DISTINCT FROM OLD."trialClaimKey"
      OR NEW."createdAt" <> OLD."createdAt"
      OR (OLD."externalSessionId" IS NOT NULL AND NEW."externalSessionId" IS DISTINCT FROM OLD."externalSessionId")
      OR (OLD."status" <> 'OPEN' AND (NEW."status" <> OLD."status"
@@ -197,3 +214,15 @@ CREATE TRIGGER "BillingReconciliationCase_guard"
 CREATE TRIGGER "BillingReconciliationCase_no_truncate"
   BEFORE TRUNCATE ON "BillingReconciliationCase"
   FOR EACH STATEMENT EXECUTE FUNCTION "guard_billing_reconciliation_case_change"();
+
+-- Backfill ---------------------------------------------------------------------
+
+-- The built-in administrator role of every existing tenant receives the new
+-- billing permissions (idempotent: an existing grant is left as it is).
+INSERT INTO "InternalRolePermission" ("roleId", "permissionKey", "tenantId", "createdAt")
+SELECT r."id", k."permissionKey", r."tenantId", CURRENT_TIMESTAMP
+  FROM "InternalRole" r
+ CROSS JOIN (VALUES ('billing.view'), ('billing.manage')) AS k("permissionKey")
+ WHERE r."key" = 'platform-administrator'
+   AND r."isSystem" = true
+ON CONFLICT ("roleId", "permissionKey") DO NOTHING;

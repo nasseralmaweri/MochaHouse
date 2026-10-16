@@ -46,6 +46,9 @@ describe("admin billing", () => {
       BILLING_MESSAGES.processing,
     );
     expect(checkoutRefusalMessage(409, { code: "BILLING_ALREADY_SET_UP" })).toBe(BILLING_MESSAGES.alreadySetUp);
+    expect(checkoutRefusalMessage(409, { code: "BILLING_TRIAL_PENDING_ELSEWHERE" })).toBe(
+      BILLING_MESSAGES.trialPendingElsewhere,
+    );
     expect(checkoutRefusalMessage(403, null)).toBe(BILLING_MESSAGES.forbidden);
     expect(checkoutRefusalMessage(429, null)).toBe(BILLING_MESSAGES.tooMany);
     expect(checkoutRefusalMessage(401, null)).toBe(BILLING_MESSAGES.sessionEnded);

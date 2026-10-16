@@ -29,6 +29,7 @@ import type {
   FakeSaasBillingProvider,
 } from './provider/fake-saas-billing-provider';
 import { SAAS_BILLING_PROVIDER } from './provider/saas-billing-provider';
+import { BillingLifecycleService } from './application/billing-lifecycle.service';
 
 // SC3b — billing through the provider boundary (the fake provider, signed
 // like Stripe; the Stripe adapter itself is covered against the real SDK in
@@ -539,6 +540,12 @@ describe('SC3b Stripe-mode billing (integration, scratch database)', () => {
     await startBilling(tenantId);
     const { sessionId } = await openCheckout(tenantId, 'cardless');
     const sub = await subscriptionOf(tenantId);
+    // Opening Checkout consumed no trial.
+    expect(
+      await prisma.billingTrialClaim.count({
+        where: { subscriptionId: sub.id },
+      }),
+    ).toBe(0);
     const snapshot = fake.completeCheckout(sessionId, {
       hasPaymentMethod: false,
     });
@@ -823,7 +830,10 @@ describe('SC3b Stripe-mode billing (integration, scratch database)', () => {
       .set('Content-Type', 'application/json')
       .set(
         'x-billing-signature',
-        signed.signatureHeader.replace(/v1=./, 'v1=0'),
+        // A definitely different signature (flip its first character).
+        signed.signatureHeader.replace(/v1=(.)/, (_, c: string) =>
+          c === '0' ? 'v1=1' : 'v1=0',
+        ),
       )
       .send(signed.rawBody)
       .expect(400);
@@ -924,27 +934,23 @@ describe('SC3b Stripe-mode billing (integration, scratch database)', () => {
     ).toMatchObject({ status: 'SUSPENDED', suspensionReason: 'SECURITY' });
   });
 
-  it('one trial per owner email: a second business of the same owner is offered none', async () => {
-    await setPolicy(14, false);
-    const first = await business('claim-a', ALL, 'claim-owner');
-    await startBilling(first);
-    await openCheckout(first, 'claim-owner');
-    // The same person (same email) owns a second business.
-    const secondTenant = randomUUID();
+  // A second business owned by the same person (same email) as `ownerKey`'s.
+  async function sameOwnerBusiness(label: string, ownerKey: string) {
+    const tenantId = randomUUID();
     await prisma.tenant.create({
       data: {
-        id: secondTenant,
-        slug: `sc3b-claim-b-${run}`,
-        name: 'Second',
+        id: tenantId,
+        slug: `sc3b-${label}-${run}`,
+        name: `SC3b ${label}`,
         status: 'ACTIVE',
       },
     });
     await prisma.tenantSubscription.create({
-      data: { subscriberTenantId: secondTenant, planVersionId: versionId },
+      data: { subscriberTenantId: tenantId, planVersionId: versionId },
     });
     const role = await prisma.internalRole.create({
       data: {
-        tenantId: secondTenant,
+        tenantId,
         key: 'platform-administrator',
         displayName: 'Admin',
         permissions: {
@@ -952,42 +958,180 @@ describe('SC3b Stripe-mode billing (integration, scratch database)', () => {
         },
       },
     });
+    const subject = `internal-dev:sc3b-${ownerKey}-${label}-${run}`;
+    const email = `sc3b-${ownerKey}-${run}@example.com`;
     const user = await prisma.internalUser.create({
       data: {
-        tenantId: secondTenant,
+        tenantId,
         externalProvider: 'internal-dev',
-        externalSubject: `internal-dev:sc3b-claim-owner-b-${run}`,
-        email: `sc3b-claim-owner-${run}@example.com`,
+        externalSubject: subject,
+        email,
         status: 'ACTIVE',
         activatedAt: new Date(),
       },
     });
     await prisma.internalUserRoleAssignment.create({
       data: {
-        tenantId: secondTenant,
+        tenantId,
         internalUserId: user.id,
         roleId: role.id,
         scopeType: 'CORPORATE',
         scopeId: null,
       },
     });
-    await startBilling(secondTenant);
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/admin/billing/checkout')
-      .set(
-        'Authorization',
-        `Bearer ${signInternalDevJwt({ sub: `internal-dev:sc3b-claim-owner-b-${run}`, email: `sc3b-claim-owner-${run}@example.com`, name: null, email_verified: true }, INTERNAL_SECRET, 3600)}`,
-      )
-      .set('X-Tenant-Id', secondTenant)
-      .expect(201);
-    expect((res.body as AdminBillingCheckoutResponse).url).toMatch(
-      /checkout\.fake\.test/,
-    );
-    const row = await prisma.billingCheckoutSession.findFirstOrThrow({
-      where: { subscriptionId: (await subscriptionOf(secondTenant)).id },
+    const checkout = () =>
+      request(app.getHttpServer())
+        .post('/api/v1/admin/billing/checkout')
+        .set(
+          'Authorization',
+          `Bearer ${signInternalDevJwt({ sub: subject, email, name: null, email_verified: true }, INTERNAL_SECRET, 3600)}`,
+        )
+        .set('X-Tenant-Id', tenantId);
+    return { tenantId, checkout };
+  }
+
+  const checkoutRow = async (tenantId: string) =>
+    prisma.billingCheckoutSession.findFirstOrThrow({
+      where: { subscriptionId: (await subscriptionOf(tenantId)).id },
+      orderBy: { createdAt: 'desc' },
     });
-    expect(row.trialDays).toBe(0);
-    expect(row.requiresPaymentMethod).toBe(true);
+
+  it('one trial per owner email: opening Checkout only holds it; the claim is consumed once the provider created the trial', async () => {
+    await setPolicy(14, false);
+    const first = await business('claim-a', ALL, 'claim-owner');
+    await startBilling(first);
+    const a = await openCheckout(first, 'claim-owner');
+    const aRow = await checkoutRow(first);
+    expect(aRow).toMatchObject({ trialDays: 14, status: 'OPEN' });
+    expect(aRow.trialClaimKey).toMatch(/^[0-9a-f]{64}$/);
+    // Opening Checkout consumed nothing.
+    expect(
+      await prisma.billingTrialClaim.count({
+        where: { claimKey: aRow.trialClaimKey! },
+      }),
+    ).toBe(0);
+
+    // The same owner's second business: asked to finish the first one.
+    const second = await sameOwnerBusiness('claim-b', 'claim-owner');
+    await startBilling(second.tenantId);
+    // An operator cannot pre-empt the held trial either.
+    await expect(
+      app
+        .get(BillingLifecycleService)
+        .startTrial(
+          (await subscriptionOf(second.tenantId)).id,
+          `sc3b-claim-owner-${run}@example.com`,
+          null,
+        ),
+    ).rejects.toMatchObject({ reason: 'TRIAL_ALREADY_USED' });
+    const held = await second.checkout().expect(409);
+    expect(held.body).toMatchObject({
+      code: 'BILLING_TRIAL_PENDING_ELSEWHERE',
+    });
+    expect(
+      await prisma.billingCheckoutSession.count({
+        where: {
+          subscriptionId: (await subscriptionOf(second.tenantId)).id,
+        },
+      }),
+    ).toBe(0);
+
+    // The first Checkout is abandoned (expired at the provider): the hold is
+    // released and the second business is offered the trial.
+    fake.expireCheckout(a.sessionId);
+    const bRes = await second.checkout().expect(201);
+    const bSession = (bRes.body as AdminBillingCheckoutResponse).url
+      .split('/')
+      .pop()!;
+    expect(await checkoutRow(second.tenantId)).toMatchObject({
+      trialDays: 14,
+      trialClaimKey: aRow.trialClaimKey,
+    });
+    expect(
+      await prisma.billingCheckoutSession.findUniqueOrThrow({
+        where: { id: aRow.id },
+      }),
+    ).toMatchObject({ status: 'EXPIRED' });
+
+    // Now the first business is the one asked to wait.
+    expect(
+      (
+        await admin('post', 'claim-owner', first, '/billing/checkout').expect(
+          409,
+        )
+      ).body,
+    ).toMatchObject({ code: 'BILLING_TRIAL_PENDING_ELSEWHERE' });
+
+    // The second business completes Checkout. Before the notification
+    // arrives, the first is already offered no trial (it is being used).
+    const bSub = await subscriptionOf(second.tenantId);
+    const snapshot = fake.completeCheckout(bSession, {
+      hasPaymentMethod: false,
+    });
+    await openCheckout(first, 'claim-owner');
+    expect(await checkoutRow(first)).toMatchObject({
+      trialDays: 0,
+      trialClaimKey: null,
+      requiresPaymentMethod: true,
+    });
+
+    // The verified trial consumes the claim, once, however often it is
+    // delivered.
+    const completion = await webhook('checkout.completed', {
+      session: bSession,
+      customer: bSub.externalCustomerId,
+      subscription: snapshot.externalSubscriptionId,
+    });
+    expect(completion.res.status).toBe(200);
+    expect((await redeliver(completion.signed)).status).toBe(200);
+    expect(await subscriptionOf(second.tenantId)).toMatchObject({
+      status: 'TRIALING',
+    });
+    expect(
+      await prisma.billingTrialClaim.findMany({
+        where: { claimKey: aRow.trialClaimKey! },
+        select: { subscriptionId: true },
+      }),
+    ).toEqual([{ subscriptionId: bSub.id }]);
+  });
+
+  it('a trial whose claim another business already consumed is never accepted (reviewed; nothing charged)', async () => {
+    await setPolicy(14, false);
+    const tenantId = await business('claim-taken');
+    await startBilling(tenantId);
+    const { sessionId } = await openCheckout(tenantId, 'claim-taken');
+    const row = await checkoutRow(tenantId);
+    const sub = await subscriptionOf(tenantId);
+    // Meanwhile the owner's claim was consumed for another business.
+    const other = await business('claim-taken-other');
+    await prisma.billingTrialClaim.create({
+      data: {
+        subscriptionId: (await subscriptionOf(other)).id,
+        claimKey: row.trialClaimKey!,
+      },
+    });
+    const snapshot = fake.completeCheckout(sessionId, {
+      hasPaymentMethod: false,
+    });
+    const completion = await webhook('checkout.completed', {
+      session: sessionId,
+      customer: sub.externalCustomerId,
+      subscription: snapshot.externalSubscriptionId,
+    });
+    expect(completion.res.status).toBe(200);
+    const after = await subscriptionOf(tenantId);
+    expect(after.status).not.toBe('TRIALING');
+    expect(after.trialStartedAt).toBeNull();
+    expect(
+      await prisma.billingTrialClaim.count({
+        where: { subscriptionId: sub.id },
+      }),
+    ).toBe(0);
+    expect(
+      await prisma.billingReconciliationCase.count({
+        where: { subscriptionId: sub.id, kind: 'UNEXPECTED_TRIAL' },
+      }),
+    ).toBe(1);
   });
 
   // --- Reconciliation (review only) --------------------------------------------------
@@ -1052,6 +1196,48 @@ describe('SC3b Stripe-mode billing (integration, scratch database)', () => {
       undefined,
       operatorToken(Math.floor(Date.now() / 1000) - 20 * 60),
     ).expect(401);
+  });
+
+  it("reconciliation: the customer's default payment method is legitimate; a removed one is reviewed", async () => {
+    await setPolicy(0, true);
+    const tenantId = await business('recon-pm');
+    await startBilling(tenantId);
+    const { sessionId } = await openCheckout(tenantId, 'recon-pm');
+    const sub = await subscriptionOf(tenantId);
+    const snapshot = fake.completeCheckout(sessionId, {
+      hasPaymentMethod: false,
+    });
+    // The method is the CUSTOMER's default, not the subscription's own.
+    fake.setSubscription(snapshot.externalSubscriptionId, {
+      paymentMethodSource: 'CUSTOMER_DEFAULT',
+    });
+    await webhook('checkout.completed', {
+      session: sessionId,
+      customer: sub.externalCustomerId,
+      subscription: snapshot.externalSubscriptionId,
+    });
+    expect(
+      (await subscriptionOf(tenantId)).recurringPaymentAuthorizedAt,
+    ).not.toBeNull();
+    const paymentMethodCases = () =>
+      prisma.billingReconciliationCase.findMany({
+        where: {
+          subscriptionId: sub.id,
+          kind: { startsWith: 'PAYMENT_METHOD' },
+        },
+        select: { kind: true },
+      });
+    await platform('post', '/billing/reconcile').expect(200);
+    expect(await paymentMethodCases()).toEqual([]);
+
+    // The method is removed at the provider: the next charge would fail.
+    fake.setSubscription(snapshot.externalSubscriptionId, {
+      paymentMethodSource: null,
+    });
+    await platform('post', '/billing/reconcile').expect(200);
+    expect(await paymentMethodCases()).toEqual([
+      { kind: 'PAYMENT_METHOD_MISSING' },
+    ]);
   });
 
   it('a trial the provider started that we never offered is reviewed, never accepted', async () => {

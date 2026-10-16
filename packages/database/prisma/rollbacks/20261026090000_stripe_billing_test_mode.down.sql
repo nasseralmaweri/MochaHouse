@@ -5,7 +5,8 @@
 -- with an API build without the Stripe billing integration (pre-SC3b).
 --
 -- It removes exactly what the migration added and restores the SC3a provider
--- id CHECK. It REFUSES to run while any Stripe billing data exists — a
+-- id CHECK, and removes the billing.view / billing.manage grants (keys the
+-- pre-SC3b vocabulary does not have). It REFUSES to run while any Stripe billing data exists — a
 -- Checkout session, a reconciliation case, a plan product id, or a
 -- subscription with a provider customer but no provider subscription (which
 -- the SC3a CHECK cannot hold) — because dropping those would destroy the
@@ -21,7 +22,7 @@ DECLARE
 BEGIN
   PERFORM set_config('lock_timeout', '5s', true);
   LOCK TABLE "TenantSubscription", "SubscriptionPlan", "BillingCheckoutSession",
-             "BillingReconciliationCase"
+             "BillingReconciliationCase", "InternalRolePermission"
     IN ACCESS EXCLUSIVE MODE;
   SELECT count(*) INTO sessions FROM "BillingCheckoutSession";
   SELECT count(*) INTO cases FROM "BillingReconciliationCase";
@@ -40,6 +41,10 @@ BEGIN
       ("billingProvider" IS NULL) = ("externalSubscriptionId" IS NULL)
       AND ("billingProvider" IS NOT NULL OR "externalCustomerId" IS NULL)
     );
+
+  -- The billing permissions no longer exist in the pre-SC3b vocabulary.
+  DELETE FROM "InternalRolePermission"
+   WHERE "permissionKey" IN ('billing.view', 'billing.manage');
 
   DROP TABLE "BillingReconciliationCase";
   DROP TABLE "BillingCheckoutSession";

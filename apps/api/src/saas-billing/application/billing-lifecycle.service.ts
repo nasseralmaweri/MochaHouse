@@ -751,14 +751,12 @@ export class BillingLifecycleService {
       where: { id: checkout.id, status: 'OPEN' },
       data: { status: 'COMPLETED', completedAt: new Date() },
     });
-    const offered = {
-      trialDays: checkout.trialDays,
-      requiresPaymentMethod: checkout.requiresPaymentMethod,
-    };
-    const sync = eventsFromSnapshot(
+    const sync = await this.syncFromSnapshot(
+      tx,
+      subscription.id,
       toBillingState(subscription),
       snapshot,
-      offered,
+      checkout,
       verified.occurredAt,
     );
     if (sync.unexpectedTrial) {
@@ -821,10 +819,16 @@ export class BillingLifecycleService {
     const completed = await tx.billingCheckoutSession.findFirst({
       where: { subscriptionId: subscription.id, status: 'COMPLETED' },
       orderBy: { completedAt: 'desc' },
-      select: { trialDays: true, requiresPaymentMethod: true },
+      select: {
+        trialDays: true,
+        requiresPaymentMethod: true,
+        trialClaimKey: true,
+      },
     });
     const state = toBillingState(subscription);
-    const sync = eventsFromSnapshot(
+    const sync = await this.syncFromSnapshot(
+      tx,
+      subscription.id,
       state,
       snapshot,
       completed,
@@ -857,6 +861,74 @@ export class BillingLifecycleService {
       `${subscription.status}->${result.next.status}`,
       result.suspension,
     );
+  }
+
+  // SC3b — the events the provider's live subscription implies. The
+  // one-time trial is CONSUMED only here, in the same transaction that
+  // records the trial: when the provider has verifiably created the trial
+  // subscription for the trial OUR Checkout offered. If the owner's claim was
+  // already used by another business, the trial is not accepted: it is
+  // reviewed as UNEXPECTED_TRIAL. A cardless trial then ends without
+  // charging; a card-required one would be charged at its end (the owner
+  // consented to that) unless an operator acts on the case. Operator trials
+  // refuse a claim an open Checkout holds, so this is a last-resort guard.
+  private async syncFromSnapshot(
+    tx: Tx,
+    subscriptionId: string,
+    state: BillingState,
+    snapshot: ProviderSubscriptionSnapshot,
+    checkout: {
+      trialDays: number;
+      requiresPaymentMethod: boolean;
+      trialClaimKey: string | null;
+    } | null,
+    at: Date,
+  ) {
+    const offered =
+      checkout === null
+        ? null
+        : {
+            trialDays: checkout.trialDays,
+            requiresPaymentMethod: checkout.requiresPaymentMethod,
+          };
+    const sync = eventsFromSnapshot(state, snapshot, offered, at);
+    if (!sync.events.some((event) => event.type === 'TRIAL_STARTED')) {
+      return sync;
+    }
+    if (
+      await this.consumeTrialClaim(
+        tx,
+        subscriptionId,
+        checkout?.trialClaimKey ?? null,
+      )
+    ) {
+      return sync;
+    }
+    return eventsFromSnapshot(state, snapshot, null, at);
+  }
+
+  // Records the owner's one-time trial claim for this subscription. Retried
+  // deliveries find their own claim; a claim another business consumed is
+  // refused (a concurrent consumer fails the serializable transaction and
+  // the event is retried, then refused).
+  private async consumeTrialClaim(
+    tx: Tx,
+    subscriptionId: string,
+    claimKey: string | null,
+  ): Promise<boolean> {
+    if (claimKey === null) return false;
+    const mine = await tx.billingTrialClaim.findUnique({
+      where: { subscriptionId },
+      select: { claimKey: true },
+    });
+    if (mine) return mine.claimKey === claimKey;
+    const taken = await tx.billingTrialClaim.findUnique({
+      where: { claimKey },
+      select: { id: true },
+    });
+    if (taken) return false;
+    await tx.billingTrialClaim.create({ data: { subscriptionId, claimKey } });
+    return true;
   }
 
   // Whether the event names a provider subscription linked to one of ours.
@@ -971,12 +1043,23 @@ export class BillingLifecycleService {
         requiresPaymentMethod: policy.trialRequiresPaymentMethod,
       });
       if (!result.ok) throw new BillingLifecycleError(result.reason);
+      const claimKey = trialClaimKey(ownerEmail, trialClaimSecret());
+      // SC3b — another business of the same owner holds this claim in an
+      // open Checkout: its trial is honoured, never pre-empted here.
+      const heldElsewhere = await tx.billingCheckoutSession.findFirst({
+        where: {
+          trialClaimKey: claimKey,
+          status: 'OPEN',
+          subscriptionId: { not: subscription.id },
+        },
+        select: { id: true },
+      });
+      if (heldElsewhere) {
+        throw new BillingLifecycleError('TRIAL_ALREADY_USED');
+      }
       try {
         await tx.billingTrialClaim.create({
-          data: {
-            subscriptionId: subscription.id,
-            claimKey: trialClaimKey(ownerEmail, trialClaimSecret()),
-          },
+          data: { subscriptionId: subscription.id, claimKey },
         });
       } catch (error) {
         if (isUniqueViolation(error)) {

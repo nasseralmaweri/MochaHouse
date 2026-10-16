@@ -517,6 +517,10 @@ model BillingCheckoutSession {
   // 0 = no trial.
   trialDays             Int
   requiresPaymentMethod Boolean
+  // SC3b — the one-trial claim this Checkout offers a trial under (set iff
+  // trialDays > 0). Only a hold: BillingTrialClaim is recorded when the
+  // provider has verifiably created the trial subscription.
+  trialClaimKey         String?
   expiresAt             DateTime?
   completedAt           DateTime?
   createdAt             DateTime                     @default(now())
