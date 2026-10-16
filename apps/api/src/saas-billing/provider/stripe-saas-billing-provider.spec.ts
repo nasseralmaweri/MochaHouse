@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import {
   STRIPE_API_VERSION,
+  SUPPORTED_CHECKOUT_PAYMENT_METHOD_TYPES,
   StripeSaasBillingProvider,
 } from './stripe-saas-billing-provider';
 import {
@@ -284,6 +285,11 @@ describe('SC3b Stripe adapter (mocked HTTP)', () => {
           cancelUrl: 'https://a.test/c',
         });
         expect(sent[0].body.get('payment_method_collection')).toBe('always');
+        // SC3c-2 — card only (synchronous confirmation), every time.
+        expect(sent[0].body.getAll('payment_method_types[0]')).toEqual([
+          'card',
+        ]);
+        expect(sent[0].body.get('payment_method_types[1]')).toBeNull();
         if (trialDays === 0) {
           expect(
             sent[0].body.get('subscription_data[trial_period_days]'),
@@ -700,6 +706,14 @@ describe('SC3b Stripe adapter (mocked HTTP)', () => {
         ),
       ).rejects.toBeInstanceOf(SaasBillingProviderError);
     });
+  });
+
+  // SC3c-2 — asynchronous payment methods (bank debits, transfers,
+  // vouchers…) confirm days later and need their own confirmation and
+  // recovery lifecycle. Adding one here must be a deliberate, reviewed
+  // change: this pins the list.
+  it('Checkout offers only synchronously-confirmed payment methods (card)', () => {
+    expect([...SUPPORTED_CHECKOUT_PAYMENT_METHOD_TYPES]).toEqual(['card']);
   });
 
   it('configuration: test keys only, never live keys, never in production', () => {

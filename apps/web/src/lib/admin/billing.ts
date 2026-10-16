@@ -117,6 +117,8 @@ export const BILLING_MESSAGES = {
   subscriptionNotEnded:
     "Your previous subscription hasn't fully ended yet at our payment provider. Try again in a moment.",
   recoveryUnavailable: "This isn't available right now. Nothing was changed. Try again in a moment.",
+  recoveryUnderReview:
+    "Your payment is being reviewed by our team. You won't be charged again; we'll restore your subscription or contact you.",
   recoveryForbidden: "Only the business owner, or someone who manages billing, can settle billing.",
 } as const;
 
@@ -128,6 +130,7 @@ const CONFLICTS: Record<string, string> = {
   BILLING_TRIAL_PENDING_ELSEWHERE: BILLING_MESSAGES.trialPendingElsewhere,
   BILLING_NOTHING_TO_PAY: BILLING_MESSAGES.nothingToPay,
   BILLING_SUBSCRIPTION_NOT_ENDED: BILLING_MESSAGES.subscriptionNotEnded,
+  BILLING_RECOVERY_UNDER_REVIEW: BILLING_MESSAGES.recoveryUnderReview,
 };
 
 // The message for a refused "open Checkout" answer (never a server detail).

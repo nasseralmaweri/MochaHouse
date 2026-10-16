@@ -41,6 +41,12 @@ const PROVIDER = 'stripe';
 // Stripe's documented default signature tolerance.
 export const STRIPE_SIGNATURE_TOLERANCE_SECONDS = 300;
 
+// SC3c-2 — Checkout offers ONLY payment methods that confirm synchronously.
+// Asynchronous ones (bank debits, transfers, vouchers…) confirm days later
+// and need their own confirmation and recovery lifecycle — not offered
+// until that is built and tested (a regression test pins this list).
+export const SUPPORTED_CHECKOUT_PAYMENT_METHOD_TYPES = ['card'] as const;
+
 export interface StripeBillingConfig {
   webhookSecret: string;
   // SC3c-2 — the operator-configured Customer Portal configuration and the
@@ -319,6 +325,7 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
           // needed. Otherwise one is always collected.
           payment_method_collection:
             trial && !input.requiresPaymentMethod ? 'if_required' : 'always',
+          payment_method_types: [...SUPPORTED_CHECKOUT_PAYMENT_METHOD_TYPES],
           metadata: {
             centerivo_tenant_id: input.tenantId,
             centerivo_checkout_id: input.checkoutSessionId,

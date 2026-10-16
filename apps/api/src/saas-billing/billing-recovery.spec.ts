@@ -497,6 +497,177 @@ describe('SC3c-2 billing recovery (integration, scratch database)', () => {
       status: 'REJECTED',
       outcome: 'UNEXPECTED_TRIAL',
     });
+    // Never linked, never given access.
+    expect(await subscriptionOf(b)).toMatchObject({
+      status: 'TRIAL_EXPIRED',
+      externalSubscriptionId: b.sub,
+    });
+    // Never silently discarded: a durable review case with safe references
+    // (provider subscription, customer, first invoice and what was paid).
+    const cases = await prisma.billingReconciliationCase.findMany({
+      where: { subscriptionId: b.subscriptionId, kind: 'UNLINKED_REPLACEMENT' },
+    });
+    expect(cases).toHaveLength(1);
+    expect(cases[0].status).toBe('OPEN');
+    for (const fragment of [
+      'Reason UNEXPECTED_TRIAL.',
+      created.externalSubscriptionId,
+      b.customer,
+      `First invoice ${created.latestInvoiceId}: paid, 4900 paid`,
+      'nothing changed at the provider',
+    ]) {
+      expect(cases[0].detail).toContain(fragment);
+    }
+    expect(cases[0].detail).not.toContain('https://');
+
+    // While it is reviewed the owner is never asked to pay again.
+    expect(
+      (
+        await asStaff(
+          'post',
+          b.key,
+          b.tenantId,
+          '/admin/billing/checkout',
+        ).expect(409)
+      ).body,
+    ).toMatchObject({ code: 'BILLING_RECOVERY_UNDER_REVIEW' });
+
+    // An operator resolves it (after dealing with the provider subscription,
+    // per the runbook): the attempt is closed and a new restart may start.
+    await prisma.billingReconciliationCase.update({
+      where: { id: cases[0].id },
+      data: { status: 'RESOLVED', resolvedAt: new Date() },
+    });
+    const next = (
+      await asStaff(
+        'post',
+        b.key,
+        b.tenantId,
+        '/admin/billing/checkout',
+      ).expect(201)
+    ).body as { url: string };
+    expect(next.url).not.toBe(url);
+    expect(
+      await prisma.billingCheckoutSession.findMany({
+        where: { subscriptionId: b.subscriptionId },
+        orderBy: { createdAt: 'asc' },
+        select: { status: true },
+      }),
+    ).toEqual([{ status: 'EXPIRED' }, { status: 'OPEN' }]);
+  });
+
+  it('a restart whose payment never completes is handed to review when its retries run out — with a case of its own if one is already open', async () => {
+    const b = await business('restart-unpaid', expiredTrial(), 'canceled');
+    // An earlier unlinked replacement is already under review.
+    await prisma.billingReconciliationCase.create({
+      data: {
+        kind: 'UNLINKED_REPLACEMENT',
+        subscriptionId: b.subscriptionId,
+        detail: 'earlier',
+      },
+    });
+    await prisma.billingReconciliationCase.updateMany({
+      where: { subscriptionId: b.subscriptionId, kind: 'UNLINKED_REPLACEMENT' },
+      data: { status: 'RESOLVED', resolvedAt: new Date() },
+    });
+    const { url } = (
+      await asStaff(
+        'post',
+        b.key,
+        b.tenantId,
+        '/admin/billing/checkout',
+      ).expect(201)
+    ).body as { url: string };
+    const sessionId = url.split('/').pop()!;
+    const created = fake.completeCheckout(sessionId, {
+      hasPaymentMethod: true,
+      firstInvoice: 'open',
+    });
+    const first = await deliver(b, 'checkout.completed', {
+      session: sessionId,
+    });
+    expect(first.result).toMatchObject({
+      status: 'FAILED',
+      outcome: 'REPLACEMENT_NOT_PAID',
+    });
+    // Retryable: no case yet.
+    expect(
+      await prisma.billingReconciliationCase.count({
+        where: {
+          kind: 'UNLINKED_REPLACEMENT',
+          status: 'OPEN',
+          OR: [
+            { subscriptionId: b.subscriptionId },
+            { billingProviderEvent: { subscriptionId: b.subscriptionId } },
+          ],
+        },
+      }),
+    ).toBe(0);
+
+    // Another unlinked replacement is opened meanwhile (OPEN for this
+    // business): the exhausted one still gets a case of its own.
+    await prisma.billingReconciliationCase.create({
+      data: {
+        kind: 'UNLINKED_REPLACEMENT',
+        subscriptionId: b.subscriptionId,
+        detail: 'another',
+      },
+    });
+    const ledger = await prisma.billingProviderEvent.findFirstOrThrow({
+      where: { externalEventId: first.body.id },
+    });
+    await prisma.billingProviderEvent.update({
+      where: { id: ledger.id },
+      data: { attempts: 11 },
+    });
+    const exhausted = await lifecycle.recordAndApply(first.verified);
+    expect(exhausted).toMatchObject({
+      status: 'REJECTED',
+      outcome: 'REPLACEMENT_NOT_PAID',
+    });
+    const own = await prisma.billingReconciliationCase.findFirstOrThrow({
+      where: {
+        kind: 'UNLINKED_REPLACEMENT',
+        billingProviderEventId: ledger.id,
+      },
+    });
+    expect(own.subscriptionId).toBeNull();
+    expect(own.detail).toContain(created.externalSubscriptionId);
+    expect(own.detail).toContain('Reason REPLACEMENT_NOT_PAID.');
+    expect(own.detail).toContain(': open, 0 paid');
+    expect((await subscriptionOf(b)).externalSubscriptionId).toBe(b.sub);
+  });
+
+  it('a restart completion refused before the replacement checks (a mismatched business claim) is still recorded with its references', async () => {
+    const b = await business('restart-claim', expiredTrial(), 'canceled');
+    const { url } = (
+      await asStaff(
+        'post',
+        b.key,
+        b.tenantId,
+        '/admin/billing/checkout',
+      ).expect(201)
+    ).body as { url: string };
+    const sessionId = url.split('/').pop()!;
+    const created = fake.completeCheckout(sessionId, {
+      hasPaymentMethod: true,
+    });
+    const outcome = await deliver(b, 'checkout.completed', {
+      session: sessionId,
+      tenantId: randomUUID(),
+    });
+    expect(outcome.result).toMatchObject({
+      status: 'REJECTED',
+      outcome: 'TENANT_CLAIM_MISMATCH',
+    });
+    const recorded = await prisma.billingReconciliationCase.findFirstOrThrow({
+      where: { subscriptionId: b.subscriptionId, kind: 'UNLINKED_REPLACEMENT' },
+    });
+    expect(recorded.detail).toContain('Reason TENANT_CLAIM_MISMATCH.');
+    expect(recorded.detail).toContain(created.externalSubscriptionId);
+    expect(recorded.detail).toContain(
+      `First invoice ${created.latestInvoiceId}: paid`,
+    );
     expect(await subscriptionOf(b)).toMatchObject({
       status: 'TRIAL_EXPIRED',
       externalSubscriptionId: b.sub,

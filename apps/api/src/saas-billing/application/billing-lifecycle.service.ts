@@ -238,6 +238,19 @@ const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const MAX_RETRY_ATTEMPTS = 12;
 const MAX_RETRY_AGE_MS = 72 * 60 * 60 * 1000;
 
+function retriesExhausted(ledger: { attempts: number; receivedAt: Date }) {
+  return (
+    ledger.attempts + 1 >= MAX_RETRY_ATTEMPTS ||
+    Date.now() - ledger.receivedAt.getTime() >= MAX_RETRY_AGE_MS
+  );
+}
+
+// SC3c-2 — the review case for a replacement the provider created (and may
+// have charged) that we could not link. Safe references only (provider ids,
+// amounts, our Checkout id) — never a URL. See
+// docs/operations/billing-recovery.md.
+export const UNLINKED_REPLACEMENT_CASE = 'UNLINKED_REPLACEMENT';
+
 function isUniqueViolation(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const e = error as {
@@ -482,11 +495,7 @@ export class BillingLifecycleService {
       subscriptionId: string | null,
     ): Promise<BillingEventOutcome> => {
       let status = requested;
-      if (
-        status === 'FAILED' &&
-        (ledger.attempts + 1 >= MAX_RETRY_ATTEMPTS ||
-          Date.now() - ledger.receivedAt.getTime() >= MAX_RETRY_AGE_MS)
-      ) {
+      if (status === 'FAILED' && retriesExhausted(ledger)) {
         await this.openCase(
           tx,
           'EVENT_RETRIES_EXHAUSTED',
@@ -841,24 +850,62 @@ export class BillingLifecycleService {
       return finish('FAILED', 'NO_MATCHING_CHECKOUT', null);
     }
     const subscription = await this.load(tx, checkout.subscriptionId);
+    // SC3c-2 — a RESTART Checkout that ends without a link — rejected, or a
+    // retryable failure whose retries ran out — leaves a provider
+    // subscription (possibly paid) that is not ours to use: it is recorded
+    // for an operator with safe references (never discarded, never given
+    // access, never changed at the provider). "Not complete" means nothing
+    // was paid and is not recorded.
+    const outcome =
+      checkout.replacesExternalSubscriptionId === null
+        ? finish
+        : async (
+            status: 'IGNORED' | 'REJECTED' | 'FAILED',
+            code: string,
+            subscriptionId: string | null,
+          ): Promise<BillingEventOutcome> => {
+            if (status !== 'IGNORED' && code !== 'CHECKOUT_NOT_COMPLETE') {
+              const ledger = await tx.billingProviderEvent.findUniqueOrThrow({
+                where: { id: ledgerId },
+                select: { attempts: true, receivedAt: true },
+              });
+              if (status === 'REJECTED' || retriesExhausted(ledger)) {
+                const read = facts.kind === 'checkout' ? facts : null;
+                await this.recordUnlinkedReplacement(tx, ledgerId, {
+                  subscriptionId: subscription.id,
+                  checkoutId: checkout.id,
+                  replaces: checkout.replacesExternalSubscriptionId,
+                  externalSubscriptionId:
+                    read?.session.externalSubscriptionId ?? null,
+                  externalCustomerId:
+                    read?.session.externalCustomerId ??
+                    verified.externalCustomerId,
+                  providerStatus: read?.snapshot?.status ?? 'unknown',
+                  firstInvoice: read?.replacement?.firstInvoice ?? null,
+                  reason: code,
+                });
+              }
+            }
+            return finish(status, code, subscriptionId);
+          };
     if (facts.kind !== 'checkout') {
-      return finish('FAILED', 'PROVIDER_READ_MISSING', subscription.id);
+      return outcome('FAILED', 'PROVIDER_READ_MISSING', subscription.id);
     }
     const { session, snapshot } = facts;
     if (
       session.externalSessionId !== externalSessionId ||
       session.livemode !== this.provider.livemode
     ) {
-      return finish('REJECTED', 'CHECKOUT_MISMATCH', subscription.id);
+      return outcome('REJECTED', 'CHECKOUT_MISMATCH', subscription.id);
     }
     if (session.status !== 'complete') {
-      return finish('FAILED', 'CHECKOUT_NOT_COMPLETE', subscription.id);
+      return outcome('FAILED', 'CHECKOUT_NOT_COMPLETE', subscription.id);
     }
     if (
       subscription.billingMode !== 'BILLED' ||
       subscription.billingProvider !== verified.provider
     ) {
-      return finish('REJECTED', 'NOT_BILLED', subscription.id);
+      return outcome('REJECTED', 'NOT_BILLED', subscription.id);
     }
     if (
       session.externalCustomerId !== subscription.externalCustomerId ||
@@ -871,13 +918,13 @@ export class BillingLifecycleService {
         subscription.id,
         ledgerId,
       );
-      return finish('REJECTED', 'CUSTOMER_MISMATCH', subscription.id);
+      return outcome('REJECTED', 'CUSTOMER_MISMATCH', subscription.id);
     }
     if (
       verified.claimedTenantId !== null &&
       verified.claimedTenantId !== subscription.subscriberTenantId
     ) {
-      return finish('REJECTED', 'TENANT_CLAIM_MISMATCH', subscription.id);
+      return outcome('REJECTED', 'TENANT_CLAIM_MISMATCH', subscription.id);
     }
     const externalSubscriptionId = session.externalSubscriptionId;
     if (
@@ -886,7 +933,7 @@ export class BillingLifecycleService {
       snapshot.externalSubscriptionId !== externalSubscriptionId ||
       snapshot.externalCustomerId !== subscription.externalCustomerId
     ) {
-      return finish(
+      return outcome(
         'FAILED',
         'CHECKOUT_SUBSCRIPTION_UNREADABLE',
         subscription.id,
@@ -902,7 +949,7 @@ export class BillingLifecycleService {
         externalSubscriptionId,
         snapshot,
         facts.replacement,
-        finish,
+        outcome,
       );
     }
     if (
@@ -917,7 +964,7 @@ export class BillingLifecycleService {
         subscription.id,
         ledgerId,
       );
-      return finish('REJECTED', 'LINKED_ELSEWHERE', subscription.id);
+      return outcome('REJECTED', 'LINKED_ELSEWHERE', subscription.id);
     }
 
     await tx.billingCheckoutSession.updateMany({
@@ -938,7 +985,7 @@ export class BillingLifecycleService {
     const result = applyAll(toBillingState(subscription), sync.events);
     const linking = subscription.externalSubscriptionId === null;
     if (!linking && result.history.length === 0) {
-      return finish('IGNORED', 'NO_CHANGE', subscription.id);
+      return outcome('IGNORED', 'NO_CHANGE', subscription.id);
     }
     await this.write(
       tx,
@@ -996,49 +1043,50 @@ export class BillingLifecycleService {
     if (subscription.externalSubscriptionId === externalSubscriptionId) {
       return finish('IGNORED', 'ALREADY_REPLACED', subscription.id);
     }
+    // Not linked: a REJECTED outcome — or a retryable one whose retries are
+    // exhausted — leaves a provider subscription (possibly paid) that is not
+    // ours to use. It is recorded for an operator (never discarded, never
+    // given access, never changed at the provider).
+    // (`finish` here is applyCheckout's restart outcome: it records the
+    // unlinked replacement for an operator.)
+    const notLinked = (
+      status: 'REJECTED' | 'FAILED',
+      reason: string,
+    ): Promise<BillingEventOutcome> => finish(status, reason, subscription.id);
     if (
       subscription.externalSubscriptionId !==
       checkout.replacesExternalSubscriptionId
     ) {
-      await this.openCase(
-        tx,
-        'CHECKOUT_LINKED_ELSEWHERE',
-        subscription.id,
-        ledgerId,
-      );
-      return finish('REJECTED', 'LINKED_ELSEWHERE', subscription.id);
+      return notLinked('REJECTED', 'LINKED_ELSEWHERE');
     }
     if (
       subscription.status !== 'TRIAL_EXPIRED' &&
       subscription.status !== 'CANCELED'
     ) {
-      await this.openCase(tx, 'REPLACEMENT_REFUSED', subscription.id, ledgerId);
-      return finish('REJECTED', 'NOT_REPLACEABLE', subscription.id);
+      return notLinked('REJECTED', 'NOT_REPLACEABLE');
     }
     if (replacement === null) {
-      return finish('FAILED', 'PROVIDER_READ_MISSING', subscription.id);
+      return notLinked('FAILED', 'PROVIDER_READ_MISSING');
     }
     const previous = replacement.previous;
     if (
       previous === null ||
       previous.externalCustomerId !== subscription.externalCustomerId
     ) {
-      await this.openCase(tx, 'REPLACEMENT_REFUSED', subscription.id, ledgerId);
-      return finish('REJECTED', 'PREVIOUS_UNVERIFIABLE', subscription.id);
+      return notLinked('REJECTED', 'PREVIOUS_UNVERIFIABLE');
     }
     if (
       previous.status !== 'canceled' &&
       previous.status !== 'incomplete_expired'
     ) {
-      return finish('FAILED', 'PREVIOUS_NOT_ENDED', subscription.id);
+      return notLinked('FAILED', 'PREVIOUS_NOT_ENDED');
     }
     if (
       snapshot.status === 'trialing' ||
       snapshot.trialStart !== null ||
       snapshot.trialEnd !== null
     ) {
-      await this.openCase(tx, 'UNEXPECTED_TRIAL', subscription.id, ledgerId);
-      return finish('REJECTED', 'UNEXPECTED_TRIAL', subscription.id);
+      return notLinked('REJECTED', 'UNEXPECTED_TRIAL');
     }
     const paid = replacement.firstInvoice;
     if (
@@ -1050,7 +1098,7 @@ export class BillingLifecycleService {
       paid.externalSubscriptionId !== externalSubscriptionId ||
       paid.externalCustomerId !== subscription.externalCustomerId
     ) {
-      return finish('FAILED', 'REPLACEMENT_NOT_PAID', subscription.id);
+      return notLinked('FAILED', 'REPLACEMENT_NOT_PAID');
     }
 
     const result = transition(toBillingState(subscription), {
@@ -1058,7 +1106,7 @@ export class BillingLifecycleService {
       at: new Date(),
     });
     if (!result.ok) {
-      return finish('REJECTED', result.reason, subscription.id);
+      return notLinked('REJECTED', result.reason);
     }
     await tx.billingCheckoutSession.updateMany({
       where: { id: checkout.id, status: 'OPEN' },
@@ -1088,6 +1136,54 @@ export class BillingLifecycleService {
       `REPLACED ${subscription.status}->${result.next.status}`,
       result.suspension,
     );
+  }
+
+  // SC3c-2 — records an unlinked replacement for an operator: one OPEN case
+  // per business (UNLINKED_REPLACEMENT), and — should a second arrive while
+  // it is open — a case of its own keyed by the event, so no paid
+  // subscription is ever folded away.
+  private async recordUnlinkedReplacement(
+    tx: Tx,
+    ledgerId: string,
+    facts: {
+      subscriptionId: string;
+      checkoutId: string;
+      replaces: string | null;
+      externalSubscriptionId: string | null;
+      externalCustomerId: string | null;
+      providerStatus: string;
+      firstInvoice: ProviderInvoice | null;
+      reason: string;
+    },
+  ): Promise<void> {
+    const invoice = facts.firstInvoice;
+    const detail = [
+      `Reason ${facts.reason}.`,
+      `Provider subscription ${facts.externalSubscriptionId ?? 'unknown'} (${facts.providerStatus}), customer ${facts.externalCustomerId ?? 'unknown'}.`,
+      invoice
+        ? `First invoice ${invoice.externalInvoiceId}: ${invoice.status}, ${invoice.amountPaidMinorUnits} paid (minor units).`
+        : 'First invoice: not available.',
+      `Our Checkout ${facts.checkoutId}; replaces ${facts.replaces ?? '-'}.`,
+      'Not linked; no access granted; nothing changed at the provider.',
+    ]
+      .join(' ')
+      .slice(0, 500);
+    const open = await tx.billingReconciliationCase.findFirst({
+      where: {
+        status: 'OPEN',
+        kind: UNLINKED_REPLACEMENT_CASE,
+        subscriptionId: facts.subscriptionId,
+      },
+      select: { id: true },
+    });
+    await tx.billingReconciliationCase.create({
+      data: {
+        kind: UNLINKED_REPLACEMENT_CASE,
+        subscriptionId: open ? null : facts.subscriptionId,
+        billingProviderEventId: ledgerId,
+        detail,
+      },
+    });
   }
 
   // SC3c-2 — a provider subscription, or null when the provider has none.

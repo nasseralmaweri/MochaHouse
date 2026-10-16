@@ -1000,6 +1000,7 @@ export declare const BILLING_CHECKOUT_PROCESSING = "BILLING_CHECKOUT_PROCESSING"
 export declare const BILLING_TRIAL_PENDING_ELSEWHERE = "BILLING_TRIAL_PENDING_ELSEWHERE";
 export declare const BILLING_NOTHING_TO_PAY = "BILLING_NOTHING_TO_PAY";
 export declare const BILLING_SUBSCRIPTION_NOT_ENDED = "BILLING_SUBSCRIPTION_NOT_ENDED";
+export declare const BILLING_RECOVERY_UNDER_REVIEW = "BILLING_RECOVERY_UNDER_REVIEW";
 export interface AdminBillingResponse {
     billing: BusinessBillingSummary;
     canSetUpPayment: boolean;

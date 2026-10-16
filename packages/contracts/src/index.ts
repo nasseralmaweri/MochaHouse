@@ -1984,6 +1984,10 @@ export const BILLING_TRIAL_PENDING_ELSEWHERE = "BILLING_TRIAL_PENDING_ELSEWHERE"
 //                                  to have ENDED at the provider.
 export const BILLING_NOTHING_TO_PAY = "BILLING_NOTHING_TO_PAY";
 export const BILLING_SUBSCRIPTION_NOT_ENDED = "BILLING_SUBSCRIPTION_NOT_ENDED";
+//   BILLING_RECOVERY_UNDER_REVIEW  — a restart payment could not be linked
+//                                  and is being reviewed: no new attempt
+//                                  (no second charge) until it is resolved.
+export const BILLING_RECOVERY_UNDER_REVIEW = "BILLING_RECOVERY_UNDER_REVIEW";
 
 // GET /api/v1/admin/billing (billing.view) — the signed-in business's own.
 export interface AdminBillingResponse {

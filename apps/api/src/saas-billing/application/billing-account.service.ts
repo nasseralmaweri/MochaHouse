@@ -12,6 +12,7 @@ import {
   BILLING_CHECKOUT_PROCESSING,
   BILLING_NOT_BILLED,
   BILLING_NOTHING_TO_PAY,
+  BILLING_RECOVERY_UNDER_REVIEW,
   BILLING_SUBSCRIPTION_NOT_ENDED,
   BILLING_TRIAL_PENDING_ELSEWHERE,
   BILLING_UNAVAILABLE,
@@ -27,6 +28,7 @@ import {
 import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
+import { UNLINKED_REPLACEMENT_CASE } from './billing-lifecycle.service';
 import { portalConfigurationRefusal } from '../provider/portal-configuration';
 import { entitledToPlanModules } from '../domain/billing-lifecycle';
 import { billingEnforcementEnabled } from './billing-enforcement.config';
@@ -718,6 +720,32 @@ export class BillingAccountService {
       throw error;
     }
     if (session.status === 'open' && session.url) return { url: session.url };
+    // SC3c-2 — a completed restart that could not be linked: reviewed by an
+    // operator first (never a second charge meanwhile). Once the operator
+    // has resolved it, this attempt is closed and a new one may start.
+    if (session.status === 'complete' && open.replacesExternalSubscriptionId) {
+      const review = await this.prisma.billingReconciliationCase.findMany({
+        where: {
+          kind: UNLINKED_REPLACEMENT_CASE,
+          createdAt: { gte: open.createdAt },
+          OR: [
+            { subscriptionId },
+            { billingProviderEvent: { subscriptionId } },
+          ],
+        },
+        select: { status: true },
+      });
+      if (review.some((item) => item.status === 'OPEN')) {
+        throw conflict(
+          BILLING_RECOVERY_UNDER_REVIEW,
+          "Your payment is being reviewed by our team. You won't be charged again.",
+        );
+      }
+      if (review.length > 0) {
+        await this.expire(open.id);
+        return null;
+      }
+    }
     if (session.status === 'complete') {
       // Paid/confirmed at the provider; our webhook will link it.
       throw conflict(
