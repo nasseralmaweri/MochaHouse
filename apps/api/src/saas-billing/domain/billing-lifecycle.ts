@@ -107,6 +107,15 @@ export type BillingEvent =
   | { type: 'GRACE_EXPIRED'; at: Date }
   // SC3c — system: an expired trial's recovery window is over.
   | { type: 'RECOVERY_EXPIRED'; at: Date }
+  // SC3c-2 — an ENDED subscription (expired trial or canceled) is replaced
+  // by a new provider subscription whose first payment is VERIFIED paid
+  // (the caller checks that, and that the old one really ended). Never a
+  // trial; the old subscription's history and trial record stay.
+  | { type: 'SUBSCRIPTION_REPLACED'; at: Date }
+  // SC3c-2 — the provider reports an UNPAID subscription active again with
+  // nothing outstanding (the caller verified both live): the recovery is
+  // complete even if no single payment event could confirm it.
+  | { type: 'RECOVERY_CONFIRMED'; at: Date }
   | { type: 'CANCEL_SCHEDULED'; at: Date }
   | { type: 'CANCEL_UNDONE'; at: Date }
   // Provider: the subscription ended (after a scheduled cancellation, or a
@@ -141,6 +150,7 @@ export interface BillingHistoryEntry {
     | 'GRACE_EXPIRED'
     | 'TRIAL_EXPIRED'
     | 'RECOVERY_EXPIRED'
+    | 'SUBSCRIPTION_REPLACED'
     | 'CANCEL_SCHEDULED'
     | 'CANCEL_UNDONE'
     | 'CANCELED'
@@ -301,6 +311,35 @@ export function transition(
   event: BillingEvent,
 ): TransitionResult {
   if (state.billingMode === 'COMPLIMENTARY') return refuse('COMPLIMENTARY');
+  // SC3c-2 — the one way out of CANCELED: a verified, paid replacement.
+  if (event.type === 'SUBSCRIPTION_REPLACED') {
+    if (state.status !== 'TRIAL_EXPIRED' && state.status !== 'CANCELED') {
+      return refuse('NOT_CHANGEABLE');
+    }
+    const next: BillingState = {
+      ...state,
+      status: 'ACTIVE',
+      // The replacement was paid with a payment method collected for
+      // recurring payment (Checkout).
+      recurringPaymentAuthorizedAt:
+        state.recurringPaymentAuthorizedAt ?? event.at,
+      // The new period comes with its paid invoice (PAYMENT_SUCCEEDED).
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      pastDueAt: null,
+      graceEndsAt: null,
+      recoveryEndsAt: null,
+      cancelAtPeriodEnd: false,
+      canceledAt: null,
+      pending: null,
+    };
+    return changed(
+      state,
+      next,
+      [entry('SUBSCRIPTION_REPLACED', state, next)],
+      'LIFT_BILLING_SUSPENSION',
+    );
+  }
   if (state.status === 'CANCELED') return refuse('CANCELED');
 
   switch (event.type) {
@@ -490,6 +529,22 @@ export function transition(
       }
       // No authorization: the trial expires and NOTHING is charged.
       return expireTrial(state, event.at, event.trialRecoveryDays);
+    }
+
+    case 'RECOVERY_CONFIRMED': {
+      if (state.status !== 'UNPAID') return refuse('NOT_PAST_DUE');
+      const next: BillingState = {
+        ...state,
+        status: 'ACTIVE',
+        pastDueAt: null,
+        graceEndsAt: null,
+      };
+      return changed(
+        state,
+        next,
+        [entry('PAYMENT_SUCCEEDED', state, next)],
+        'LIFT_BILLING_SUSPENSION',
+      );
     }
 
     case 'RECOVERY_EXPIRED': {

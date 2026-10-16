@@ -200,7 +200,11 @@ const EXTERNAL_IDENTIFIER_COLUMNS: Readonly<Record<string, readonly string[]>> =
     SubscriptionPlanPrice: ['externalPriceId'],
     // SC3b — the provider's product and Checkout session ids.
     SubscriptionPlan: ['externalProductId'],
-    BillingCheckoutSession: ['externalSessionId'],
+    // SC3c-2 — the ended provider subscription a restart Checkout replaces.
+    BillingCheckoutSession: [
+      'externalSessionId',
+      'replacesExternalSubscriptionId',
+    ],
     BillingProviderEvent: [
       'externalEventId',
       'externalSubscriptionId',

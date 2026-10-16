@@ -37,6 +37,9 @@ export interface ProviderSubscriptionSnapshot {
   cancelAtPeriodEnd: boolean;
   trialStart: Date | null;
   trialEnd: Date | null;
+  // SC3c-2 — the subscription's most recent invoice (its first one, for a
+  // just-created subscription), when the provider reports one.
+  latestInvoiceId: string | null;
 }
 
 // What we offered when the business opened Checkout (fixed then): a trial is

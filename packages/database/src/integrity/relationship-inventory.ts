@@ -1382,6 +1382,8 @@ const POLYMORPHIC_REFERENCES: readonly PolymorphicReference[] = [
     fixedTargets: {
       giftcard_configuration: 'company',
       loyalty_configuration: 'company',
+      // SC3c-2 — billing recovery started by a staff member.
+      billing_subscription: 'company',
     },
     keyedTargets: {
       notification_recipient: {

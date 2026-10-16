@@ -7,6 +7,7 @@ import {
   BILLING_STATE_LABELS,
   billingStateDescription,
   checkoutReturn,
+  portalReturn,
 } from "@/lib/admin/billing";
 import { formatMinorUnits } from "@/lib/admin/crm";
 import { AdminPage } from "@/components/admin/AdminPage";
@@ -14,6 +15,7 @@ import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import { AdminErrorState, AdminForbidden, AdminNotFound } from "@/components/admin/states";
 import { Card } from "@/components/Card";
 import { SetUpPaymentForm } from "./SetUpPaymentForm";
+import { BillingActionForm } from "./BillingActionForm";
 import { CheckoutConfirming } from "./CheckoutConfirming";
 import { ForgetCheckoutReturn } from "./ForgetCheckoutReturn";
 
@@ -23,7 +25,7 @@ import { ForgetCheckoutReturn } from "./ForgetCheckoutReturn";
 export default async function AdminBillingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ checkout?: string }>;
+  searchParams: Promise<{ checkout?: string; portal?: string }>;
 }) {
   const session = await getInternalSession();
   if (!session) redirect("/internal/sign-in");
@@ -59,23 +61,46 @@ export default async function AdminBillingPage({
     );
   }
 
-  const { billing, canSetUpPayment } = result.data;
+  const {
+    billing,
+    canSetUpPayment,
+    canRestartSubscription,
+    canPayInvoice,
+    canManagePaymentMethod,
+  } = result.data;
   const returned = checkoutReturn(params.checkout);
-  // Back from the provider but not confirmed yet: the page re-reads itself
-  // and the setup button is hidden (nothing needs setting up again).
-  const confirming = returned === "success" && billing.state === "AWAITING_SETUP";
+  const fromPortal = portalReturn(params.portal);
+  // Back from the provider but not confirmed yet (a new setup, or a restart
+  // of an ended subscription): the page re-reads itself and the action is
+  // hidden (nothing needs doing again).
+  const confirming =
+    returned === "success" &&
+    (billing.state === "AWAITING_SETUP" ||
+      billing.state === "TRIAL_EXPIRED" ||
+      billing.state === "CANCELED");
   const date = (iso: string | null) =>
     iso ? new Date(iso).toLocaleDateString("en-US", { dateStyle: "long" }) : null;
 
   return (
     <AdminPage>
       {header}
-      {returned && !confirming ? <ForgetCheckoutReturn /> : null}
+      {(returned && !confirming) || fromPortal ? <ForgetCheckoutReturn /> : null}
+      {fromPortal ? (
+        <p role="status" className="rounded-lg bg-surface-subtle px-3 py-2 text-sm text-text-primary">
+          You&apos;re back from our payment provider. Any payment method changes are saved there.
+        </p>
+      ) : null}
       {confirming ? (
         <CheckoutConfirming />
       ) : returned === "success" ? (
         <p role="status" className="rounded-lg bg-surface-subtle px-3 py-2 text-sm text-text-primary">
           Payment setup is complete.
+        </p>
+      ) : returned === "pending" ? (
+        <p role="status" className="rounded-lg bg-surface-subtle px-3 py-2 text-sm text-text-primary">
+          We haven&apos;t received confirmation of your payment yet. If you completed it, this page
+          shows it once it&apos;s confirmed — you don&apos;t need to pay again. Otherwise you can try
+          again below.
         </p>
       ) : returned === "cancelled" ? (
         <p role="status" className="rounded-lg bg-surface-subtle px-3 py-2 text-sm text-text-primary">
@@ -127,6 +152,14 @@ export default async function AdminBillingPage({
           <SetUpPaymentForm />
         ) : billing.state === "AWAITING_SETUP" && !confirming ? (
           <p className="text-sm text-text-secondary">{BILLING_MESSAGES.forbidden}</p>
+        ) : null}
+        {canRestartSubscription && !confirming ? <BillingActionForm kind="restart" /> : null}
+        {canPayInvoice ? <BillingActionForm kind="invoice" /> : null}
+        {canManagePaymentMethod && !confirming ? <BillingActionForm kind="portal" /> : null}
+        {!canRestartSubscription &&
+        !canPayInvoice &&
+        ["PAST_DUE", "UNPAID", "TRIAL_EXPIRED", "CANCELED"].includes(billing.state) ? (
+          <p className="text-sm text-text-secondary">{BILLING_MESSAGES.recoveryForbidden}</p>
         ) : null}
       </Card>
     </AdminPage>

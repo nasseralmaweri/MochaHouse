@@ -20,6 +20,9 @@ export function CheckoutConfirming() {
       if (Date.now() - started >= LIMIT_MS) {
         window.clearInterval(timer);
         setGaveUp(true);
+        // SC3c-2 — not confirmed within the minute: show the page as
+        // "pending" (its actions available again), never a dead end.
+        router.replace("/admin/billing?checkout=pending");
         return;
       }
       router.refresh();

@@ -1978,12 +1978,28 @@ export const BILLING_CHECKOUT_PROCESSING = "BILLING_CHECKOUT_PROCESSING";
 // Another business of the same owner holds the one-time trial in an open
 // Checkout: finish or leave that one first.
 export const BILLING_TRIAL_PENDING_ELSEWHERE = "BILLING_TRIAL_PENDING_ELSEWHERE";
+// SC3c-2 — billing recovery refusals.
+//   BILLING_NOTHING_TO_PAY      — no open invoice of this subscription to pay.
+//   BILLING_SUBSCRIPTION_NOT_ENDED — a restart needs the old subscription
+//                                  to have ENDED at the provider.
+export const BILLING_NOTHING_TO_PAY = "BILLING_NOTHING_TO_PAY";
+export const BILLING_SUBSCRIPTION_NOT_ENDED = "BILLING_SUBSCRIPTION_NOT_ENDED";
 
 // GET /api/v1/admin/billing (billing.view) — the signed-in business's own.
 export interface AdminBillingResponse {
   billing: BusinessBillingSummary;
   // Payment setup can be started now (billing.manage holders only).
   canSetUpPayment: boolean;
+  // SC3c-2 — recovery actions available now (billing.manage holders only):
+  //   canRestartSubscription — an ended subscription (expired trial or
+  //     canceled): a new, paid subscription through Checkout (no trial).
+  //   canPayInvoice — an outstanding invoice can be paid on the provider's
+  //     hosted page.
+  //   canManagePaymentMethod — the provider's Customer Portal (payment
+  //     methods and invoices only) is configured and available.
+  canRestartSubscription: boolean;
+  canPayInvoice: boolean;
+  canManagePaymentMethod: boolean;
 }
 
 // POST /api/v1/admin/billing/checkout (billing.manage) — no body: the
@@ -1992,9 +2008,21 @@ export interface AdminBillingResponse {
 // reused; at most one at a time).
 //   409 BILLING_NOT_BILLED / BILLING_ALREADY_SET_UP /
 //       BILLING_CHECKOUT_IN_PROGRESS / BILLING_CHECKOUT_PROCESSING /
-//       BILLING_TRIAL_PENDING_ELSEWHERE
+//       BILLING_TRIAL_PENDING_ELSEWHERE / BILLING_SUBSCRIPTION_NOT_ENDED
 //   503 BILLING_UNAVAILABLE
+// SC3c-2 — also restarts an ENDED subscription (no trial).
 export interface AdminBillingCheckoutResponse {
+  url: string;
+}
+
+// SC3c-2 — POST /api/v1/admin/billing/recovery/invoice and
+// POST /api/v1/admin/billing/recovery/portal (billing.manage; no body). The
+// provider's hosted page for the business's outstanding invoice (found and
+// verified from OUR records — never a client value), or its Customer Portal
+// session (payment methods and invoices only).
+//   409 BILLING_NOT_BILLED / BILLING_NOTHING_TO_PAY
+//   503 BILLING_UNAVAILABLE
+export interface AdminBillingRecoveryResponse {
   url: string;
 }
 
@@ -2105,7 +2133,9 @@ export type PlatformSubscriptionEventType =
   // SC3c-1 — enforcement.
   | "RECOVERY_EXPIRED"
   | "BILLING_SUSPENDED"
-  | "BILLING_SUSPENSION_LIFTED";
+  | "BILLING_SUSPENSION_LIFTED"
+  // SC3c-2 — an ended subscription replaced by a new, paid one.
+  | "SUBSCRIPTION_REPLACED";
 
 // SC3a — the subscription's billing state (separate from a business's
 // administrative/security suspension). A COMPLIMENTARY subscription is never

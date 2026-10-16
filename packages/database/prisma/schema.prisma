@@ -263,6 +263,9 @@ enum TenantSubscriptionEventType {
   RECOVERY_EXPIRED
   BILLING_SUSPENDED
   BILLING_SUSPENSION_LIFTED
+  // SC3c-2 — an ended subscription (expired trial or canceled) was replaced
+  // by a new, PAID provider subscription through a restart Checkout.
+  SUBSCRIPTION_REPLACED
 }
 
 // SC3a — who caused a subscription history entry.
@@ -520,21 +523,24 @@ enum BillingCheckoutSessionStatus {
 // created. Rows are never deleted; the provider session id is set once
 // (database trigger).
 model BillingCheckoutSession {
-  id                    String                       @id @default(uuid(7))
-  subscriptionId        String
-  planPriceId           String
-  externalSessionId     String?                      @unique
-  status                BillingCheckoutSessionStatus @default(OPEN)
+  id                             String                       @id @default(uuid(7))
+  subscriptionId                 String
+  planPriceId                    String
+  externalSessionId              String?                      @unique
+  status                         BillingCheckoutSessionStatus @default(OPEN)
   // 0 = no trial.
-  trialDays             Int
-  requiresPaymentMethod Boolean
+  trialDays                      Int
+  requiresPaymentMethod          Boolean
   // SC3b — the one-trial claim this Checkout offers a trial under (set iff
   // trialDays > 0). Only a hold: BillingTrialClaim is recorded when the
   // provider has verifiably created the trial subscription.
-  trialClaimKey         String?
-  expiresAt             DateTime?
-  completedAt           DateTime?
-  createdAt             DateTime                     @default(now())
+  trialClaimKey                  String?
+  // SC3c-2 — a restart Checkout: the ended provider subscription it
+  // replaces (never with a trial; set once; one COMPLETED per replaced id).
+  replacesExternalSubscriptionId String?
+  expiresAt                      DateTime?
+  completedAt                    DateTime?
+  createdAt                      DateTime                     @default(now())
 
   subscription TenantSubscription    @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   planPrice    SubscriptionPlanPrice @relation(fields: [planPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)

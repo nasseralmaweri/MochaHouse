@@ -43,6 +43,7 @@ function snapshot(
     livemode: false,
     hasPaymentMethod: false,
     paymentMethodSource: null,
+    latestInvoiceId: null,
     cancelAtPeriodEnd: false,
     trialStart: T0,
     trialEnd: day(14),

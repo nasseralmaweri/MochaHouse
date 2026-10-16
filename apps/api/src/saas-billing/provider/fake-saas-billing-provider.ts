@@ -11,10 +11,12 @@ import {
   type ProviderCheckoutSession,
   type ProviderInvoice,
   type ProviderInvoiceStatus,
+  type ProviderPayableInvoice,
   type ProviderLifecycleEvent,
   type SaasBillingProvider,
   type VerifiedBillingProviderEvent,
 } from './saas-billing-provider';
+import type { ProviderPortalConfiguration } from './portal-configuration';
 
 // SC3a/SC3b — a deterministic, in-memory SaaS billing provider for
 // development and tests ONLY (refused in production-like environments; see
@@ -120,7 +122,28 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
   readonly checkouts = new Map<string, FakeCheckout>();
   private readonly checkoutsByKey = new Map<string, string>();
   readonly subscriptions = new Map<string, ProviderSubscriptionSnapshot>();
-  readonly invoices = new Map<string, ProviderInvoice>();
+  readonly invoices = new Map<string, ProviderPayableInvoice>();
+  // SC3c-2 — the Customer Portal (test settings; a safe configuration by
+  // default, changeable by tests).
+  portalConfigurationId: string | null = 'bpc_fake00000001';
+  expectedAccountId: string | null = 'acct_fake00000001';
+  portalConfiguration: ProviderPortalConfiguration = {
+    configurationId: 'bpc_fake00000001',
+    accountId: 'acct_fake00000001',
+    livemode: false,
+    active: true,
+    paymentMethodUpdate: true,
+    invoiceHistory: true,
+    subscriptionCancel: false,
+    subscriptionUpdate: false,
+    customerUpdate: false,
+    loginPage: false,
+    otherEnabledFeatures: [],
+  };
+  readonly portalSessions: Array<{ customer: string; returnUrl: string }> = [];
+  // Test hook: open invoices the provider lists for a subscription but whose
+  // shape names no subscription (an invoice the adapter could not read).
+  readonly unreadableOpenInvoices = new Map<string, ProviderPayableInvoice[]>();
   readonly calls: Array<{ op: string; key: string }> = [];
   // Test hook: make the next provider call fail (a transient outage).
   failNext: string | null = null;
@@ -237,17 +260,67 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
     return Promise.resolve(invoice ? { ...invoice } : null);
   }
 
+  listOpenInvoices(
+    externalSubscriptionId: string,
+  ): Promise<ProviderPayableInvoice[]> {
+    this.call('listOpenInvoices', externalSubscriptionId);
+    return Promise.resolve(
+      [...this.invoices.values()]
+        .filter(
+          (invoice) =>
+            invoice.status === 'open' &&
+            invoice.externalSubscriptionId === externalSubscriptionId,
+        )
+        .concat(this.unreadableOpenInvoices.get(externalSubscriptionId) ?? [])
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+        .map((invoice) => ({ ...invoice })),
+    );
+  }
+
+  retrievePortalConfiguration(
+    configurationId: string,
+  ): Promise<ProviderPortalConfiguration> {
+    this.call('retrievePortalConfiguration', configurationId);
+    if (configurationId !== this.portalConfiguration.configurationId) {
+      return Promise.reject(new SaasBillingProviderError('resource_missing'));
+    }
+    return Promise.resolve({ ...this.portalConfiguration });
+  }
+
+  createPortalSession(input: {
+    externalCustomerId: string;
+    configurationId: string;
+    returnUrl: string;
+  }): Promise<{ url: string; livemode: boolean }> {
+    this.call('createPortalSession', input.externalCustomerId);
+    this.portalSessions.push({
+      customer: input.externalCustomerId,
+      returnUrl: input.returnUrl,
+    });
+    return Promise.resolve({
+      url: `https://billing.fake.test/p/${hex()}`,
+      livemode: false,
+    });
+  }
+
   // --- test helpers (the provider side) --------------------------------------
 
   // The owner finished Checkout: the provider created a subscription.
   completeCheckout(
     externalSessionId: string,
-    opts: { hasPaymentMethod: boolean; now?: Date },
+    opts: {
+      hasPaymentMethod: boolean;
+      now?: Date;
+      // SC3c-2 — a subscription without a trial has a first invoice: paid
+      // (the default, as Checkout collects it) or still open.
+      firstInvoice?: 'paid' | 'open';
+    },
   ): ProviderSubscriptionSnapshot {
     const checkout = this.checkouts.get(externalSessionId)!;
     const now = opts.now ?? new Date();
     const subscriptionId = `fake_sub_${hex()}`;
     const trial = checkout.trialDays > 0;
+    const firstInvoiceId = trial ? null : `fake_in_first_${hex()}`;
     const snapshot: ProviderSubscriptionSnapshot = {
       externalSubscriptionId: subscriptionId,
       externalCustomerId: checkout.externalCustomerId!,
@@ -260,8 +333,17 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
       trialEnd: trial
         ? new Date(now.getTime() + checkout.trialDays * 86_400_000)
         : null,
+      latestInvoiceId: firstInvoiceId,
     };
     this.subscriptions.set(subscriptionId, snapshot);
+    if (firstInvoiceId !== null) {
+      this.setInvoice(
+        firstInvoiceId,
+        opts.firstInvoice ?? 'paid',
+        subscriptionId,
+        checkout.externalCustomerId,
+      );
+    }
     checkout.status = 'complete';
     checkout.externalSubscriptionId = subscriptionId;
     return snapshot;
@@ -289,13 +371,21 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
     status: ProviderInvoiceStatus,
     externalSubscriptionId: string | null,
     externalCustomerId: string | null,
+    opts: { amountMinorUnits?: number; createdAt?: Date } = {},
   ): void {
+    const amount = opts.amountMinorUnits ?? 4900;
+    const existing = this.invoices.get(externalInvoiceId);
     this.invoices.set(externalInvoiceId, {
       externalInvoiceId,
       status,
       externalSubscriptionId,
       externalCustomerId,
       livemode: false,
+      amountPaidMinorUnits: status === 'paid' ? amount : 0,
+      amountDueMinorUnits: amount,
+      currency: 'usd',
+      createdAt: opts.createdAt ?? existing?.createdAt ?? new Date(),
+      hostedInvoiceUrl: `https://invoice.fake.test/i/${externalInvoiceId}`,
     });
   }
 

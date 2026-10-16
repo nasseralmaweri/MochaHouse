@@ -25,6 +25,38 @@ async function actorTenantId(
 
 @Injectable()
 export class InternalAuditService {
+  // SC3c-2 — a billing-recovery action a staff member started: a restart
+  // Checkout, a hosted invoice payment page, or a Customer Portal session.
+  // Records WHICH invoice / Checkout — never the provider's page URL (a
+  // bearer link).
+  async recordBillingRecoveryStarted(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      subscriptionId: string;
+      kind: 'RESTART_CHECKOUT' | 'INVOICE_PAYMENT' | 'PAYMENT_METHOD_PORTAL';
+      reference: string | null;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'billing.recovery_started',
+        // The business's own CENTERIVO subscription (a whole-business
+        // target, like the configuration audits).
+        targetType: 'billing_subscription',
+        targetId: 'company',
+        afterData: {
+          kind: input.kind,
+          subscriptionId: input.subscriptionId,
+          reference: input.reference,
+        },
+        reason: 'Billing recovery',
+      },
+    });
+  }
+
   // Records a completed internal-user status change. Call this with the
   // SAME `tx` that performed the InternalUser.update, so the update and the
   // audit row commit or roll back together.

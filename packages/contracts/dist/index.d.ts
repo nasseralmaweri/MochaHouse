@@ -998,11 +998,19 @@ export declare const BILLING_ALREADY_SET_UP = "BILLING_ALREADY_SET_UP";
 export declare const BILLING_CHECKOUT_IN_PROGRESS = "BILLING_CHECKOUT_IN_PROGRESS";
 export declare const BILLING_CHECKOUT_PROCESSING = "BILLING_CHECKOUT_PROCESSING";
 export declare const BILLING_TRIAL_PENDING_ELSEWHERE = "BILLING_TRIAL_PENDING_ELSEWHERE";
+export declare const BILLING_NOTHING_TO_PAY = "BILLING_NOTHING_TO_PAY";
+export declare const BILLING_SUBSCRIPTION_NOT_ENDED = "BILLING_SUBSCRIPTION_NOT_ENDED";
 export interface AdminBillingResponse {
     billing: BusinessBillingSummary;
     canSetUpPayment: boolean;
+    canRestartSubscription: boolean;
+    canPayInvoice: boolean;
+    canManagePaymentMethod: boolean;
 }
 export interface AdminBillingCheckoutResponse {
+    url: string;
+}
+export interface AdminBillingRecoveryResponse {
     url: string;
 }
 export declare const PLATFORM_ALREADY_BILLED = "ALREADY_BILLED";
@@ -1055,7 +1063,7 @@ export interface PlatformPlanCreateRequest {
 export interface PlatformPlanVersionModulesRequest {
     moduleKeys: OptionalModuleKey[];
 }
-export type PlatformSubscriptionEventType = "PLAN_ASSIGNED" | "PLAN_CHANGED" | "ADDON_GRANTED" | "ADDON_REVOKED" | "TRIAL_STARTED" | "PAYMENT_AUTHORIZED" | "PAYMENT_SUCCEEDED" | "PAYMENT_FAILED" | "GRACE_EXPIRED" | "TRIAL_EXPIRED" | "CANCEL_SCHEDULED" | "CANCEL_UNDONE" | "CANCELED" | "PLAN_CHANGE_PENDING" | "PLAN_CHANGE_APPLIED" | "PLAN_CHANGE_ABANDONED" | "RECOVERY_EXPIRED" | "BILLING_SUSPENDED" | "BILLING_SUSPENSION_LIFTED";
+export type PlatformSubscriptionEventType = "PLAN_ASSIGNED" | "PLAN_CHANGED" | "ADDON_GRANTED" | "ADDON_REVOKED" | "TRIAL_STARTED" | "PAYMENT_AUTHORIZED" | "PAYMENT_SUCCEEDED" | "PAYMENT_FAILED" | "GRACE_EXPIRED" | "TRIAL_EXPIRED" | "CANCEL_SCHEDULED" | "CANCEL_UNDONE" | "CANCELED" | "PLAN_CHANGE_PENDING" | "PLAN_CHANGE_APPLIED" | "PLAN_CHANGE_ABANDONED" | "RECOVERY_EXPIRED" | "BILLING_SUSPENDED" | "BILLING_SUSPENSION_LIFTED" | "SUBSCRIPTION_REPLACED";
 export type PlatformSubscriptionStatus = "ACTIVE" | "TRIALING" | "PAST_DUE" | "UNPAID" | "TRIAL_EXPIRED" | "CANCELED";
 export type PlatformBillingMode = "COMPLIMENTARY" | "BILLED";
 export interface PlatformTenantSubscription {

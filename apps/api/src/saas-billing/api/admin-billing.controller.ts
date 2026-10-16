@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Header,
+  HttpCode,
   NotFoundException,
   Post,
   Req,
@@ -9,6 +10,7 @@ import {
 } from '@nestjs/common';
 import type {
   AdminBillingCheckoutResponse,
+  AdminBillingRecoveryResponse,
   AdminBillingResponse,
 } from '@mocha-house/contracts';
 import type { TenantContext } from '@mocha-house/database';
@@ -42,14 +44,21 @@ export class AdminBillingController {
     request.authorization!.assertCorporate('billing.view');
     const billing = await this.accounts.summaryForTenant(tenant.tenantId);
     if (!billing) throw new NotFoundException('No billing for this business.');
+    const manage = request.authorization!.has('billing.manage');
+    const actions = this.accounts.recoveryActions(billing);
     return {
       billing,
-      canSetUpPayment:
-        billing.state === 'AWAITING_SETUP' &&
-        request.authorization!.has('billing.manage'),
+      canSetUpPayment: billing.state === 'AWAITING_SETUP' && manage,
+      canRestartSubscription: actions.restart && manage,
+      canPayInvoice: actions.payInvoice && manage,
+      canManagePaymentMethod: actions.portal && manage,
     };
   }
 
+  // SC3c-1/SC3c-2 — setting up or recovering payment is part of a billing
+  // wind-down (billing.manage holders only; never during a SECURITY or
+  // administrative suspension, which admits no one).
+  @AllowDuringBillingWindDown()
   @RequirePermission('billing.manage')
   @UseGuards(RateLimitGuard)
   @RateLimit('billing-checkout')
@@ -63,6 +72,37 @@ export class AdminBillingController {
     return this.accounts.openCheckout(
       tenant.tenantId,
       request.internalUser!.email,
+      request.internalUser!.id,
     );
+  }
+
+  @AllowDuringBillingWindDown()
+  @RequirePermission('billing.manage')
+  @UseGuards(RateLimitGuard)
+  @RateLimit('billing-checkout')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @Post('recovery/invoice')
+  async payInvoice(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ): Promise<AdminBillingRecoveryResponse> {
+    request.authorization!.assertCorporate('billing.manage');
+    return this.accounts.payInvoice(tenant.tenantId, request.internalUser!.id);
+  }
+
+  @AllowDuringBillingWindDown()
+  @RequirePermission('billing.manage')
+  @UseGuards(RateLimitGuard)
+  @RateLimit('billing-checkout')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @Post('recovery/portal')
+  async openPortal(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ): Promise<AdminBillingRecoveryResponse> {
+    request.authorization!.assertCorporate('billing.manage');
+    return this.accounts.openPortal(tenant.tenantId, request.internalUser!.id);
   }
 }

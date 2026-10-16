@@ -21,6 +21,7 @@ import {
   SaasBillingProviderError,
   type ProviderCheckoutSession,
   type ProviderInvoice,
+  type ProviderPayableInvoice,
   type ProviderLifecycleEvent,
   type SaasBillingProvider,
   type VerifiedBillingProviderEvent,
@@ -36,10 +37,31 @@ type ProviderFacts =
       kind: 'checkout';
       session: ProviderCheckoutSession;
       snapshot: ProviderSubscriptionSnapshot | null;
+      // SC3c-2 — a restart Checkout: the replaced subscription (null: the
+      // provider no longer has it) and the new subscription's first invoice.
+      replacement: {
+        previous: ProviderSubscriptionSnapshot | null;
+        firstInvoice: ProviderInvoice | null;
+      } | null;
     }
-  | { kind: 'snapshot'; snapshot: ProviderSubscriptionSnapshot }
+  | {
+      kind: 'snapshot';
+      snapshot: ProviderSubscriptionSnapshot;
+      // SC3c-2 — for an UNPAID business: its still-open invoices.
+      openInvoices: ProviderPayableInvoice[] | null;
+    }
   // null: the provider has no such invoice.
-  | { kind: 'invoice'; invoice: ProviderInvoice | null };
+  | {
+      kind: 'invoice';
+      invoice: ProviderInvoice | null;
+      // SC3c-2 — a payment of a business that is UNPAID (or an expired
+      // trial): the live subscription and its still-open invoices, read so
+      // the payment restores access only when nothing is outstanding.
+      recovery: {
+        snapshot: ProviderSubscriptionSnapshot;
+        openInvoices: ProviderPayableInvoice[];
+      } | null;
+    };
 
 // Applies lifecycle events in order to a state, skipping the ones it refuses
 // (each provider-sync event is independently valid or not).
@@ -359,7 +381,7 @@ export class BillingLifecycleService {
         // Only a session WE created is ever read from the provider.
         const ours = await this.prisma.billingCheckoutSession.findUnique({
           where: { externalSessionId: event.externalSessionId },
-          select: { id: true },
+          select: { id: true, replacesExternalSubscriptionId: true },
         });
         if (!ours) return { kind: 'none' };
         const session = await this.provider.retrieveCheckoutSession(
@@ -371,7 +393,22 @@ export class BillingLifecycleService {
                 session.externalSubscriptionId,
               )
             : null;
-        return { kind: 'checkout', session, snapshot };
+        let replacement: Extract<
+          ProviderFacts,
+          { kind: 'checkout' }
+        >['replacement'] = null;
+        if (ours.replacesExternalSubscriptionId !== null) {
+          replacement = {
+            previous: await this.readSubscriptionOrNull(
+              ours.replacesExternalSubscriptionId,
+            ),
+            firstInvoice:
+              snapshot?.latestInvoiceId != null
+                ? await this.provider.retrieveInvoice(snapshot.latestInvoiceId)
+                : null,
+          };
+        }
+        return { kind: 'checkout', session, snapshot, replacement };
       }
       case 'SUBSCRIPTION_CHANGED':
         // Only a subscription linked to one of OURS is read from the
@@ -383,14 +420,33 @@ export class BillingLifecycleService {
           snapshot: await this.provider.retrieveSubscription(
             verified.externalSubscriptionId!,
           ),
+          openInvoices: (await this.inRecovery(verified))
+            ? await this.provider.listOpenInvoices(
+                verified.externalSubscriptionId!,
+              )
+            : null,
         };
       case 'PAYMENT_SUCCEEDED':
-      case 'PAYMENT_FAILED':
+      case 'PAYMENT_FAILED': {
         if (!(await this.isLinked(verified))) return { kind: 'none' };
-        return {
-          kind: 'invoice',
-          invoice: await this.provider.retrieveInvoice(event.reference),
-        };
+        const invoice = await this.provider.retrieveInvoice(event.reference);
+        let recovery: Extract<ProviderFacts, { kind: 'invoice' }>['recovery'] =
+          null;
+        if (
+          event.kind === 'PAYMENT_SUCCEEDED' &&
+          (await this.inRecovery(verified))
+        ) {
+          recovery = {
+            snapshot: await this.provider.retrieveSubscription(
+              verified.externalSubscriptionId!,
+            ),
+            openInvoices: await this.provider.listOpenInvoices(
+              verified.externalSubscriptionId!,
+            ),
+          };
+        }
+        return { kind: 'invoice', invoice, recovery };
+      }
       default:
         return { kind: 'none' };
     }
@@ -486,6 +542,22 @@ export class BillingLifecycleService {
       },
     });
     if (!subscription) {
+      // SC3c-2 — a subscription a business has REPLACED (restart): its late
+      // or delayed events never act on the replacement.
+      const replaced = await tx.billingCheckoutSession.findFirst({
+        where: {
+          replacesExternalSubscriptionId: verified.externalSubscriptionId,
+          status: 'COMPLETED',
+        },
+        select: { subscriptionId: true },
+      });
+      if (replaced) {
+        return finish(
+          'IGNORED',
+          'SUPERSEDED_SUBSCRIPTION',
+          replaced.subscriptionId,
+        );
+      }
       // Not one of our customers (the provider account may carry other
       // business): acknowledged and ignored, never retried. One of ours but
       // not linked yet (delivered before the Checkout completion): retryable.
@@ -512,6 +584,47 @@ export class BillingLifecycleService {
     if (verified.event.kind === 'SUBSCRIPTION_CHANGED') {
       if (facts.kind !== 'snapshot') {
         return finish('FAILED', 'PROVIDER_READ_MISSING', subscription.id);
+      }
+      // SC3c-2 — an UNPAID business the provider reports active again with
+      // nothing outstanding: the recovery is complete.
+      if (
+        subscription.status === 'UNPAID' &&
+        facts.openInvoices !== null &&
+        facts.snapshot.status === 'active' &&
+        facts.snapshot.livemode === this.provider.livemode &&
+        facts.snapshot.externalSubscriptionId ===
+          subscription.externalSubscriptionId &&
+        facts.openInvoices.every((open) => open.amountDueMinorUnits <= 0)
+      ) {
+        const result = transition(toBillingState(subscription), {
+          type: 'RECOVERY_CONFIRMED',
+          at: verified.occurredAt,
+        });
+        if (result.ok && result.changed) {
+          await this.write(
+            tx,
+            subscription,
+            result.next,
+            subscription.lastBillingEventAt,
+          );
+          await this.history(tx, subscription.id, result.history, {
+            source: 'BILLING_PROVIDER',
+            billingProviderEventId: ledgerId,
+            actorPlatformOperatorId: null,
+          });
+          await this.enforce(tx, subscription, result.next, result.suspension, {
+            source: 'BILLING_PROVIDER',
+            billingProviderEventId: ledgerId,
+            actorPlatformOperatorId: null,
+          });
+          return this.applied(
+            tx,
+            ledgerId,
+            subscription.id,
+            'RECOVERED UNPAID->ACTIVE',
+            result.suspension,
+          );
+        }
       }
       return this.applySnapshot(
         tx,
@@ -558,6 +671,36 @@ export class BillingLifecycleService {
       ) {
         await this.openCase(tx, 'INVOICE_NOT_PAID', subscription.id, ledgerId);
         return finish('REJECTED', 'INVOICE_NOT_PAID', subscription.id);
+      }
+      // SC3c-2 — paying ONE invoice of an UNPAID business (or an expired
+      // trial) restores it only when the provider's live subscription is
+      // active again and nothing else is outstanding. Otherwise the payment
+      // is not applied yet: retryable (the provider redelivers; the last
+      // payment then finds nothing outstanding), and reviewed if it never
+      // completes.
+      if (
+        verified.event.kind === 'PAYMENT_SUCCEEDED' &&
+        (subscription.status === 'UNPAID' ||
+          subscription.status === 'TRIAL_EXPIRED')
+      ) {
+        const recovery = facts.recovery;
+        if (recovery === null) {
+          return finish('FAILED', 'PROVIDER_READ_MISSING', subscription.id);
+        }
+        const outstanding = recovery.openInvoices.filter(
+          (open) =>
+            open.externalInvoiceId !== invoice.externalInvoiceId &&
+            open.amountDueMinorUnits > 0,
+        );
+        if (
+          recovery.snapshot.externalSubscriptionId !==
+            subscription.externalSubscriptionId ||
+          recovery.snapshot.livemode !== this.provider.livemode ||
+          recovery.snapshot.status !== 'active' ||
+          outstanding.length > 0
+        ) {
+          return finish('FAILED', 'RECOVERY_INCOMPLETE', subscription.id);
+        }
       }
     }
     // An older event never rolls the state back — except an authorization,
@@ -749,6 +892,19 @@ export class BillingLifecycleService {
         subscription.id,
       );
     }
+    // SC3c-2 — a restart Checkout replaces the ENDED subscription.
+    if (checkout.replacesExternalSubscriptionId !== null) {
+      return this.applyReplacement(
+        tx,
+        ledgerId,
+        checkout,
+        subscription,
+        externalSubscriptionId,
+        snapshot,
+        facts.replacement,
+        finish,
+      );
+    }
     if (
       subscription.externalSubscriptionId !== null &&
       subscription.externalSubscriptionId !== externalSubscriptionId
@@ -810,6 +966,163 @@ export class BillingLifecycleService {
       `${linking ? 'LINKED ' : ''}${subscription.status}->${result.next.status}`,
       result.suspension,
     );
+  }
+
+  // SC3c-2 — links the business to the NEW provider subscription of a
+  // completed restart Checkout, replacing the ended one — only when:
+  //   * the business still holds the subscription this Checkout replaces,
+  //     and is still TRIAL_EXPIRED or CANCELED;
+  //   * the provider confirms the replaced subscription has ENDED;
+  //   * the new subscription is active, without a trial (a free trial is
+  //     never granted this way), and its first invoice is verifiably PAID.
+  // Applied atomically (one serializable transaction, compare-and-set on the
+  // subscription, at most one completed replacement per replaced
+  // subscription). Paid features return only then; the billing suspension
+  // (if enforcement applied one) is lifted the same way as for a payment.
+  private async applyReplacement(
+    tx: Tx,
+    ledgerId: string,
+    checkout: { id: string; replacesExternalSubscriptionId: string | null },
+    subscription: SubscriptionRow,
+    externalSubscriptionId: string,
+    snapshot: ProviderSubscriptionSnapshot,
+    replacement: Extract<ProviderFacts, { kind: 'checkout' }>['replacement'],
+    finish: (
+      status: 'IGNORED' | 'REJECTED' | 'FAILED',
+      outcome: string,
+      subscriptionId: string | null,
+    ) => Promise<BillingEventOutcome>,
+  ): Promise<BillingEventOutcome> {
+    if (subscription.externalSubscriptionId === externalSubscriptionId) {
+      return finish('IGNORED', 'ALREADY_REPLACED', subscription.id);
+    }
+    if (
+      subscription.externalSubscriptionId !==
+      checkout.replacesExternalSubscriptionId
+    ) {
+      await this.openCase(
+        tx,
+        'CHECKOUT_LINKED_ELSEWHERE',
+        subscription.id,
+        ledgerId,
+      );
+      return finish('REJECTED', 'LINKED_ELSEWHERE', subscription.id);
+    }
+    if (
+      subscription.status !== 'TRIAL_EXPIRED' &&
+      subscription.status !== 'CANCELED'
+    ) {
+      await this.openCase(tx, 'REPLACEMENT_REFUSED', subscription.id, ledgerId);
+      return finish('REJECTED', 'NOT_REPLACEABLE', subscription.id);
+    }
+    if (replacement === null) {
+      return finish('FAILED', 'PROVIDER_READ_MISSING', subscription.id);
+    }
+    const previous = replacement.previous;
+    if (
+      previous === null ||
+      previous.externalCustomerId !== subscription.externalCustomerId
+    ) {
+      await this.openCase(tx, 'REPLACEMENT_REFUSED', subscription.id, ledgerId);
+      return finish('REJECTED', 'PREVIOUS_UNVERIFIABLE', subscription.id);
+    }
+    if (
+      previous.status !== 'canceled' &&
+      previous.status !== 'incomplete_expired'
+    ) {
+      return finish('FAILED', 'PREVIOUS_NOT_ENDED', subscription.id);
+    }
+    if (
+      snapshot.status === 'trialing' ||
+      snapshot.trialStart !== null ||
+      snapshot.trialEnd !== null
+    ) {
+      await this.openCase(tx, 'UNEXPECTED_TRIAL', subscription.id, ledgerId);
+      return finish('REJECTED', 'UNEXPECTED_TRIAL', subscription.id);
+    }
+    const paid = replacement.firstInvoice;
+    if (
+      snapshot.status !== 'active' ||
+      paid === null ||
+      paid.livemode !== this.provider.livemode ||
+      paid.status !== 'paid' ||
+      paid.amountPaidMinorUnits <= 0 ||
+      paid.externalSubscriptionId !== externalSubscriptionId ||
+      paid.externalCustomerId !== subscription.externalCustomerId
+    ) {
+      return finish('FAILED', 'REPLACEMENT_NOT_PAID', subscription.id);
+    }
+
+    const result = transition(toBillingState(subscription), {
+      type: 'SUBSCRIPTION_REPLACED',
+      at: new Date(),
+    });
+    if (!result.ok) {
+      return finish('REJECTED', result.reason, subscription.id);
+    }
+    await tx.billingCheckoutSession.updateMany({
+      where: { id: checkout.id, status: 'OPEN' },
+      data: { status: 'COMPLETED', completedAt: new Date() },
+    });
+    await this.write(
+      tx,
+      subscription,
+      result.next,
+      subscription.lastBillingEventAt,
+      { externalSubscriptionId },
+    );
+    await this.history(tx, subscription.id, result.history, {
+      source: 'BILLING_PROVIDER',
+      billingProviderEventId: ledgerId,
+      actorPlatformOperatorId: null,
+    });
+    await this.enforce(tx, subscription, result.next, result.suspension, {
+      source: 'BILLING_PROVIDER',
+      billingProviderEventId: ledgerId,
+      actorPlatformOperatorId: null,
+    });
+    return this.applied(
+      tx,
+      ledgerId,
+      subscription.id,
+      `REPLACED ${subscription.status}->${result.next.status}`,
+      result.suspension,
+    );
+  }
+
+  // SC3c-2 — a provider subscription, or null when the provider has none.
+  private async readSubscriptionOrNull(
+    externalSubscriptionId: string,
+  ): Promise<ProviderSubscriptionSnapshot | null> {
+    try {
+      return await this.provider.retrieveSubscription(externalSubscriptionId);
+    } catch (error) {
+      if (
+        error instanceof SaasBillingProviderError &&
+        error.code === 'resource_missing'
+      ) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  // SC3c-2 — whether the event's (linked) subscription is UNPAID or an
+  // expired trial, i.e. a payment would be a recovery.
+  private async inRecovery(
+    verified: VerifiedBillingProviderEvent,
+  ): Promise<boolean> {
+    if (verified.externalSubscriptionId === null) return false;
+    const found = await this.prisma.tenantSubscription.findUnique({
+      where: {
+        billingProvider_externalSubscriptionId: {
+          billingProvider: verified.provider,
+          externalSubscriptionId: verified.externalSubscriptionId,
+        },
+      },
+      select: { status: true },
+    });
+    return found?.status === 'UNPAID' || found?.status === 'TRIAL_EXPIRED';
   }
 
   // SC3b — bring our state in line with the provider's live subscription.
