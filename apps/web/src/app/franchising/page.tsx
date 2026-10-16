@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { FranchisingPageContent } from "@mocha-house/contracts";
-import { getPublishedFranchisingContent } from "@/lib/api";
+import { getPublishedFranchisingContent, getStorefrontFeatures } from "@/lib/api";
+import { FeatureUnavailable } from "@/components/FeatureUnavailable";
 import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/Card";
 
@@ -61,8 +62,21 @@ export async function generateMetadata(): Promise<Metadata> {
 // (intro, opportunity, process steps, CTA copy) is CMS-managed. The CTA's
 // destination is always /franchising/inquiry — never CMS-controlled.
 export default async function FranchisingPage() {
-  const cms = await getPublishedFranchisingContent();
+  const [cms, features] = await Promise.all([
+    getPublishedFranchisingContent(),
+    getStorefrontFeatures(),
+  ]);
   const content = cms ?? FALLBACK_CONTENT;
+
+  // SC2b — this business does not offer franchising.
+  if (features?.franchising === false) {
+    return (
+      <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-8">
+        <PageHeader title="Franchising" />
+        <FeatureUnavailable message="Franchising inquiries aren't available here right now." />
+      </main>
+    );
+  }
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-8 px-4 py-8">

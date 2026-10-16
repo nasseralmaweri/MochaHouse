@@ -44,6 +44,7 @@ import {
 } from '../infrastructure/gift-card-recovery-credential';
 import { GiftCardConfigurationService } from './gift-card-configuration.service';
 import { GiftCardIssuanceService } from './gift-card-issuance.service';
+import { StorefrontFeaturesService } from '../../subscriptions/application/storefront-features.service';
 
 // Milestone 7H — customer digital gift-card purchase, a bounded TWO-STEP
 // protocol over ONE persisted aggregate (GiftCardPurchase):
@@ -96,6 +97,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
     private readonly issuance: GiftCardIssuanceService,
     @Inject(PAYMENT_PROVIDER)
     private readonly paymentProvider: PaymentProvider,
+    private readonly features: StorefrontFeaturesService,
   ) {}
 
   // Fail fast at boot if either purpose-specific secret is missing / unusable.
@@ -145,6 +147,11 @@ export class GiftCardPurchaseService implements OnModuleInit {
       this.assertSameIntent(existing.giftCardPurchase, request);
       return this.intentResponse(existing.giftCardPurchase, null);
     }
+    // SC2b — selling a NEW gift card needs the gift-card module in the
+    // business's plan: refused before any intent or payment attempt exists.
+    // (An intent that already exists is returned above as persisted.)
+    await this.features.assertAvailable(tenant.tenantId, 'giftcards');
+
     // Payment safety — a gift card is only ever issued against a real
     // payment: with no provider able to take one, no intent is recorded.
     this.assertPaymentAvailable();
@@ -379,6 +386,12 @@ export class GiftCardPurchaseService implements OnModuleInit {
           : 'Only the signed-in buyer can complete this purchase.',
       );
     }
+
+    // SC2b — checked again at the charging step, before the claim: the plan
+    // may have changed since the intent was created. Nothing has been
+    // charged yet, so refusing here strands no payment. Once the claim below
+    // is made the purchase completes (or replays) whatever the plan says.
+    await this.features.assertAvailable(tenant.tenantId, 'giftcards');
 
     // Payment safety — checked again at the charging step, before the claim:
     // configuration may have changed since the intent was created.

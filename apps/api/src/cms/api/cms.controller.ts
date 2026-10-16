@@ -3,6 +3,7 @@ import type { TenantContext } from '@mocha-house/database';
 import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 import { CmsContentPublicService } from '../application/cms-content-public.service';
 import { HomeContentPublicService } from '../application/home-content-public.service';
+import { StorefrontFeaturesService } from '../../subscriptions/application/storefront-features.service';
 
 // The PUBLIC CMS content API. No authentication.
 //   GET /api/v1/content/:pageKey — published content only.
@@ -16,13 +17,19 @@ export class CmsController {
   constructor(
     private readonly content: CmsContentPublicService,
     private readonly homeContent: HomeContentPublicService,
+    private readonly features: StorefrontFeaturesService,
   ) {}
 
   @Get(':pageKey')
-  getPublished(
+  // SC2b — without the website-content module every managed page is 404,
+  // exactly like an unpublished one; the storefront falls back to its
+  // built-in content. Stored content is untouched and returns on
+  // re-entitlement.
+  async getPublished(
     @Param('pageKey') pageKey: string,
     @CurrentTenantContext() tenant: TenantContext,
   ) {
+    await this.features.assertPageAvailable(tenant.tenantId, 'cms');
     if (pageKey === 'home') {
       return this.homeContent.getPublished(tenant);
     }

@@ -7,6 +7,7 @@ import { CmsController } from './api/cms.controller';
 import { CmsPagesAdminService } from './application/cms-pages-admin.service';
 import { CmsContentPublicService } from './application/cms-content-public.service';
 import { HomeContentPublicService } from './application/home-content-public.service';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
 // Milestone 8E/8F — CMS foundation. Structured content management for a
 // small, code-defined set of public page keys (the registry) — NOT a page
@@ -23,7 +24,7 @@ import { HomeContentPublicService } from './application/home-content-public.serv
 // InternalAuthModule; PrismaService from the @Global PrismaModule;
 // InternalAuditService from AuditModule.
 @Module({
-  imports: [PrismaModule, AuditModule, MediaStorageModule],
+  imports: [PrismaModule, AuditModule, MediaStorageModule, SubscriptionsModule],
   controllers: [AdminCmsController, CmsController],
   providers: [
     CmsPagesAdminService,

@@ -3,6 +3,7 @@
 // Adds the request-origin marker header to state-changing /api calls (S3b).
 import { markedFetch as fetch } from "@/lib/security/marked-fetch";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { FEATURE_NOT_AVAILABLE } from "@mocha-house/contracts";
 import type {
   GiftCardBalanceResponse,
   GiftCardPublicStatus,
@@ -32,16 +33,31 @@ const BALANCE_STATUS_LABEL: Record<GiftCardPublicStatus, string> = {
   inactive: "Not currently usable",
 };
 
-export function GiftCardsClient() {
+export function GiftCardsClient({
+  purchaseAvailable = true,
+}: {
+  purchaseAvailable?: boolean;
+}) {
   const [options, setOptions] = useState<GiftCardPurchaseOptions | null>(null);
   const [optionsError, setOptionsError] = useState(false);
+  // SC2b — the server refused purchase options (403 FEATURE_NOT_AVAILABLE):
+  // the business stopped selling gift cards after this page was rendered.
+  const [purchaseRefused, setPurchaseRefused] = useState(false);
+  const canBuy = purchaseAvailable && !purchaseRefused;
 
   useEffect(() => {
+    if (!purchaseAvailable) return;
     let cancelled = false;
     fetch("/api/gift-cards/options", { cache: "no-store" })
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error())))
-      .then((data: GiftCardPurchaseOptions) => {
-        if (!cancelled) setOptions(data);
+      .then((res) => {
+        if (res.status === 403) {
+          if (!cancelled) setPurchaseRefused(true);
+          return null;
+        }
+        return res.ok ? res.json() : Promise.reject(new Error());
+      })
+      .then((data: GiftCardPurchaseOptions | null) => {
+        if (!cancelled && data) setOptions(data);
       })
       .catch(() => {
         if (!cancelled) setOptionsError(true);
@@ -49,7 +65,7 @@ export function GiftCardsClient() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [purchaseAvailable]);
 
   return (
     <div className="flex flex-col gap-8">
@@ -57,12 +73,23 @@ export function GiftCardsClient() {
         <h2 className="text-lg font-semibold text-text-primary">
           Buy a gift card
         </h2>
-        {optionsError ? (
+        {!canBuy ? (
+          <Card tone="subtle" className="text-sm text-text-secondary">
+            <p role="status">
+              Gift cards aren&apos;t on sale here right now
+              {purchaseRefused ? " — you weren't charged" : ""}. You can still
+              check a balance below and use an existing card at checkout.
+            </p>
+          </Card>
+        ) : optionsError ? (
           <Card tone="subtle" className="text-sm text-status-warning">
             We couldn&apos;t load gift-card options. Please refresh and try again.
           </Card>
         ) : options ? (
-          <PurchasePanel options={options} />
+          <PurchasePanel
+            options={options}
+            onPurchaseRefused={() => setPurchaseRefused(true)}
+          />
         ) : (
           <p className="text-sm text-text-muted">Loading…</p>
         )}
@@ -80,7 +107,13 @@ export function GiftCardsClient() {
 
 // --- Buy -------------------------------------------------------------
 
-function PurchasePanel({ options }: { options: GiftCardPurchaseOptions }) {
+function PurchasePanel({
+  options,
+  onPurchaseRefused,
+}: {
+  options: GiftCardPurchaseOptions;
+  onPurchaseRefused: () => void;
+}) {
   const [selectedPreset, setSelectedPreset] = useState<number | null>(
     options.presetAmountsMinorUnits[0] ?? null,
   );
@@ -212,7 +245,7 @@ function PurchasePanel({ options }: { options: GiftCardPurchaseOptions }) {
       });
       const data = (await res.json().catch(() => null)) as
         | (PurchaseGiftCardResponse & { message?: string })
-        | { message?: string; outcome?: string }
+        | { message?: string; outcome?: string; code?: string }
         | null;
 
       if (res.ok && data && "purchaseId" in data) {
@@ -228,6 +261,13 @@ function PurchasePanel({ options }: { options: GiftCardPurchaseOptions }) {
         return;
       }
       if (res.status === 403) {
+        // SC2b — the business stopped selling gift cards before this
+        // purchase was charged. Nothing was charged.
+        if (data && "code" in data && data.code === FEATURE_NOT_AVAILABLE) {
+          resetPurchaseState();
+          onPurchaseRefused();
+          return;
+        }
         setError(
           "Your purchase session expired. Please start again.",
         );
@@ -340,9 +380,11 @@ function PurchasePanel({ options }: { options: GiftCardPurchaseOptions }) {
       </label>
 
       {error ? (
-        <Card tone="subtle" className="text-sm text-status-warning">
-          {error}
-        </Card>
+        <div role="alert">
+          <Card tone="subtle" className="text-sm text-status-warning">
+            {error}
+          </Card>
+        </div>
       ) : null}
 
       <button type="submit" disabled={pending} className={primaryButtonClass}>

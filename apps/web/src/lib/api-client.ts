@@ -4,6 +4,7 @@ import {
   ACTIVE_ORDER_STATUSES,
   TERMINAL_ORDER_STATUSES,
 } from "@mocha-house/domain";
+import { FEATURE_NOT_AVAILABLE } from "@mocha-house/contracts";
 import type {
   AdminAdjustMochaBeansRequest,
   AdminApprovalRequest,
@@ -126,6 +127,9 @@ export type CheckoutResult =
   | { outcome: "declined" | "failed"; message: string }
   | { outcome: "invalid"; message: string }
   | { outcome: "conflict"; message: string }
+  // SC2b — the business no longer offers something this checkout used (a
+  // coupon or a reward). Refused before any payment: nothing was charged.
+  | { outcome: "unavailable"; message: string }
   | { outcome: "network-error"; message: string };
 
 // Milestone 7C — the checkout reward-eligibility quote. Goes through this
@@ -142,11 +146,11 @@ export async function getCheckoutRewardsFromBrowser(
       body: JSON.stringify(input),
     });
     if (!response.ok) {
-      return { balance: 0, rewards: [] };
+      return { balance: 0, rewards: [], available: false };
     }
     return (await response.json()) as CheckoutRewardEligibilityResponse;
   } catch {
-    return { balance: 0, rewards: [] };
+    return { balance: 0, rewards: [], available: false };
   }
 }
 
@@ -154,7 +158,8 @@ export async function getCheckoutRewardsFromBrowser(
 // (regular Promotion/Coupon + Mocha Bean rewards + total). Goes through this
 // app's own /api/orders/checkout-quote route (server-side, attaches the
 // httpOnly session cookie when present; guests allowed). Never throws — a
-// failure returns a subtotal-only quote so checkout still works.
+// failure returns null (the page then shows the subtotal and drops any
+// reward selection it can no longer show) so checkout still works.
 export async function getCheckoutQuoteFromBrowser(
   input: CheckoutQuoteRequest,
 ): Promise<CheckoutQuoteResponse | null> {
@@ -211,6 +216,18 @@ export async function submitCheckoutFromBrowser(
     return {
       outcome: "invalid",
       message: body?.message ?? "Your cart could not be placed. Please review it.",
+    };
+  }
+
+  if (response.status === 403) {
+    const body = await safeJson(response);
+    return {
+      outcome: "unavailable",
+      message:
+        (body?.code === FEATURE_NOT_AVAILABLE && typeof body?.message === "string"
+          ? body.message
+          : null) ??
+        "Part of this order is not available right now. Nothing was charged — please review it and try again.",
     };
   }
 

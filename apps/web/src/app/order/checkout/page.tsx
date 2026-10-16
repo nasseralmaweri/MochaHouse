@@ -35,6 +35,7 @@ const COUPON_MESSAGE: Record<CouponQuoteStatus, string> = {
   minimum_not_met: "Your order doesn't reach this coupon's minimum.",
   usage_limit_reached: "This coupon has reached its redemption limit.",
   sign_in_required: "Sign in to use this coupon.",
+  not_available: "Coupons aren't available here right now. Remove it to continue.",
 };
 
 export default function CheckoutPage() {
@@ -59,6 +60,9 @@ export default function CheckoutPage() {
   const [giftCardDraft, setGiftCardDraft] = useState("");
   const [appliedGiftCard, setAppliedGiftCard] = useState<string | null>(null);
 
+  // SC2b — bumped when a submission is refused because the business no
+  // longer offers a coupon or reward, so the quote is re-read from the server.
+  const [quoteRefresh, setQuoteRefresh] = useState(0);
   const inFlightRef = useRef(false);
   const idempotencyKeyRef = useRef<string | null>(null);
   const rotateKeyOnNextSubmitRef = useRef(true);
@@ -138,6 +142,7 @@ export default function CheckoutPage() {
     appliedCoupon,
     selectedRewardId,
     appliedGiftCard,
+    quoteRefresh,
   ]);
 
   if (!cart.isHydrated) {
@@ -192,6 +197,10 @@ export default function CheckoutPage() {
       ? COUPON_MESSAGE[quote.couponStatus]
       : null;
   const couponApplied = quote?.couponStatus === "applied";
+  // SC2b — the coupon field is only offered when the business offers
+  // promotions (it stays visible while a code is entered, so the customer
+  // can see why it no longer applies and remove it).
+  const showCoupon = quote?.promotionsAvailable !== false || appliedCoupon !== null;
 
   // Milestone 7G — gift-card tender. The server quote is authoritative for
   // how much a gift card applies and what remains due.
@@ -254,6 +263,25 @@ export default function CheckoutPage() {
 
     if (result.outcome === "declined" || result.outcome === "failed") {
       rotateKeyOnNextSubmitRef.current = true;
+    }
+    if (result.outcome === "unavailable") {
+      // Nothing was charged. Drop the coupon and reward the business no
+      // longer offers, re-read the quote, and let the customer review the
+      // new total before placing the order again.
+      const removed = [
+        appliedCoupon !== null ? "coupon" : null,
+        selectedRewardId !== null ? "reward" : null,
+      ].filter((item): item is string => item !== null);
+      setAppliedCoupon(null);
+      setCouponDraft("");
+      setSelectedRewardId(null);
+      setQuoteRefresh((n) => n + 1);
+      setSubmitError(
+        removed.length > 0
+          ? `${result.message} We removed your ${removed.join(" and ")} — please review your total and place your order again.`
+          : result.message,
+      );
+      return;
     }
     setSubmitError(result.message);
   }
@@ -369,10 +397,10 @@ export default function CheckoutPage() {
         </Card>
       ) : null}
 
-      {priced?.ok ? (
+      {priced?.ok && showCoupon ? (
         <Card className="flex flex-col gap-2">
           <span className="text-sm font-semibold text-text-primary">Coupon</span>
-          {couponApplied && appliedCoupon ? (
+          {appliedCoupon !== null && (couponApplied || quote?.promotionsAvailable === false) ? (
             <div className="flex items-center justify-between gap-2 text-sm">
               <span className="font-mono text-text-primary">{appliedCoupon}</span>
               <button
@@ -539,9 +567,11 @@ export default function CheckoutPage() {
         </label>
 
         {submitError ? (
-          <Card tone="subtle" className="text-sm text-status-warning">
-            {submitError}
-          </Card>
+          <div role="alert">
+            <Card tone="subtle" className="text-sm text-status-warning">
+              {submitError}
+            </Card>
+          </div>
         ) : null}
 
         <button

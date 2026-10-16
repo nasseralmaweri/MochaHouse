@@ -775,6 +775,10 @@ export interface CustomerLoyaltyReward {
 export interface CustomerLoyaltySummary {
   balance: number;
   rewards: CustomerLoyaltyReward[];
+  // SC2b — false when the business's plan does not include loyalty: the
+  // balance is kept and shown, but nothing is earned or redeemed (and
+  // rewards is empty) until loyalty is available again.
+  available: boolean;
 }
 
 // --- Checkout: Mocha Bean reward eligibility (Milestone 7C) ----------
@@ -809,6 +813,8 @@ export interface CheckoutRewardOption {
 export interface CheckoutRewardEligibilityResponse {
   balance: number;
   rewards: CheckoutRewardOption[];
+  // SC2b — false when loyalty is not in the business's plan (rewards empty).
+  available: boolean;
 }
 
 // --- Checkout: the unified pricing quote (Milestone 7E) -------------
@@ -846,7 +852,9 @@ export type CouponQuoteStatus =
   | "not_applicable"
   | "minimum_not_met"
   | "usage_limit_reached"
-  | "sign_in_required";
+  | "sign_in_required"
+  // SC2b — the business's plan does not include promotions.
+  | "not_available";
 
 export interface CheckoutQuoteRegularDiscount {
   // COUPON when it came from a customer-entered code; AUTOMATIC when it is
@@ -910,6 +918,11 @@ export interface CheckoutQuoteResponse {
   // total - (giftCard?.appliedMinorUnits ?? 0) = what the customer would pay
   // by external payment. Equals `total` when no gift card applies.
   amountDueAfterGiftCardMinorUnits: number;
+  // SC2b — whether this business currently offers loyalty rewards and
+  // promotions/coupons. Gift-card redemption is always available (existing
+  // cards are stored value the business owes).
+  loyaltyAvailable: boolean;
+  promotionsAvailable: boolean;
 }
 
 // --- Admin: HQ loyalty configuration (Milestone 7B) ------------------
@@ -2519,6 +2532,40 @@ export function isPermissionEntitled(
 }
 
 export const MODULE_NOT_ENTITLED = "MODULE_NOT_ENTITLED";
+
+// SC2b — customer-facing (storefront) enforcement. The optional modules a
+// customer can meet directly. CRM, operations and marketing have no public
+// surface, so they are never reported to the storefront.
+export const STOREFRONT_FEATURE_KEYS = [
+  "loyalty",
+  "promotions",
+  "giftcards",
+  "careers",
+  "franchising",
+  "cms",
+] as const satisfies readonly OptionalModuleKey[];
+
+export type StorefrontFeatureKey = (typeof STOREFRONT_FEATURE_KEYS)[number];
+
+// A customer action the business's plan does not include: answered 403 with
+// this code, always BEFORE any payment is attempted. A page that only
+// exists for such a module (a job opening, a website-content page) is 404.
+export const FEATURE_NOT_AVAILABLE = "FEATURE_NOT_AVAILABLE";
+
+export interface FeatureNotAvailableError {
+  statusCode: 403;
+  error: "Forbidden";
+  code: typeof FEATURE_NOT_AVAILABLE;
+  feature: StorefrontFeatureKey;
+  message: string;
+}
+
+// GET /api/v1/storefront/features — no auth. Availability only, for the
+// storefront's own (server-resolved) business: never the plan's name,
+// prices or any other business's data.
+export interface StorefrontFeaturesResponse {
+  features: Record<StorefrontFeatureKey, boolean>;
+}
 
 // What the business admin knows about its own plan (GET /internal/me).
 export interface InternalEntitlementsSummary {

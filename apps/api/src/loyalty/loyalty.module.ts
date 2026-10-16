@@ -3,6 +3,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { AuditModule } from '../audit/audit.module';
 import { CustomersModule } from '../customers/customers.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { LoyaltyService } from './application/loyalty.service';
 import { LoyaltyAdminService } from './application/loyalty-admin.service';
 import { LoyaltySettingsService } from './application/loyalty-settings.service';
@@ -34,7 +35,13 @@ import { AdminLoyaltyController } from './api/admin-loyalty.controller';
 @Module({
   // TenancyModule (Milestone S0D-2B-1): the customer loyalty endpoint
   // JIT-resolves the Customer under the request's TenantContext.
-  imports: [PrismaModule, AuditModule, CustomersModule, TenancyModule],
+  imports: [
+    PrismaModule,
+    AuditModule,
+    CustomersModule,
+    TenancyModule,
+    SubscriptionsModule,
+  ],
   controllers: [CustomerLoyaltyController, AdminLoyaltyController],
   providers: [
     LoyaltyService,

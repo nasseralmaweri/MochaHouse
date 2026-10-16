@@ -399,6 +399,7 @@ export interface CustomerLoyaltyReward {
 export interface CustomerLoyaltySummary {
     balance: number;
     rewards: CustomerLoyaltyReward[];
+    available: boolean;
 }
 export interface CheckoutRewardEligibilityRequest {
     locationId: string;
@@ -417,6 +418,7 @@ export interface CheckoutRewardOption {
 export interface CheckoutRewardEligibilityResponse {
     balance: number;
     rewards: CheckoutRewardOption[];
+    available: boolean;
 }
 export interface CheckoutQuoteRequest {
     locationId: string;
@@ -425,7 +427,7 @@ export interface CheckoutQuoteRequest {
     loyaltyRewardId?: string | null;
     giftCardCode?: string | null;
 }
-export type CouponQuoteStatus = "applied" | "invalid" | "inactive" | "not_started" | "expired" | "wrong_location" | "not_applicable" | "minimum_not_met" | "usage_limit_reached" | "sign_in_required";
+export type CouponQuoteStatus = "applied" | "invalid" | "inactive" | "not_started" | "expired" | "wrong_location" | "not_applicable" | "minimum_not_met" | "usage_limit_reached" | "sign_in_required" | "not_available";
 export interface CheckoutQuoteRegularDiscount {
     source: PromotionKind;
     name: string;
@@ -453,6 +455,8 @@ export interface CheckoutQuoteResponse {
     giftCardMessage: string | null;
     giftCard: CheckoutQuoteGiftCard | null;
     amountDueAfterGiftCardMinorUnits: number;
+    loyaltyAvailable: boolean;
+    promotionsAvailable: boolean;
 }
 export interface LoyaltySettings {
     earningRatePerDollar: number;
@@ -1150,6 +1154,19 @@ export declare const PERMISSION_MODULE: Readonly<Record<InternalPermissionKey, S
 export declare const LIFECYCLE_RETAINED_PERMISSIONS: readonly InternalPermissionKey[];
 export declare function isPermissionEntitled(key: InternalPermissionKey, modules: ReadonlySet<SubscriptionModuleKey>): boolean;
 export declare const MODULE_NOT_ENTITLED = "MODULE_NOT_ENTITLED";
+export declare const STOREFRONT_FEATURE_KEYS: readonly ["loyalty", "promotions", "giftcards", "careers", "franchising", "cms"];
+export type StorefrontFeatureKey = (typeof STOREFRONT_FEATURE_KEYS)[number];
+export declare const FEATURE_NOT_AVAILABLE = "FEATURE_NOT_AVAILABLE";
+export interface FeatureNotAvailableError {
+    statusCode: 403;
+    error: "Forbidden";
+    code: typeof FEATURE_NOT_AVAILABLE;
+    feature: StorefrontFeatureKey;
+    message: string;
+}
+export interface StorefrontFeaturesResponse {
+    features: Record<StorefrontFeatureKey, boolean>;
+}
 export interface InternalEntitlementsSummary {
     modules: SubscriptionModuleKey[];
     planName: string | null;
