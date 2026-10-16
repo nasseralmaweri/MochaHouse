@@ -21,6 +21,7 @@ describe('loadRateLimitConfig', () => {
       'platform-sign-in',
       'platform-mfa',
       'platform-provisioning',
+      'platform-lifecycle',
       'account-recovery',
       'account-verification',
     ];

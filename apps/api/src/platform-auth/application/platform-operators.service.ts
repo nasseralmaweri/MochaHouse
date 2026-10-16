@@ -27,6 +27,10 @@ export const PLATFORM_AUDIT_ACTIONS = {
   sessionEnded: 'platform.session.ended',
   // SC1d — a business created by a platform operator (target: the tenant).
   tenantProvisioned: 'platform.tenant.provisioned',
+  // SC1e — business lifecycle changes (target: the tenant).
+  tenantSuspended: 'platform.tenant.suspended',
+  tenantReactivated: 'platform.tenant.reactivated',
+  tenantOwnerEmailCorrected: 'platform.tenant.owner_email_corrected',
 } as const;
 
 @Injectable()

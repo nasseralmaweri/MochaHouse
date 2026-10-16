@@ -73,6 +73,16 @@ export function normaliseOwnerEmail(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
+// SC1e — the one owner-email rule, shared by provisioning and the owner
+// email correction: trimmed, lowercased, a plain address, at most 254.
+export function parseOwnerEmail(raw: unknown): string {
+  const email = normaliseOwnerEmail(text(raw, 'Owner email'));
+  if (email.length > EMAIL_MAX || !EMAIL_PATTERN.test(email)) {
+    throw new TenantProvisionRequestError('Owner email is not valid.');
+  }
+  return email;
+}
+
 export function parseProvisionRequest(
   body: unknown,
 ): NormalisedProvisionRequest {
@@ -106,10 +116,7 @@ export function parseProvisionRequest(
     throw new TenantProvisionRequestError('That slug is reserved.');
   }
 
-  const ownerEmail = normaliseOwnerEmail(text(input.ownerEmail, 'Owner email'));
-  if (ownerEmail.length > EMAIL_MAX || !EMAIL_PATTERN.test(ownerEmail)) {
-    throw new TenantProvisionRequestError('Owner email is not valid.');
-  }
+  const ownerEmail = parseOwnerEmail(input.ownerEmail);
 
   let ownerDisplayName: string | null = null;
   if (input.ownerDisplayName !== undefined && input.ownerDisplayName !== null) {

@@ -8,6 +8,7 @@ import { PlatformAuthController } from '../platform-auth/api/platform-auth.contr
 import { RATE_LIMIT_POLICY_KEY } from './rate-limit.decorator';
 import { RateLimitGuard } from './rate-limit.guard';
 import { PlatformTenantsController } from '../platform-tenants/api/platform-tenants.controller';
+import { PlatformTenantLifecycleController } from '../platform-tenants/api/platform-tenant-lifecycle.controller';
 import type { PolicyName } from './rate-limit.config';
 
 // The list of public routes protected by S3a. If a route here loses its
@@ -103,6 +104,22 @@ const PROTECTED: ReadonlyArray<{
     controller: PlatformTenantsController,
     method: 'provision',
     policy: 'platform-provisioning',
+  },
+  // SC1e — business lifecycle changes.
+  {
+    controller: PlatformTenantLifecycleController,
+    method: 'suspend',
+    policy: 'platform-lifecycle',
+  },
+  {
+    controller: PlatformTenantLifecycleController,
+    method: 'reactivate',
+    policy: 'platform-lifecycle',
+  },
+  {
+    controller: PlatformTenantLifecycleController,
+    method: 'correctOwnerEmail',
+    policy: 'platform-lifecycle',
   },
 ];
 

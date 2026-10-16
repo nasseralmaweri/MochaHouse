@@ -9,11 +9,11 @@ import { MODEL_TENANCY } from '@mocha-house/database';
 
 const SRC = join(__dirname, '..');
 const PLATFORM_DIRS = ['platform-auth', 'platform-tenants'];
-const ALLOWED_WRITER = join(
-  'platform-tenants',
-  'application',
-  'tenant-provisioning.service.ts',
-);
+// SC1e — plus the lifecycle service (owner email correction only).
+const ALLOWED_WRITERS = [
+  join('platform-tenants', 'application', 'tenant-lifecycle.service.ts'),
+  join('platform-tenants', 'application', 'tenant-provisioning.service.ts'),
+];
 const WRITES =
   '(create|createMany|createManyAndReturn|update|updateMany|upsert|delete|deleteMany)';
 
@@ -43,13 +43,13 @@ describe('SC1d platform write boundary', () => {
     );
   });
 
-  it('only the provisioning service writes tenant-owned rows', () => {
+  it('only the provisioning and lifecycle services write tenant-owned rows', () => {
     const writers = files
       .filter((file) => {
         const source = readFileSync(file, 'utf8');
         return writeOf.test(source) || rawWrite.test(source);
       })
       .map((file) => relative(SRC, file));
-    expect(writers).toEqual([ALLOWED_WRITER]);
+    expect(writers.sort()).toEqual([...ALLOWED_WRITERS].sort());
   });
 });

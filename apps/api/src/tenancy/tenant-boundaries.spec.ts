@@ -40,6 +40,13 @@ describe('Tenant foundation boundaries', () => {
     expect(applicationSourceFiles().length).toBeGreaterThan(100);
   });
 
+  // SC1e review — the ONE approved exception: the platform lifecycle service
+  // names Tenant #1 only to REFUSE suspending it from the console (owner
+  // decision L2). That is an explicit protection, never a default tenant.
+  const APPROVED_TENANT_ONE_REFERENCES = [
+    'apps/api/src/platform-tenants/application/tenant-lifecycle.service.ts',
+  ];
+
   it('no application source names Tenant #1 — there is no default tenant', () => {
     expect(
       filesMatching(
@@ -47,7 +54,21 @@ describe('Tenant foundation boundaries', () => {
           `TENANT_1_MOCHA_HOUSE|${TENANT_1_MOCHA_HOUSE_ID}|ensureTenantOne`,
         ),
       ),
-    ).toEqual([]);
+    ).toEqual(APPROVED_TENANT_ONE_REFERENCES);
+  });
+
+  it('SC1e: the lifecycle service uses Tenant #1 only to refuse suspending it', () => {
+    const source = readFileSync(
+      join(repoRoot, APPROVED_TENANT_ONE_REFERENCES[0]),
+      'utf8',
+    );
+    const uses = source.match(/TENANT_1_MOCHA_HOUSE_ID/g) ?? [];
+    // The import, the protected flag in the read model, and the suspend
+    // refusal — nothing else.
+    expect(uses).toHaveLength(3);
+    expect(source).toMatch(
+      /if \(tenant\.id === TENANT_1_MOCHA_HOUSE_ID\) \{\s*throw conflict\(\s*PLATFORM_TENANT_PROTECTED/,
+    );
   });
 
   it('only the single-tenant resolvers read SINGLE_TENANT_ID', () => {

@@ -17,6 +17,11 @@ export const PLATFORM_DEV_PROVIDER = 'platform-dev';
 export interface PlatformIdentity {
   provider: typeof PLATFORM_COGNITO_PROVIDER | typeof PLATFORM_DEV_PROVIDER;
   subject: string;
+  // SC1e — when the operator signed in (with MFA) for this token, in epoch
+  // seconds: Cognito's auth_time (else iat; the platform issues no refresh
+  // tokens, so an ID token is always minted at sign-in). null when the token
+  // does not say — a recent-sign-in check then fails closed.
+  authenticatedAt: number | null;
 }
 
 // Attached by PlatformAuthGuard, and only by it. `platformOperator` is the

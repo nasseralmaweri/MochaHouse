@@ -10,8 +10,10 @@ import {
   RegistryStatePanel,
   TenantStatusBadge,
 } from "@/components/platform/TenantRegistry";
+import { TenantLifecyclePanel } from "@/components/platform/TenantLifecyclePanel";
 import {
   getPlatformTenant,
+  getPlatformTenantLifecycle,
   listPlatformTenantLocations,
 } from "@/lib/platform/tenants-api";
 import {
@@ -39,9 +41,11 @@ function BackLink() {
   );
 }
 
-// SC1c — one business from the read-only tenant registry: its registry
-// record, status, and location summary. No customers, orders, payments or
-// staff are read or shown, and nothing here changes the business.
+// SC1c — one business from the tenant registry: its registry record,
+// status, and location summary. No customers, orders, payments or staff
+// records are read or shown. SC1e — plus its lifecycle (status changes and
+// the first owner, operator-only), changed only through the panel's
+// server actions.
 export default async function PlatformTenantPage({
   params,
   searchParams,
@@ -62,9 +66,10 @@ export default async function PlatformTenantPage({
     );
   }
 
-  const [detail, locations] = await Promise.all([
+  const [detail, locations, lifecycle] = await Promise.all([
     getPlatformTenant(tenantId),
     listPlatformTenantLocations(tenantId, locationPage),
+    getPlatformTenantLifecycle(tenantId),
   ]);
   if (detail.state !== "ok") {
     return (
@@ -93,7 +98,11 @@ export default async function PlatformTenantPage({
         <TenantStatusBadge status={tenant.status} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div
+        className={
+          lifecycle.state === "ok" ? "grid gap-4" : "grid gap-4 lg:grid-cols-2"
+        }
+      >
         <PlatformCard title="Business">
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
             <dt className="text-text-secondary">Name</dt>
@@ -111,23 +120,44 @@ export default async function PlatformTenantPage({
           </dl>
         </PlatformCard>
 
-        <PlatformCard title="Status">
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-            <dt className="text-text-secondary">Status</dt>
-            <dd>
-              <TenantStatusBadge status={tenant.status} />
-            </dd>
-            {tenant.suspensionReason ? (
-              <>
-                <dt className="text-text-secondary">Suspension reason</dt>
-                <dd className="text-text-primary">
-                  {SUSPENSION_REASON_LABELS[tenant.suspensionReason]}
-                </dd>
-              </>
-            ) : null}
-          </dl>
-        </PlatformCard>
+        {lifecycle.state !== "ok" ? (
+          // SC1e — the lifecycle could not be read: status only, no actions.
+          <PlatformCard title="Business status">
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+              <dt className="text-text-secondary">Status</dt>
+              <dd>
+                <TenantStatusBadge status={tenant.status} />
+              </dd>
+              {tenant.suspensionReason ? (
+                <>
+                  <dt className="text-text-secondary">Suspension reason</dt>
+                  <dd className="text-text-primary">
+                    {SUSPENSION_REASON_LABELS[tenant.suspensionReason]}
+                  </dd>
+                </>
+              ) : null}
+            </dl>
+            <p className="text-sm text-text-secondary">
+              Status changes are unavailable right now.{" "}
+              <Link
+                href={`/platform/tenants/${tenant.id}`}
+                className="font-medium text-text-primary underline underline-offset-4"
+              >
+                Reload
+              </Link>
+            </p>
+          </PlatformCard>
+        ) : null}
       </div>
+
+      {lifecycle.state === "ok" ? (
+        <section aria-labelledby="tenant-lifecycle" className="flex flex-col gap-4">
+          <h2 id="tenant-lifecycle" className="text-lg font-semibold text-text-primary">
+            Lifecycle
+          </h2>
+          <TenantLifecyclePanel lifecycle={lifecycle.data} slug={tenant.slug} />
+        </section>
+      ) : null}
 
       <section aria-labelledby="tenant-locations" className="flex flex-col gap-4">
         <h2
