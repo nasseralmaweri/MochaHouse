@@ -34,7 +34,7 @@ export const PLATFORM_NAV_ITEMS: readonly PlatformNavItem[] = [
   {
     key: "plans",
     label: "Plans",
-    href: null,
+    href: "/platform/plans",
     description: "Plans, modules and entitlements.",
   },
   {

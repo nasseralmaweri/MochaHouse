@@ -29,6 +29,7 @@ const EMPTY: ProvisionFormState = {
     ownerEmail: "",
     ownerEmailConfirm: "",
     ownerDisplayName: "",
+    planVersionId: "",
   },
   errors: {},
   message: null,
@@ -41,9 +42,17 @@ const FIELD_ORDER: ProvisionField[] = [
   "ownerEmail",
   "ownerEmailConfirm",
   "ownerDisplayName",
+  "planVersionId",
 ];
 
-export function ProvisionTenantForm({ operationKey }: { operationKey: string }) {
+export function ProvisionTenantForm({
+  operationKey,
+  plans,
+}: {
+  operationKey: string;
+  // SC2a — published plan versions only.
+  plans: ReadonlyArray<{ id: string; label: string }>;
+}) {
   const [state, formAction, pending] = useActionState(
     provisionTenantAction,
     EMPTY,
@@ -63,6 +72,7 @@ export function ProvisionTenantForm({ operationKey }: { operationKey: string }) 
   const [ownerDisplayName, setOwnerDisplayName] = useState(
     state.values.ownerDisplayName,
   );
+  const [planVersionId, setPlanVersionId] = useState(state.values.planVersionId);
   const successHeading = useRef<HTMLHeadingElement>(null);
 
   // After a failed attempt: focus the first field in error (or the message).
@@ -295,6 +305,37 @@ export function ProvisionTenantForm({ operationKey }: { operationKey: string }) 
             className={platformInputClassName}
           />
           {fieldError("ownerDisplayName")}
+        </div>
+      </fieldset>
+
+      {/* SC2a — every new business starts on a published plan. */}
+      <fieldset className="flex flex-col gap-4">
+        <legend className="mb-1 text-base font-semibold text-text-primary">Plan</legend>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={fieldId("planVersionId")} className="text-sm font-medium text-text-primary">
+            Starting plan
+          </label>
+          <select
+            id={fieldId("planVersionId")}
+            name="planVersionId"
+            required
+            value={planVersionId}
+            onChange={(event) => setPlanVersionId(event.target.value)}
+            aria-invalid={state.errors.planVersionId ? true : undefined}
+            aria-describedby={describe("planVersionId", `${id}-plan-hint`)}
+            className={platformInputClassName}
+          >
+            <option value="">Choose a published plan…</option>
+            {plans.map((plan) => (
+              <option key={plan.id} value={plan.id}>
+                {plan.label}
+              </option>
+            ))}
+          </select>
+          <p id={`${id}-plan-hint`} className="text-xs text-text-secondary">
+            Decides which modules the business can use. Core is always included. No billing yet.
+          </p>
+          {fieldError("planVersionId")}
         </div>
       </fieldset>
 

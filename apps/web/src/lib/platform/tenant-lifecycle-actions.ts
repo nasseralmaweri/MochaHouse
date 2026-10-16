@@ -104,6 +104,7 @@ export async function correctOwnerEmailAction(
     ownerEmail: email,
     ownerEmailConfirm: emailConfirm,
     ownerDisplayName: "",
+    planVersionId: "00000000-0000-0000-0000-000000000000",
   });
   const fieldError = errors.ownerEmail ?? errors.ownerEmailConfirm ?? null;
   if (fieldError) return { outcome: null, fieldError };

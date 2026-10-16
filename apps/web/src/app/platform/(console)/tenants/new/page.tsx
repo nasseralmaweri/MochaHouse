@@ -4,6 +4,9 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { PlatformPageHeader } from "@/components/platform/PlatformCards";
 import { ProvisionTenantForm } from "@/components/platform/ProvisionTenantForm";
+import { RegistryStatePanel } from "@/components/platform/TenantRegistry";
+import { listPlatformPlans } from "@/lib/platform/tenants-api";
+import { assignableVersions } from "@/lib/platform/subscriptions";
 
 export const metadata: Metadata = {
   title: "Add a business · CENTERIVO Platform Console",
@@ -16,6 +19,9 @@ export const metadata: Metadata = {
 export default async function PlatformAddTenantPage() {
   await connection();
   const operationKey = randomUUID();
+  // SC2a — a new business must start on a published plan.
+  const plans = await listPlatformPlans();
+  const versions = plans.state === "ok" ? assignableVersions(plans.data.plans) : [];
 
   return (
     <div className="flex max-w-2xl flex-col gap-6">
@@ -27,9 +33,17 @@ export default async function PlatformAddTenantPage() {
       </Link>
       <PlatformPageHeader
         title="Add a business"
-        description="Creates the business with its built-in staff roles and its first owner. It starts with no locations, ordering, payments, storefront or subscription."
+        description="Creates the business with its built-in staff roles, its first owner and its plan. It starts with no locations, ordering, payments or storefront."
       />
-      <ProvisionTenantForm key={operationKey} operationKey={operationKey} />
+      {plans.state !== "ok" ? (
+        <RegistryStatePanel state={plans.state} retryHref="/platform/tenants/new" />
+      ) : versions.length === 0 ? (
+        <p role="status" className="rounded-2xl border border-border-default bg-surface-card p-5 text-sm text-text-primary">
+          No published plan yet. <Link href="/platform/plans" className="font-medium underline underline-offset-4">Publish a plan</Link> before adding a business.
+        </p>
+      ) : (
+        <ProvisionTenantForm key={operationKey} operationKey={operationKey} plans={versions} />
+      )}
     </div>
   );
 }

@@ -43,6 +43,7 @@ export async function provisionTenantAction(
     ownerEmail: field(form, "ownerEmail"),
     ownerEmailConfirm: field(form, "ownerEmailConfirm"),
     ownerDisplayName: field(form, "ownerDisplayName"),
+    planVersionId: field(form, "planVersionId"),
   };
   const operationKey = form.get("operationKey");
   const fail = (
@@ -77,6 +78,7 @@ export async function provisionTenantAction(
         slug: values.slug,
         ownerEmail: normaliseEmail(values.ownerEmail),
         ownerDisplayName: values.ownerDisplayName.trim() || null,
+        planVersionId: values.planVersionId,
       }),
       cache: "no-store",
     });

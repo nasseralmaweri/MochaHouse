@@ -18,6 +18,7 @@ const valid: ProvisionValues = {
   ownerEmail: " Owner@Example.com ",
   ownerEmailConfirm: "owner@example.COM",
   ownerDisplayName: "",
+  planVersionId: "01a0db02-f800-7000-8000-00000000f002",
 };
 
 const created = {
@@ -46,12 +47,14 @@ describe("add a business: validation", () => {
         ownerEmail: "nope",
         ownerEmailConfirm: "",
         ownerDisplayName: "x".repeat(121),
+        planVersionId: "",
       }),
     ).toEqual({
       name: expect.any(String),
       slug: expect.any(String),
       ownerEmail: expect.any(String),
       ownerDisplayName: expect.any(String),
+      planVersionId: "Choose a plan for the business.",
     });
     expect(
       validateProvision({ ...valid, ownerEmailConfirm: "other@example.com" }),

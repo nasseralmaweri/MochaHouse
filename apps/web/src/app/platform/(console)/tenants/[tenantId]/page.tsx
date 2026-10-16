@@ -11,9 +11,13 @@ import {
   TenantStatusBadge,
 } from "@/components/platform/TenantRegistry";
 import { TenantLifecyclePanel } from "@/components/platform/TenantLifecyclePanel";
+import { SubscriptionPanel } from "@/components/platform/SubscriptionPanel";
+import { assignableVersions } from "@/lib/platform/subscriptions";
 import {
   getPlatformTenant,
   getPlatformTenantLifecycle,
+  getPlatformTenantSubscription,
+  listPlatformPlans,
   listPlatformTenantLocations,
 } from "@/lib/platform/tenants-api";
 import {
@@ -66,10 +70,12 @@ export default async function PlatformTenantPage({
     );
   }
 
-  const [detail, locations, lifecycle] = await Promise.all([
+  const [detail, locations, lifecycle, subscription, plans] = await Promise.all([
     getPlatformTenant(tenantId),
     listPlatformTenantLocations(tenantId, locationPage),
     getPlatformTenantLifecycle(tenantId),
+    getPlatformTenantSubscription(tenantId),
+    listPlatformPlans(),
   ]);
   if (detail.state !== "ok") {
     return (
@@ -158,6 +164,24 @@ export default async function PlatformTenantPage({
           <TenantLifecyclePanel lifecycle={lifecycle.data} slug={tenant.slug} />
         </section>
       ) : null}
+
+      {/* SC2a — the business's plan, add-ons and modules. */}
+      <section aria-labelledby="tenant-subscription" className="flex flex-col gap-4">
+        <h2 id="tenant-subscription" className="text-lg font-semibold text-text-primary">
+          Subscription
+        </h2>
+        {subscription.state === "ok" && plans.state === "ok" ? (
+          <SubscriptionPanel
+            data={subscription.data}
+            versions={assignableVersions(plans.data.plans)}
+          />
+        ) : (
+          <RegistryStatePanel
+            state={subscription.state !== "ok" ? subscription.state : plans.state === "ok" ? "unavailable" : plans.state}
+            retryHref={`/platform/tenants/${tenant.id}`}
+          />
+        )}
+      </section>
 
       <section aria-labelledby="tenant-locations" className="flex flex-col gap-4">
         <h2

@@ -1,5 +1,7 @@
 import "server-only";
 import type {
+  PlatformPlanListResponse,
+  PlatformTenantSubscriptionResponse,
   PlatformTenantDetailResponse,
   PlatformTenantLifecycleResponse,
   PlatformTenantListResponse,
@@ -70,6 +72,18 @@ export function getPlatformTenantLifecycle(
   tenantId: string,
 ): Promise<RegistryResult<PlatformTenantLifecycleResponse>> {
   return readRegistry(`/tenants/${encodeURIComponent(tenantId)}/lifecycle`);
+}
+
+// SC2a — plans (with versions and subscriber counts), and one business's
+// subscription (plan, add-ons, effective modules, history).
+export function listPlatformPlans(): Promise<RegistryResult<PlatformPlanListResponse>> {
+  return readRegistry("/plans");
+}
+
+export function getPlatformTenantSubscription(
+  tenantId: string,
+): Promise<RegistryResult<PlatformTenantSubscriptionResponse>> {
+  return readRegistry(`/tenants/${encodeURIComponent(tenantId)}/subscription`);
 }
 
 export function listPlatformTenantLocations(
