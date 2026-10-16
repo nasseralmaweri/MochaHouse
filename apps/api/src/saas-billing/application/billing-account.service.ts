@@ -2,6 +2,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -10,6 +11,9 @@ import {
   BILLING_CHECKOUT_IN_PROGRESS,
   BILLING_CHECKOUT_PROCESSING,
   BILLING_NOT_BILLED,
+  BILLING_NOTHING_TO_PAY,
+  BILLING_RECOVERY_UNDER_REVIEW,
+  BILLING_SUBSCRIPTION_NOT_ENDED,
   BILLING_TRIAL_PENDING_ELSEWHERE,
   BILLING_UNAVAILABLE,
   PLATFORM_ALREADY_BILLED,
@@ -23,6 +27,9 @@ import {
 } from '@mocha-house/contracts';
 import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { InternalAuditService } from '../../audit/internal-audit.service';
+import { UNLINKED_REPLACEMENT_CASE } from './billing-lifecycle.service';
+import { portalConfigurationRefusal } from '../provider/portal-configuration';
 import { entitledToPlanModules } from '../domain/billing-lifecycle';
 import { billingEnforcementEnabled } from './billing-enforcement.config';
 import { runSerializable } from '../../prisma/serializable-transaction';
@@ -33,6 +40,7 @@ import {
   SAAS_BILLING_PROVIDER,
   SaasBillingProviderError,
   type ProviderCheckoutSession,
+  type ProviderPayableInvoice,
   type SaasBillingProvider,
 } from '../provider/saas-billing-provider';
 import {
@@ -79,6 +87,41 @@ function trialPendingElsewhere(): ConflictException {
     BILLING_TRIAL_PENDING_ELSEWHERE,
     "A free trial is being set up for another of this owner's businesses. Finish or leave that payment setup, then try again.",
   );
+}
+
+function nothingToPay(): ConflictException {
+  return conflict(
+    BILLING_NOTHING_TO_PAY,
+    "There's no outstanding invoice to pay right now.",
+  );
+}
+
+// SC3c-2 — only the billing provider's OWN hosted pages are ever handed to
+// the browser (invoice payment / Customer Portal). The fake provider's only
+// for the fake.
+export function isProviderPage(
+  value: string,
+  provider: string,
+  kind: 'invoice' | 'portal',
+): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:' || url.username || url.password) return false;
+  const host =
+    provider === 'stripe'
+      ? kind === 'invoice'
+        ? 'invoice.stripe.com'
+        : 'billing.stripe.com'
+      : provider === 'fake'
+        ? kind === 'invoice'
+          ? 'invoice.fake.test'
+          : 'billing.fake.test'
+        : null;
+  return host !== null && url.hostname === host;
 }
 
 function unavailable(): ServiceUnavailableException {
@@ -140,11 +183,167 @@ export function checkoutReturnUrl(
 
 @Injectable()
 export class BillingAccountService {
+  private readonly logger = new Logger(BillingAccountService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     @Inject(SAAS_BILLING_PROVIDER)
     private readonly provider: SaasBillingProvider,
+    private readonly audit: InternalAuditService,
   ) {}
+
+  // --- SC3c-2: recovery ---------------------------------------------------------
+
+  // Which recovery actions the business's billing allows now (the caller
+  // adds the billing.manage check).
+  recoveryActions(billing: BusinessBillingSummary): {
+    restart: boolean;
+    payInvoice: boolean;
+    portal: boolean;
+  } {
+    const linked =
+      billing.state !== 'COMPLIMENTARY' && billing.state !== 'AWAITING_SETUP';
+    return {
+      restart:
+        billing.state === 'TRIAL_EXPIRED' || billing.state === 'CANCELED',
+      payInvoice: billing.state === 'PAST_DUE' || billing.state === 'UNPAID',
+      // An ended subscription is restarted, not edited.
+      portal:
+        linked &&
+        billing.state !== 'TRIAL_EXPIRED' &&
+        billing.state !== 'CANCELED' &&
+        this.provider.available &&
+        this.provider.portalConfigurationId !== null &&
+        this.provider.expectedAccountId !== null,
+    };
+  }
+
+  // The provider's hosted page for the business's OLDEST outstanding
+  // invoice. Found from OUR stored subscription and customer and verified
+  // (subscription, customer, test mode, open, something due, the provider's
+  // own page) — no client value is read.
+  async payInvoice(
+    tenantId: string,
+    actorInternalUserId: string,
+  ): Promise<{ url: string }> {
+    if (!this.provider.available) throw unavailable();
+    const subscription = await this.linkedSubscription(tenantId);
+    if (
+      subscription.status !== 'PAST_DUE' &&
+      subscription.status !== 'UNPAID'
+    ) {
+      throw nothingToPay();
+    }
+    let invoices: ProviderPayableInvoice[];
+    try {
+      invoices = await this.provider.listOpenInvoices(
+        subscription.externalSubscriptionId!,
+      );
+    } catch (error) {
+      if (error instanceof SaasBillingProviderError) throw unavailable();
+      throw error;
+    }
+    const payable = invoices.find(
+      (invoice) =>
+        invoice.status === 'open' &&
+        !invoice.livemode &&
+        invoice.externalSubscriptionId ===
+          subscription.externalSubscriptionId &&
+        invoice.externalCustomerId === subscription.externalCustomerId &&
+        invoice.amountDueMinorUnits > 0 &&
+        invoice.hostedInvoiceUrl !== null &&
+        isProviderPage(invoice.hostedInvoiceUrl, this.provider.name, 'invoice'),
+    );
+    if (!payable) throw nothingToPay();
+    await this.prisma.$transaction((tx) =>
+      this.audit.recordBillingRecoveryStarted(tx, {
+        actorInternalUserId,
+        subscriptionId: subscription.id,
+        kind: 'INVOICE_PAYMENT',
+        reference: payable.externalInvoiceId,
+      }),
+    );
+    return { url: payable.hostedInvoiceUrl! };
+  }
+
+  // A Customer Portal session for the business's OWN provider customer,
+  // under the operator-configured configuration — re-read and checked
+  // first (payment methods and invoices only; never subscription changes).
+  async openPortal(
+    tenantId: string,
+    actorInternalUserId: string,
+  ): Promise<{ url: string }> {
+    const configurationId = this.provider.portalConfigurationId;
+    const accountId = this.provider.expectedAccountId;
+    if (!this.provider.available || !configurationId || !accountId) {
+      throw unavailable();
+    }
+    const returnUrl = checkoutReturnUrl();
+    if (!returnUrl) throw unavailable();
+    const subscription = await this.linkedSubscription(tenantId);
+    let url: string;
+    try {
+      const config =
+        await this.provider.retrievePortalConfiguration(configurationId);
+      const refusal = portalConfigurationRefusal(config, {
+        configurationId,
+        accountId,
+      });
+      if (refusal !== null) {
+        this.logger.warn(`Customer Portal refused: configuration ${refusal}.`);
+        throw unavailable();
+      }
+      const back = new URL(returnUrl);
+      back.searchParams.set('portal', 'returned');
+      const session = await this.provider.createPortalSession({
+        externalCustomerId: subscription.externalCustomerId!,
+        configurationId,
+        returnUrl: back.toString(),
+      });
+      if (
+        session.livemode ||
+        !isProviderPage(session.url, this.provider.name, 'portal')
+      ) {
+        throw unavailable();
+      }
+      url = session.url;
+    } catch (error) {
+      if (error instanceof SaasBillingProviderError) throw unavailable();
+      throw error;
+    }
+    await this.prisma.$transaction((tx) =>
+      this.audit.recordBillingRecoveryStarted(tx, {
+        actorInternalUserId,
+        subscriptionId: subscription.id,
+        kind: 'PAYMENT_METHOD_PORTAL',
+        reference: null,
+      }),
+    );
+    return { url };
+  }
+
+  // The business's BILLED subscription, linked to its provider customer and
+  // subscription (recovery needs both).
+  private async linkedSubscription(tenantId: string) {
+    const subscription = await this.prisma.tenantSubscription.findUnique({
+      where: { subscriberTenantId: tenantId },
+    });
+    if (
+      !subscription ||
+      subscription.billingMode !== 'BILLED' ||
+      subscription.externalSubscriptionId === null ||
+      subscription.externalCustomerId === null
+    ) {
+      throw conflict(
+        BILLING_NOT_BILLED,
+        'This business has no billing to recover.',
+      );
+    }
+    if (subscription.billingProvider !== this.provider.name) {
+      throw unavailable();
+    }
+    return subscription;
+  }
 
   // --- reads ------------------------------------------------------------------
 
@@ -303,6 +502,7 @@ export class BillingAccountService {
   async openCheckout(
     tenantId: string,
     ownerEmail: string,
+    actorInternalUserId: string | null = null,
   ): Promise<{ url: string }> {
     if (!this.provider.available) throw unavailable();
     const returnUrl = checkoutReturnUrl();
@@ -318,7 +518,15 @@ export class BillingAccountService {
         'This business has no billing to set up.',
       );
     }
-    if (subscription.externalSubscriptionId !== null) {
+    // SC3c-2 — a business whose subscription ENDED (expired trial or
+    // canceled) restarts it with a new Checkout; anything else that is
+    // already linked is set up.
+    const replaces = subscription.externalSubscriptionId;
+    if (
+      replaces !== null &&
+      subscription.status !== 'TRIAL_EXPIRED' &&
+      subscription.status !== 'CANCELED'
+    ) {
       throw conflict(BILLING_ALREADY_SET_UP, 'Payment is already set up.');
     }
     if (
@@ -333,8 +541,37 @@ export class BillingAccountService {
     const reused = await this.reuseOpenCheckout(subscription.id);
     if (reused) return reused;
 
+    // A restart: the old provider subscription must really have ENDED
+    // (read live), and it is never offered a trial.
+    if (replaces !== null) {
+      let ended: boolean;
+      try {
+        const old = await this.provider.retrieveSubscription(replaces);
+        if (
+          old.livemode ||
+          old.externalCustomerId !== subscription.externalCustomerId
+        ) {
+          throw unavailable();
+        }
+        ended =
+          old.status === 'canceled' || old.status === 'incomplete_expired';
+      } catch (error) {
+        if (error instanceof SaasBillingProviderError) throw unavailable();
+        throw error;
+      }
+      if (!ended) {
+        throw conflict(
+          BILLING_SUBSCRIPTION_NOT_ENDED,
+          'Your previous subscription has not ended yet. Try again in a moment.',
+        );
+      }
+    }
+
     const externalPriceId = await this.syncPrice(subscription);
-    const trial = await this.offeredTrial(subscription, ownerEmail);
+    const trial =
+      replaces !== null
+        ? { trialDays: 0, requiresPaymentMethod: true, claimKey: null }
+        : await this.offeredTrial(subscription, ownerEmail);
 
     // Our row first: the partial unique index allows ONE open Checkout per
     // subscription, so concurrent requests cannot both create one.
@@ -344,16 +581,45 @@ export class BillingAccountService {
     // provider has verifiably created the trial subscription (webhook).
     let checkoutId: string;
     try {
-      const row = await this.prisma.billingCheckoutSession.create({
-        data: {
-          subscriptionId: subscription.id,
-          planPriceId: subscription.planPrice.id,
-          trialDays: trial.trialDays,
-          requiresPaymentMethod: trial.requiresPaymentMethod,
-          trialClaimKey: trial.claimKey,
-        },
+      checkoutId = await runSerializable(this.prisma, async (tx) => {
+        // SC3c-2 — a restart only while the business still holds the ended
+        // subscription it replaces (a concurrent replacement wins).
+        if (replaces !== null) {
+          const current = await tx.tenantSubscription.findUniqueOrThrow({
+            where: { id: subscription.id },
+            select: { externalSubscriptionId: true, status: true },
+          });
+          if (
+            current.externalSubscriptionId !== replaces ||
+            (current.status !== 'TRIAL_EXPIRED' &&
+              current.status !== 'CANCELED')
+          ) {
+            throw conflict(
+              BILLING_ALREADY_SET_UP,
+              'Payment is already set up.',
+            );
+          }
+        }
+        const row = await tx.billingCheckoutSession.create({
+          data: {
+            subscriptionId: subscription.id,
+            planPriceId: subscription.planPrice!.id,
+            trialDays: trial.trialDays,
+            requiresPaymentMethod: trial.requiresPaymentMethod,
+            trialClaimKey: trial.claimKey,
+            replacesExternalSubscriptionId: replaces,
+          },
+        });
+        if (replaces !== null && actorInternalUserId !== null) {
+          await this.audit.recordBillingRecoveryStarted(tx, {
+            actorInternalUserId,
+            subscriptionId: subscription.id,
+            kind: 'RESTART_CHECKOUT',
+            reference: row.id,
+          });
+        }
+        return row.id;
       });
-      checkoutId = row.id;
     } catch (error) {
       if (isUniqueViolation(error)) {
         if (
@@ -454,6 +720,32 @@ export class BillingAccountService {
       throw error;
     }
     if (session.status === 'open' && session.url) return { url: session.url };
+    // SC3c-2 — a completed restart that could not be linked: reviewed by an
+    // operator first (never a second charge meanwhile). Once the operator
+    // has resolved it, this attempt is closed and a new one may start.
+    if (session.status === 'complete' && open.replacesExternalSubscriptionId) {
+      const review = await this.prisma.billingReconciliationCase.findMany({
+        where: {
+          kind: UNLINKED_REPLACEMENT_CASE,
+          createdAt: { gte: open.createdAt },
+          OR: [
+            { subscriptionId },
+            { billingProviderEvent: { subscriptionId } },
+          ],
+        },
+        select: { status: true },
+      });
+      if (review.some((item) => item.status === 'OPEN')) {
+        throw conflict(
+          BILLING_RECOVERY_UNDER_REVIEW,
+          "Your payment is being reviewed by our team. You won't be charged again.",
+        );
+      }
+      if (review.length > 0) {
+        await this.expire(open.id);
+        return null;
+      }
+    }
     if (session.status === 'complete') {
       // Paid/confirmed at the provider; our webhook will link it.
       throw conflict(

@@ -22,6 +22,8 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   // SC3b — the business's own CENTERIVO subscription billing.
   'GET /api/v1/admin/billing': { scope: 'tenant' },
   'POST /api/v1/admin/billing/checkout': { scope: 'tenant' },
+  'POST /api/v1/admin/billing/recovery/invoice': { scope: 'tenant' },
+  'POST /api/v1/admin/billing/recovery/portal': { scope: 'tenant' },
   'GET /api/v1/admin/approvals/:approvalRequestId': { scope: 'tenant' },
   'GET /api/v1/admin/audit': { scope: 'tenant' },
   'GET /api/v1/admin/careers/applications': { scope: 'tenant' },

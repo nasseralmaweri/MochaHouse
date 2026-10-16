@@ -29,6 +29,7 @@ const CASE_LABELS: Record<string, string> = {
   SUBSCRIPTION_MISMATCH: "Provider subscription does not match our records",
   EVENT_NOT_APPLIED: "A billing event could not be applied",
   EVENT_RETRIES_EXHAUSTED: "A billing event kept failing and was set aside",
+  UNLINKED_REPLACEMENT: "A restart was created at the payment provider but not linked (see the recovery runbook)",
   CHECKOUT_NOT_RECORDED: "A payment page was created but could not be recorded",
   PROVIDER_UNREADABLE: "The payment provider could not be read",
 };

@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import {
   STRIPE_API_VERSION,
+  SUPPORTED_CHECKOUT_PAYMENT_METHOD_TYPES,
   StripeSaasBillingProvider,
 } from './stripe-saas-billing-provider';
 import {
@@ -70,6 +71,8 @@ function harness(routes: Record<string, (sent: Sent) => [number, unknown]>) {
     stripe,
     provider: new StripeSaasBillingProvider(stripe, {
       webhookSecret: WEBHOOK_SECRET,
+      portalConfigurationId: 'bpc_test0000000001',
+      expectedAccountId: 'acct_test000000001',
     }),
   };
 }
@@ -282,6 +285,11 @@ describe('SC3b Stripe adapter (mocked HTTP)', () => {
           cancelUrl: 'https://a.test/c',
         });
         expect(sent[0].body.get('payment_method_collection')).toBe('always');
+        // SC3c-2 — card only (synchronous confirmation), every time.
+        expect(sent[0].body.getAll('payment_method_types[0]')).toEqual([
+          'card',
+        ]);
+        expect(sent[0].body.get('payment_method_types[1]')).toBeNull();
         if (trialDays === 0) {
           expect(
             sent[0].body.get('subscription_data[trial_period_days]'),
@@ -453,6 +461,154 @@ describe('SC3b Stripe adapter (mocked HTTP)', () => {
     await expect(provider.retrieveInvoice('in_missing')).resolves.toBeNull();
   });
 
+  describe('SC3c-2 recovery reads', () => {
+    const invoice = (over: Record<string, unknown>) => ({
+      id: 'in_1',
+      object: 'invoice',
+      status: 'open',
+      livemode: false,
+      customer: 'cus_1',
+      amount_paid: 0,
+      amount_due: 4900,
+      currency: 'usd',
+      created: 1_800_000_000,
+      hosted_invoice_url: 'https://invoice.stripe.com/i/acct_1/test_1',
+      parent: {
+        type: 'subscription_details',
+        subscription_details: { subscription: 'sub_1' },
+      },
+      ...over,
+    });
+
+    it("lists only THIS subscription's open invoices, oldest first, with their hosted pages", async () => {
+      const { provider, sent } = harness({
+        'GET /v1/invoices': () => [
+          200,
+          {
+            object: 'list',
+            has_more: false,
+            data: [
+              invoice({ id: 'in_new', created: 1_800_000_100 }),
+              invoice({ id: 'in_old', created: 1_800_000_000 }),
+              invoice({
+                id: 'in_other',
+                parent: {
+                  type: 'subscription_details',
+                  subscription_details: { subscription: 'sub_other' },
+                },
+              }),
+              // A shape we cannot read: still outstanding, never dropped.
+              invoice({
+                id: 'in_unknown',
+                created: 1_800_000_050,
+                parent: null,
+              }),
+            ],
+          },
+        ],
+      });
+      const open = await provider.listOpenInvoices('sub_1');
+      expect(open.map((i) => i.externalInvoiceId)).toEqual([
+        'in_old',
+        'in_unknown',
+        'in_new',
+      ]);
+      expect(open[1].externalSubscriptionId).toBeNull();
+      expect(open[0]).toMatchObject({
+        status: 'open',
+        amountDueMinorUnits: 4900,
+        hostedInvoiceUrl: 'https://invoice.stripe.com/i/acct_1/test_1',
+      });
+      expect(sent[0].body.get('subscription')).toBe('sub_1');
+      expect(sent[0].body.get('status')).toBe('open');
+    });
+
+    it('a live-mode invoice is refused', async () => {
+      const { provider } = harness({
+        'GET /v1/invoices': () => [
+          200,
+          {
+            object: 'list',
+            has_more: false,
+            data: [invoice({ livemode: true })],
+          },
+        ],
+      });
+      await expect(provider.listOpenInvoices('sub_1')).rejects.toBeInstanceOf(
+        SaasBillingProviderError,
+      );
+    });
+
+    it('reads the portal configuration and the account it belongs to; creates a session for one customer', async () => {
+      const { provider, sent } = harness({
+        'GET /v1/billing_portal/configurations/bpc_test0000000001': () => [
+          200,
+          {
+            id: 'bpc_test0000000001',
+            object: 'billing_portal.configuration',
+            active: true,
+            livemode: false,
+            is_default: false,
+            login_page: { enabled: false, url: null },
+            features: {
+              customer_update: { enabled: false, allowed_updates: [] },
+              invoice_history: { enabled: true },
+              payment_method_update: { enabled: true },
+              subscription_cancel: { enabled: false },
+              subscription_update: { enabled: false },
+              subscription_pause: { enabled: true },
+            },
+          },
+        ],
+        'GET /v1/account': () => [
+          200,
+          { id: 'acct_test000000001', object: 'account' },
+        ],
+        'POST /v1/billing_portal/sessions': () => [
+          200,
+          {
+            id: 'bps_1',
+            object: 'billing_portal.session',
+            livemode: false,
+            url: 'https://billing.stripe.com/p/session/test_1',
+          },
+        ],
+      });
+      expect(provider.portalConfigurationId).toBe('bpc_test0000000001');
+      await expect(
+        provider.retrievePortalConfiguration('bpc_test0000000001'),
+      ).resolves.toEqual({
+        configurationId: 'bpc_test0000000001',
+        accountId: 'acct_test000000001',
+        livemode: false,
+        active: true,
+        paymentMethodUpdate: true,
+        invoiceHistory: true,
+        subscriptionCancel: false,
+        subscriptionUpdate: false,
+        customerUpdate: false,
+        loginPage: false,
+        // Reported (and refused by the check), never ignored.
+        otherEnabledFeatures: ['subscription_pause'],
+      });
+      await expect(
+        provider.createPortalSession({
+          externalCustomerId: 'cus_1',
+          configurationId: 'bpc_test0000000001',
+          returnUrl: 'https://admin.example.test/admin/billing?portal=returned',
+        }),
+      ).resolves.toEqual({
+        url: 'https://billing.stripe.com/p/session/test_1',
+        livemode: false,
+      });
+      const created = sent.find(
+        (r) => r.path === '/v1/billing_portal/sessions',
+      )!;
+      expect(created.body.get('customer')).toBe('cus_1');
+      expect(created.body.get('configuration')).toBe('bpc_test0000000001');
+    });
+  });
+
   describe('payment method the provider will charge (Checkout and customer defaults)', () => {
     const subscription = (over: Record<string, unknown>) => ({
       id: 'sub_pm',
@@ -550,6 +706,14 @@ describe('SC3b Stripe adapter (mocked HTTP)', () => {
         ),
       ).rejects.toBeInstanceOf(SaasBillingProviderError);
     });
+  });
+
+  // SC3c-2 — asynchronous payment methods (bank debits, transfers,
+  // vouchers…) confirm days later and need their own confirmation and
+  // recovery lifecycle. Adding one here must be a deliberate, reviewed
+  // change: this pins the list.
+  it('Checkout offers only synchronously-confirmed payment methods (card)', () => {
+    expect([...SUPPORTED_CHECKOUT_PAYMENT_METHOD_TYPES]).toEqual(['card']);
   });
 
   it('configuration: test keys only, never live keys, never in production', () => {

@@ -149,6 +149,20 @@ describe('SC3c-1 billing enforcement (integration, scratch database)', () => {
         ...state,
       },
     });
+    // SC3c-2 — the provider's live subscription (read when a payment would
+    // restore an unpaid business).
+    fake.subscriptions.set(sub.externalSubscriptionId, {
+      externalSubscriptionId: sub.externalSubscriptionId,
+      externalCustomerId: sub.externalCustomerId,
+      status: 'active',
+      livemode: false,
+      hasPaymentMethod: true,
+      paymentMethodSource: 'SUBSCRIPTION',
+      cancelAtPeriodEnd: false,
+      trialStart: null,
+      trialEnd: null,
+      latestInvoiceId: null,
+    });
     const location = await prisma.location.create({
       data: { tenantId, name: `Shop ${label}`, slug: `shop-${label}-${run}` },
     });
@@ -499,6 +513,14 @@ describe('SC3c-1 billing enforcement (integration, scratch database)', () => {
     ).toMatchObject({ status: 'REJECTED', outcome: 'INVOICE_NOT_PAID' });
     expect((await tenantOf(b)).status).toBe('SUSPENDED');
 
+    // SC3c-2 — that bogus invoice is voided at the provider (an open one
+    // would still be outstanding and keep the business suspended).
+    fake.setInvoice(
+      `inv_unpaid_${run}`,
+      'void',
+      b.sub.externalSubscriptionId,
+      b.sub.externalCustomerId,
+    );
     // The real payment: restored, once.
     fake.setInvoice(
       `inv_grace_${run}`,
@@ -645,7 +667,7 @@ describe('SC3c-1 billing enforcement (integration, scratch database)', () => {
     // Billing is readable; payment recovery is SC3c-2. Everything else: no.
     await asStaff('get', b.key, b.tenantId, '/admin/billing').expect(200);
     for (const [method, path] of [
-      ['post', '/admin/billing/checkout'],
+      ['post', '/admin/loyalty/rewards'],
       ['get', '/admin/locations'],
       ['post', '/admin/gift-cards'],
       ['get', '/admin/loyalty/settings'],

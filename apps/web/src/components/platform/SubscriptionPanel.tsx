@@ -62,6 +62,7 @@ const EVENT_LABELS: Record<PlatformSubscriptionEventType, string> = {
   RECOVERY_EXPIRED: "Trial recovery period ended",
   BILLING_SUSPENDED: "Business suspended for billing",
   BILLING_SUSPENSION_LIFTED: "Billing suspension lifted after payment",
+  SUBSCRIPTION_REPLACED: "Subscription restarted (paid)",
 };
 
 function Chips({ modules }: { modules: readonly SubscriptionModuleKey[] }) {

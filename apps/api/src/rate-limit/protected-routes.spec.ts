@@ -156,11 +156,11 @@ const PROTECTED: ReadonlyArray<{
     method,
     policy: 'platform-lifecycle' as const,
   })),
-  {
+  ...(['checkout', 'payInvoice', 'openPortal'] as const).map((method) => ({
     controller: AdminBillingController,
-    method: 'checkout',
-    policy: 'billing-checkout',
-  },
+    method,
+    policy: 'billing-checkout' as const,
+  })),
   {
     controller: BillingWebhookController,
     method: 'receive',

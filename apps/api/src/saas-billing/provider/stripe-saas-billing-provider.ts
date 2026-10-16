@@ -11,10 +11,12 @@ import {
   type ProviderCheckoutSession,
   type ProviderInvoice,
   type ProviderInvoiceStatus,
+  type ProviderPayableInvoice,
   type ProviderLifecycleEvent,
   type SaasBillingProvider,
   type VerifiedBillingProviderEvent,
 } from './saas-billing-provider';
+import type { ProviderPortalConfiguration } from './portal-configuration';
 
 // SC3b — CENTERIVO SaaS billing through Stripe Billing, TEST MODE ONLY (F4):
 // the configuration refuses live keys (saas-billing-provider-mode.ts), and
@@ -39,8 +41,18 @@ const PROVIDER = 'stripe';
 // Stripe's documented default signature tolerance.
 export const STRIPE_SIGNATURE_TOLERANCE_SECONDS = 300;
 
+// SC3c-2 — Checkout offers ONLY payment methods that confirm synchronously.
+// Asynchronous ones (bank debits, transfers, vouchers…) confirm days later
+// and need their own confirmation and recovery lifecycle — not offered
+// until that is built and tested (a regression test pins this list).
+export const SUPPORTED_CHECKOUT_PAYMENT_METHOD_TYPES = ['card'] as const;
+
 export interface StripeBillingConfig {
   webhookSecret: string;
+  // SC3c-2 — the operator-configured Customer Portal configuration and the
+  // Stripe account it must belong to (both required for the portal).
+  portalConfigurationId?: string | null;
+  expectedAccountId?: string | null;
 }
 
 function productId(planId: string): string {
@@ -100,6 +112,14 @@ function date(seconds: unknown): Date | null {
     : null;
 }
 
+const OPEN_INVOICE_CAP = 500;
+
+function amount(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+    ? value
+    : 0;
+}
+
 function text(value: unknown, max = 255): string | null {
   return typeof value === 'string' && value.length > 0 && value.length <= max
     ? value
@@ -127,6 +147,16 @@ const SUBSCRIPTION_STATUSES: readonly ProviderSubscriptionStatus[] = [
   'incomplete_expired',
   'paused',
 ];
+
+// The portal features we read explicitly; any other enabled one refuses
+// the configuration (portal-configuration.ts).
+const KNOWN_PORTAL_FEATURES = new Set([
+  'customer_update',
+  'invoice_history',
+  'payment_method_update',
+  'subscription_cancel',
+  'subscription_update',
+]);
 
 const INVOICE_STATUSES: readonly ProviderInvoiceStatus[] = [
   'draft',
@@ -295,6 +325,7 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
           // needed. Otherwise one is always collected.
           payment_method_collection:
             trial && !input.requiresPaymentMethod ? 'if_required' : 'always',
+          payment_method_types: [...SUPPORTED_CHECKOUT_PAYMENT_METHOD_TYPES],
           metadata: {
             centerivo_tenant_id: input.tenantId,
             centerivo_checkout_id: input.checkoutSessionId,
@@ -386,6 +417,7 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
         cancelAtPeriodEnd: sub.cancel_at_period_end === true,
         trialStart: date(sub.trial_start),
         trialEnd: date(sub.trial_end),
+        latestInvoiceId: id(sub.latest_invoice),
       };
     } catch (error) {
       throw providerError(error);
@@ -409,11 +441,118 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
         externalSubscriptionId: invoiceSubscription(invoice),
         externalCustomerId: id(invoice.customer),
         livemode: invoice.livemode,
+        amountPaidMinorUnits: amount(invoice.amount_paid),
       };
     } catch (error) {
       if ((error as { code?: unknown })?.code === 'resource_missing') {
         return null;
       }
+      throw providerError(error);
+    }
+  }
+
+  // SC3c-2 — the subscription's open invoices (oldest first). Only test-mode
+  // invoices of THIS subscription are returned.
+  async listOpenInvoices(
+    externalSubscriptionId: string,
+  ): Promise<ProviderPayableInvoice[]> {
+    try {
+      // Every open invoice (up to a hard cap): one that cannot be read
+      // still counts as outstanding (its subscription is then unknown and it
+      // is never OFFERED, but it blocks a restoration).
+      const all = await this.stripe.invoices
+        .list({
+          subscription: externalSubscriptionId,
+          status: 'open',
+          limit: 100,
+        })
+        .autoPagingToArray({ limit: OPEN_INVOICE_CAP });
+      return all
+        .map((invoice) => {
+          this.assertTestMode(invoice.livemode);
+          return {
+            externalInvoiceId: invoice.id ?? '',
+            status: 'open' as const,
+            externalSubscriptionId: invoiceSubscription(invoice),
+            externalCustomerId: id(invoice.customer),
+            livemode: invoice.livemode,
+            amountPaidMinorUnits: amount(invoice.amount_paid),
+            amountDueMinorUnits: amount(invoice.amount_due),
+            currency: text(invoice.currency, 3) ?? '',
+            createdAt: date(invoice.created) ?? new Date(0),
+            hostedInvoiceUrl: text(invoice.hosted_invoice_url, 2048),
+          };
+        })
+        .filter(
+          (invoice) =>
+            invoice.externalSubscriptionId === null ||
+            invoice.externalSubscriptionId === externalSubscriptionId,
+        )
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  get portalConfigurationId(): string | null {
+    return this.config.portalConfigurationId ?? null;
+  }
+
+  get expectedAccountId(): string | null {
+    return this.config.expectedAccountId ?? null;
+  }
+
+  async retrievePortalConfiguration(
+    configurationId: string,
+  ): Promise<ProviderPortalConfiguration> {
+    try {
+      const [config, account] = await Promise.all([
+        this.stripe.billingPortal.configurations.retrieve(configurationId),
+        this.stripe.accounts.retrieveCurrent(),
+      ]);
+      this.assertTestMode(config.livemode);
+      return {
+        configurationId: config.id,
+        accountId: account.id,
+        livemode: config.livemode,
+        active: config.active,
+        paymentMethodUpdate: config.features.payment_method_update.enabled,
+        invoiceHistory: config.features.invoice_history.enabled,
+        subscriptionCancel: config.features.subscription_cancel.enabled,
+        subscriptionUpdate: config.features.subscription_update.enabled,
+        customerUpdate: config.features.customer_update.enabled,
+        loginPage: config.login_page.enabled,
+        otherEnabledFeatures: Object.entries(
+          config.features as unknown as Record<string, unknown>,
+        )
+          .filter(
+            ([name, feature]) =>
+              !KNOWN_PORTAL_FEATURES.has(name) &&
+              typeof feature === 'object' &&
+              feature !== null &&
+              (feature as { enabled?: unknown }).enabled === true,
+          )
+          .map(([name]) => name),
+      };
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  async createPortalSession(input: {
+    externalCustomerId: string;
+    configurationId: string;
+    returnUrl: string;
+  }): Promise<{ url: string; livemode: boolean }> {
+    try {
+      const session = await this.stripe.billingPortal.sessions.create({
+        customer: input.externalCustomerId,
+        configuration: input.configurationId,
+        return_url: input.returnUrl,
+      });
+      this.assertTestMode(session.livemode);
+      return { url: session.url, livemode: session.livemode };
+    } catch (error) {
       throw providerError(error);
     }
   }

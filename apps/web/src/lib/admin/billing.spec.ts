@@ -9,6 +9,8 @@ import {
   checkoutRefusalMessage,
   checkoutReturn,
   isAllowedCheckoutUrl,
+  isAllowedRecoveryUrl,
+  portalReturn,
 } from "./billing";
 import { adminNavItems, groupAdminNavItems } from "./nav";
 
@@ -125,8 +127,8 @@ describe("SC3c-1 billing enforcement (web)", () => {
   });
 
   it("the wind-down message only offers what this person can reach", () => {
-    expect(windDownMessage({ orders: true, billing: true })).toMatch(/complete orders .* and view billing/);
-    expect(windDownMessage({ orders: true, billing: false })).not.toMatch(/view billing/);
+    expect(windDownMessage({ orders: true, billing: true })).toMatch(/complete orders .* and see and settle your billing/);
+    expect(windDownMessage({ orders: true, billing: false })).not.toMatch(/settle your billing/);
     expect(windDownMessage({ orders: false, billing: true })).not.toMatch(/orders/);
     expect(windDownMessage({ orders: false, billing: false })).toMatch(/Ask a business owner or manager/);
   });
@@ -139,5 +141,36 @@ describe("SC3c-1 billing enforcement (web)", () => {
     for (const path of ["/admin", "/admin/gift-cards", "/admin/ordersx", "/admin/billingx", "/admin/administration"]) {
       expect(isWindDownPath(path)).toBe(false);
     }
+  });
+});
+
+describe("SC3c-2 billing recovery (web)", () => {
+  it("redirects only to the provider's own invoice and portal pages", () => {
+    expect(isAllowedRecoveryUrl("https://invoice.stripe.com/i/acct_1/test_1", "invoice")).toBe(true);
+    expect(isAllowedRecoveryUrl("https://billing.stripe.com/p/session/test_1", "portal")).toBe(true);
+    for (const [bad, kind] of [
+      ["https://billing.stripe.com/p/session/test_1", "invoice"],
+      ["https://invoice.stripe.com/i/acct_1/test_1", "portal"],
+      ["http://invoice.stripe.com/i/1", "invoice"],
+      ["https://user:pw@invoice.stripe.com/i/1", "invoice"],
+      ["https://invoice.stripe.com.evil.example/i/1", "invoice"],
+      ["https://evil.example/pay", "invoice"],
+      ["javascript:alert(1)", "portal"],
+      [null, "portal"],
+    ] as const) {
+      expect(isAllowedRecoveryUrl(bad, kind)).toBe(false);
+    }
+    // The fake provider's pages: never in production.
+    expect(isAllowedRecoveryUrl("https://invoice.fake.test/i/1", "invoice", { NODE_ENV: "test" })).toBe(true);
+    expect(isAllowedRecoveryUrl("https://invoice.fake.test/i/1", "invoice", { NODE_ENV: "production" })).toBe(false);
+  });
+
+  it("recovery refusals are plain messages", () => {
+    expect(checkoutRefusalMessage(409, { code: "BILLING_NOTHING_TO_PAY" })).toBe(BILLING_MESSAGES.nothingToPay);
+    expect(checkoutRefusalMessage(409, { code: "BILLING_SUBSCRIPTION_NOT_ENDED" })).toBe(
+      BILLING_MESSAGES.subscriptionNotEnded,
+    );
+    expect(portalReturn("returned")).toBe(true);
+    expect(portalReturn("x")).toBe(false);
   });
 });

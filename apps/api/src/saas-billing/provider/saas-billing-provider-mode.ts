@@ -70,6 +70,13 @@ export function resolveSaasBillingProviderMode(
   return value;
 }
 
+function portalSetting(
+  value: string | undefined,
+  pattern: RegExp,
+): string | null {
+  return typeof value === 'string' && pattern.test(value) ? value : null;
+}
+
 export function createSaasBillingProvider(
   env: Record<string, string | undefined> = process.env,
 ): SaasBillingProvider {
@@ -79,6 +86,16 @@ export function createSaasBillingProvider(
     case 'stripe':
       return StripeSaasBillingProvider.create(env.STRIPE_BILLING_SECRET_KEY!, {
         webhookSecret: env.STRIPE_BILLING_WEBHOOK_SECRET!,
+        // SC3c-2 — the portal is offered only with both set (checked
+        // against the provider before every session).
+        portalConfigurationId: portalSetting(
+          env.STRIPE_BILLING_PORTAL_CONFIGURATION,
+          /^bpc_[A-Za-z0-9]{8,64}$/,
+        ),
+        expectedAccountId: portalSetting(
+          env.STRIPE_BILLING_ACCOUNT_ID,
+          /^acct_[A-Za-z0-9]{8,64}$/,
+        ),
       });
     default:
       return new DisabledSaasBillingProvider();

@@ -3,6 +3,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { PlatformAuthModule } from '../platform-auth/platform-auth.module';
 import { InternalAuthModule } from '../internal-auth/internal-auth.module';
 import { RateLimitModule } from '../rate-limit/rate-limit.module';
+import { AuditModule } from '../audit/audit.module';
 import { AdminBillingController } from './api/admin-billing.controller';
 import { BillingWebhookController } from './api/billing-webhook.controller';
 import { PlatformBillingController } from './api/platform-billing.controller';
@@ -26,6 +27,7 @@ import { SAAS_BILLING_PROVIDER } from './provider/saas-billing-provider';
     PlatformAuthModule,
     InternalAuthModule,
     RateLimitModule,
+    AuditModule,
   ],
   controllers: [
     PlatformBillingController,

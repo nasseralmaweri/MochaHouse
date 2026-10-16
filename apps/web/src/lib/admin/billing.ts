@@ -43,12 +43,12 @@ export function windDownMessage(access: {
 }): string {
   const lead = "This business is suspended for billing; everything else is paused.";
   if (access.orders && access.billing) {
-    return `${lead} You can still complete orders you already accepted and view billing.`;
+    return `${lead} You can still complete orders you already accepted, and see and settle your billing.`;
   }
   if (access.orders) {
     return `${lead} You can still complete orders you already accepted.`;
   }
-  if (access.billing) return `${lead} You can still view billing.`;
+  if (access.billing) return `${lead} You can still see and settle your billing.`;
   return `${lead} Ask a business owner or manager for help.`;
 }
 
@@ -88,7 +88,7 @@ export function billingStateDescription(billing: BusinessBillingSummary): string
     case "PAST_DUE":
       return "Your last payment didn't go through. Everything keeps working while it is retried.";
     case "UNPAID":
-      return "Your subscription is unpaid. Update your payment to continue.";
+      return "Your subscription is unpaid and your outstanding invoices need paying to continue.";
     case "TRIAL_EXPIRED":
       if (billing.suspendedForBilling) {
         return "Your free trial ended without a payment method. Nothing was charged. Your business is paused until payment is set up; orders you already accepted can still be completed.";
@@ -112,6 +112,14 @@ export const BILLING_MESSAGES = {
   forbidden: "Only the business owner can set up payment.",
   sessionEnded: "Your session has ended. Sign in again to continue.",
   tooMany: "Too many attempts. Wait a few minutes, then try again.",
+  // SC3c-2 — recovery.
+  nothingToPay: "There's no outstanding invoice to pay right now. This page shows the latest status.",
+  subscriptionNotEnded:
+    "Your previous subscription hasn't fully ended yet at our payment provider. Try again in a moment.",
+  recoveryUnavailable: "This isn't available right now. Nothing was changed. Try again in a moment.",
+  recoveryUnderReview:
+    "Your payment is being reviewed by our team. You won't be charged again; we'll restore your subscription or contact you.",
+  recoveryForbidden: "Only the business owner, or someone who manages billing, can settle billing.",
 } as const;
 
 const CONFLICTS: Record<string, string> = {
@@ -120,6 +128,9 @@ const CONFLICTS: Record<string, string> = {
   BILLING_CHECKOUT_IN_PROGRESS: BILLING_MESSAGES.inProgress,
   BILLING_CHECKOUT_PROCESSING: BILLING_MESSAGES.processing,
   BILLING_TRIAL_PENDING_ELSEWHERE: BILLING_MESSAGES.trialPendingElsewhere,
+  BILLING_NOTHING_TO_PAY: BILLING_MESSAGES.nothingToPay,
+  BILLING_SUBSCRIPTION_NOT_ENDED: BILLING_MESSAGES.subscriptionNotEnded,
+  BILLING_RECOVERY_UNDER_REVIEW: BILLING_MESSAGES.recoveryUnderReview,
 };
 
 // The message for a refused "open Checkout" answer (never a server detail).
@@ -162,8 +173,38 @@ export function isAllowedCheckoutUrl(
   );
 }
 
-export type CheckoutReturn = "success" | "cancelled" | null;
+// SC3c-2 — only the billing provider's own hosted invoice-payment and
+// Customer Portal pages (values from our API, still checked: never an open
+// redirect). The fake provider's pages only outside production.
+export function isAllowedRecoveryUrl(
+  value: unknown,
+  kind: "invoice" | "portal",
+  env: Record<string, string | undefined> = process.env,
+): value is string {
+  if (typeof value !== "string") return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:" || url.username || url.password) return false;
+  const stripe = kind === "invoice" ? "invoice.stripe.com" : "billing.stripe.com";
+  if (url.hostname === stripe) return true;
+  const fake = kind === "invoice" ? "invoice.fake.test" : "billing.fake.test";
+  return env.NODE_ENV !== "production" && url.hostname === fake;
+}
+
+export function portalReturn(value: unknown): boolean {
+  return value === "returned";
+}
+
+// "pending": back from the provider, but the payment was not confirmed
+// within the page's minute of checking (the actions are offered again).
+export type CheckoutReturn = "success" | "cancelled" | "pending" | null;
 
 export function checkoutReturn(value: unknown): CheckoutReturn {
-  return value === "success" || value === "cancelled" ? value : null;
+  return value === "success" || value === "cancelled" || value === "pending"
+    ? value
+    : null;
 }

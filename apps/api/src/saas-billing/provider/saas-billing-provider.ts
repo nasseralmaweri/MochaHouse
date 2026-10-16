@@ -1,4 +1,5 @@
 import type { ProviderSubscriptionSnapshot } from '../domain/provider-sync';
+import type { ProviderPortalConfiguration } from './portal-configuration';
 
 // SC3a/SC3b — the CENTERIVO SaaS subscription-billing provider boundary.
 //
@@ -82,6 +83,17 @@ export interface ProviderInvoice {
   externalSubscriptionId: string | null;
   externalCustomerId: string | null;
   livemode: boolean;
+  // SC3c-2 — what was actually collected (integer minor units).
+  amountPaidMinorUnits: number;
+}
+
+// SC3c-2 — an invoice that can be paid on the provider's hosted page.
+export interface ProviderPayableInvoice extends ProviderInvoice {
+  amountDueMinorUnits: number;
+  currency: string;
+  createdAt: Date;
+  // The provider's own hosted payment page for this invoice.
+  hostedInvoiceUrl: string | null;
 }
 
 export class BillingEventVerificationError extends Error {
@@ -162,6 +174,24 @@ export interface SaasBillingProvider {
   // null when the provider has no such invoice.
   retrieveInvoice(externalInvoiceId: string): Promise<ProviderInvoice | null>;
 
+  // SC3c-2 — the subscription's OPEN invoices, oldest first.
+  listOpenInvoices(
+    externalSubscriptionId: string,
+  ): Promise<ProviderPayableInvoice[]>;
+
+  // SC3c-2 — the Customer Portal. The configuration (operator-configured)
+  // is read back and checked before every session (portal-configuration.ts).
+  readonly portalConfigurationId: string | null;
+  readonly expectedAccountId: string | null;
+  retrievePortalConfiguration(
+    configurationId: string,
+  ): Promise<ProviderPortalConfiguration>;
+  createPortalSession(input: {
+    externalCustomerId: string;
+    configurationId: string;
+    returnUrl: string;
+  }): Promise<{ url: string; livemode: boolean }>;
+
   // Verifies an incoming event's signature and freshness and normalizes it.
   // Throws BillingEventVerificationError for anything unverifiable.
   verifyEvent(input: {
@@ -189,6 +219,11 @@ export class DisabledSaasBillingProvider implements SaasBillingProvider {
   retrieveCheckoutSession = unavailable;
   retrieveSubscription = unavailable;
   retrieveInvoice = unavailable;
+  listOpenInvoices = unavailable;
+  readonly portalConfigurationId = null;
+  readonly expectedAccountId = null;
+  retrievePortalConfiguration = unavailable;
+  createPortalSession = unavailable;
   verifyEvent(): VerifiedBillingProviderEvent {
     throw new BillingEventVerificationError('SaaS billing is not configured.');
   }
