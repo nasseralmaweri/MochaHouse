@@ -21,6 +21,7 @@ import { GiftCardPublicThrottleGuard } from '../infrastructure/gift-card-public-
 import { GiftCardBalanceService } from '../application/gift-card-balance.service';
 import { GiftCardPurchaseService } from '../application/gift-card-purchase.service';
 import { GiftCardConfigurationService } from '../application/gift-card-configuration.service';
+import { StorefrontFeaturesService } from '../../subscriptions/application/storefront-features.service';
 
 // Milestone 7H — the PUBLIC customer gift-card surface (no HQ permissions).
 //   GET  /api/v1/gift-cards/purchase-options  — amount rules for the page
@@ -41,10 +42,15 @@ export class GiftCardsController {
     private readonly purchaseService: GiftCardPurchaseService,
     private readonly balanceService: GiftCardBalanceService,
     private readonly configuration: GiftCardConfigurationService,
+    private readonly features: StorefrontFeaturesService,
   ) {}
 
   @Get('purchase-options')
-  purchaseOptions(@CurrentTenantContext() tenant: TenantContext) {
+  // SC2b — without the gift-card module there is nothing to buy (403).
+  // Balance checks (below) and redeeming an existing card at checkout stay
+  // available: an issued card is stored value the business owes.
+  async purchaseOptions(@CurrentTenantContext() tenant: TenantContext) {
+    await this.features.assertAvailable(tenant.tenantId, 'giftcards');
     return this.configuration.getPublicOptions(tenant);
   }
 

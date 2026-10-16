@@ -36,7 +36,13 @@ import { LoyaltyBonusService } from '../../loyalty/application/loyalty-bonus.ser
 import {
   PromotionCheckoutService,
   type RegularDiscountPlan,
+  type RegularDiscountResolution,
 } from '../../promotions/application/promotion-checkout.service';
+import {
+  featureNotAvailable,
+  StorefrontFeaturesService,
+  type StorefrontFeatures,
+} from '../../subscriptions/application/storefront-features.service';
 import {
   GiftCardRedemptionService,
   type GiftCardTenderPlan,
@@ -62,6 +68,9 @@ import {
 } from '../infrastructure/order-line-mapper';
 
 const MAX_ORDER_NUMBER_ATTEMPTS = 5;
+
+// SC2b — what a business without the promotions module resolves to.
+const NO_REGULAR_DISCOUNT: RegularDiscountResolution = { outcome: 'none' };
 
 type OrderWithRelations = Prisma.OrderGetPayload<{
   include: {
@@ -106,6 +115,7 @@ export class CheckoutService {
     private readonly giftCardRedemptionService: GiftCardRedemptionService,
     @Inject(PAYMENT_PROVIDER)
     private readonly paymentProvider: PaymentProvider,
+    private readonly storefrontFeatures: StorefrontFeaturesService,
   ) {}
 
   // customerIdentity is optional — sign-in is never required to check out
@@ -166,21 +176,36 @@ export class CheckoutService {
       throw new BadRequestException(priced.error.message);
     }
 
+    // SC2b — the business's plan is evaluated ONCE, here, for this new
+    // submission and before any payment attempt exists. A coupon or reward
+    // the plan does not include is refused now (403, nothing charged). The
+    // same decision is then carried into the post-payment order
+    // transaction and never re-evaluated there, so a plan change while this
+    // checkout is being paid can neither fail a paid order nor change what
+    // was charged. A retry with the same idempotency key replays the stored
+    // outcome and never re-runs any of this.
+    const features = await this.storefrontFeatures.forTenant(tenantId);
+
     // Milestone 7E — resolve the ONE regular Promotion/Coupon FIRST. A
     // supplied coupon that fails any rule is rejected here, before any
     // payment attempt exists (never silently swapped for an automatic
     // Promotion). With no coupon, the best eligible automatic Promotion (if
     // any) applies.
     const couponCode = normalizeRequestCoupon(request.couponCode);
-    const regularResolution =
-      await this.promotionService.resolveRegularDiscount({
-        tenantId,
-        priced,
-        menu,
-        locationId: request.locationId,
-        customerId,
-        couponCode,
-      });
+    if (couponCode !== null && !features.promotions) {
+      throw featureNotAvailable('promotions');
+    }
+    // Without the promotions module no automatic Promotion applies either.
+    const regularResolution: RegularDiscountResolution = features.promotions
+      ? await this.promotionService.resolveRegularDiscount({
+          tenantId,
+          priced,
+          menu,
+          locationId: request.locationId,
+          customerId,
+          couponCode,
+        })
+      : NO_REGULAR_DISCOUNT;
     if (regularResolution.outcome === 'coupon_rejected') {
       throw new BadRequestException(regularResolution.message);
     }
@@ -200,6 +225,9 @@ export class CheckoutService {
         ? request.loyaltyRewardId.trim()
         : null;
     let prePaymentPlan: RedemptionPlan | null = null;
+    if (rewardId !== null && !features.loyalty) {
+      throw featureNotAvailable('loyalty');
+    }
     if (rewardId !== null) {
       if (customerId === null) {
         throw new BadRequestException('Sign in to use a Mocha Bean reward.');
@@ -331,7 +359,8 @@ export class CheckoutService {
       // order-transaction failure — the payment stays SUCCEEDED and the
       // attempt is flagged reconciliationRequired, never silently orphaned.
       // Guests (customerId null) never earn, so this is skipped for them.
-      if (customerId !== null) {
+      // SC2b — only when the plan included loyalty at submission.
+      if (customerId !== null && features.loyalty) {
         await this.loyaltyService.ensureAccountForCustomer(customerId);
       }
 
@@ -342,6 +371,7 @@ export class CheckoutService {
         rewardId,
         couponCode,
         giftCardPlan,
+        features,
       );
     } catch (error) {
       // Payment already succeeded (the update above committed before this
@@ -400,12 +430,22 @@ export class CheckoutService {
       throw new BadRequestException(priced.error.message);
     }
 
-    return this.redemptionService.previewForCart(
+    // SC2b — without the loyalty module no reward is offered; the balance
+    // is still the customer's and is reported unchanged.
+    if (!(await this.storefrontFeatures.isAvailable(tenantId, 'loyalty'))) {
+      const balance = await this.loyaltyService.getBalanceForCustomer(
+        customer.id,
+      );
+      return { balance, rewards: [], available: false };
+    }
+
+    const preview = await this.redemptionService.previewForCart(
       customer.id,
       priced,
       menu,
       tenantId,
     );
+    return { ...preview, available: true };
   }
 
   // Milestone 7E — the unified, server-authoritative checkout pricing quote.
@@ -451,15 +491,27 @@ export class CheckoutService {
       throw new BadRequestException(priced.error.message);
     }
 
+    // SC2b — a quote reflects the plan right now but locks nothing: the
+    // submission evaluates it again before payment.
+    const features = await this.storefrontFeatures.forTenant(tenantId);
+
     const couponCode = normalizeRequestCoupon(request.couponCode);
-    const resolution = await this.promotionService.resolveRegularDiscount({
-      tenantId,
-      priced,
-      menu,
-      locationId: request.locationId,
-      customerId,
-      couponCode,
-    });
+    const resolution: RegularDiscountResolution = !features.promotions
+      ? couponCode !== null
+        ? {
+            outcome: 'coupon_rejected',
+            status: 'not_available',
+            message: 'Promotions and coupons are not available here right now.',
+          }
+        : NO_REGULAR_DISCOUNT
+      : await this.promotionService.resolveRegularDiscount({
+          tenantId,
+          priced,
+          menu,
+          locationId: request.locationId,
+          customerId,
+          couponCode,
+        });
 
     let regularDiscountView: CheckoutQuoteResponse['regularDiscount'] = null;
     let couponStatus: CheckoutQuoteResponse['couponStatus'] = null;
@@ -488,7 +540,10 @@ export class CheckoutService {
 
     let balance = 0;
     let rewards: CheckoutRewardOption[] = [];
-    if (customerId !== null) {
+    if (customerId !== null && !features.loyalty) {
+      // The balance is kept and shown; no reward is offered.
+      balance = await this.loyaltyService.getBalanceForCustomer(customerId);
+    } else if (customerId !== null) {
       const preview = await this.redemptionService.previewForCart(
         customerId,
         priced,
@@ -507,7 +562,7 @@ export class CheckoutService {
         ? request.loyaltyRewardId.trim()
         : null;
     let rewardDiscountMinorUnits = 0;
-    if (selectedRewardId !== null && customerId !== null) {
+    if (selectedRewardId !== null && customerId !== null && features.loyalty) {
       try {
         const plan = await this.redemptionService.buildRedemptionPlan(
           selectedRewardId,
@@ -576,6 +631,8 @@ export class CheckoutService {
       giftCardMessage,
       giftCard,
       amountDueAfterGiftCardMinorUnits: total - giftCardApplied,
+      loyaltyAvailable: features.loyalty,
+      promotionsAvailable: features.promotions,
     };
   }
 
@@ -893,6 +950,10 @@ export class CheckoutService {
     rewardId: string | null,
     couponCode: string | null,
     giftCardPlan: GiftCardTenderPlan | null,
+    // SC2b — the decision evaluated before payment (see checkout()). Used
+    // as-is: never re-read here, so a plan change mid-payment cannot make
+    // this transaction disagree with what was charged.
+    features: StorefrontFeatures,
   ): Promise<OrderWithRelations> {
     const paymentAttemptId = attempt.id;
     // Milestone S0D-2C-1 — the attempt was written under the tenant of the
@@ -927,16 +988,17 @@ export class CheckoutService {
       // CURRENT promotion state (dates, location, applicability, minimum,
       // limits) and the freshly repriced cart. The authoritative
       // redemption-count enforcement happens in applyRedemption below.
-      const regularResolution =
-        await this.promotionService.resolveRegularDiscount({
-          tenantId,
-          db: tx,
-          priced,
-          menu,
-          locationId: request.locationId,
-          customerId,
-          couponCode,
-        });
+      const regularResolution: RegularDiscountResolution = features.promotions
+        ? await this.promotionService.resolveRegularDiscount({
+            tenantId,
+            db: tx,
+            priced,
+            menu,
+            locationId: request.locationId,
+            customerId,
+            couponCode,
+          })
+        : NO_REGULAR_DISCOUNT;
       if (regularResolution.outcome === 'coupon_rejected') {
         throw new ConflictException(
           `Payment succeeded but your coupon is no longer valid ` +
@@ -956,7 +1018,7 @@ export class CheckoutService {
       // success.
       let plan: RedemptionPlan | null = null;
       let rewardDiscount = 0;
-      if (rewardId !== null && customerId !== null) {
+      if (rewardId !== null && customerId !== null && features.loyalty) {
         plan = await this.redemptionService.buildRedemptionPlan(
           rewardId,
           priced,
@@ -1116,7 +1178,9 @@ export class CheckoutService {
       //      is still held, so this is safe.
       // A guest order earns and redeems nothing. `@@unique([type, orderId])`
       // on the ledger makes REDEEM and EARN each exactly-once per order.
-      if (customerId !== null) {
+      // SC2b — nothing is earned, redeemed or awarded when the plan did not
+      // include loyalty at submission. The customer's balance is untouched.
+      if (customerId !== null && features.loyalty) {
         if (plan !== null) {
           await this.redemptionService.applyRedemption(tx, {
             tenantId,

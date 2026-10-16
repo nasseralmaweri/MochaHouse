@@ -8,6 +8,7 @@ import { FranchiseInquiriesPublicService } from './application/franchise-inquiri
 import { FranchiseInquiriesAdminService } from './application/franchise-inquiries-admin.service';
 import { FranchiseInquiryNotesService } from './application/franchise-inquiry-notes.service';
 import { FranchisingPublicThrottleGuard } from './infrastructure/franchising-public-throttle.guard';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
 // Milestone 8D — Franchising inquiries. A visitor submits an inquiry from
 // the public Franchising pages (no account); HQ views/manages inquiries
@@ -21,7 +22,7 @@ import { FranchisingPublicThrottleGuard } from './infrastructure/franchising-pub
 // InternalAuditService from AuditModule; RedisService from the @Global
 // RedisModule (used by the public throttle guard).
 @Module({
-  imports: [PrismaModule, AuditModule, RedisModule],
+  imports: [PrismaModule, AuditModule, RedisModule, SubscriptionsModule],
   controllers: [AdminFranchisingController, FranchisingController],
   providers: [
     FranchiseInquiriesPublicService,

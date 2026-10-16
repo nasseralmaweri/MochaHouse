@@ -7,6 +7,7 @@ import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decor
 import { CustomersService } from '../../customers/application/customers.service';
 import { LoyaltyService } from '../application/loyalty.service';
 import { LoyaltyRewardsService } from '../application/loyalty-rewards.service';
+import { StorefrontFeaturesService } from '../../subscriptions/application/storefront-features.service';
 
 // The customer's own Mocha Beans view (Milestone 7A balance; Milestone 7B
 // adds the Rewards Catalog). Authenticated (mandatory — see
@@ -25,6 +26,7 @@ export class CustomerLoyaltyController {
     private readonly customersService: CustomersService,
     private readonly loyaltyService: LoyaltyService,
     private readonly rewardsService: LoyaltyRewardsService,
+    private readonly features: StorefrontFeaturesService,
   ) {}
 
   @Get()
@@ -40,10 +42,16 @@ export class CustomerLoyaltyController {
     const balance = await this.loyaltyService.getBalanceForCustomer(
       customer.id,
     );
+    // SC2b — without the loyalty module the balance is still the
+    // customer's and is shown, but no reward can be redeemed (or earned)
+    // until loyalty is available again.
+    if (!(await this.features.isAvailable(customer.tenantId, 'loyalty'))) {
+      return { balance, rewards: [], available: false };
+    }
     const rewards = await this.rewardsService.listActiveRewardsForCustomer(
       balance,
       customer.tenantId,
     );
-    return { balance, rewards };
+    return { balance, rewards, available: true };
   }
 }

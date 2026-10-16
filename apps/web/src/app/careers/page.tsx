@@ -7,6 +7,7 @@ import {
 } from "@/lib/admin/careers";
 import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/Card";
+import { FeatureUnavailable } from "@/components/FeatureUnavailable";
 
 export const metadata: Metadata = {
   title: "Careers · Mocha House",
@@ -19,10 +20,16 @@ export const dynamic = "force-dynamic";
 // published, publicly-visible openings. Applying online is not part of this
 // release.
 export default async function CareersPage() {
-  let jobs: Awaited<ReturnType<typeof getPublicJobOpenings>>["jobs"] = [];
+  let jobs: NonNullable<Awaited<ReturnType<typeof getPublicJobOpenings>>>["jobs"] = [];
   let failed = false;
+  let unavailable = false;
   try {
-    jobs = (await getPublicJobOpenings()).jobs;
+    const result = await getPublicJobOpenings();
+    if (result === null) {
+      unavailable = true;
+    } else {
+      jobs = result.jobs;
+    }
   } catch {
     failed = true;
   }
@@ -31,10 +38,12 @@ export default async function CareersPage() {
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-8">
       <PageHeader
         title="Careers"
-        subtitle="Open positions at Mocha House."
+        subtitle={unavailable ? undefined : "Open positions at Mocha House."}
       />
 
-      {failed ? (
+      {unavailable ? (
+        <FeatureUnavailable message="Careers aren't available here right now." />
+      ) : failed ? (
         <Card tone="subtle" className="text-sm text-text-secondary">
           We couldn&apos;t load open positions right now. Please try again later.
         </Card>

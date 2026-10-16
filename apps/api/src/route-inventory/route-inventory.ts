@@ -103,6 +103,7 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   },
   'GET /api/v1/locations': { scope: 'tenant' },
   'GET /api/v1/locations/:locationId/menu': { scope: 'tenant' },
+  'GET /api/v1/storefront/features': { scope: 'tenant' },
   'PATCH /api/v1/admin/careers/jobs/:jobId': { scope: 'tenant' },
   'PATCH /api/v1/admin/catalog/menus/:menuId/products/:productId/assignment': {
     scope: 'tenant',

@@ -7,6 +7,7 @@ import type {
   PublicHomePageContentResponse,
   PublicJobOpeningDetail,
   PublicJobOpeningsResponse,
+  StorefrontFeaturesResponse,
 } from "@mocha-house/contracts";
 import { parseLocationMenuResponse } from "@/lib/menu";
 
@@ -52,10 +53,14 @@ export async function getLocationMenu(
 // endpoint. `getPublicJobOpening` returns null on 404 so the page can render
 // notFound().
 
-export async function getPublicJobOpenings(): Promise<PublicJobOpeningsResponse> {
+// SC2b — null when the business does not offer careers (the API answers 404).
+export async function getPublicJobOpenings(): Promise<PublicJobOpeningsResponse | null> {
   const response = await fetch(`${getApiUrl()}/careers/jobs`, {
     cache: "no-store",
   });
+  if (response.status === 404) {
+    return null;
+  }
   if (!response.ok) {
     throw new Error(`Failed to load job openings (${response.status}).`);
   }
@@ -116,6 +121,29 @@ export async function getPublishedHomeContent(): Promise<PublicHomePageContent |
     }
     const body = (await response.json()) as PublicHomePageContentResponse;
     return body?.content ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// --- Storefront features (SC2b) --------------------------------------
+// Which customer-facing features this storefront's business offers, used
+// only to hide entry points and show an "unavailable" state: the API
+// enforces every feature itself. Never throws — null when it can't be read,
+// and callers then show their normal page (never invented availability).
+
+export type StorefrontFeatures = StorefrontFeaturesResponse["features"];
+
+export async function getStorefrontFeatures(): Promise<StorefrontFeatures | null> {
+  try {
+    const response = await fetch(`${getApiUrl()}/storefront/features`, {
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const body = (await response.json()) as StorefrontFeaturesResponse;
+    return body?.features ?? null;
   } catch {
     return null;
   }

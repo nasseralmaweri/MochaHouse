@@ -12,6 +12,7 @@ import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decor
 import { JobOpeningsPublicService } from '../application/job-openings-public.service';
 import { JobApplicationsPublicService } from '../application/job-applications-public.service';
 import { CareersPublicThrottleGuard } from '../infrastructure/careers-public-throttle.guard';
+import { StorefrontFeaturesService } from '../../subscriptions/application/storefront-features.service';
 
 // The PUBLIC Careers API. No authentication.
 //   GET  /api/v1/careers/jobs              — published + visible openings.
@@ -26,28 +27,34 @@ export class CareersController {
   constructor(
     private readonly jobs: JobOpeningsPublicService,
     private readonly applications: JobApplicationsPublicService,
+    private readonly features: StorefrontFeaturesService,
   ) {}
 
   @Get('jobs')
-  list(@CurrentTenantContext() tenant: TenantContext) {
+  // SC2b — without the careers module, openings are not found (404) and a
+  // new application is refused (403) before anything is stored or queued.
+  async list(@CurrentTenantContext() tenant: TenantContext) {
+    await this.features.assertPageAvailable(tenant.tenantId, 'careers');
     return this.jobs.list(tenant);
   }
 
   @Get('jobs/:jobId')
-  detail(
+  async detail(
     @Param('jobId') jobId: string,
     @CurrentTenantContext() tenant: TenantContext,
   ) {
+    await this.features.assertPageAvailable(tenant.tenantId, 'careers');
     return this.jobs.getDetail(jobId, tenant);
   }
 
   @UseGuards(CareersPublicThrottleGuard)
   @Post('jobs/:jobId/applications')
-  apply(
+  async apply(
     @Param('jobId') jobId: string,
     @Body() body: SubmitJobApplicationRequest,
     @CurrentTenantContext() tenant: TenantContext,
   ) {
+    await this.features.assertAvailable(tenant.tenantId, 'careers');
     return this.applications.submit(jobId, body, tenant);
   }
 }

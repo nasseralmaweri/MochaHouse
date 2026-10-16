@@ -33,6 +33,9 @@ export default async function AccountPage() {
   const summary = loyalty?.outcome === "success" ? loyalty.summary : null;
   const mochaBeans = summary?.balance ?? null;
   const rewards = summary?.rewards ?? [];
+  // SC2b — the business does not offer loyalty right now: the balance is
+  // kept and shown, nothing is earned or redeemed until it returns.
+  const loyaltyPaused = summary?.available === false;
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
@@ -58,7 +61,11 @@ export default async function AccountPage() {
             Mocha Beans
           </span>
           <span className="text-sm text-text-secondary">
-            Earn Mocha Beans on qualifying purchases.
+            {loyaltyPaused
+              ? "Rewards are paused right now. Your balance is kept."
+              : summary === null
+                ? "We couldn't load your balance right now."
+                : "Earn Mocha Beans on qualifying purchases."}
           </span>
         </div>
         <span className="text-2xl font-semibold tracking-tight text-text-primary">

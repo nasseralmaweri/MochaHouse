@@ -18,6 +18,7 @@ import { CustomerOrdersService } from './application/customer-orders.service';
 import { CustomerReorderService } from './application/customer-reorder.service';
 import { OrderClosureService } from './application/order-closure.service';
 import { AuditModule } from '../audit/audit.module';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
 // apps/api stays synchronous request/response only — OutboxEvent rows are
 // written here (see CheckoutService) and read here (see
@@ -40,6 +41,8 @@ import { AuditModule } from '../audit/audit.module';
     LoyaltyModule,
     PromotionsModule,
     GiftCardsModule,
+    // SC2b — the storefront entitlement decision checkout evaluates before payment.
+    SubscriptionsModule,
     // The payment boundary binding (Milestone 7H) — CheckoutService depends
     // only on the PaymentProvider interface via PAYMENT_PROVIDER.
     PaymentModule,

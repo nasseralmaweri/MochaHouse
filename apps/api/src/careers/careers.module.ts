@@ -3,6 +3,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { AuditModule } from '../audit/audit.module';
 import { RedisModule } from '../redis/redis.module';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { AdminCareersController } from './api/admin-careers.controller';
 import { AdminCareersApplicationsController } from './api/admin-careers-applications.controller';
 import { CareersController } from './api/careers.controller';
@@ -24,7 +25,13 @@ import { CareersPublicThrottleGuard } from './infrastructure/careers-public-thro
 // InternalAuditService from AuditModule (create / update / status changes
 // are audited in the same transaction).
 @Module({
-  imports: [PrismaModule, AuditModule, RedisModule, TenancyModule],
+  imports: [
+    PrismaModule,
+    AuditModule,
+    RedisModule,
+    TenancyModule,
+    SubscriptionsModule,
+  ],
   controllers: [
     AdminCareersController,
     AdminCareersApplicationsController,

@@ -15,6 +15,7 @@ import { GiftCardCustomerSummaryService } from './application/gift-card-customer
 import { GiftCardPublicThrottleGuard } from './infrastructure/gift-card-public-throttle.guard';
 import { AdminGiftCardsController } from './api/admin-gift-cards.controller';
 import { GiftCardsController } from './api/gift-cards.controller';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
 // Gift Cards — the financial + administrative + customer surface for Mocha
 // House gift cards.
@@ -46,6 +47,7 @@ import { GiftCardsController } from './api/gift-cards.controller';
     TenancyModule,
     PaymentModule,
     RedisModule,
+    SubscriptionsModule,
   ],
   controllers: [AdminGiftCardsController, GiftCardsController],
   providers: [
@@ -61,6 +63,12 @@ import { GiftCardsController } from './api/gift-cards.controller';
   // GiftCardRedemptionService — for OrdersModule's checkout.
   // GiftCardCustomerSummaryService — Milestone 8A, so CrmModule can project a
   // customer's purchased / redeemed gift cards (masked) into the HQ CRM view.
-  exports: [GiftCardRedemptionService, GiftCardCustomerSummaryService],
+  exports: [
+    // SC2b — re-exported so checkout (which imports this module) resolves
+    // the storefront entitlement decision from the same place.
+    SubscriptionsModule,
+    GiftCardRedemptionService,
+    GiftCardCustomerSummaryService,
+  ],
 })
 export class GiftCardsModule {}
