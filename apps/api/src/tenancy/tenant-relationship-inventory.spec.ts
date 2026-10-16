@@ -182,12 +182,24 @@ const APPROVED_GLOBAL_MODELS = [
   'TenantSubscription',
   'TenantModuleGrant',
   'TenantSubscriptionEvent',
+  // SC3a — SaaS billing (platform data; reach a business only through
+  // TenantSubscription).
+  'SubscriptionPlanPrice',
+  'BillingPolicy',
+  'BillingTrialClaim',
+  'BillingProviderEvent',
 ];
 // SC2a review — identifiers issued by an OUTSIDE system (not a record of
-// ours): reserved for subscription billing, always null until it exists.
+// ours): the SaaS billing provider's ids (SC3a).
 const EXTERNAL_IDENTIFIER_COLUMNS: Readonly<Record<string, readonly string[]>> =
   {
-    TenantSubscription: ['externalSubscriptionId'],
+    TenantSubscription: ['externalSubscriptionId', 'externalCustomerId'],
+    SubscriptionPlanPrice: ['externalPriceId'],
+    BillingProviderEvent: [
+      'externalEventId',
+      'externalSubscriptionId',
+      'externalCustomerId',
+    ],
   };
 // SC2a review (owner decision S3) — the ONLY relation from platform data to
 // a business: a subscription's real foreign key to its Tenant, so the
@@ -228,6 +240,11 @@ const PLATFORM_OPERATOR_MODELS = [
   'TenantSubscription',
   'TenantModuleGrant',
   'TenantSubscriptionEvent',
+  // SC3a — SaaS billing.
+  'SubscriptionPlanPrice',
+  'BillingPolicy',
+  'BillingTrialClaim',
+  'BillingProviderEvent',
 ];
 
 describe('Tenant relationship inventory (Security 4C-1)', () => {

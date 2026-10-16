@@ -4,6 +4,7 @@ import { useActionState, useEffect, useId, useRef, useState } from "react";
 import type {
   OptionalModuleKey,
   PlatformSubscriptionChangeResponse,
+  PlatformSubscriptionEventType,
   PlatformSubscriptionPreviewResponse,
   PlatformTenantSubscriptionResponse,
   SubscriptionModuleKey,
@@ -39,12 +40,25 @@ const PRIMARY =
 const SELECT =
   "min-h-10 rounded-lg border border-border-default bg-surface-card px-3 text-sm text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
 
-const EVENT_LABELS = {
+const EVENT_LABELS: Record<PlatformSubscriptionEventType, string> = {
   PLAN_ASSIGNED: "Plan assigned",
   PLAN_CHANGED: "Plan changed",
   ADDON_GRANTED: "Add-on granted",
   ADDON_REVOKED: "Add-on revoked",
-} as const;
+  // SC3a — billing lifecycle (recorded once billing is active).
+  TRIAL_STARTED: "Trial started",
+  PAYMENT_AUTHORIZED: "Automatic payment authorized",
+  PAYMENT_SUCCEEDED: "Payment received",
+  PAYMENT_FAILED: "Payment failed",
+  GRACE_EXPIRED: "Grace period ended",
+  TRIAL_EXPIRED: "Trial ended without payment",
+  CANCEL_SCHEDULED: "Cancellation scheduled",
+  CANCEL_UNDONE: "Cancellation withdrawn",
+  CANCELED: "Subscription ended",
+  PLAN_CHANGE_PENDING: "Plan change pending",
+  PLAN_CHANGE_APPLIED: "Plan change applied",
+  PLAN_CHANGE_ABANDONED: "Plan change not completed",
+};
 
 function Chips({ modules }: { modules: readonly SubscriptionModuleKey[] }) {
   return (

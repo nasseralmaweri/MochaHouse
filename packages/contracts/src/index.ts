@@ -1821,7 +1821,8 @@ export interface PlatformTenantOwnerEmailResponse {
 // --- CENTERIVO platform: plans and subscriptions (SC2a) -----------------
 // Platform operators only. Changes need a recent sign-in (as SC1e) and are
 // audited. SaaS plans are separate from a business's customer payments.
-// Prices, intervals, trials and proration are not modelled yet.
+// SC3a adds list prices (versioned independently of features) and the
+// billing policy; nothing charges anyone yet.
 
 export type PlatformPlanVersionStatus = "DRAFT" | "PUBLISHED" | "RETIRED";
 
@@ -1831,6 +1832,9 @@ export const PLATFORM_PLAN_VERSION_NOT_DRAFT = "PLAN_VERSION_NOT_DRAFT";
 export const PLATFORM_PLAN_VERSION_NOT_PUBLISHED = "PLAN_VERSION_NOT_PUBLISHED";
 export const PLATFORM_NO_SUBSCRIPTION = "NO_SUBSCRIPTION";
 export const PLATFORM_ADDON_IN_PLAN = "ADDON_IN_PLAN";
+// SC3a — a BILLED subscription changes plan or add-ons only through billing
+// (the paid modules follow confirmed payment; SC3d), never directly.
+export const PLATFORM_SUBSCRIPTION_BILLED = "SUBSCRIPTION_BILLED";
 
 export interface PlatformPlanVersion {
   id: string;
@@ -1843,12 +1847,72 @@ export interface PlatformPlanVersion {
   subscriberCount: number;
 }
 
+// SC3a — a plan's list price for one interval. A new price is a new row and
+// the previous ACTIVE one is ARCHIVED; businesses keep the price they agreed
+// to. USD only for now. Amounts are integer minor units (cents).
+export type PlatformBillingInterval = "MONTH" | "YEAR";
+export type PlatformPlanPriceStatus = "ACTIVE" | "ARCHIVED";
+
+export interface PlatformPlanPrice {
+  id: string;
+  interval: PlatformBillingInterval;
+  currency: string;
+  amountMinorUnits: number;
+  status: PlatformPlanPriceStatus;
+  createdAt: string;
+  archivedAt: string | null;
+  // Businesses whose agreed price this is.
+  subscriberCount: number;
+}
+
 export interface PlatformPlan {
   id: string;
   key: string;
   name: string;
   description: string | null;
   versions: PlatformPlanVersion[];
+  // SC3a — newest first, ACTIVE and ARCHIVED.
+  prices: PlatformPlanPrice[];
+}
+
+export const PLATFORM_PRICE_NOT_ACTIVE = "PRICE_NOT_ACTIVE";
+export const PLATFORM_NO_MONTHLY_PRICE = "NO_MONTHLY_PRICE";
+
+// POST /api/v1/platform/plans/:planId/prices — a new ACTIVE list price for
+// one interval (the previous ACTIVE price for that interval is archived in
+// the same change). Give EITHER `amountMinorUnits`, OR — for YEAR only —
+// `annualDiscountBasisPoints` (1–9999: e.g. 1500 = 15% off twelve times the
+// plan's ACTIVE monthly price; 409 NO_MONTHLY_PRICE without one). The
+// discount is never hard-coded: the stored price is the resulting amount.
+export interface PlatformPlanPriceCreateRequest {
+  interval: PlatformBillingInterval;
+  // "USD" only for now (optional).
+  currency?: string;
+  amountMinorUnits?: number;
+  annualDiscountBasisPoints?: number;
+}
+
+// POST /api/v1/platform/plans/:planId/prices/:priceId/archive — stop
+// offering a price; 409 PRICE_NOT_ACTIVE if already archived. Businesses on
+// it keep it.
+
+// SC3a — the platform billing policy (one, platform-wide). Changes apply to
+// trials and grace periods that START afterwards.
+// GET /api/v1/platform/billing/policy
+// PUT /api/v1/platform/billing/policy
+export interface PlatformBillingPolicy {
+  // 0–90 (0 = no trial).
+  trialDays: number;
+  trialRequiresPaymentMethod: boolean;
+  // 1–60: full access after a failed payment before billing suspension.
+  gracePeriodDays: number;
+  updatedAt: string;
+}
+
+export interface PlatformBillingPolicyUpdateRequest {
+  trialDays: number;
+  trialRequiresPaymentMethod: boolean;
+  gracePeriodDays: number;
 }
 
 // GET /api/v1/platform/plans
@@ -1884,11 +1948,37 @@ export type PlatformSubscriptionEventType =
   | "PLAN_ASSIGNED"
   | "PLAN_CHANGED"
   | "ADDON_GRANTED"
-  | "ADDON_REVOKED";
+  | "ADDON_REVOKED"
+  // SC3a — billing lifecycle.
+  | "TRIAL_STARTED"
+  | "PAYMENT_AUTHORIZED"
+  | "PAYMENT_SUCCEEDED"
+  | "PAYMENT_FAILED"
+  | "GRACE_EXPIRED"
+  | "TRIAL_EXPIRED"
+  | "CANCEL_SCHEDULED"
+  | "CANCEL_UNDONE"
+  | "CANCELED"
+  | "PLAN_CHANGE_PENDING"
+  | "PLAN_CHANGE_APPLIED"
+  | "PLAN_CHANGE_ABANDONED";
+
+// SC3a — the subscription's billing state (separate from a business's
+// administrative/security suspension). A COMPLIMENTARY subscription is never
+// billed (Founding businesses).
+export type PlatformSubscriptionStatus =
+  | "ACTIVE"
+  | "TRIALING"
+  | "PAST_DUE"
+  | "UNPAID"
+  | "TRIAL_EXPIRED"
+  | "CANCELED";
+export type PlatformBillingMode = "COMPLIMENTARY" | "BILLED";
 
 export interface PlatformTenantSubscription {
   id: string;
-  status: "ACTIVE" | "TRIALING";
+  status: PlatformSubscriptionStatus;
+  billingMode: PlatformBillingMode;
   startedAt: string;
   plan: { id: string; key: string; name: string };
   version: { id: string; version: number; status: PlatformPlanVersionStatus };

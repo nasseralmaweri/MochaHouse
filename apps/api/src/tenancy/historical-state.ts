@@ -31,6 +31,11 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'TenantSubscription',
   'TenantModuleGrant',
   'TenantSubscriptionEvent',
+  // SC3a — SaaS billing (20261025090000).
+  'SubscriptionPlanPrice',
+  'BillingPolicy',
+  'BillingTrialClaim',
+  'BillingProviderEvent',
 ]);
 
 // Columns added after the 4C-era migrations to tables that already existed.

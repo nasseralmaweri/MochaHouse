@@ -239,6 +239,11 @@ const GLOBAL_TABLES = [
   'TenantSubscription',
   'TenantModuleGrant',
   'TenantSubscriptionEvent',
+  // SC3a — SaaS billing (platform data).
+  'SubscriptionPlanPrice',
+  'BillingPolicy',
+  'BillingTrialClaim',
+  'BillingProviderEvent',
   '_prisma_migrations',
 ];
 

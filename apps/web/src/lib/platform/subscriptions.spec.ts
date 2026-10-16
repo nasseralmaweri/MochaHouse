@@ -23,6 +23,7 @@ const plan = (overrides: Partial<PlatformPlan> = {}): PlatformPlan => ({
     { id: "v2", version: 2, status: "PUBLISHED", moduleKeys: ["crm", "loyalty"], publishedAt: "x", retiredAt: null, subscriberCount: 4 },
     { id: "v1", version: 1, status: "RETIRED", moduleKeys: ["loyalty"], publishedAt: "x", retiredAt: "y", subscriberCount: 1 },
   ],
+  prices: [],
   ...overrides,
 });
 
@@ -75,6 +76,7 @@ describe("reading the API's answer", () => {
       ["PLAN_VERSION_NOT_PUBLISHED", SUBSCRIPTION_MESSAGES.notPublished],
       ["NO_SUBSCRIPTION", SUBSCRIPTION_MESSAGES.noSubscription],
       ["ADDON_IN_PLAN", SUBSCRIPTION_MESSAGES.addonInPlan],
+      ["SUBSCRIPTION_BILLED", SUBSCRIPTION_MESSAGES.billed],
       ["SOMETHING_NEW", SUBSCRIPTION_MESSAGES.unavailable],
     ] as const) {
       expect(interpretChange(409, { code })).toEqual({ kind: "error", message });
