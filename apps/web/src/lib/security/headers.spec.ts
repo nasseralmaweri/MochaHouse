@@ -36,6 +36,15 @@ describe("buildHeaderRules", () => {
     }
   });
 
+  it("keeps the CENTERIVO platform console uncached, unreferred and unindexed (SC1b)", () => {
+    for (const source of ["/platform", "/platform/:path*"]) {
+      const h = find(rules, source);
+      expect(h["Cache-Control"]).toBe("no-store");
+      expect(h["Referrer-Policy"]).toBe("no-referrer");
+      expect(h["X-Robots-Tag"]).toBe("noindex, nofollow");
+    }
+  });
+
   it("marks API responses uncacheable", () => {
     expect(find(rules, "/api/:path*")["Cache-Control"]).toBe("no-store");
   });
