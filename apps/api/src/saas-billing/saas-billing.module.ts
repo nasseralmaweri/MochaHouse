@@ -1,24 +1,41 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PlatformAuthModule } from '../platform-auth/platform-auth.module';
+import { InternalAuthModule } from '../internal-auth/internal-auth.module';
 import { RateLimitModule } from '../rate-limit/rate-limit.module';
+import { AdminBillingController } from './api/admin-billing.controller';
+import { BillingWebhookController } from './api/billing-webhook.controller';
 import { PlatformBillingController } from './api/platform-billing.controller';
+import { BillingAccountService } from './application/billing-account.service';
 import { BillingCatalogService } from './application/billing-catalog.service';
 import { BillingLifecycleService } from './application/billing-lifecycle.service';
+import { BillingReconciliationService } from './application/billing-reconciliation.service';
 import { createSaasBillingProvider } from './provider/saas-billing-provider-mode';
 import { SAAS_BILLING_PROVIDER } from './provider/saas-billing-provider';
 
-// SC3a — CENTERIVO SaaS subscription billing (charging BUSINESSES for the
-// platform). Entirely separate from restaurant/customer payments: it never
-// imports PaymentModule, checkout, orders or gift cards, and they never
+// SC3a/SC3b — CENTERIVO SaaS subscription billing (charging BUSINESSES for
+// the platform). Entirely separate from restaurant/customer payments: it
+// never imports PaymentModule, checkout, orders or gift cards, and they never
 // import it (saas-billing-separation.spec.ts). Builds on the SC2a plans and
-// subscriptions; the provider is the fake or none until SC3b.
+// subscriptions. The provider is Stripe in TEST MODE, the fake (development
+// and tests), or none — never production billing (SC3g).
 @Module({
-  imports: [PrismaModule, PlatformAuthModule, RateLimitModule],
-  controllers: [PlatformBillingController],
+  imports: [
+    PrismaModule,
+    PlatformAuthModule,
+    InternalAuthModule,
+    RateLimitModule,
+  ],
+  controllers: [
+    PlatformBillingController,
+    AdminBillingController,
+    BillingWebhookController,
+  ],
   providers: [
     BillingCatalogService,
     BillingLifecycleService,
+    BillingAccountService,
+    BillingReconciliationService,
     {
       provide: SAAS_BILLING_PROVIDER,
       useFactory: () => createSaasBillingProvider(),

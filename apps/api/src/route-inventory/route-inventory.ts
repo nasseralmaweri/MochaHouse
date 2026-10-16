@@ -19,6 +19,9 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   // business (TenancyModule), plus the signed-in customer's own records.
   'DELETE /api/v1/customers/me/locations/:locationId': { scope: 'tenant' },
   'GET /api/v1/admin/approvals': { scope: 'tenant' },
+  // SC3b — the business's own CENTERIVO subscription billing.
+  'GET /api/v1/admin/billing': { scope: 'tenant' },
+  'POST /api/v1/admin/billing/checkout': { scope: 'tenant' },
   'GET /api/v1/admin/approvals/:approvalRequestId': { scope: 'tenant' },
   'GET /api/v1/admin/audit': { scope: 'tenant' },
   'GET /api/v1/admin/careers/applications': { scope: 'tenant' },
@@ -264,6 +267,10 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     scope: 'token',
     note: 'Dev/local media bytes by unguessable object key (S3/CDN in production).',
   },
+  'POST /api/v1/billing/webhooks/:provider': {
+    scope: 'token',
+    note: "SC3b — billing-provider webhooks: the provider's signature over the raw body is the only credential; the business comes from our stored provider ids, never the request.",
+  },
   'GET /api/v1/orders/:orderId': {
     scope: 'token',
     note: 'Guest order status: requires the order accessToken.',
@@ -358,6 +365,27 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'PUT /api/v1/platform/billing/policy': {
     scope: 'platform',
     note: 'SC3a — change trial and grace-period settings; audited.',
+  },
+  // SC3b — starting a business's billing and review-only reconciliation.
+  'GET /api/v1/platform/tenants/:tenantId/billing': {
+    scope: 'platform',
+    note: "SC3b — a business's billing state.",
+  },
+  'POST /api/v1/platform/tenants/:tenantId/billing/start': {
+    scope: 'platform',
+    note: 'SC3b — start billing a business at one price; audited.',
+  },
+  'POST /api/v1/platform/billing/reconcile': {
+    scope: 'platform',
+    note: 'SC3b — review-only reconciliation sweep (never moves money); audited.',
+  },
+  'GET /api/v1/platform/billing/reconciliation-cases': {
+    scope: 'platform',
+    note: 'SC3b — billing cases to review.',
+  },
+  'POST /api/v1/platform/billing/reconciliation-cases/:caseId/resolve': {
+    scope: 'platform',
+    note: 'SC3b — mark a case reviewed (changes nothing else); audited.',
   },
   'GET /api/v1/platform/tenants/:tenantId/subscription': {
     scope: 'platform',

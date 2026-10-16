@@ -1915,6 +1915,112 @@ export interface PlatformBillingPolicyUpdateRequest {
   gracePeriodDays: number;
 }
 
+// --- SC3b — Stripe Billing (test mode) ----------------------------------
+// A business's billing as the platform and the business itself see it.
+// AWAITING_SETUP: billing was started by an operator; the owner has not yet
+// completed payment setup (hosted Checkout).
+export type BusinessBillingState =
+  | "COMPLIMENTARY"
+  | "AWAITING_SETUP"
+  | "TRIALING"
+  | "ACTIVE"
+  | "PAST_DUE"
+  | "UNPAID"
+  | "TRIAL_EXPIRED"
+  | "CANCELED";
+
+export interface BusinessBillingSummary {
+  state: BusinessBillingState;
+  planName: string;
+  // The agreed price (null while COMPLIMENTARY).
+  price: {
+    amountMinorUnits: number;
+    currency: string;
+    interval: PlatformBillingInterval;
+  } | null;
+  trialEndsAt: string | null;
+  currentPeriodEnd: string | null;
+  graceEndsAt: string | null;
+  cancelAtPeriodEnd: boolean;
+  paymentMethodOnFile: boolean;
+}
+
+export const BILLING_UNAVAILABLE = "BILLING_UNAVAILABLE";
+export const BILLING_NOT_BILLED = "BILLING_NOT_BILLED";
+export const BILLING_ALREADY_SET_UP = "BILLING_ALREADY_SET_UP";
+export const BILLING_CHECKOUT_IN_PROGRESS = "BILLING_CHECKOUT_IN_PROGRESS";
+export const BILLING_CHECKOUT_PROCESSING = "BILLING_CHECKOUT_PROCESSING";
+// Another business of the same owner holds the one-time trial in an open
+// Checkout: finish or leave that one first.
+export const BILLING_TRIAL_PENDING_ELSEWHERE = "BILLING_TRIAL_PENDING_ELSEWHERE";
+
+// GET /api/v1/admin/billing (billing.view) — the signed-in business's own.
+export interface AdminBillingResponse {
+  billing: BusinessBillingSummary;
+  // Payment setup can be started now (billing.manage holders only).
+  canSetUpPayment: boolean;
+}
+
+// POST /api/v1/admin/billing/checkout (billing.manage) — no body: the
+// business, price and trial come ONLY from the server's records. Returns
+// the provider's hosted Checkout page for this business (an open one is
+// reused; at most one at a time).
+//   409 BILLING_NOT_BILLED / BILLING_ALREADY_SET_UP /
+//       BILLING_CHECKOUT_IN_PROGRESS / BILLING_CHECKOUT_PROCESSING /
+//       BILLING_TRIAL_PENDING_ELSEWHERE
+//   503 BILLING_UNAVAILABLE
+export interface AdminBillingCheckoutResponse {
+  url: string;
+}
+
+export const PLATFORM_ALREADY_BILLED = "ALREADY_BILLED";
+export const PLATFORM_FOUNDING_COMPLIMENTARY = "FOUNDING_COMPLIMENTARY";
+export const PLATFORM_PRICE_NOT_FOR_PLAN = "PRICE_NOT_FOR_PLAN";
+export const PLATFORM_NO_OWNER = "NO_OWNER";
+
+// POST /api/v1/platform/tenants/:tenantId/billing/start — an operator starts
+// billing a COMPLIMENTARY (non-Founding) business at one ACTIVE price of its
+// current plan; the owner then sets up payment. 409 ALREADY_BILLED /
+// FOUNDING_COMPLIMENTARY / PRICE_NOT_FOR_PLAN / PRICE_NOT_ACTIVE / NO_OWNER;
+// 503 BILLING_UNAVAILABLE.
+export interface PlatformStartBillingRequest {
+  planPriceId: string;
+}
+
+// GET /api/v1/platform/tenants/:tenantId/billing
+export interface PlatformTenantBillingResponse {
+  tenantId: string;
+  billing: BusinessBillingSummary | null;
+}
+
+// Review-only billing reconciliation (operators). Running it or resolving a
+// case never moves money or changes a subscription.
+export type PlatformReconciliationCaseStatus = "OPEN" | "RESOLVED";
+
+export interface PlatformReconciliationCase {
+  id: string;
+  kind: string;
+  tenantId: string | null;
+  businessName: string | null;
+  detail: string | null;
+  status: PlatformReconciliationCaseStatus;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+// GET  /api/v1/platform/billing/reconciliation-cases?status=OPEN|RESOLVED
+// POST /api/v1/platform/billing/reconciliation-cases/:caseId/resolve
+export interface PlatformReconciliationCaseListResponse {
+  cases: PlatformReconciliationCase[];
+}
+
+// POST /api/v1/platform/billing/reconcile
+export interface PlatformReconciliationRunResponse {
+  subscriptionsChecked: number;
+  casesOpened: number;
+  checkoutsExpired: number;
+}
+
 // GET /api/v1/platform/plans
 export interface PlatformPlanListResponse {
   plans: PlatformPlan[];
@@ -2417,6 +2523,11 @@ export const INTERNAL_PERMISSION_KEYS = [
   //                  reports are read-only, so there is no separate
   //                  "manage" action, and no per-report key is warranted.
   "reports.view",
+  // SC3b — the business's own CENTERIVO subscription billing (core). view:
+  // its plan, price and billing state; manage: open Checkout to set up
+  // payment. Never anything about restaurant customer payments.
+  "billing.view",
+  "billing.manage",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -2569,6 +2680,8 @@ export const PERMISSION_MODULE: Readonly<
   "approvals.view": "core",
   "approvals.decide": "core",
   "reports.view": "core",
+  "billing.view": "core",
+  "billing.manage": "core",
   "operations.view": "operations",
   "operations.tasks.complete": "operations",
   "operations.checklists.configure": "operations",
@@ -2992,6 +3105,18 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "reports.view",
     description:
       "View HQ reporting — read-only, aggregated business figures. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "billing.view": {
+    key: "billing.view",
+    description:
+      "View the business's CENTERIVO plan, price and billing status. A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "billing.manage": {
+    key: "billing.manage",
+    description:
+      "Set up the business's CENTERIVO subscription payment (hosted Checkout). A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };

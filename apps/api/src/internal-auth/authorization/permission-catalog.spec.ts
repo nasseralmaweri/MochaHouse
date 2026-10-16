@@ -82,6 +82,9 @@ describe('internal permission catalog', () => {
         'approvals.decide',
         // Milestone 9A
         'reports.view',
+        // SC3b
+        'billing.view',
+        'billing.manage',
       ].sort(),
     );
   });

@@ -63,6 +63,10 @@ describe('SC3a subscription-billing foundation (integration, scratch database)',
   const run = randomUUID().replace(/-/g, '').slice(0, 8);
 
   let planId: string;
+  // SC3b — a BILLED subscription always has an agreed price (database
+  // CHECK); the fixtures use one from a separate plan so the price tests on
+  // `planId` count only their own rows.
+  let fixturePriceId: string;
   let v1: string; // crm
   let v2: string; // crm + loyalty
   let paymentAttemptsBefore: number;
@@ -104,6 +108,7 @@ describe('SC3a subscription-billing foundation (integration, scratch database)',
         billingProvider: 'fake',
         externalSubscriptionId: `fake_sub_${label}_${run}`,
         externalCustomerId: `fake_cus_${label}_${run}`,
+        planPriceId: fixturePriceId,
       },
     });
     return { tenantId, subscription };
@@ -133,6 +138,22 @@ describe('SC3a subscription-billing foundation (integration, scratch database)',
       },
       ...over,
     };
+    // SC3b — a payment event is checked against the provider's invoice:
+    // the fake holds one matching the event (paid for invoice.paid, still
+    // open for a failure) unless the test set it up itself.
+    const reference = body.data.reference;
+    if (
+      reference &&
+      (type === 'invoice.paid' || type === 'invoice.payment_failed') &&
+      !fake.invoices.has(reference)
+    ) {
+      fake.setInvoice(
+        reference,
+        type === 'invoice.paid' ? 'paid' : 'open',
+        body.data.subscription ?? null,
+        body.data.customer ?? null,
+      );
+    }
     const signed = fake.signEvent(body, new Date(occurred * 1000));
     const verified = fake.verifyEvent({
       ...signed,
@@ -195,6 +216,19 @@ describe('SC3a subscription-billing foundation (integration, scratch database)',
     };
     v1 = await publish(1, ['crm']);
     v2 = await publish(2, ['crm', 'loyalty']);
+    const fixturePlan = await prisma.subscriptionPlan.create({
+      data: { key: `fixture-${run}`, name: 'Fixture' },
+    });
+    fixturePriceId = (
+      await prisma.subscriptionPlanPrice.create({
+        data: {
+          planId: fixturePlan.id,
+          interval: 'MONTH',
+          currency: 'USD',
+          amountMinorUnits: 4900,
+        },
+      })
+    ).id;
     paymentAttemptsBefore = await prisma.paymentAttempt.count();
   });
 
@@ -539,7 +573,13 @@ describe('SC3a subscription-billing foundation (integration, scratch database)',
       pastDue.graceEndsAt,
     );
 
-    // Recovery.
+    // Recovery: the provider collected the retried invoice.
+    fake.setInvoice(
+      'inv_1',
+      'paid',
+      subscription.externalSubscriptionId,
+      subscription.externalCustomerId,
+    );
     const paid = await deliver(
       subscription,
       'invoice.paid',
@@ -583,7 +623,9 @@ describe('SC3a subscription-billing foundation (integration, scratch database)',
       status: 'REJECTED',
       outcome: 'CUSTOMER_MISMATCH',
     });
-    const unknown = await deliver(
+    // SC3b — no customer of ours (a claimed business is not trusted):
+    // acknowledged and ignored, never retried.
+    const foreign = await deliver(
       {
         externalSubscriptionId: `fake_sub_unknown_${run}`,
         externalCustomerId: null,
@@ -591,7 +633,19 @@ describe('SC3a subscription-billing foundation (integration, scratch database)',
       'payment_method.authorized',
       { tenantId },
     );
-    // Possibly early (before our ids were stored): retryable, never final.
+    expect(foreign.result).toMatchObject({
+      status: 'IGNORED',
+      outcome: 'NOT_OURS',
+    });
+    // Our customer, an unknown subscription: possibly early (before our ids
+    // were stored): retryable, never final.
+    const unknown = await deliver(
+      {
+        externalSubscriptionId: `fake_sub_unknown_${run}_2`,
+        externalCustomerId: subscription.externalCustomerId,
+      },
+      'payment_method.authorized',
+    );
     expect(unknown.result).toMatchObject({
       status: 'FAILED',
       outcome: 'NO_MATCHING_SUBSCRIPTION',

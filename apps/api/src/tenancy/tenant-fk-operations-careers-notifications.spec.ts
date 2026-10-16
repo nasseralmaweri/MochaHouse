@@ -244,6 +244,8 @@ const GLOBAL_TABLES = [
   'BillingPolicy',
   'BillingTrialClaim',
   'BillingProviderEvent',
+  'BillingCheckoutSession',
+  'BillingReconciliationCase',
   '_prisma_migrations',
 ];
 

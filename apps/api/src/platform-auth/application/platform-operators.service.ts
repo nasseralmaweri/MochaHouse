@@ -45,6 +45,11 @@ export const PLATFORM_AUDIT_ACTIONS = {
   planPriceCreated: 'platform.plan.price_created',
   planPriceArchived: 'platform.plan.price_archived',
   billingPolicyUpdated: 'platform.billing.policy_updated',
+  // SC3b — starting a business's billing (target: the tenant), running the
+  // review-only reconciliation and resolving a case (no target).
+  tenantBillingStarted: 'platform.tenant.billing_started',
+  billingReconciled: 'platform.billing.reconciled',
+  billingCaseResolved: 'platform.billing.case_resolved',
 } as const;
 
 @Injectable()

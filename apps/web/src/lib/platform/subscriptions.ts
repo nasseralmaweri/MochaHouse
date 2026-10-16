@@ -78,6 +78,14 @@ export const SUBSCRIPTION_MESSAGES = {
   addonInPlan: "That module is already in the business's plan.",
   // SC3a — a billed business changes plan only through billing.
   billed: "This business is billed: its plan and add-ons change through billing. Nothing was changed.",
+  // SC3b — starting billing and reconciliation.
+  alreadyBilled: "This business is already billed. Nothing was changed.",
+  founding: "Founding businesses are complimentary and are never billed.",
+  priceNotForPlan: "That price isn't one of this business's plan's prices.",
+  priceNotActive: "That price is no longer offered. Choose a current price.",
+  noOwner: "This business has no owner to bill yet.",
+  caseResolved: "This case was already resolved.",
+  billingUnavailable: "Billing isn't available right now. Nothing was changed. Try again in a moment.",
   tooMany: "Too many changes. Wait a few minutes, then try again.",
   unavailable: "The change could not be made right now. Nothing was changed. Try again in a moment.",
 } as const;
@@ -90,6 +98,12 @@ const CONFLICTS: Record<string, string> = {
   NO_SUBSCRIPTION: SUBSCRIPTION_MESSAGES.noSubscription,
   ADDON_IN_PLAN: SUBSCRIPTION_MESSAGES.addonInPlan,
   SUBSCRIPTION_BILLED: SUBSCRIPTION_MESSAGES.billed,
+  ALREADY_BILLED: SUBSCRIPTION_MESSAGES.alreadyBilled,
+  FOUNDING_COMPLIMENTARY: SUBSCRIPTION_MESSAGES.founding,
+  PRICE_NOT_FOR_PLAN: SUBSCRIPTION_MESSAGES.priceNotForPlan,
+  PRICE_NOT_ACTIVE: SUBSCRIPTION_MESSAGES.priceNotActive,
+  NO_OWNER: SUBSCRIPTION_MESSAGES.noOwner,
+  CASE_ALREADY_RESOLVED: SUBSCRIPTION_MESSAGES.caseResolved,
 };
 
 export type ChangeOutcome<T> =

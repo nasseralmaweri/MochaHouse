@@ -12,10 +12,12 @@ import {
 } from "@/components/platform/TenantRegistry";
 import { TenantLifecyclePanel } from "@/components/platform/TenantLifecyclePanel";
 import { SubscriptionPanel } from "@/components/platform/SubscriptionPanel";
+import { BillingPanel } from "@/components/platform/BillingPanel";
 import { assignableVersions } from "@/lib/platform/subscriptions";
 import {
   getPlatformTenant,
   getPlatformTenantLifecycle,
+  getPlatformTenantBilling,
   getPlatformTenantSubscription,
   listPlatformPlans,
   listPlatformTenantLocations,
@@ -70,12 +72,13 @@ export default async function PlatformTenantPage({
     );
   }
 
-  const [detail, locations, lifecycle, subscription, plans] = await Promise.all([
+  const [detail, locations, lifecycle, subscription, plans, billing] = await Promise.all([
     getPlatformTenant(tenantId),
     listPlatformTenantLocations(tenantId, locationPage),
     getPlatformTenantLifecycle(tenantId),
     getPlatformTenantSubscription(tenantId),
     listPlatformPlans(),
+    getPlatformTenantBilling(tenantId),
   ]);
   if (detail.state !== "ok") {
     return (
@@ -178,6 +181,34 @@ export default async function PlatformTenantPage({
         ) : (
           <RegistryStatePanel
             state={subscription.state !== "ok" ? subscription.state : plans.state === "ok" ? "unavailable" : plans.state}
+            retryHref={`/platform/tenants/${tenant.id}`}
+          />
+        )}
+      </section>
+
+      {/* SC3b — billing (Stripe test mode): start billing; review only. */}
+      <section aria-labelledby="tenant-billing" className="flex flex-col gap-4">
+        <h2 id="tenant-billing" className="text-lg font-semibold text-text-primary">
+          Billing
+        </h2>
+        {billing.state === "ok" && subscription.state === "ok" && plans.state === "ok" ? (
+          (() => {
+            const versionId = subscription.data.subscription?.version.id;
+            const plan = plans.data.plans.find((candidate) =>
+              candidate.versions.some((version) => version.id === versionId),
+            );
+            return (
+              <BillingPanel
+                tenantId={tenant.id}
+                billing={billing.data.billing}
+                isFounding={plan?.key === "founding"}
+                prices={(plan?.prices ?? []).filter((price) => price.status === "ACTIVE")}
+              />
+            );
+          })()
+        ) : (
+          <RegistryStatePanel
+            state={billing.state !== "ok" ? billing.state : "unavailable"}
             retryHref={`/platform/tenants/${tenant.id}`}
           />
         )}

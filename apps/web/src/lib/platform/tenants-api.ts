@@ -1,6 +1,8 @@
 import "server-only";
 import type {
   PlatformPlanListResponse,
+  PlatformReconciliationCaseListResponse,
+  PlatformTenantBillingResponse,
   PlatformTenantSubscriptionResponse,
   PlatformTenantDetailResponse,
   PlatformTenantLifecycleResponse,
@@ -84,6 +86,19 @@ export function getPlatformTenantSubscription(
   tenantId: string,
 ): Promise<RegistryResult<PlatformTenantSubscriptionResponse>> {
   return readRegistry(`/tenants/${encodeURIComponent(tenantId)}/subscription`);
+}
+
+// SC3b — one business's billing, and the billing cases to review.
+export function getPlatformTenantBilling(
+  tenantId: string,
+): Promise<RegistryResult<PlatformTenantBillingResponse>> {
+  return readRegistry(`/tenants/${encodeURIComponent(tenantId)}/billing`);
+}
+
+export function listPlatformReconciliationCases(
+  status: "OPEN" | "RESOLVED",
+): Promise<RegistryResult<PlatformReconciliationCaseListResponse>> {
+  return readRegistry(`/billing/reconciliation-cases?status=${status}`);
 }
 
 export function listPlatformTenantLocations(

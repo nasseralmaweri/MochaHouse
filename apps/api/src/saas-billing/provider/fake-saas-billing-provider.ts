@@ -4,23 +4,30 @@ import {
   randomBytes,
   timingSafeEqual,
 } from 'node:crypto';
+import type { ProviderSubscriptionSnapshot } from '../domain/provider-sync';
 import {
   BillingEventVerificationError,
+  SaasBillingProviderError,
+  type ProviderCheckoutSession,
+  type ProviderInvoice,
+  type ProviderInvoiceStatus,
   type ProviderLifecycleEvent,
   type SaasBillingProvider,
   type VerifiedBillingProviderEvent,
 } from './saas-billing-provider';
 
-// SC3a — a deterministic, in-memory SaaS billing provider for development
-// and tests ONLY (refused in production-like environments; see
+// SC3a/SC3b — a deterministic, in-memory SaaS billing provider for
+// development and tests ONLY (refused in production-like environments; see
 // saas-billing-provider-mode.ts). It moves no money and calls nothing.
 //
 // Events are signed like a real provider's webhooks so the verification
 // path is exercised end to end:
 //   header  "t=<unix seconds>,v1=<hex HMAC-SHA256 of `${t}.${rawBody}`>"
 //   body    {"id","type","created","livemode","data":{...}}
-// Operations are idempotent by key: repeating a key returns the first
-// result, never a second object.
+// Operations are idempotent by key (or deterministic by our ids): repeating
+// one returns the first result, never a second object. Tests drive the
+// provider side through the helpers at the bottom (complete a Checkout,
+// change a subscription, settle an invoice).
 
 export const FAKE_SIGNATURE_TOLERANCE_SECONDS = 300;
 
@@ -31,7 +38,9 @@ export type FakeEventType =
   | 'subscription.trial_ended'
   | 'subscription.cancel_scheduled'
   | 'subscription.cancel_undone'
-  | 'subscription.ended';
+  | 'subscription.ended'
+  | 'checkout.completed'
+  | 'subscription.changed';
 
 export interface FakeEventBody {
   id: string;
@@ -44,6 +53,7 @@ export interface FakeEventBody {
     // Metadata — never trusted, only cross-checked.
     tenantId?: string | null;
     reference?: string | null;
+    session?: string | null;
     amount?: number | null;
     currency?: string | null;
     periodStart?: number | null;
@@ -92,13 +102,28 @@ function optionalText(value: unknown, max = 255): string | null {
     : null;
 }
 
+const hex = () => randomBytes(8).toString('hex');
+
+interface FakeCheckout extends ProviderCheckoutSession {
+  externalPriceId: string;
+  trialDays: number;
+  requiresPaymentMethod: boolean;
+}
+
 export class FakeSaasBillingProvider implements SaasBillingProvider {
   readonly name = 'fake';
   readonly livemode = false;
   readonly available = true;
+  readonly products = new Map<string, string>();
+  readonly prices = new Map<string, string>();
   private readonly customers = new Map<string, string>();
-  private readonly subscriptions = new Map<string, string>();
-  readonly calls: Array<{ op: string; idempotencyKey: string }> = [];
+  readonly checkouts = new Map<string, FakeCheckout>();
+  private readonly checkoutsByKey = new Map<string, string>();
+  readonly subscriptions = new Map<string, ProviderSubscriptionSnapshot>();
+  readonly invoices = new Map<string, ProviderInvoice>();
+  readonly calls: Array<{ op: string; key: string }> = [];
+  // Test hook: make the next provider call fail (a transient outage).
+  failNext: string | null = null;
 
   constructor(
     private readonly webhookSecret: string = randomBytes(32).toString('hex'),
@@ -108,49 +133,178 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
     }
   }
 
+  private call(op: string, key: string): void {
+    this.calls.push({ op, key });
+    if (this.failNext !== null) {
+      const code = this.failNext;
+      this.failNext = null;
+      throw new SaasBillingProviderError(code);
+    }
+  }
+
+  ensureProduct(input: {
+    planId: string;
+  }): Promise<{ externalProductId: string }> {
+    this.call('ensureProduct', input.planId);
+    const productId = `fake_prod_${input.planId}`;
+    this.products.set(input.planId, productId);
+    return Promise.resolve({ externalProductId: productId });
+  }
+
+  ensurePrice(input: {
+    priceId: string;
+  }): Promise<{ externalPriceId: string }> {
+    this.call('ensurePrice', input.priceId);
+    const existing = this.prices.get(input.priceId);
+    const priceId = existing ?? `fake_price_${hex()}`;
+    this.prices.set(input.priceId, priceId);
+    return Promise.resolve({ externalPriceId: priceId });
+  }
+
   createCustomer(input: {
     idempotencyKey: string;
   }): Promise<{ externalCustomerId: string }> {
-    this.calls.push({
-      op: 'createCustomer',
-      idempotencyKey: input.idempotencyKey,
-    });
+    this.call('createCustomer', input.idempotencyKey);
     const existing = this.customers.get(input.idempotencyKey);
-    const id = existing ?? `fake_cus_${randomBytes(8).toString('hex')}`;
-    this.customers.set(input.idempotencyKey, id);
-    return Promise.resolve({ externalCustomerId: id });
+    const customerId = existing ?? `fake_cus_${hex()}`;
+    this.customers.set(input.idempotencyKey, customerId);
+    return Promise.resolve({ externalCustomerId: customerId });
   }
 
-  createSubscription(input: {
+  createCheckoutSession(input: {
     idempotencyKey: string;
-  }): Promise<{ externalSubscriptionId: string }> {
-    this.calls.push({
-      op: 'createSubscription',
-      idempotencyKey: input.idempotencyKey,
+    externalCustomerId: string;
+    externalPriceId: string;
+    trialDays: number;
+    requiresPaymentMethod: boolean;
+  }): Promise<ProviderCheckoutSession> {
+    this.call('createCheckoutSession', input.idempotencyKey);
+    const existing = this.checkoutsByKey.get(input.idempotencyKey);
+    if (existing) return Promise.resolve(this.view(existing));
+    const sessionId = `fake_cs_${hex()}`;
+    this.checkouts.set(sessionId, {
+      externalSessionId: sessionId,
+      status: 'open',
+      url: `https://checkout.fake.test/${sessionId}`,
+      expiresAt: new Date(Date.now() + 24 * 3600_000),
+      externalCustomerId: input.externalCustomerId,
+      externalSubscriptionId: null,
+      livemode: false,
+      externalPriceId: input.externalPriceId,
+      trialDays: input.trialDays,
+      requiresPaymentMethod: input.requiresPaymentMethod,
     });
-    const existing = this.subscriptions.get(input.idempotencyKey);
-    const id = existing ?? `fake_sub_${randomBytes(8).toString('hex')}`;
-    this.subscriptions.set(input.idempotencyKey, id);
-    return Promise.resolve({ externalSubscriptionId: id });
+    this.checkoutsByKey.set(input.idempotencyKey, sessionId);
+    return Promise.resolve(this.view(sessionId));
   }
 
-  scheduleCancellation(input: { idempotencyKey: string }): Promise<void> {
-    this.calls.push({
-      op: 'scheduleCancellation',
-      idempotencyKey: input.idempotencyKey,
-    });
-    return Promise.resolve();
+  private view(sessionId: string): ProviderCheckoutSession {
+    const c = this.checkouts.get(sessionId)!;
+    return {
+      externalSessionId: c.externalSessionId,
+      status: c.status,
+      url: c.status === 'open' ? c.url : null,
+      expiresAt: c.expiresAt,
+      externalCustomerId: c.externalCustomerId,
+      externalSubscriptionId: c.externalSubscriptionId,
+      livemode: false,
+    };
   }
 
-  undoCancellation(input: { idempotencyKey: string }): Promise<void> {
-    this.calls.push({
-      op: 'undoCancellation',
-      idempotencyKey: input.idempotencyKey,
-    });
-    return Promise.resolve();
+  retrieveCheckoutSession(
+    externalSessionId: string,
+  ): Promise<ProviderCheckoutSession> {
+    this.call('retrieveCheckoutSession', externalSessionId);
+    if (!this.checkouts.has(externalSessionId)) {
+      return Promise.reject(new SaasBillingProviderError('resource_missing'));
+    }
+    return Promise.resolve(this.view(externalSessionId));
   }
 
-  // Test helper: the signed delivery a real provider would send.
+  retrieveSubscription(
+    externalSubscriptionId: string,
+  ): Promise<ProviderSubscriptionSnapshot> {
+    this.call('retrieveSubscription', externalSubscriptionId);
+    const snapshot = this.subscriptions.get(externalSubscriptionId);
+    return snapshot
+      ? Promise.resolve({ ...snapshot })
+      : Promise.reject(new SaasBillingProviderError('resource_missing'));
+  }
+
+  retrieveInvoice(externalInvoiceId: string): Promise<ProviderInvoice | null> {
+    this.call('retrieveInvoice', externalInvoiceId);
+    const invoice = this.invoices.get(externalInvoiceId);
+    return Promise.resolve(invoice ? { ...invoice } : null);
+  }
+
+  // --- test helpers (the provider side) --------------------------------------
+
+  // The owner finished Checkout: the provider created a subscription.
+  completeCheckout(
+    externalSessionId: string,
+    opts: { hasPaymentMethod: boolean; now?: Date },
+  ): ProviderSubscriptionSnapshot {
+    const checkout = this.checkouts.get(externalSessionId)!;
+    const now = opts.now ?? new Date();
+    const subscriptionId = `fake_sub_${hex()}`;
+    const trial = checkout.trialDays > 0;
+    const snapshot: ProviderSubscriptionSnapshot = {
+      externalSubscriptionId: subscriptionId,
+      externalCustomerId: checkout.externalCustomerId!,
+      status: trial ? 'trialing' : 'active',
+      livemode: false,
+      hasPaymentMethod: opts.hasPaymentMethod,
+      paymentMethodSource: opts.hasPaymentMethod ? 'SUBSCRIPTION' : null,
+      cancelAtPeriodEnd: false,
+      trialStart: trial ? now : null,
+      trialEnd: trial
+        ? new Date(now.getTime() + checkout.trialDays * 86_400_000)
+        : null,
+    };
+    this.subscriptions.set(subscriptionId, snapshot);
+    checkout.status = 'complete';
+    checkout.externalSubscriptionId = subscriptionId;
+    return snapshot;
+  }
+
+  setSubscription(
+    externalSubscriptionId: string,
+    change: Partial<ProviderSubscriptionSnapshot>,
+  ): void {
+    const current = this.subscriptions.get(externalSubscriptionId)!;
+    const next = { ...current, ...change };
+    // The two payment-method fields stay consistent, as the real adapter's.
+    if (change.paymentMethodSource !== undefined) {
+      next.hasPaymentMethod = change.paymentMethodSource !== null;
+    } else if (change.hasPaymentMethod !== undefined) {
+      next.paymentMethodSource = change.hasPaymentMethod
+        ? 'SUBSCRIPTION'
+        : null;
+    }
+    this.subscriptions.set(externalSubscriptionId, next);
+  }
+
+  setInvoice(
+    externalInvoiceId: string,
+    status: ProviderInvoiceStatus,
+    externalSubscriptionId: string | null,
+    externalCustomerId: string | null,
+  ): void {
+    this.invoices.set(externalInvoiceId, {
+      externalInvoiceId,
+      status,
+      externalSubscriptionId,
+      externalCustomerId,
+      livemode: false,
+    });
+  }
+
+  expireCheckout(externalSessionId: string): void {
+    const checkout = this.checkouts.get(externalSessionId)!;
+    checkout.status = 'expired';
+  }
+
+  // The signed delivery a real provider would send.
   signEvent(
     body: FakeEventBody,
     at: Date = new Date(),
@@ -164,16 +318,15 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
   }
 
   verifyEvent(input: {
-    rawBody: string;
+    rawBody: string | Buffer;
     signatureHeader: string | undefined;
     now?: Date;
   }): VerifiedBillingProviderEvent {
-    const { rawBody } = input;
-    if (
-      typeof rawBody !== 'string' ||
-      rawBody.length === 0 ||
-      rawBody.length > 65_536
-    ) {
+    const rawBody =
+      typeof input.rawBody === 'string'
+        ? input.rawBody
+        : input.rawBody.toString('utf8');
+    if (rawBody.length === 0 || rawBody.length > 65_536) {
       throw new BillingEventVerificationError('Unreadable event.');
     }
     const header = parseHeader(input.signatureHeader);
@@ -204,10 +357,15 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
     } catch {
       throw new BillingEventVerificationError('Unreadable event.');
     }
-    const id = optionalText(body?.id);
+    const eventId = optionalText(body?.id);
     const type = optionalText(body?.type, 100);
     const occurredAt = toDate(body?.created);
-    if (!id || !type || !occurredAt || typeof body.livemode !== 'boolean') {
+    if (
+      !eventId ||
+      !type ||
+      !occurredAt ||
+      typeof body.livemode !== 'boolean'
+    ) {
       throw new BillingEventVerificationError('Incomplete event.');
     }
     // An event cannot have happened after it was signed.
@@ -221,7 +379,7 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
       typeof body.data === 'object' && body.data !== null ? body.data : {};
     return {
       provider: this.name,
-      externalEventId: id,
+      externalEventId: eventId,
       providerType: type,
       livemode: body.livemode,
       occurredAt,
@@ -271,6 +429,14 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
         return { kind: 'CANCEL_UNDONE' };
       case 'subscription.ended':
         return { kind: 'SUBSCRIPTION_ENDED' };
+      case 'checkout.completed': {
+        const session = optionalText(data.session);
+        return session
+          ? { kind: 'CHECKOUT_COMPLETED', externalSessionId: session }
+          : { kind: 'UNSUPPORTED' };
+      }
+      case 'subscription.changed':
+        return { kind: 'SUBSCRIPTION_CHANGED' };
       default:
         return { kind: 'UNSUPPORTED' };
     }

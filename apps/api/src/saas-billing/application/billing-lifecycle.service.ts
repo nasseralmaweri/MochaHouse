@@ -12,11 +12,53 @@ import {
   type SuspensionEffect,
 } from '../domain/billing-lifecycle';
 import {
+  eventsFromSnapshot,
+  type ProviderSubscriptionSnapshot,
+} from '../domain/provider-sync';
+import {
   SAAS_BILLING_PROVIDER,
+  SaasBillingProviderError,
+  type ProviderCheckoutSession,
+  type ProviderInvoice,
   type ProviderLifecycleEvent,
   type SaasBillingProvider,
   type VerifiedBillingProviderEvent,
 } from '../provider/saas-billing-provider';
+
+// SC3b — what the provider says NOW about the thing an event concerns, read
+// BEFORE the database transaction (no provider call ever runs while rows are
+// locked, and a provider outage leaves the event retryable).
+type ProviderFacts =
+  | { kind: 'none' }
+  | {
+      kind: 'checkout';
+      session: ProviderCheckoutSession;
+      snapshot: ProviderSubscriptionSnapshot | null;
+    }
+  | { kind: 'snapshot'; snapshot: ProviderSubscriptionSnapshot }
+  // null: the provider has no such invoice.
+  | { kind: 'invoice'; invoice: ProviderInvoice | null };
+
+// Applies lifecycle events in order to a state, skipping the ones it refuses
+// (each provider-sync event is independently valid or not).
+function applyAll(state: BillingState, events: BillingEvent[]) {
+  let next = state;
+  const history: BillingHistoryEntry[] = [];
+  let suspension: SuspensionEffect = 'NONE';
+  const refused: string[] = [];
+  for (const event of events) {
+    const result = transition(next, event);
+    if (!result.ok) {
+      refused.push(result.reason);
+      continue;
+    }
+    if (!result.changed) continue;
+    next = result.next;
+    history.push(...result.history);
+    if (result.suspension !== 'NONE') suspension = result.suspension;
+  }
+  return { next, history, suspension, refused };
+}
 
 // SC3a — applies billing lifecycle changes to a business's subscription
 // (the SC2a TenantSubscription — no parallel model).
@@ -163,6 +205,13 @@ const PERMANENT_REFUSALS = new Set<RefusalReason>([
 // How far ahead of our clock an event may claim to have happened.
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
+// SC3b — a retryable (FAILED) outcome is not retried forever: after this many
+// attempts, or this long after it first arrived, the event is closed as
+// REJECTED and a reconciliation case is opened for an operator. (The
+// provider itself stops redelivering after about three days.)
+const MAX_RETRY_ATTEMPTS = 12;
+const MAX_RETRY_AGE_MS = 72 * 60 * 60 * 1000;
+
 function isUniqueViolation(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const e = error as {
@@ -182,6 +231,8 @@ function isUniqueViolation(error: unknown): boolean {
 function failureCode(error: unknown): string {
   if (error instanceof BillingLifecycleError) return error.reason;
   if (error instanceof ConcurrentBillingChange) return 'CONCURRENT_CHANGE';
+  // The provider could not be read (outage, rate limit): retryable.
+  if (error instanceof SaasBillingProviderError) return 'PROVIDER_ERROR';
   return 'APPLY_ERROR';
 }
 
@@ -226,8 +277,9 @@ export class BillingLifecycleService {
       };
     }
     try {
+      const facts = await this.readProvider(verified);
       return await runSerializable(this.prisma, (tx) =>
-        this.apply(tx, ledger.id, verified),
+        this.apply(tx, ledger.id, verified, facts),
       );
     } catch (error) {
       // Recorded as FAILED (retryable by redelivery); never half-applied —
@@ -243,9 +295,11 @@ export class BillingLifecycleService {
           attempts: { increment: 1 },
         },
       });
+      // The error class only: messages (database or provider) can carry
+      // query detail or identifiers.
       this.logger.error(
         `Billing event ${ledger.id} failed to apply (${outcome}): ${
-          error instanceof Error ? error.message : 'unknown'
+          error instanceof Error ? error.name : 'unknown'
         }`,
       );
       return {
@@ -290,10 +344,59 @@ export class BillingLifecycleService {
     }
   }
 
+  // SC3b — the provider's current view, for the events that need one.
+  private async readProvider(
+    verified: VerifiedBillingProviderEvent,
+  ): Promise<ProviderFacts> {
+    if (verified.livemode !== this.provider.livemode) return { kind: 'none' };
+    const event = verified.event;
+    switch (event.kind) {
+      case 'CHECKOUT_COMPLETED': {
+        // Only a session WE created is ever read from the provider.
+        const ours = await this.prisma.billingCheckoutSession.findUnique({
+          where: { externalSessionId: event.externalSessionId },
+          select: { id: true },
+        });
+        if (!ours) return { kind: 'none' };
+        const session = await this.provider.retrieveCheckoutSession(
+          event.externalSessionId,
+        );
+        const snapshot =
+          session.externalSubscriptionId !== null
+            ? await this.provider.retrieveSubscription(
+                session.externalSubscriptionId,
+              )
+            : null;
+        return { kind: 'checkout', session, snapshot };
+      }
+      case 'SUBSCRIPTION_CHANGED':
+        // Only a subscription linked to one of OURS is read from the
+        // provider (anything else is matched — and ignored or retried — in
+        // the transaction without reading it).
+        if (!(await this.isLinked(verified))) return { kind: 'none' };
+        return {
+          kind: 'snapshot',
+          snapshot: await this.provider.retrieveSubscription(
+            verified.externalSubscriptionId!,
+          ),
+        };
+      case 'PAYMENT_SUCCEEDED':
+      case 'PAYMENT_FAILED':
+        if (!(await this.isLinked(verified))) return { kind: 'none' };
+        return {
+          kind: 'invoice',
+          invoice: await this.provider.retrieveInvoice(event.reference),
+        };
+      default:
+        return { kind: 'none' };
+    }
+  }
+
   private async apply(
     tx: Tx,
     ledgerId: string,
     verified: VerifiedBillingProviderEvent,
+    facts: ProviderFacts,
   ): Promise<BillingEventOutcome> {
     const ledger = await tx.billingProviderEvent.findUniqueOrThrow({
       where: { id: ledgerId },
@@ -311,12 +414,28 @@ export class BillingLifecycleService {
       };
     }
 
-    // FAILED = not applied, retryable (a later delivery is applied).
+    // FAILED = not applied, retryable (a later delivery is applied) — until
+    // its retries are exhausted, when it is closed and handed to review.
     const finish = async (
-      status: 'IGNORED' | 'REJECTED' | 'FAILED',
+      requested: 'IGNORED' | 'REJECTED' | 'FAILED',
       outcome: string,
       subscriptionId: string | null,
     ): Promise<BillingEventOutcome> => {
+      let status = requested;
+      if (
+        status === 'FAILED' &&
+        (ledger.attempts + 1 >= MAX_RETRY_ATTEMPTS ||
+          Date.now() - ledger.receivedAt.getTime() >= MAX_RETRY_AGE_MS)
+      ) {
+        await this.openCase(
+          tx,
+          'EVENT_RETRIES_EXHAUSTED',
+          subscriptionId,
+          ledgerId,
+          outcome,
+        );
+        status = 'REJECTED';
+      }
       await tx.billingProviderEvent.update({
         where: { id: ledgerId },
         data: {
@@ -340,6 +459,16 @@ export class BillingLifecycleService {
     if (verified.event.kind === 'UNSUPPORTED') {
       return finish('IGNORED', 'UNSUPPORTED_TYPE', null);
     }
+    if (verified.event.kind === 'CHECKOUT_COMPLETED') {
+      return this.applyCheckout(
+        tx,
+        ledgerId,
+        verified,
+        verified.event.externalSessionId,
+        facts,
+        finish,
+      );
+    }
     if (verified.externalSubscriptionId === null) {
       return finish('IGNORED', 'NO_SUBSCRIPTION_REFERENCE', null);
     }
@@ -353,7 +482,12 @@ export class BillingLifecycleService {
       },
     });
     if (!subscription) {
-      // Possibly delivered before we stored the provider ids: retryable.
+      // Not one of our customers (the provider account may carry other
+      // business): acknowledged and ignored, never retried. One of ours but
+      // not linked yet (delivered before the Checkout completion): retryable.
+      if (!(await this.isOurCustomer(tx, verified))) {
+        return finish('IGNORED', 'NOT_OURS', null);
+      }
       return finish('FAILED', 'NO_MATCHING_SUBSCRIPTION', null);
     }
     if (
@@ -367,6 +501,60 @@ export class BillingLifecycleService {
       verified.claimedTenantId !== subscription.subscriberTenantId
     ) {
       return finish('REJECTED', 'TENANT_CLAIM_MISMATCH', subscription.id);
+    }
+    // SC3b — a subscription change is applied from the provider's LIVE view
+    // (read just before this transaction), so its delivery order does not
+    // matter and the stale rule does not apply.
+    if (verified.event.kind === 'SUBSCRIPTION_CHANGED') {
+      if (facts.kind !== 'snapshot') {
+        return finish('FAILED', 'PROVIDER_READ_MISSING', subscription.id);
+      }
+      return this.applySnapshot(
+        tx,
+        ledgerId,
+        verified,
+        subscription,
+        facts.snapshot,
+        finish,
+      );
+    }
+    // SC3b — a payment event is checked against the provider's live invoice:
+    // it must belong to THIS subscription; a failure already superseded by a
+    // payment is not applied; a "paid" invoice must really be paid.
+    if (
+      verified.event.kind === 'PAYMENT_SUCCEEDED' ||
+      verified.event.kind === 'PAYMENT_FAILED'
+    ) {
+      // Never applied without the live invoice (linked after the read:
+      // retryable).
+      if (facts.kind !== 'invoice') {
+        return finish('FAILED', 'PROVIDER_READ_MISSING', subscription.id);
+      }
+      const invoice = facts.invoice;
+      if (
+        invoice === null ||
+        invoice.livemode !== this.provider.livemode ||
+        invoice.externalSubscriptionId !==
+          subscription.externalSubscriptionId ||
+        (invoice.externalCustomerId !== null &&
+          invoice.externalCustomerId !== subscription.externalCustomerId)
+      ) {
+        await this.openCase(tx, 'INVOICE_MISMATCH', subscription.id, ledgerId);
+        return finish('REJECTED', 'INVOICE_MISMATCH', subscription.id);
+      }
+      if (
+        verified.event.kind === 'PAYMENT_FAILED' &&
+        invoice.status === 'paid'
+      ) {
+        return finish('IGNORED', 'SUPERSEDED_BY_PAYMENT', subscription.id);
+      }
+      if (
+        verified.event.kind === 'PAYMENT_SUCCEEDED' &&
+        invoice.status !== 'paid'
+      ) {
+        await this.openCase(tx, 'INVOICE_NOT_PAID', subscription.id, ledgerId);
+        return finish('REJECTED', 'INVOICE_NOT_PAID', subscription.id);
+      }
     }
     // An older event never rolls the state back — except an authorization,
     // a fact that only ever adds (it never removes access or charges).
@@ -425,7 +613,10 @@ export class BillingLifecycleService {
   private async lifecycleEvent(
     tx: Tx,
     verified: VerifiedBillingProviderEvent,
-    event: Exclude<ProviderLifecycleEvent, { kind: 'UNSUPPORTED' }>,
+    event: Exclude<
+      ProviderLifecycleEvent,
+      { kind: 'UNSUPPORTED' | 'CHECKOUT_COMPLETED' | 'SUBSCRIPTION_CHANGED' }
+    >,
   ): Promise<BillingEvent> {
     const at = verified.occurredAt;
     switch (event.kind) {
@@ -461,6 +652,372 @@ export class BillingLifecycleService {
     }
   }
 
+  // SC3b — the owner completed a hosted Checkout. Linked ONLY when the
+  // session is one WE created for this subscription, for the customer WE
+  // stored, and the provider (read live) says it is complete. The provider
+  // subscription it created is then linked and our state brought in line
+  // with it.
+  private async applyCheckout(
+    tx: Tx,
+    ledgerId: string,
+    verified: VerifiedBillingProviderEvent,
+    externalSessionId: string,
+    facts: ProviderFacts,
+    finish: (
+      status: 'IGNORED' | 'REJECTED' | 'FAILED',
+      outcome: string,
+      subscriptionId: string | null,
+    ) => Promise<BillingEventOutcome>,
+  ): Promise<BillingEventOutcome> {
+    const checkout = await tx.billingCheckoutSession.findUnique({
+      where: { externalSessionId },
+    });
+    if (!checkout) {
+      // Not for one of our customers: ignored. Ours but not recorded (yet):
+      // retryable, then handed to review.
+      if (!(await this.isOurCustomer(tx, verified))) {
+        return finish('IGNORED', 'NOT_OURS', null);
+      }
+      return finish('FAILED', 'NO_MATCHING_CHECKOUT', null);
+    }
+    const subscription = await this.load(tx, checkout.subscriptionId);
+    if (facts.kind !== 'checkout') {
+      return finish('FAILED', 'PROVIDER_READ_MISSING', subscription.id);
+    }
+    const { session, snapshot } = facts;
+    if (
+      session.externalSessionId !== externalSessionId ||
+      session.livemode !== this.provider.livemode
+    ) {
+      return finish('REJECTED', 'CHECKOUT_MISMATCH', subscription.id);
+    }
+    if (session.status !== 'complete') {
+      return finish('FAILED', 'CHECKOUT_NOT_COMPLETE', subscription.id);
+    }
+    if (
+      subscription.billingMode !== 'BILLED' ||
+      subscription.billingProvider !== verified.provider
+    ) {
+      return finish('REJECTED', 'NOT_BILLED', subscription.id);
+    }
+    if (
+      session.externalCustomerId !== subscription.externalCustomerId ||
+      (verified.externalCustomerId !== null &&
+        verified.externalCustomerId !== subscription.externalCustomerId)
+    ) {
+      await this.openCase(
+        tx,
+        'CHECKOUT_CUSTOMER_MISMATCH',
+        subscription.id,
+        ledgerId,
+      );
+      return finish('REJECTED', 'CUSTOMER_MISMATCH', subscription.id);
+    }
+    if (
+      verified.claimedTenantId !== null &&
+      verified.claimedTenantId !== subscription.subscriberTenantId
+    ) {
+      return finish('REJECTED', 'TENANT_CLAIM_MISMATCH', subscription.id);
+    }
+    const externalSubscriptionId = session.externalSubscriptionId;
+    if (
+      externalSubscriptionId === null ||
+      snapshot === null ||
+      snapshot.externalSubscriptionId !== externalSubscriptionId ||
+      snapshot.externalCustomerId !== subscription.externalCustomerId
+    ) {
+      return finish(
+        'FAILED',
+        'CHECKOUT_SUBSCRIPTION_UNREADABLE',
+        subscription.id,
+      );
+    }
+    if (
+      subscription.externalSubscriptionId !== null &&
+      subscription.externalSubscriptionId !== externalSubscriptionId
+    ) {
+      // Already linked to another provider subscription: never replaced
+      // automatically.
+      await this.openCase(
+        tx,
+        'CHECKOUT_LINKED_ELSEWHERE',
+        subscription.id,
+        ledgerId,
+      );
+      return finish('REJECTED', 'LINKED_ELSEWHERE', subscription.id);
+    }
+
+    await tx.billingCheckoutSession.updateMany({
+      where: { id: checkout.id, status: 'OPEN' },
+      data: { status: 'COMPLETED', completedAt: new Date() },
+    });
+    const sync = await this.syncFromSnapshot(
+      tx,
+      subscription.id,
+      toBillingState(subscription),
+      snapshot,
+      checkout,
+      verified.occurredAt,
+    );
+    if (sync.unexpectedTrial) {
+      await this.openCase(tx, 'UNEXPECTED_TRIAL', subscription.id, ledgerId);
+    }
+    const result = applyAll(toBillingState(subscription), sync.events);
+    const linking = subscription.externalSubscriptionId === null;
+    if (!linking && result.history.length === 0) {
+      return finish('IGNORED', 'NO_CHANGE', subscription.id);
+    }
+    await this.write(
+      tx,
+      subscription,
+      result.next,
+      // Not advanced: the change came from the provider's live view, and
+      // an earlier-created payment event delivered after it must still apply.
+      subscription.lastBillingEventAt,
+      linking ? { externalSubscriptionId } : {},
+    );
+    await this.history(tx, subscription.id, result.history, {
+      source: 'BILLING_PROVIDER',
+      billingProviderEventId: ledgerId,
+      actorPlatformOperatorId: null,
+    });
+    return this.applied(
+      tx,
+      ledgerId,
+      subscription.id,
+      `${linking ? 'LINKED ' : ''}${subscription.status}->${result.next.status}`,
+      result.suspension,
+    );
+  }
+
+  // SC3b — bring our state in line with the provider's live subscription.
+  private async applySnapshot(
+    tx: Tx,
+    ledgerId: string,
+    verified: VerifiedBillingProviderEvent,
+    subscription: SubscriptionRow,
+    snapshot: ProviderSubscriptionSnapshot,
+    finish: (
+      status: 'IGNORED' | 'REJECTED' | 'FAILED',
+      outcome: string,
+      subscriptionId: string | null,
+    ) => Promise<BillingEventOutcome>,
+  ): Promise<BillingEventOutcome> {
+    if (
+      snapshot.livemode !== this.provider.livemode ||
+      snapshot.externalSubscriptionId !== subscription.externalSubscriptionId ||
+      snapshot.externalCustomerId !== subscription.externalCustomerId
+    ) {
+      await this.openCase(
+        tx,
+        'SUBSCRIPTION_MISMATCH',
+        subscription.id,
+        ledgerId,
+      );
+      return finish('REJECTED', 'SUBSCRIPTION_MISMATCH', subscription.id);
+    }
+    const completed = await tx.billingCheckoutSession.findFirst({
+      where: { subscriptionId: subscription.id, status: 'COMPLETED' },
+      orderBy: { completedAt: 'desc' },
+      select: {
+        trialDays: true,
+        requiresPaymentMethod: true,
+        trialClaimKey: true,
+      },
+    });
+    const state = toBillingState(subscription);
+    const sync = await this.syncFromSnapshot(
+      tx,
+      subscription.id,
+      state,
+      snapshot,
+      completed,
+      verified.occurredAt,
+    );
+    if (sync.unexpectedTrial) {
+      await this.openCase(tx, 'UNEXPECTED_TRIAL', subscription.id, ledgerId);
+    }
+    const result = applyAll(state, sync.events);
+    if (result.history.length === 0) {
+      return finish('IGNORED', 'NO_CHANGE', subscription.id);
+    }
+    await this.write(
+      tx,
+      subscription,
+      result.next,
+      // Not advanced: the change came from the provider's live view, and
+      // an earlier-created payment event delivered after it must still apply.
+      subscription.lastBillingEventAt,
+    );
+    await this.history(tx, subscription.id, result.history, {
+      source: 'BILLING_PROVIDER',
+      billingProviderEventId: ledgerId,
+      actorPlatformOperatorId: null,
+    });
+    return this.applied(
+      tx,
+      ledgerId,
+      subscription.id,
+      `${subscription.status}->${result.next.status}`,
+      result.suspension,
+    );
+  }
+
+  // SC3b — the events the provider's live subscription implies. The
+  // one-time trial is CONSUMED only here, in the same transaction that
+  // records the trial: when the provider has verifiably created the trial
+  // subscription for the trial OUR Checkout offered. If the owner's claim was
+  // already used by another business, the trial is not accepted: it is
+  // reviewed as UNEXPECTED_TRIAL. A cardless trial then ends without
+  // charging; a card-required one would be charged at its end (the owner
+  // consented to that) unless an operator acts on the case. Operator trials
+  // refuse a claim an open Checkout holds, so this is a last-resort guard.
+  private async syncFromSnapshot(
+    tx: Tx,
+    subscriptionId: string,
+    state: BillingState,
+    snapshot: ProviderSubscriptionSnapshot,
+    checkout: {
+      trialDays: number;
+      requiresPaymentMethod: boolean;
+      trialClaimKey: string | null;
+    } | null,
+    at: Date,
+  ) {
+    const offered =
+      checkout === null
+        ? null
+        : {
+            trialDays: checkout.trialDays,
+            requiresPaymentMethod: checkout.requiresPaymentMethod,
+          };
+    const sync = eventsFromSnapshot(state, snapshot, offered, at);
+    if (!sync.events.some((event) => event.type === 'TRIAL_STARTED')) {
+      return sync;
+    }
+    if (
+      await this.consumeTrialClaim(
+        tx,
+        subscriptionId,
+        checkout?.trialClaimKey ?? null,
+      )
+    ) {
+      return sync;
+    }
+    return eventsFromSnapshot(state, snapshot, null, at);
+  }
+
+  // Records the owner's one-time trial claim for this subscription. Retried
+  // deliveries find their own claim; a claim another business consumed is
+  // refused (a concurrent consumer fails the serializable transaction and
+  // the event is retried, then refused).
+  private async consumeTrialClaim(
+    tx: Tx,
+    subscriptionId: string,
+    claimKey: string | null,
+  ): Promise<boolean> {
+    if (claimKey === null) return false;
+    const mine = await tx.billingTrialClaim.findUnique({
+      where: { subscriptionId },
+      select: { claimKey: true },
+    });
+    if (mine) return mine.claimKey === claimKey;
+    const taken = await tx.billingTrialClaim.findUnique({
+      where: { claimKey },
+      select: { id: true },
+    });
+    if (taken) return false;
+    await tx.billingTrialClaim.create({ data: { subscriptionId, claimKey } });
+    return true;
+  }
+
+  // Whether the event names a provider subscription linked to one of ours.
+  private async isLinked(
+    verified: VerifiedBillingProviderEvent,
+  ): Promise<boolean> {
+    if (verified.externalSubscriptionId === null) return false;
+    const found = await this.prisma.tenantSubscription.findUnique({
+      where: {
+        billingProvider_externalSubscriptionId: {
+          billingProvider: verified.provider,
+          externalSubscriptionId: verified.externalSubscriptionId,
+        },
+      },
+      select: { id: true },
+    });
+    return found !== null;
+  }
+
+  // Whether the event names a customer WE created (matched only through our
+  // stored provider ids).
+  private async isOurCustomer(
+    tx: Tx,
+    verified: VerifiedBillingProviderEvent,
+  ): Promise<boolean> {
+    if (verified.externalCustomerId === null) return false;
+    const found = await tx.tenantSubscription.findUnique({
+      where: {
+        billingProvider_externalCustomerId: {
+          billingProvider: verified.provider,
+          externalCustomerId: verified.externalCustomerId,
+        },
+      },
+      select: { id: true },
+    });
+    return found !== null;
+  }
+
+  private async applied(
+    tx: Tx,
+    ledgerId: string,
+    subscriptionId: string,
+    outcome: string,
+    suspension: SuspensionEffect,
+  ): Promise<BillingEventOutcome> {
+    await tx.billingProviderEvent.update({
+      where: { id: ledgerId },
+      data: {
+        status: 'APPLIED',
+        outcome: outcome.slice(0, 500),
+        subscriptionId,
+        processedAt: new Date(),
+        attempts: { increment: 1 },
+      },
+    });
+    return {
+      status: 'APPLIED',
+      duplicate: false,
+      subscriptionId,
+      suspension,
+      outcome,
+    };
+  }
+
+  // SC3b — something for a platform operator to review (never acts). One
+  // OPEN case per subject and kind.
+  async openCase(
+    tx: Tx,
+    kind: string,
+    subscriptionId: string | null,
+    billingProviderEventId: string | null,
+    detail: string | null = null,
+  ): Promise<void> {
+    const existing = await tx.billingReconciliationCase.findFirst({
+      where: {
+        status: 'OPEN',
+        kind,
+        ...(subscriptionId !== null
+          ? { subscriptionId }
+          : { billingProviderEventId }),
+      },
+      select: { id: true },
+    });
+    if (existing) return;
+    await tx.billingReconciliationCase.create({
+      data: { kind, subscriptionId, billingProviderEventId, detail },
+    });
+  }
+
   // --- operator and system changes -------------------------------------------
 
   // Starts the one trial of a BILLED subscription under the CURRENT billing
@@ -486,12 +1043,23 @@ export class BillingLifecycleService {
         requiresPaymentMethod: policy.trialRequiresPaymentMethod,
       });
       if (!result.ok) throw new BillingLifecycleError(result.reason);
+      const claimKey = trialClaimKey(ownerEmail, trialClaimSecret());
+      // SC3b — another business of the same owner holds this claim in an
+      // open Checkout: its trial is honoured, never pre-empted here.
+      const heldElsewhere = await tx.billingCheckoutSession.findFirst({
+        where: {
+          trialClaimKey: claimKey,
+          status: 'OPEN',
+          subscriptionId: { not: subscription.id },
+        },
+        select: { id: true },
+      });
+      if (heldElsewhere) {
+        throw new BillingLifecycleError('TRIAL_ALREADY_USED');
+      }
       try {
         await tx.billingTrialClaim.create({
-          data: {
-            subscriptionId: subscription.id,
-            claimKey: trialClaimKey(ownerEmail, trialClaimSecret()),
-          },
+          data: { subscriptionId: subscription.id, claimKey },
         });
       } catch (error) {
         if (isUniqueViolation(error)) {
@@ -570,6 +1138,7 @@ export class BillingLifecycleService {
     current: SubscriptionRow,
     next: BillingState,
     lastBillingEventAt: Date | null,
+    link: { externalSubscriptionId?: string } = {},
   ): Promise<void> {
     const { count } = await tx.tenantSubscription.updateMany({
       where: {
@@ -578,6 +1147,7 @@ export class BillingLifecycleService {
       },
       data: {
         ...stateColumns(next),
+        ...link,
         lastBillingEventAt,
         billingStateVersion: { increment: 1 },
       },

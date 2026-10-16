@@ -335,6 +335,19 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'View HQ reporting',
     definition: 'View HQ reporting',
   },
+  // SC3b — the business's own CENTERIVO subscription.
+  'billing.view': {
+    group: 'Billing',
+    effectiveAll: 'View the CENTERIVO plan and billing status',
+    effectiveScoped: 'View the CENTERIVO plan and billing status',
+    definition: 'View the CENTERIVO plan and billing status',
+  },
+  'billing.manage': {
+    group: 'Billing',
+    effectiveAll: 'Set up CENTERIVO subscription payment',
+    effectiveScoped: 'Set up CENTERIVO subscription payment',
+    definition: 'Set up CENTERIVO subscription payment',
+  },
 };
 
 const GROUP_ORDER = [
@@ -353,6 +366,7 @@ const GROUP_ORDER = [
   'Marketing',
   'Approvals',
   'Reports',
+  'Billing',
   'Administration',
 ];
 
@@ -400,6 +414,8 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'approvals.view',
   'approvals.decide',
   'reports.view',
+  'billing.view',
+  'billing.manage',
   'users.view',
   'roles.view',
   'audit.view',

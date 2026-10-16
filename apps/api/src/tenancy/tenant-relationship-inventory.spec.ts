@@ -188,6 +188,9 @@ const APPROVED_GLOBAL_MODELS = [
   'BillingPolicy',
   'BillingTrialClaim',
   'BillingProviderEvent',
+  // SC3b — Checkout sessions and reconciliation cases.
+  'BillingCheckoutSession',
+  'BillingReconciliationCase',
 ];
 // SC2a review — identifiers issued by an OUTSIDE system (not a record of
 // ours): the SaaS billing provider's ids (SC3a).
@@ -195,6 +198,9 @@ const EXTERNAL_IDENTIFIER_COLUMNS: Readonly<Record<string, readonly string[]>> =
   {
     TenantSubscription: ['externalSubscriptionId', 'externalCustomerId'],
     SubscriptionPlanPrice: ['externalPriceId'],
+    // SC3b — the provider's product and Checkout session ids.
+    SubscriptionPlan: ['externalProductId'],
+    BillingCheckoutSession: ['externalSessionId'],
     BillingProviderEvent: [
       'externalEventId',
       'externalSubscriptionId',
@@ -245,6 +251,9 @@ const PLATFORM_OPERATOR_MODELS = [
   'BillingPolicy',
   'BillingTrialClaim',
   'BillingProviderEvent',
+  // SC3b — Checkout sessions and reconciliation cases.
+  'BillingCheckoutSession',
+  'BillingReconciliationCase',
 ];
 
 describe('Tenant relationship inventory (Security 4C-1)', () => {
