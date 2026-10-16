@@ -66,9 +66,10 @@ export async function startBillingAction(
   return { outcome };
 }
 
-export async function runReconciliationAction(
-  _previous: BillingActionState<PlatformReconciliationRunResponse>,
-): Promise<BillingActionState<PlatformReconciliationRunResponse>> {
+// Used with useActionState; the previous state is not needed.
+export async function runReconciliationAction(): Promise<
+  BillingActionState<PlatformReconciliationRunResponse>
+> {
   const outcome = await call<PlatformReconciliationRunResponse>("/billing/reconcile");
   if (outcome.kind === "ok") revalidatePath("/platform/billing");
   return { outcome };

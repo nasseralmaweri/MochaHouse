@@ -10,9 +10,8 @@ export interface SetUpPaymentState {
   message: string | null;
 }
 
-export async function setUpPaymentAction(
-  _previous: SetUpPaymentState,
-): Promise<SetUpPaymentState> {
+// Used with useActionState; the previous state is not needed.
+export async function setUpPaymentAction(): Promise<SetUpPaymentState> {
   const result = await openAdminBillingCheckout();
   if (result.outcome === "refused") return { message: result.message };
   redirect(result.url);
