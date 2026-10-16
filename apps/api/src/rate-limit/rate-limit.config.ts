@@ -61,6 +61,8 @@ export type PolicyName =
   | 'order-status'
   | 'customer-sign-in'
   | 'internal-sign-in'
+  | 'platform-sign-in'
+  | 'platform-mfa'
   | 'account-recovery'
   | 'account-verification';
 
@@ -211,6 +213,51 @@ const DEFAULTS: Record<PolicyName, PolicyDefault> = {
         key: ['tenant', 'identifier'],
         limit: 30,
         windowSeconds: HOUR,
+      },
+    ],
+  },
+  // SC1b — CENTERIVO platform-operator sign-in (no tenant: the tenant part of
+  // the key is the fixed "none"). Stricter than staff sign-in: a platform
+  // operator account is the most privileged credential in the system.
+  'platform-sign-in': {
+    identifierField: 'email',
+    scopes: [
+      // one source: 4 per 15 min = at most 16/hour, under the ceiling of 20
+      // (so one source can never lock an operator out)
+      {
+        name: 'identifier-ip',
+        key: ['tenant', 'identifier', 'ip'],
+        limit: 4,
+        windowSeconds: QUARTER_HOUR,
+      },
+      {
+        name: 'ip',
+        key: ['tenant', 'ip'],
+        limit: 20,
+        windowSeconds: FIVE_MINUTES,
+      },
+      {
+        name: 'identifier',
+        key: ['tenant', 'identifier'],
+        limit: 20,
+        windowSeconds: HOUR,
+      },
+    ],
+  },
+  // SC1b — the MFA / enrolment steps. This caps how fast one client can call
+  // them at all. Code guessing is bounded elsewhere: every code attempt
+  // consumes its single-use challenge (a wrong code included), and a new
+  // challenge needs the password, which 'platform-sign-in' limits to 20 per
+  // hour per operator from any number of addresses. There is deliberately no
+  // IP-independent ceiling here: requests with junk handles would spend it
+  // and lock every operator out of this step.
+  'platform-mfa': {
+    scopes: [
+      {
+        name: 'ip',
+        key: ['tenant', 'ip'],
+        limit: 20,
+        windowSeconds: FIVE_MINUTES,
       },
     ],
   },

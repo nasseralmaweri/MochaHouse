@@ -775,6 +775,32 @@ export interface PlatformOperatorProfile {
 export interface PlatformMeResponse {
     operator: PlatformOperatorProfile;
 }
+export interface PlatformSignInRequest {
+    email: string;
+    password: string;
+}
+export interface PlatformSignInStepResponse {
+    status: "mfa-required" | "mfa-setup-required";
+    challenge: string;
+}
+export interface PlatformChallengeRequest {
+    challenge: string;
+}
+export interface PlatformMfaSetupResponse {
+    challenge: string;
+}
+export interface PlatformMfaSetupDisplayResponse {
+    secret: string;
+    otpauthUri: string;
+}
+export interface PlatformChallengeCodeRequest {
+    challenge: string;
+    code: string;
+}
+export interface PlatformSessionResponse {
+    idToken: string;
+    expiresInSeconds: number;
+}
 export type AdminUserLocationAccess = {
     kind: "all";
 } | {

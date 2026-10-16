@@ -18,6 +18,8 @@ describe('loadRateLimitConfig', () => {
       'order-status',
       'customer-sign-in',
       'internal-sign-in',
+      'platform-sign-in',
+      'platform-mfa',
       'account-recovery',
       'account-verification',
     ];
@@ -44,6 +46,7 @@ describe('loadRateLimitConfig', () => {
     for (const policy of [
       'customer-sign-in',
       'internal-sign-in',
+      'platform-sign-in',
       'account-recovery',
       'account-verification',
     ] as const) {
@@ -166,6 +169,9 @@ describe('policy invariants', () => {
   it('names the identifier field each credential policy keys on (the one its handler reads)', () => {
     expect(policies['customer-sign-in'].identifierField).toBe('identifier');
     expect(policies['internal-sign-in'].identifierField).toBe('identifier');
+    // SC1b — the platform sign-in handler reads `email`.
+    expect(policies['platform-sign-in'].identifierField).toBe('email');
+    expect(policies['platform-mfa'].identifierField).toBeNull();
     expect(policies['account-recovery'].identifierField).toBe('email');
     expect(policies['account-verification'].identifierField).toBe('email');
     for (const name of [
@@ -178,10 +184,17 @@ describe('policy invariants', () => {
     }
   });
 
+  it('SC1b: every platform-mfa scope includes the client address (junk requests cannot lock every operator out)', () => {
+    const scopes = policies['platform-mfa'].scopes;
+    expect(scopes.length).toBeGreaterThan(0);
+    for (const scope of scopes) expect(scope.key).toContain('ip');
+  });
+
   it('keeps every per-identifier ceiling above what ONE address can reach, so one source cannot lock a customer out', () => {
     for (const name of [
       'customer-sign-in',
       'internal-sign-in',
+      'platform-sign-in',
       'account-recovery',
       'account-verification',
     ] as const) {

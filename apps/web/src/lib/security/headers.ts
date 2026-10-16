@@ -37,6 +37,11 @@ export const API_ROUTE_HEADERS: readonly HeaderEntry[] = [
   { key: "Cache-Control", value: "no-store" },
 ];
 
+export const PLATFORM_CONSOLE_HEADERS: readonly HeaderEntry[] = [
+  ...PRIVATE_URL_HEADERS,
+  { key: "X-Robots-Tag", value: "noindex, nofollow" },
+];
+
 // HSTS is opt-in: it is only correct once the deployment serves HTTPS on every
 // host it covers, which this repository cannot know.
 export function hstsHeader(env: NodeJS.ProcessEnv = process.env): HeaderEntry[] {
@@ -60,5 +65,10 @@ export function buildHeaderRules(
     { source: "/order/confirmation/:path*", headers: [...PRIVATE_URL_HEADERS] },
     { source: "/account/:path*", headers: [...PRIVATE_URL_HEADERS] },
     { source: "/api/:path*", headers: [...API_ROUTE_HEADERS] },
+    // SC1b — the CENTERIVO platform console (operator-only; the first
+    // sign-in shows an authenticator secret): never cached, never leaked in
+    // a Referer, never indexed.
+    { source: "/platform", headers: [...PLATFORM_CONSOLE_HEADERS] },
+    { source: "/platform/:path*", headers: [...PLATFORM_CONSOLE_HEADERS] },
   ];
 }

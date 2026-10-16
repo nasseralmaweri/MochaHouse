@@ -120,10 +120,11 @@ describe('Platform operator authentication (integration)', () => {
 
   // --- valid access -------------------------------------------------------
 
-  it('an ACTIVE operator gets their profile — no identity subject, no claims, not cacheable — and the access is audited', async () => {
+  it('an ACTIVE operator gets their profile — no identity subject, no claims, not cacheable — and reading it writes nothing (SC1b)', async () => {
     const row = await operator('active');
     const token = platformToken('active');
     const res = await platformMe(token).expect(200);
+    await platformMe(token).expect(200);
     expect(res.body).toEqual({
       operator: {
         id: row.id,
@@ -135,15 +136,13 @@ describe('Platform operator authentication (integration)', () => {
     expect(res.headers['cache-control']).toBe('no-store');
     expect(JSON.stringify(res.body)).not.toContain(row.externalSubject);
 
+    // SC1b — the portal reads /me on every page, so it is read-only: the
+    // privileged access is audited once per sign-in (platform-sign-in.spec).
     const stored = await prisma.platformOperator.findUniqueOrThrow({
       where: { id: row.id },
     });
-    expect(stored.lastAuthenticatedAt).not.toBeNull();
-    const events = await auditFor({ actorPlatformOperatorId: row.id });
-    expect(events.map((e) => [e.action, e.outcome])).toEqual([
-      ['platform.session.verified', 'SUCCEEDED'],
-    ]);
-    expect(JSON.stringify(events)).not.toContain(token);
+    expect(stored.lastAuthenticatedAt).toBeNull();
+    expect(await auditFor({ actorPlatformOperatorId: row.id })).toEqual([]);
   });
 
   it('ignores tenant headers: a platform request carries no tenant, whatever the client sends', async () => {

@@ -1586,6 +1586,53 @@ export interface PlatformMeResponse {
   operator: PlatformOperatorProfile;
 }
 
+// --- CENTERIVO platform-operator sign-in (SC1b) ------------------------
+// Server-to-server only: the web tier's server actions call these and keep
+// the challenge handle and the session token in HttpOnly cookies. The
+// second factor is always required — sign-in never returns a token.
+
+// POST /api/v1/platform/auth/sign-in
+export interface PlatformSignInRequest {
+  email: string;
+  password: string;
+}
+
+// An opaque, single-use, short-lived handle to the server-side challenge.
+export interface PlatformSignInStepResponse {
+  status: "mfa-required" | "mfa-setup-required";
+  challenge: string;
+}
+
+// POST /api/v1/platform/auth/mfa-setup
+export interface PlatformChallengeRequest {
+  challenge: string;
+}
+
+// The next handle once an authenticator secret has been issued (the secret
+// itself stays server-side with the attempt).
+export interface PlatformMfaSetupResponse {
+  challenge: string;
+}
+
+// POST /api/v1/platform/auth/mfa-setup/display — the issued authenticator
+// secret, for the setup page to render on the server. Does not advance the
+// attempt.
+export interface PlatformMfaSetupDisplayResponse {
+  secret: string;
+  otpauthUri: string;
+}
+
+// POST /api/v1/platform/auth/mfa and /mfa-setup/verify
+export interface PlatformChallengeCodeRequest {
+  challenge: string;
+  code: string;
+}
+
+export interface PlatformSessionResponse {
+  idToken: string;
+  expiresInSeconds: number;
+}
+
 // --- Admin: internal user access review (Milestone 5E-1) --------------
 // The business-facing read model for the Administration → Users screens.
 // Served only from `/api/v1/admin/internal-users*` (InternalAuthGuard +

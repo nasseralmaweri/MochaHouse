@@ -83,6 +83,14 @@ const COGNITO_VARS = [
   'INTERNAL_COGNITO_CLIENT_ID',
 ] as const;
 
+// SC1b — dev-only settings of the local platform sign-in provider (its TOTP
+// secret, optional password, and enrolment switch). Never in production.
+const PLATFORM_DEV_SIGN_IN_VARS = [
+  'PLATFORM_AUTH_DEV_TOTP_SECRET',
+  'PLATFORM_AUTH_DEV_PASSWORD',
+  'PLATFORM_AUTH_DEV_MFA_ENROLLMENT',
+] as const;
+
 const MIN_DEV_SECRET_LENGTH = 32;
 const PLACEHOLDER_SECRETS = new Set([
   'changeme',
@@ -163,6 +171,14 @@ export function authConfigProblems(env: Env = process.env): string[] {
       if (isSet(env, boundary.secret)) {
         problems.push(
           `${boundary.secret} must not be set in a production-like environment (${signal}).`,
+        );
+      }
+    }
+    // SC1b — the dev platform sign-in's second factor and switches.
+    for (const name of PLATFORM_DEV_SIGN_IN_VARS) {
+      if (isSet(env, name)) {
+        problems.push(
+          `${name} must not be set in a production-like environment (${signal}).`,
         );
       }
     }

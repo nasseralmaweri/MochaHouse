@@ -78,31 +78,55 @@ describe('API route inventory', () => {
 
   // SC1a — the CENTERIVO platform-operator boundary. A platform route lives
   // under /api/v1/platform/, is guarded by PlatformAuthGuard and by NO tenant
-  // or customer guard (a tenant credential can never be what admits it);
-  // and every route under /api/v1/platform/ is classified 'platform'.
+  // or customer guard (a tenant credential can never be what admits it).
+  // SC1b — the ONLY exception under /api/v1/platform/ is the sign-in API
+  // (/api/v1/platform/auth/*): public-auth, rate limited, and still free of
+  // every tenant and customer guard.
+  const TENANT_OR_CUSTOMER_GUARDS = [
+    'InternalAuthGuard',
+    'InternalIdentityGuard',
+    'PermissionGuard',
+    'CustomerAuthGuard',
+    'OptionalCustomerAuthGuard',
+  ];
+  const isPlatformPath = (r: DiscoveredRoute) =>
+    r.path === '/api/v1/platform' || r.path.startsWith('/api/v1/platform/');
+  const isPlatformSignInPath = (r: DiscoveredRoute) =>
+    r.path.startsWith('/api/v1/platform/auth/');
+
   it('platform routes sit under /api/v1/platform/ behind PlatformAuthGuard only', () => {
-    const isPlatformPath = (r: DiscoveredRoute) =>
-      r.path === '/api/v1/platform' || r.path.startsWith('/api/v1/platform/');
     const violations = routes
       .filter((r) => scopeOf(r) === 'platform' || isPlatformPath(r))
+      .filter((r) => !isPlatformSignInPath(r))
       .filter(
         (r) =>
           scopeOf(r) !== 'platform' ||
           !isPlatformPath(r) ||
           !r.guards.includes('PlatformAuthGuard') ||
-          r.guards.some((guard) =>
-            [
-              'InternalAuthGuard',
-              'InternalIdentityGuard',
-              'PermissionGuard',
-              'CustomerAuthGuard',
-              'OptionalCustomerAuthGuard',
-            ].includes(guard),
-          ),
+          r.guards.some((guard) => TENANT_OR_CUSTOMER_GUARDS.includes(guard)),
       )
       .map((r) => `${r.key} [${scopeOf(r)}] guards=${r.guards.join(',')}`);
     expect(violations).toEqual([]);
     expect(routes.some((r) => scopeOf(r) === 'platform')).toBe(true);
+  });
+
+  it('the platform sign-in API is public-auth, rate limited, and free of tenant and customer guards', () => {
+    const signIn = routes.filter(isPlatformSignInPath);
+    expect(signIn.length).toBeGreaterThan(0);
+    expect(
+      signIn
+        .filter(
+          (r) =>
+            scopeOf(r) !== 'public-auth' ||
+            !r.guards.includes('RateLimitGuard') ||
+            r.guards.some((guard) =>
+              [...TENANT_OR_CUSTOMER_GUARDS, 'PlatformAuthGuard'].includes(
+                guard,
+              ),
+            ),
+        )
+        .map((r) => `${r.key} [${scopeOf(r)}] guards=${r.guards.join(',')}`),
+    ).toEqual([]);
   });
 
   it('public-auth, token and system routes never expose Admin paths', () => {
