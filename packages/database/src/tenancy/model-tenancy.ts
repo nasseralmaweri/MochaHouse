@@ -26,6 +26,8 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     // APPROVED_GLOBAL_MODELS).
     PlatformOperator: 'platform',
     PlatformAuditEvent: 'platform',
+    // SC1d — one row per completed business provisioning (idempotency).
+    TenantProvisioningOperation: 'platform',
 
     // Catalog & locations
     Location: 'tenant',

@@ -368,7 +368,9 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
               -- and are outside the inventory; their one foreign key
               -- (audit event -> operator) is pinned in
               -- tenant-relationship-inventory.spec.ts.
-              AND cl.relname NOT IN ('PlatformOperator', 'PlatformAuditEvent')
+              -- SC1d — plus the provisioning records (one foreign key:
+              -- record -> operator).
+              AND cl.relname NOT IN ('PlatformOperator', 'PlatformAuditEvent', 'TenantProvisioningOperation')
               AND cl.relnamespace = 'public'::regnamespace`,
           )
         ).rows,

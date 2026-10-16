@@ -7,6 +7,7 @@ import { OrdersController } from '../orders/api/orders.controller';
 import { PlatformAuthController } from '../platform-auth/api/platform-auth.controller';
 import { RATE_LIMIT_POLICY_KEY } from './rate-limit.decorator';
 import { RateLimitGuard } from './rate-limit.guard';
+import { PlatformTenantsController } from '../platform-tenants/api/platform-tenants.controller';
 import type { PolicyName } from './rate-limit.config';
 
 // The list of public routes protected by S3a. If a route here loses its
@@ -96,6 +97,12 @@ const PROTECTED: ReadonlyArray<{
     controller: PlatformAuthController,
     method: 'mfaSetupVerify',
     policy: 'platform-mfa',
+  },
+  // SC1d — business provisioning.
+  {
+    controller: PlatformTenantsController,
+    method: 'provision',
+    policy: 'platform-provisioning',
   },
 ];
 

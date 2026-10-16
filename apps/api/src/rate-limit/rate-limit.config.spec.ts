@@ -20,6 +20,7 @@ describe('loadRateLimitConfig', () => {
       'internal-sign-in',
       'platform-sign-in',
       'platform-mfa',
+      'platform-provisioning',
       'account-recovery',
       'account-verification',
     ];

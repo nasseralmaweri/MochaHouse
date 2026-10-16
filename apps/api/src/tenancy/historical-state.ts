@@ -23,6 +23,8 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   // SC1a — CENTERIVO platform operators (20261022090000).
   'PlatformOperator',
   'PlatformAuditEvent',
+  // SC1d — business provisioning records (20261023090000).
+  'TenantProvisioningOperation',
 ]);
 
 // Columns added after the 4C-era migrations to tables that already existed.

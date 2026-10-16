@@ -1,7 +1,11 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { INTERNAL_PERMISSION_KEYS } from '@mocha-house/contracts';
+import {
+  INTERNAL_PERMISSION_KEYS,
+  PLATFORM_ADMINISTRATOR_ROLE,
+  STORE_MANAGER_ROLE,
+} from '@mocha-house/contracts';
 import { PrismaClient } from '../src/generated/prisma/client';
 import {
   TENANT_1_MOCHA_HOUSE_ID,
@@ -367,16 +371,16 @@ async function seedMochaHouseBusinessData(
       select: { id: true },
     })) !== null;
   const platformAdminRole = await prisma.internalRole.upsert({
-    where: { tenantId_key: { tenantId, key: 'platform-administrator' } },
+    where: { tenantId_key: { tenantId, key: PLATFORM_ADMINISTRATOR_ROLE.key } },
     update: safety.reset
-      ? { displayName: 'Platform Administrator', isSystem: true }
+      ? { displayName: PLATFORM_ADMINISTRATOR_ROLE.displayName, isSystem: true }
       : {},
+    // SC1d — the shared built-in definition (also used by provisioning).
     create: {
       tenantId,
-      key: 'platform-administrator',
-      displayName: 'Platform Administrator',
-      description:
-        'Built-in role holding every internal permission. Granted at corporate scope for platform operators.',
+      key: PLATFORM_ADMINISTRATOR_ROLE.key,
+      displayName: PLATFORM_ADMINISTRATOR_ROLE.displayName,
+      description: PLATFORM_ADMINISTRATOR_ROLE.description,
       isSystem: true,
     },
   });
@@ -439,32 +443,9 @@ async function seedMochaHouseBusinessData(
   // Store Manager may do survives re-seeding.
   // The seed assigns it to NOBODY (not even the Local Dev Admin): who holds
   // Store Manager, and where, is decided through the Administration UI.
-  const STORE_MANAGER_PERMISSION_KEYS = [
-    'locations.view',
-    'orders.view',
-    'orders.manage_status',
-    // R1 / S5b — a Store Manager may reject or cancel an order at the
-    // locations they run. Seeded only for a NEW role (create-once, like every
-    // key here); an existing deployment grants it through the Administration
-    // UI. Inert while ORDER_CLOSURE_ENABLED is off.
-    'orders.cancel',
-    'catalog.overrides.manage',
-    'locations.manage_digital_ordering',
-    // Milestone 6A — a Store Manager's home is the Store Operations
-    // workspace for the locations they run. Held here as a LOCATION-scoped
-    // capability (the role is only ever assigned per location).
-    'operations.view',
-    // Milestone 6B — a Store Manager runs the opening: completing (and
-    // undoing) checklist items for their locations.
-    'operations.tasks.complete',
-    // Milestone 6C — a Store Manager is the person who logs a management
-    // exception when an opening requirement genuinely could not be met.
-    'operations.exceptions.manage',
-    // Milestone 7F — gift-card administration (giftcards.view /
-    // giftcards.manage / giftcards.configure) is deliberately NOT here. A
-    // gift card is company-wide stored value; its administration is a
-    // CORPORATE-only HQ function a Store Manager never holds by default.
-  ] as const;
+  // SC1d — the permission set now lives in the shared built-in definition
+  // (@mocha-house/contracts STORE_MANAGER_ROLE), used by provisioning too.
+  const STORE_MANAGER_PERMISSION_KEYS = STORE_MANAGER_ROLE.permissionKeys;
 
   const storeManagerExisted =
     (await prisma.internalRole.findUnique({
@@ -475,18 +456,16 @@ async function seedMochaHouseBusinessData(
     where: { tenantId_key: { tenantId, key: 'store-manager' } },
     update: safety.reset
       ? {
-          displayName: 'Store Manager',
-          description:
-            'Manages day-to-day orders, online ordering, prices and availability for assigned locations.',
+          displayName: STORE_MANAGER_ROLE.displayName,
+          description: STORE_MANAGER_ROLE.description,
           isSystem: true,
         }
       : {},
     create: {
       tenantId,
-      key: 'store-manager',
-      displayName: 'Store Manager',
-      description:
-        'Manages day-to-day orders, online ordering, prices and availability for assigned locations.',
+      key: STORE_MANAGER_ROLE.key,
+      displayName: STORE_MANAGER_ROLE.displayName,
+      description: STORE_MANAGER_ROLE.description,
       isSystem: true,
     },
   });

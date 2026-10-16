@@ -63,6 +63,7 @@ export type PolicyName =
   | 'internal-sign-in'
   | 'platform-sign-in'
   | 'platform-mfa'
+  | 'platform-provisioning'
   | 'account-recovery'
   | 'account-verification';
 
@@ -258,6 +259,18 @@ const DEFAULTS: Record<PolicyName, PolicyDefault> = {
         key: ['tenant', 'ip'],
         limit: 20,
         windowSeconds: FIVE_MINUTES,
+      },
+    ],
+  },
+  // SC1d — creating a business (after PlatformAuthGuard: an ACTIVE operator
+  // with MFA). Far above real use; caps a runaway client or stolen session.
+  'platform-provisioning': {
+    scopes: [
+      {
+        name: 'ip',
+        key: ['tenant', 'ip'],
+        limit: 20,
+        windowSeconds: HOUR,
       },
     ],
   },

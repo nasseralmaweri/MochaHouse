@@ -161,15 +161,42 @@ const effectiveOnDelete = (r: Relation) =>
 // platform operators and their audit trail. Platform-wide by definition; no
 // tenantId, no reference to any business record (the only foreign key is
 // audit event -> operator, between the two platform-operator models).
+//
+// SC1d review — TenantProvisioningOperation: one row per business a platform
+// operator provisioned (idempotency). Platform-plane; its only foreign key
+// is to the operator. The business it created is a plain value
+// (provisionedTenantId), deliberately NOT a relation to Tenant.
 const APPROVED_GLOBAL_MODELS = [
   'Tenant',
   'PlatformOperator',
   'PlatformAuditEvent',
+  'TenantProvisioningOperation',
 ];
 // The ONLY references a global model may hold: between the platform-operator
 // models themselves. Tenant is deliberately not part of this set — a
 // reference to (or from) a business is never exempt.
-const PLATFORM_OPERATOR_MODELS = ['PlatformOperator', 'PlatformAuditEvent'];
+// SC1d review — the ONLY values on a global model that may name a business,
+// each reviewed and approved: plain columns, deliberately NOT relations (so
+// no foreign key ties platform data to a business), written only in the same
+// transaction that creates the business (TenantProvisioningService).
+//   - PlatformAuditEvent.targetId: which business an operator's action was
+//     about (targetType 'tenant');
+//   - TenantProvisioningOperation.provisionedTenantId: the business one
+//     provisioning operation created (idempotent replay).
+const APPROVED_PLATFORM_BUSINESS_POINTERS: Readonly<
+  Record<string, readonly string[]>
+> = {
+  PlatformAuditEvent: ['targetId'],
+  TenantProvisioningOperation: ['provisionedTenantId'],
+};
+// SC1d — PlatformAuditEvent target types (platform audit; distinct from the
+// tenant audit's InternalAuditEvent targets classified below).
+const PLATFORM_AUDIT_TARGET_TYPES = ['tenant'];
+const PLATFORM_OPERATOR_MODELS = [
+  'PlatformOperator',
+  'PlatformAuditEvent',
+  'TenantProvisioningOperation',
+];
 
 describe('Tenant relationship inventory (Security 4C-1)', () => {
   it('parses every relation and model in schema.prisma (no silent omissions)', () => {
@@ -229,6 +256,13 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
           PLATFORM_OPERATOR_MODELS.includes(r.target),
       );
       const globalFkColumns = new Set(globalRelations.flatMap((r) => r.fields));
+      const approvedPointers = APPROVED_PLATFORM_BUSINESS_POINTERS[name] ?? [];
+      // An approved pointer is never a relation (no foreign key).
+      expect(
+        model.relations.filter((r) =>
+          r.fields.some((f) => approvedPointers.includes(f)),
+        ),
+      ).toEqual([]);
       expect({
         model: name,
         // Foreign-key relations from the global model to anything that is
@@ -243,7 +277,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
               (f) =>
                 /Id$/.test(f.name) &&
                 f.name !== 'id' &&
-                !globalFkColumns.has(f.name),
+                !globalFkColumns.has(f.name) &&
+                !approvedPointers.includes(f.name),
             )
             .map((f) => f.name),
         ],
@@ -605,7 +640,10 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
     };
 
     it('every audit target type is classified', () => {
-      const known = resolvable('InternalAuditEvent.targetId');
+      const known = new Set([
+        ...resolvable('InternalAuditEvent.targetId'),
+        ...PLATFORM_AUDIT_TARGET_TYPES,
+      ]);
       const used = literals('targetType');
       expect(used.size).toBeGreaterThan(10);
       expect([...used].filter((t) => !known.has(t))).toEqual([]);
