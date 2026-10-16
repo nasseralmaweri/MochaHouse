@@ -72,11 +72,14 @@ describe('SC1d tenant provisioning foundation migration (scratch database)', () 
       process.env.DATABASE_URL!,
       'sc1d_migration',
     );
+    // Up to (not including) this migration, then exactly this one. (Later
+    // migrations, e.g. SC2a's, are irrelevant to what it adds.)
     const all = listMigrations(MIGRATIONS);
-    expect(all[all.length - 1].name).toBe(THIS);
-    await applyMigrations(scratch.url, all.slice(0, -1));
+    const at = all.findIndex((migration) => migration.name === THIS);
+    expect(at).toBeGreaterThan(0);
+    await applyMigrations(scratch.url, all.slice(0, at));
     expect(await columnsOf('TenantProvisioningOperation')).toEqual([]);
-    await applyMigrations(scratch.url, all.slice(-1));
+    await applyMigrations(scratch.url, [all[at]]);
     operatorId = randomUUID();
     await sql((c) =>
       c.query(

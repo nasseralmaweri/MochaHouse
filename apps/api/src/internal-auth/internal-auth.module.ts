@@ -1,3 +1,4 @@
+import { EntitlementsService } from '../subscriptions/application/entitlements.service';
 import { Global, Module } from '@nestjs/common';
 import { RateLimitModule } from '../rate-limit/rate-limit.module';
 import { InternalAuthController } from './api/internal-auth.controller';
@@ -59,6 +60,8 @@ import { InternalSessionService } from './application/internal-session.service';
     // Milestone 5B — authorization layer, applied after InternalAuthGuard.
     AuthorizationService,
     PermissionGuard,
+    // SC2a — the business's plan entitlements (AuthorizationService).
+    EntitlementsService,
     // Milestone 5C — composes GET /internal/me's authorization summary.
     InternalSessionService,
   ],
@@ -75,6 +78,7 @@ import { InternalSessionService } from './application/internal-session.service';
     InternalTenantMembershipService,
     AuthorizationService,
     PermissionGuard,
+    EntitlementsService,
   ],
 })
 export class InternalAuthModule {}

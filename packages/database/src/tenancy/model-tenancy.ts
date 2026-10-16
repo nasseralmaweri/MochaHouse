@@ -28,6 +28,12 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     PlatformAuditEvent: 'platform',
     // SC1d — one row per completed business provisioning (idempotency).
     TenantProvisioningOperation: 'platform',
+    // SC2a — SaaS plans, subscriptions, add-on grants and their history.
+    SubscriptionPlan: 'platform',
+    SubscriptionPlanVersion: 'platform',
+    TenantSubscription: 'platform',
+    TenantModuleGrant: 'platform',
+    TenantSubscriptionEvent: 'platform',
 
     // Catalog & locations
     Location: 'tenant',

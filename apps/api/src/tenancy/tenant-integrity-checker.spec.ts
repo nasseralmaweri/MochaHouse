@@ -370,7 +370,10 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
               -- tenant-relationship-inventory.spec.ts.
               -- SC1d — plus the provisioning records (one foreign key:
               -- record -> operator).
-              AND cl.relname NOT IN ('PlatformOperator', 'PlatformAuditEvent', 'TenantProvisioningOperation')
+              -- SC2a — plus the SaaS plan and subscription tables.
+              AND cl.relname NOT IN ('PlatformOperator', 'PlatformAuditEvent', 'TenantProvisioningOperation',
+                                     'SubscriptionPlan', 'SubscriptionPlanVersion', 'TenantSubscription',
+                                     'TenantModuleGrant', 'TenantSubscriptionEvent')
               AND cl.relnamespace = 'public'::regnamespace`,
           )
         ).rows,

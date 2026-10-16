@@ -31,6 +31,11 @@ export type TenantOwnedModel = Exclude<
   | 'PlatformOperator'
   | 'PlatformAuditEvent'
   | 'TenantProvisioningOperation'
+  | 'SubscriptionPlan'
+  | 'SubscriptionPlanVersion'
+  | 'TenantSubscription'
+  | 'TenantModuleGrant'
+  | 'TenantSubscriptionEvent'
 >;
 
 export type ReferentialAction = 'Cascade' | 'Restrict' | 'SetNull' | 'NoAction';

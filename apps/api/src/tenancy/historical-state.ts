@@ -25,6 +25,12 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'PlatformAuditEvent',
   // SC1d — business provisioning records (20261023090000).
   'TenantProvisioningOperation',
+  // SC2a — SaaS plans and subscriptions (20261024090000).
+  'SubscriptionPlan',
+  'SubscriptionPlanVersion',
+  'TenantSubscription',
+  'TenantModuleGrant',
+  'TenantSubscriptionEvent',
 ]);
 
 // Columns added after the 4C-era migrations to tables that already existed.

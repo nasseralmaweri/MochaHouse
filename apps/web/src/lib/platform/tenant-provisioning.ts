@@ -10,7 +10,8 @@ export type ProvisionField =
   | "slug"
   | "ownerEmail"
   | "ownerEmailConfirm"
-  | "ownerDisplayName";
+  | "ownerDisplayName"
+  | "planVersionId";
 
 export interface ProvisionValues {
   name: string;
@@ -18,6 +19,8 @@ export interface ProvisionValues {
   ownerEmail: string;
   ownerEmailConfirm: string;
   ownerDisplayName: string;
+  // SC2a — the published plan version the business starts on.
+  planVersionId: string;
 }
 
 export type ProvisionFieldErrors = Partial<Record<ProvisionField, string>>;
@@ -72,6 +75,9 @@ export function validateProvision(values: ProvisionValues): ProvisionFieldErrors
   }
   if (values.ownerDisplayName.trim().length > 120) {
     errors.ownerDisplayName = "Use 120 characters or fewer.";
+  }
+  if (!isOperationKey(values.planVersionId)) {
+    errors.planVersionId = "Choose a plan for the business.";
   }
   return errors;
 }

@@ -16,10 +16,10 @@ describe("platform console navigation", () => {
     ]);
   });
 
-  it("only Overview and Tenants are links; everything else is marked as not available", () => {
+  it("only Overview, Tenants and (SC2a) Plans are links; everything else is marked as not available", () => {
     expect(
       PLATFORM_NAV_ITEMS.filter(isAvailable).map((item) => item.href),
-    ).toEqual(["/platform", "/platform/tenants"]);
+    ).toEqual(["/platform", "/platform/tenants", "/platform/plans"]);
   });
 
   it("SC1c: Tenants stays current on a tenant's page; Overview only on /platform", () => {

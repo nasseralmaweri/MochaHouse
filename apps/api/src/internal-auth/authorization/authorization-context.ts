@@ -1,3 +1,9 @@
+import {
+  MODULE_NOT_ENTITLED,
+  OPTIONAL_MODULE_KEYS,
+  type InternalEntitlementsSummary,
+  type SubscriptionModuleKey,
+} from '@mocha-house/contracts';
 import { ForbiddenException } from '@nestjs/common';
 import {
   allowedScopeTypesFor,
@@ -29,6 +35,13 @@ export type AuthorizedLocations =
 // the 403 message is uniform). Built by AuthorizationService from
 // InternalUser -> assignments -> role -> role permissions; never from a
 // role name.
+// The test/bootstrap convenience constructors are not bound to a business's
+// plan: every module.
+const ALL_MODULES_SUMMARY: InternalEntitlementsSummary = {
+  modules: ['core', ...OPTIONAL_MODULE_KEYS],
+  planName: null,
+};
+
 export class AuthorizationContext {
   private constructor(
     // key -> the scope grants through which the user holds it. Only ever
@@ -45,6 +58,11 @@ export class AuthorizationContext {
     // after a business switch) is refused before any resource is read.
     // `null` only for the test convenience constructors below.
     private readonly tenantLocationIds: ReadonlySet<string> | null,
+    // SC2a — permissions this user's roles grant but the business's plan
+    // does not include (already removed from `grants`), and the plan
+    // summary for GET /internal/me.
+    private readonly blockedByPlan: ReadonlySet<InternalPermissionKey> = new Set(),
+    private readonly entitlements: InternalEntitlementsSummary = ALL_MODULES_SUMMARY,
   ) {}
 
   // The production constructor (AuthorizationService). The tenant's
@@ -53,8 +71,39 @@ export class AuthorizationContext {
   static create(
     grants: ReadonlyMap<InternalPermissionKey, readonly ScopeGrant[]>,
     tenantLocationIds: ReadonlySet<string>,
+    blockedByPlan: ReadonlySet<InternalPermissionKey> = new Set(),
+    entitlements: InternalEntitlementsSummary = ALL_MODULES_SUMMARY,
   ): AuthorizationContext {
-    return new AuthorizationContext(grants, tenantLocationIds);
+    return new AuthorizationContext(
+      grants,
+      tenantLocationIds,
+      blockedByPlan,
+      entitlements,
+    );
+  }
+
+  // SC2a — whether a role grants this permission but the business's plan
+  // does not include it (PermissionGuard then answers MODULE_NOT_ENTITLED).
+  isBlockedByPlan(key: InternalPermissionKey): boolean {
+    return this.blockedByPlan.has(key);
+  }
+
+  entitlementsSummary(): InternalEntitlementsSummary {
+    return this.entitlements;
+  }
+
+  // SC2a — for an action that creates NEW value in a module (e.g. issuing a
+  // gift card): the module itself must be in the plan. A lifecycle-retained
+  // permission (kept so stored value stays correctable) is not enough.
+  assertModuleEntitled(module: SubscriptionModuleKey): void {
+    if (!this.entitlements.modules.includes(module)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: MODULE_NOT_ENTITLED,
+        message: "This feature is not included in your business's plan.",
+      });
+    }
   }
 
   // Test/bootstrap convenience: build a context from a plain description.

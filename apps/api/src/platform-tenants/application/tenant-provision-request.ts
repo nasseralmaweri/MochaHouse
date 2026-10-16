@@ -10,6 +10,8 @@ export interface NormalisedProvisionRequest {
   slug: string;
   ownerEmail: string;
   ownerDisplayName: string | null;
+  // SC2a — the PUBLISHED plan version the business starts on.
+  planVersionId: string;
 }
 
 const NAME_MIN = 2;
@@ -131,7 +133,22 @@ export function parseProvisionRequest(
     ownerDisplayName = value.length > 0 ? value : null;
   }
 
-  return { name, slug, ownerEmail, ownerDisplayName };
+  // SC2a — a new business must start on a plan (checked as PUBLISHED in
+  // the provisioning transaction).
+  if (
+    typeof input.planVersionId !== 'string' ||
+    !UUID_PATTERN.test(input.planVersionId)
+  ) {
+    throw new TenantProvisionRequestError('Choose a plan for the business.');
+  }
+
+  return {
+    name,
+    slug,
+    ownerEmail,
+    ownerDisplayName,
+    planVersionId: input.planVersionId,
+  };
 }
 
 export function parseIdempotencyKey(raw: unknown): string {
@@ -155,6 +172,7 @@ export function provisionRequestHash(
         request.slug,
         request.ownerEmail,
         request.ownerDisplayName,
+        request.planVersionId,
       ]),
     )
     .digest('hex');

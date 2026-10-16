@@ -63,6 +63,12 @@ describe('Tenant query audit (report-only)', () => {
           'Tenant',
           // SC1d
           'TenantProvisioningOperation',
+          // SC2a
+          'SubscriptionPlan',
+          'SubscriptionPlanVersion',
+          'TenantSubscription',
+          'TenantModuleGrant',
+          'TenantSubscriptionEvent',
         ].sort(),
       );
     });

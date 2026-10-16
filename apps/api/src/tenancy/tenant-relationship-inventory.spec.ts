@@ -166,12 +166,38 @@ const effectiveOnDelete = (r: Relation) =>
 // operator provisioned (idempotency). Platform-plane; its only foreign key
 // is to the operator. The business it created is a plain value
 // (provisionedTenantId), deliberately NOT a relation to Tenant.
+//
+// SC2a review — SubscriptionPlan, SubscriptionPlanVersion,
+// TenantSubscription, TenantModuleGrant, TenantSubscriptionEvent: CENTERIVO
+// SaaS plans and subscriptions (platform data, separate from customer
+// payments). Their foreign keys stay among platform models, except the ONE
+// approved link to a business below.
 const APPROVED_GLOBAL_MODELS = [
   'Tenant',
   'PlatformOperator',
   'PlatformAuditEvent',
   'TenantProvisioningOperation',
+  'SubscriptionPlan',
+  'SubscriptionPlanVersion',
+  'TenantSubscription',
+  'TenantModuleGrant',
+  'TenantSubscriptionEvent',
 ];
+// SC2a review — identifiers issued by an OUTSIDE system (not a record of
+// ours): reserved for subscription billing, always null until it exists.
+const EXTERNAL_IDENTIFIER_COLUMNS: Readonly<Record<string, readonly string[]>> =
+  {
+    TenantSubscription: ['externalSubscriptionId'],
+  };
+// SC2a review (owner decision S3) — the ONLY relation from platform data to
+// a business: a subscription's real foreign key to its Tenant, so the
+// database itself guarantees every subscription belongs to an existing
+// business. Nothing else on a platform model may relate to Tenant.
+const APPROVED_PLATFORM_TENANT_RELATIONS: Readonly<
+  Record<string, readonly string[]>
+> = {
+  TenantSubscription: ['subscriberTenant'],
+};
 // The ONLY references a global model may hold: between the platform-operator
 // models themselves. Tenant is deliberately not part of this set — a
 // reference to (or from) a business is never exempt.
@@ -191,11 +217,17 @@ const APPROVED_PLATFORM_BUSINESS_POINTERS: Readonly<
 };
 // SC1d — PlatformAuditEvent target types (platform audit; distinct from the
 // tenant audit's InternalAuditEvent targets classified below).
-const PLATFORM_AUDIT_TARGET_TYPES = ['tenant'];
+// SC2a — plus 'plan' (plan and plan version changes).
+const PLATFORM_AUDIT_TARGET_TYPES = ['tenant', 'plan'];
 const PLATFORM_OPERATOR_MODELS = [
   'PlatformOperator',
   'PlatformAuditEvent',
   'TenantProvisioningOperation',
+  'SubscriptionPlan',
+  'SubscriptionPlanVersion',
+  'TenantSubscription',
+  'TenantModuleGrant',
+  'TenantSubscriptionEvent',
 ];
 
 describe('Tenant relationship inventory (Security 4C-1)', () => {
@@ -250,10 +282,13 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       // operator) is not a reference to a business record; its foreign-key
       // column is then not a loose …Id either. Nothing else is exempt — in
       // particular nothing from or to Tenant.
+      const approvedTenantRelations =
+        APPROVED_PLATFORM_TENANT_RELATIONS[name] ?? [];
       const globalRelations = model.relations.filter(
         (r) =>
-          PLATFORM_OPERATOR_MODELS.includes(name) &&
-          PLATFORM_OPERATOR_MODELS.includes(r.target),
+          (PLATFORM_OPERATOR_MODELS.includes(name) &&
+            PLATFORM_OPERATOR_MODELS.includes(r.target)) ||
+          (r.target === 'Tenant' && approvedTenantRelations.includes(r.field)),
       );
       const globalFkColumns = new Set(globalRelations.flatMap((r) => r.fields));
       const approvedPointers = APPROVED_PLATFORM_BUSINESS_POINTERS[name] ?? [];
@@ -278,7 +313,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
                 /Id$/.test(f.name) &&
                 f.name !== 'id' &&
                 !globalFkColumns.has(f.name) &&
-                !approvedPointers.includes(f.name),
+                !approvedPointers.includes(f.name) &&
+                !(EXTERNAL_IDENTIFIER_COLUMNS[name] ?? []).includes(f.name),
             )
             .map((f) => f.name),
         ],

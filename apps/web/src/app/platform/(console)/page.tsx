@@ -8,7 +8,10 @@ import {
 } from "@/components/platform/PlatformCards";
 import { getPlatformSession } from "@/lib/platform-auth/session";
 import { PLATFORM_NAV_ITEMS, isAvailable } from "@/lib/platform/nav";
-import { getPlatformRegistryTotals } from "@/lib/platform/tenants-api";
+import {
+  getPlatformRegistryTotals,
+  listPlatformPlans,
+} from "@/lib/platform/tenants-api";
 
 function RegistryMetric({ title, value }: { title: string; value: number }) {
   return (
@@ -36,7 +39,10 @@ export default async function PlatformOverviewPage() {
   }
   const { operator } = session;
   const comingSoon = PLATFORM_NAV_ITEMS.filter((item) => !isAvailable(item));
-  const totals = await getPlatformRegistryTotals();
+  const [totals, plans] = await Promise.all([
+    getPlatformRegistryTotals(),
+    listPlatformPlans(),
+  ]);
   const registry = totals.state === "ok" ? totals.data.registry : null;
 
   return (
@@ -64,10 +70,18 @@ export default async function PlatformOverviewPage() {
             />
           </>
         )}
-        <UnavailableMetric
-          title="Active subscriptions"
-          reason="Arrives with subscriptions."
-        />
+        {/* SC2a — businesses with a plan (no billing yet). */}
+        {plans.state === "ok" ? (
+          <RegistryMetric
+            title="Businesses with a plan"
+            value={plans.data.subscriptions.total}
+          />
+        ) : (
+          <UnavailableMetric
+            title="Businesses with a plan"
+            reason="Plans could not be loaded."
+          />
+        )}
         <UnavailableMetric
           title="Monthly recurring revenue"
           reason="Arrives with SaaS billing."

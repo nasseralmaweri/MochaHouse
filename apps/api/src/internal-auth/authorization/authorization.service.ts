@@ -1,3 +1,8 @@
+import { isPermissionEntitled } from '@mocha-house/contracts';
+import {
+  EntitlementsService,
+  entitlementsSummary,
+} from '../../subscriptions/application/entitlements.service';
 import { Injectable, Logger } from '@nestjs/common';
 import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -11,7 +16,10 @@ import {
 export class AuthorizationService {
   private readonly logger = new Logger(AuthorizationService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly entitlements: EntitlementsService,
+  ) {}
 
   // Builds the effective authorization context for an ACTIVE internal user
   // from persisted data only:
@@ -91,7 +99,25 @@ export class AuthorizationService {
       }
     }
 
-    return AuthorizationContext.create(grants, tenantLocationIds);
+    // SC2a — the business's plan bounds every role: a permission whose
+    // module the plan does not include is removed (lifecycle-retained
+    // permissions excepted), so has(), the /me summary and every service
+    // check agree. Roles still decide WHO holds what is entitled.
+    const entitled = await this.entitlements.forTenant(tenant.tenantId);
+    const blockedByPlan = new Set<InternalPermissionKey>();
+    for (const key of [...grants.keys()]) {
+      if (!isPermissionEntitled(key, entitled.modules)) {
+        grants.delete(key);
+        blockedByPlan.add(key);
+      }
+    }
+
+    return AuthorizationContext.create(
+      grants,
+      tenantLocationIds,
+      blockedByPlan,
+      entitlementsSummary(entitled),
+    );
   }
 
   private toValidScopeGrant(assignment: {

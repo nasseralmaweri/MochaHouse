@@ -1567,7 +1567,10 @@ export interface InternalBusinessesResponse {
 export interface InternalMeResponse {
   business: InternalBusinessSummary;
   user: InternalUserProfile;
+  // SC2a — `permissions` / `capabilities` already exclude anything the
+  // business's plan does not include.
   authorization: InternalAuthorizationSummary;
+  entitlements: InternalEntitlementsSummary;
 }
 
 // --- CENTERIVO platform operators (SC1a) -------------------------------
@@ -1717,6 +1720,8 @@ export interface PlatformTenantProvisionRequest {
   // Trimmed and lowercased before use.
   ownerEmail: string;
   ownerDisplayName?: string | null;
+  // SC2a — the business starts on this PUBLISHED plan version.
+  planVersionId: string;
 }
 
 export interface PlatformTenantProvisionResponse {
@@ -1797,6 +1802,125 @@ export interface PlatformTenantOwnerEmailRequest {
 
 export interface PlatformTenantOwnerEmailResponse {
   owner: PlatformTenantOwner;
+  changed: boolean;
+}
+
+// --- CENTERIVO platform: plans and subscriptions (SC2a) -----------------
+// Platform operators only. Changes need a recent sign-in (as SC1e) and are
+// audited. SaaS plans are separate from a business's customer payments.
+// Prices, intervals, trials and proration are not modelled yet.
+
+export type PlatformPlanVersionStatus = "DRAFT" | "PUBLISHED" | "RETIRED";
+
+export const PLATFORM_PLAN_KEY_TAKEN = "PLAN_KEY_TAKEN";
+export const PLATFORM_PLAN_DRAFT_EXISTS = "PLAN_DRAFT_EXISTS";
+export const PLATFORM_PLAN_VERSION_NOT_DRAFT = "PLAN_VERSION_NOT_DRAFT";
+export const PLATFORM_PLAN_VERSION_NOT_PUBLISHED = "PLAN_VERSION_NOT_PUBLISHED";
+export const PLATFORM_NO_SUBSCRIPTION = "NO_SUBSCRIPTION";
+export const PLATFORM_ADDON_IN_PLAN = "ADDON_IN_PLAN";
+
+export interface PlatformPlanVersion {
+  id: string;
+  version: number;
+  status: PlatformPlanVersionStatus;
+  moduleKeys: OptionalModuleKey[];
+  publishedAt: string | null;
+  retiredAt: string | null;
+  // Businesses currently subscribed to this version.
+  subscriberCount: number;
+}
+
+export interface PlatformPlan {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  versions: PlatformPlanVersion[];
+}
+
+// GET /api/v1/platform/plans
+export interface PlatformPlanListResponse {
+  plans: PlatformPlan[];
+  subscriptions: { total: number };
+}
+
+// POST /api/v1/platform/plans — a new plan with a DRAFT version 1.
+//   409 PLAN_KEY_TAKEN
+export interface PlatformPlanCreateRequest {
+  // 2–50: lowercase letters/digits in hyphen-separated words.
+  key: string;
+  // 2–80 characters.
+  name: string;
+  description?: string | null;
+  moduleKeys: OptionalModuleKey[];
+}
+
+// POST /api/v1/platform/plans/:planId/versions — a new DRAFT version
+// (copying the given modules); 409 PLAN_DRAFT_EXISTS while one is open.
+// PUT  /api/v1/platform/plans/:planId/versions/:versionId — edit a DRAFT's
+// modules; 409 PLAN_VERSION_NOT_DRAFT once published.
+export interface PlatformPlanVersionModulesRequest {
+  moduleKeys: OptionalModuleKey[];
+}
+
+// POST …/versions/:versionId/publish — DRAFT -> PUBLISHED (then immutable).
+// POST …/versions/:versionId/retire  — PUBLISHED -> RETIRED: no longer
+// offered; businesses already on it keep it until moved.
+
+export type PlatformSubscriptionEventType =
+  | "PLAN_ASSIGNED"
+  | "PLAN_CHANGED"
+  | "ADDON_GRANTED"
+  | "ADDON_REVOKED";
+
+export interface PlatformTenantSubscription {
+  id: string;
+  status: "ACTIVE" | "TRIALING";
+  startedAt: string;
+  plan: { id: string; key: string; name: string };
+  version: { id: string; version: number; status: PlatformPlanVersionStatus };
+  addOns: OptionalModuleKey[];
+}
+
+// GET /api/v1/platform/tenants/:tenantId/subscription
+export interface PlatformTenantSubscriptionResponse {
+  tenantId: string;
+  // null: no subscription — the business has core only.
+  subscription: PlatformTenantSubscription | null;
+  // What the business can use now (always includes "core").
+  modules: SubscriptionModuleKey[];
+  // Most recent first (up to 20).
+  history: Array<{
+    type: PlatformSubscriptionEventType;
+    at: string;
+    fromVersion: string | null;
+    toVersion: string | null;
+    moduleKey: OptionalModuleKey | null;
+  }>;
+}
+
+// POST /api/v1/platform/tenants/:tenantId/subscription/preview — what a
+// change WOULD do, without making it (exactly one of the three).
+export interface PlatformSubscriptionChangeRequest {
+  planVersionId?: string;
+  grant?: OptionalModuleKey;
+  revoke?: OptionalModuleKey;
+}
+
+export interface PlatformSubscriptionPreviewResponse {
+  current: SubscriptionModuleKey[];
+  proposed: SubscriptionModuleKey[];
+  gained: SubscriptionModuleKey[];
+  lost: SubscriptionModuleKey[];
+}
+
+// PUT    /api/v1/platform/tenants/:tenantId/subscription {planVersionId}
+//        assign or change the plan (a PUBLISHED version only; add-ons stay)
+// POST   /api/v1/platform/tenants/:tenantId/subscription/add-ons {moduleKey}
+// DELETE /api/v1/platform/tenants/:tenantId/subscription/add-ons/:moduleKey
+// A request for the current state changes nothing (`changed: false`).
+export interface PlatformSubscriptionChangeResponse
+  extends PlatformTenantSubscriptionResponse {
   changed: boolean;
 }
 
@@ -2245,6 +2369,163 @@ export const BUILT_IN_INTERNAL_ROLES: readonly BuiltInInternalRole[] = [
   PLATFORM_ADMINISTRATOR_ROLE,
   STORE_MANAGER_ROLE,
 ];
+
+// --- CENTERIVO SaaS: module catalog (SC2a) ------------------------------
+// The ONE definition of what a subscription plan can include. Every staff
+// permission belongs to exactly one module (PERMISSION_MODULE is an
+// exhaustive Record, so a new permission cannot be added unclassified).
+// "core" is ALWAYS included: account management, administration, orders,
+// catalog, locations, reports — everything a business needs to run, recover
+// access and reconcile money. A business with no subscription has core only.
+//
+// SaaS subscriptions are platform data. They are entirely separate from a
+// business's customer payments (orders / PaymentAttempt) and never share a
+// provider, table or configuration with them.
+
+export type SubscriptionModuleKey =
+  | "core"
+  | "operations"
+  | "loyalty"
+  | "promotions"
+  | "giftcards"
+  | "crm"
+  | "careers"
+  | "franchising"
+  | "cms"
+  | "marketing";
+
+// The modules a plan chooses (core is implicit and never listed).
+export type OptionalModuleKey = Exclude<SubscriptionModuleKey, "core">;
+
+export interface SubscriptionModule {
+  key: SubscriptionModuleKey;
+  label: string;
+  description: string;
+}
+
+export const SUBSCRIPTION_MODULES: readonly SubscriptionModule[] = [
+  {
+    key: "core",
+    label: "Core",
+    description:
+      "Orders, catalog and menus, locations, staff and roles, audit, approvals, media, notification routing and reports. Always included.",
+  },
+  { key: "operations", label: "Store operations", description: "Daily checklists, tasks and exceptions." },
+  { key: "loyalty", label: "Loyalty", description: "Points earning, rewards and bonus promotions." },
+  { key: "promotions", label: "Promotions", description: "Discount promotions at checkout." },
+  { key: "giftcards", label: "Gift cards", description: "Selling, redeeming and managing gift cards." },
+  { key: "crm", label: "Customers", description: "Customer directory and notes." },
+  { key: "careers", label: "Careers", description: "Job openings and applicants." },
+  { key: "franchising", label: "Franchising", description: "Franchise inquiries." },
+  { key: "cms", label: "Website content", description: "Website pages." },
+  { key: "marketing", label: "Marketing", description: "Campaigns." },
+];
+
+export const OPTIONAL_MODULE_KEYS: readonly OptionalModuleKey[] = [
+  "operations",
+  "loyalty",
+  "promotions",
+  "giftcards",
+  "crm",
+  "careers",
+  "franchising",
+  "cms",
+  "marketing",
+];
+
+export function isOptionalModuleKey(value: unknown): value is OptionalModuleKey {
+  return (
+    typeof value === "string" &&
+    (OPTIONAL_MODULE_KEYS as readonly string[]).includes(value)
+  );
+}
+
+export const PERMISSION_MODULE: Readonly<
+  Record<InternalPermissionKey, SubscriptionModuleKey>
+> = {
+  "orders.view": "core",
+  "orders.manage_status": "core",
+  "orders.cancel": "core",
+  "catalog.products.edit": "core",
+  "catalog.menu.manage": "core",
+  "catalog.overrides.manage": "core",
+  "catalog.view": "core",
+  "locations.view": "core",
+  "locations.edit": "core",
+  "locations.manage_digital_ordering": "core",
+  "users.view": "core",
+  "roles.view": "core",
+  "users.manage_status": "core",
+  "users.manage_roles": "core",
+  "audit.view": "core",
+  "platform.view": "core",
+  "notifications.routing.view": "core",
+  "notifications.routing.manage": "core",
+  "media.view": "core",
+  "media.manage": "core",
+  "approvals.view": "core",
+  "approvals.decide": "core",
+  "reports.view": "core",
+  "operations.view": "operations",
+  "operations.tasks.complete": "operations",
+  "operations.checklists.configure": "operations",
+  "operations.exceptions.manage": "operations",
+  "loyalty.view": "loyalty",
+  "loyalty.adjust": "loyalty",
+  "loyalty.configure": "loyalty",
+  "promotions.configure": "promotions",
+  "giftcards.view": "giftcards",
+  "giftcards.manage": "giftcards",
+  "giftcards.configure": "giftcards",
+  "customers.view": "crm",
+  "customers.notes.manage": "crm",
+  "careers.view": "careers",
+  "careers.manage": "careers",
+  "applicants.view": "careers",
+  "applicants.manage": "careers",
+  "franchising.view": "franchising",
+  "franchising.manage": "franchising",
+  "cms.view": "cms",
+  "cms.manage": "cms",
+  "marketing.view": "marketing",
+  "marketing.manage": "marketing",
+};
+
+// Lifecycle exceptions: permissions kept even when their module is NOT
+// entitled (e.g. after a downgrade), so a business can still see and
+// correct stored value it already holds — reconciliation and required
+// refunds are never blocked by a plan change. Configuration and new
+// activity in the module stay off. (Orders, refunds and payment
+// reconciliation are core.)
+export const LIFECYCLE_RETAINED_PERMISSIONS: readonly InternalPermissionKey[] = [
+  "giftcards.view",
+  "giftcards.manage",
+  "loyalty.view",
+  "loyalty.adjust",
+];
+
+// Whether a business with these entitled modules may use a permission
+// (roles still decide who holds it).
+export function isPermissionEntitled(
+  key: InternalPermissionKey,
+  modules: ReadonlySet<SubscriptionModuleKey>,
+): boolean {
+  const owner = PERMISSION_MODULE[key];
+  return (
+    owner === "core" ||
+    modules.has(owner) ||
+    LIFECYCLE_RETAINED_PERMISSIONS.includes(key)
+  );
+}
+
+export const MODULE_NOT_ENTITLED = "MODULE_NOT_ENTITLED";
+
+// What the business admin knows about its own plan (GET /internal/me).
+export interface InternalEntitlementsSummary {
+  // Always includes "core".
+  modules: SubscriptionModuleKey[];
+  planName: string | null;
+}
 
 // Scope types the application currently supports operationally. The Prisma
 // enum mirrors exactly this set — additional organizational scope types

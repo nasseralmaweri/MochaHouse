@@ -111,7 +111,8 @@ export class GiftCardsAdminService {
   ): Promise<AdminGiftCardSearchResponse> {
     authorization.assertCorporate('giftcards.view');
 
-    const rawCode = typeof request?.code === 'string' ? request.code.trim() : '';
+    const rawCode =
+      typeof request?.code === 'string' ? request.code.trim() : '';
     const rawId =
       typeof request?.giftCardId === 'string' ? request.giftCardId.trim() : '';
 
@@ -173,6 +174,9 @@ export class GiftCardsAdminService {
     tenant: TenantContext,
   ): Promise<IssueGiftCardResponse> {
     authorization.assertCorporate('giftcards.manage');
+    // SC2a — issuing creates new stored value: the gift-card module must be
+    // in the plan (giftcards.manage alone is retained only for corrections).
+    authorization.assertModuleEntitled('giftcards');
 
     const originalValueMinorUnits = this.validateOriginalValue(
       request?.originalValueMinorUnits,
@@ -608,7 +612,7 @@ export class GiftCardsAdminService {
       balanceAfterMinorUnits: entry.balanceAfterMinorUnits,
       reason: entry.reason,
       actorLabel: entry.actorInternalUser
-        ? entry.actorInternalUser.displayName ?? entry.actorInternalUser.email
+        ? (entry.actorInternalUser.displayName ?? entry.actorInternalUser.email)
         : null,
       orderNumber: entry.order?.orderNumber ?? null,
       createdAt: entry.createdAt.toISOString(),
