@@ -50,6 +50,7 @@ export const PLATFORM_AUDIT_ACTIONS = {
   tenantBillingStarted: 'platform.tenant.billing_started',
   billingReconciled: 'platform.billing.reconciled',
   billingCaseResolved: 'platform.billing.case_resolved',
+  billingEnforcementSwept: 'platform.billing.enforcement_swept',
 } as const;
 
 @Injectable()

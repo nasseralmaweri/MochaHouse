@@ -25,6 +25,7 @@ function billed(over: Partial<BillingState> = {}): BillingState {
     currentPeriodEnd: null,
     pastDueAt: null,
     graceEndsAt: null,
+    recoveryEndsAt: null,
     cancelAtPeriodEnd: false,
     canceledAt: null,
     pending: null,
@@ -60,6 +61,7 @@ function sync(
     snap,
     offered,
     day(0),
+    3,
   );
   let next = state;
   const history: string[] = [];
@@ -93,7 +95,9 @@ describe('SC3b provider sync', () => {
     expect(r.next.status).toBe('TRIAL_EXPIRED');
     expect(r.next.canceledAt).toBeNull();
     expect(r.history).toEqual(['TRIAL_EXPIRED']);
-    expect(r.suspensions).toEqual(['SUSPEND_FOR_BILLING']);
+    // SC3c — no suspension yet: the recovery window (policy days) first.
+    expect(r.suspensions).toEqual([]);
+    expect(r.next.recoveryEndsAt).toEqual(day(3));
     // Seen again (a later notification): nothing changes, never CANCELED.
     expect(sync(r.next, snapshot({ status: 'canceled' })).history).toEqual([]);
   });
@@ -127,7 +131,7 @@ describe('SC3b provider sync', () => {
   });
 
   it('a trial we never offered (or longer than offered) is never accepted', () => {
-    const none = eventsFromSnapshot(billed(), snapshot(), null, day(0));
+    const none = eventsFromSnapshot(billed(), snapshot(), null, day(0), 3);
     expect(none.unexpectedTrial).toBe(true);
     expect(none.events.map((e) => e.type)).not.toContain('TRIAL_STARTED');
     const zero = eventsFromSnapshot(
@@ -135,6 +139,7 @@ describe('SC3b provider sync', () => {
       snapshot(),
       { trialDays: 0, requiresPaymentMethod: true },
       day(0),
+      3,
     );
     expect(zero.unexpectedTrial).toBe(true);
     // Longer than offered: the lifecycle refuses it.
@@ -179,6 +184,7 @@ describe('SC3b provider sync', () => {
         snapshot(),
         { trialDays: 14, requiresPaymentMethod: false },
         day(1),
+        3,
       ).events,
     ).toEqual([]);
   });

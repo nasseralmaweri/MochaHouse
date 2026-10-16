@@ -264,7 +264,13 @@ describe('S0F admin tenant resolution & business membership (integration)', () =
     for (const header of [undefined, TENANT_A]) {
       const res = await me('a-only', header).expect(200);
       const body = res.body as InternalMeResponse;
-      expect(Object.keys(body.business).sort()).toEqual(['id', 'name', 'slug']);
+      expect(Object.keys(body.business).sort()).toEqual([
+        'access',
+        'id',
+        'name',
+        'slug',
+      ]);
+      expect(body.business.access).toBe('FULL');
       expect(body.business.id).toBe(TENANT_A);
       expect(body.business.slug).toBe('mocha-house');
       expect(body.authorization.isCorporate).toBe(true);
@@ -459,7 +465,12 @@ describe('S0F admin tenant resolution & business membership (integration)', () =
     const res = await businesses('multi').expect(200);
     for (const business of (res.body as InternalBusinessesResponse)
       .businesses) {
-      expect(Object.keys(business).sort()).toEqual(['id', 'name', 'slug']);
+      expect(Object.keys(business).sort()).toEqual([
+        'access',
+        'id',
+        'name',
+        'slug',
+      ]);
     }
     expect(JSON.stringify(res.body)).not.toContain(TENANT_C);
 

@@ -1,6 +1,7 @@
 import {
   billingAccess,
   decideSuspension,
+  entitledToPlanModules,
   mayChargeAutomatically,
   transition,
   type BillingEvent,
@@ -26,6 +27,7 @@ function billed(over: Partial<BillingState> = {}): BillingState {
     currentPeriodEnd: null,
     pastDueAt: null,
     graceEndsAt: null,
+    recoveryEndsAt: null,
     cancelAtPeriodEnd: false,
     canceledAt: null,
     pending: null,
@@ -76,10 +78,10 @@ describe('SC3a billing lifecycle', () => {
         trialDays: 14,
         requiresPaymentMethod: false,
       },
-      { type: 'TRIAL_ENDED', at: T0 },
+      { type: 'TRIAL_ENDED', at: T0, trialRecoveryDays: 3 },
       { type: 'GRACE_EXPIRED', at: T0 },
       { type: 'CANCEL_SCHEDULED', at: T0 },
-      { type: 'SUBSCRIPTION_ENDED', at: T0 },
+      { type: 'SUBSCRIPTION_ENDED', at: T0, trialRecoveryDays: 3 },
     ];
     for (const event of events) {
       expect(transition(founding, event)).toEqual({
@@ -158,12 +160,46 @@ describe('SC3a billing lifecycle', () => {
         trialEndsAt: day(14),
         trialRequiresPaymentMethod: false,
       });
-      const r = ok(transition(trialing, { type: 'TRIAL_ENDED', at: day(14) }));
+      const r = ok(
+        transition(trialing, {
+          type: 'TRIAL_ENDED',
+          at: day(14),
+          trialRecoveryDays: 3,
+        }),
+      );
       expect(r.next.status).toBe('TRIAL_EXPIRED');
       expect(r.history.map((h) => h.type)).toEqual(['TRIAL_EXPIRED']);
-      expect(r.suspension).toBe('SUSPEND_FOR_BILLING');
+      // SC3c — not suspended yet: a recovery window first (core access
+      // only; premium modules stop at once).
+      expect(r.suspension).toBe('NONE');
+      expect(r.next.recoveryEndsAt).toEqual(day(17));
+      expect(entitledToPlanModules(r.next)).toBe(false);
       expect(mayChargeAutomatically(r.next)).toBe(false);
       expect(billingAccess(r.next)).toBe('BILLING_RECOVERY_ONLY');
+      // The window ends: suspended for billing, still never charged.
+      expect(
+        transition(r.next, { type: 'RECOVERY_EXPIRED', at: day(16) }),
+      ).toEqual({ ok: false, reason: 'RECOVERY_NOT_OVER' });
+      const over = ok(
+        transition(r.next, { type: 'RECOVERY_EXPIRED', at: day(17) }),
+      );
+      expect(over.suspension).toBe('SUSPEND_FOR_BILLING');
+      expect(over.next).toMatchObject({
+        status: 'TRIAL_EXPIRED',
+        recoveryEndsAt: null,
+      });
+      // Only once.
+      expect(
+        transition(over.next, { type: 'RECOVERY_EXPIRED', at: day(18) }),
+      ).toEqual({ ok: false, reason: 'NOT_IN_RECOVERY' });
+      // An invalid window is refused rather than guessed.
+      expect(
+        transition(trialing, {
+          type: 'TRIAL_ENDED',
+          at: day(14),
+          trialRecoveryDays: 0,
+        }),
+      ).toEqual({ ok: false, reason: 'NOT_CHANGEABLE' });
       // A failed charge against a business that never authorized one is not
       // a delinquency.
       expect(transition(trialing, failed(day(14)))).toEqual({
@@ -180,7 +216,13 @@ describe('SC3a billing lifecycle', () => {
         trialRequiresPaymentMethod: true,
       });
       expect(
-        ok(transition(trialing, { type: 'TRIAL_ENDED', at: day(14) })).changed,
+        ok(
+          transition(trialing, {
+            type: 'TRIAL_ENDED',
+            at: day(14),
+            trialRecoveryDays: 3,
+          }),
+        ).changed,
       ).toBe(false);
       expect(ok(transition(trialing, paid(day(14)))).next.status).toBe(
         'ACTIVE',
@@ -337,7 +379,11 @@ describe('SC3a billing lifecycle', () => {
       );
 
       const ended = ok(
-        transition(scheduled.next, { type: 'SUBSCRIPTION_ENDED', at: day(30) }),
+        transition(scheduled.next, {
+          type: 'SUBSCRIPTION_ENDED',
+          at: day(30),
+          trialRecoveryDays: 3,
+        }),
       );
       expect(ended.next).toMatchObject({
         status: 'CANCELED',

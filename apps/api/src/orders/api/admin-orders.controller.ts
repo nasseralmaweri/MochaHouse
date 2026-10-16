@@ -19,6 +19,7 @@ import { OrderClosureService } from '../application/order-closure.service';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
+import { AllowDuringBillingWindDown } from '../../internal-auth/infrastructure/billing-wind-down.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
 import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 
@@ -40,6 +41,9 @@ export class AdminOrdersController {
   // ORDER_CLOSURE_ENABLED=1. `orders.cancel` is checked again for the
   // specific location in the service, and the order must belong to that
   // location and to the request's business.
+  // SC3c-1 — rejecting (refunding) an order the business already took is
+  // part of a billing wind-down; ORDER_CLOSURE_ENABLED still gates it.
+  @AllowDuringBillingWindDown()
   @RequirePermission('orders.cancel')
   @Post(':orderId/reject')
   reject(
@@ -63,6 +67,7 @@ export class AdminOrdersController {
   }
 
   // R1 / S5b — cancel an ACCEPTED / PREPARING / READY order (same gates).
+  @AllowDuringBillingWindDown()
   @RequirePermission('orders.cancel')
   @Post(':orderId/cancel')
   cancel(
@@ -86,6 +91,7 @@ export class AdminOrdersController {
     );
   }
 
+  @AllowDuringBillingWindDown()
   @RequirePermission('orders.view')
   @Get()
   listActive(
@@ -100,6 +106,7 @@ export class AdminOrdersController {
     );
   }
 
+  @AllowDuringBillingWindDown()
   @RequirePermission('orders.view')
   @Get(':orderId')
   getDetail(
@@ -116,6 +123,12 @@ export class AdminOrdersController {
     );
   }
 
+  // SC3c-1 — during a billing wind-down orders the business already took
+  // may be fulfilled: an ACCEPTED order moves on to completion, and a
+  // RECEIVED order is accepted only if it was paid before the suspension
+  // (checked in the service). New orders cannot arrive (the storefront is
+  // suspended).
+  @AllowDuringBillingWindDown()
   @RequirePermission('orders.manage_status')
   @Post(':orderId/advance')
   advance(
@@ -130,6 +143,7 @@ export class AdminOrdersController {
       body.expectedStatus,
       request.authorization!,
       tenant,
+      request.internalBusinessAccess === 'BILLING_WIND_DOWN',
     );
   }
 }

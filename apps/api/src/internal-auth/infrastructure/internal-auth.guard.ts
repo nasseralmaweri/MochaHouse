@@ -6,6 +6,9 @@ import {
   Injectable,
   InternalServerErrorException,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { BUSINESS_BILLING_SUSPENDED } from '@mocha-house/contracts';
+import { BILLING_WIND_DOWN_ALLOWED } from './billing-wind-down.decorator';
 import { createTenantContext } from '@mocha-house/database';
 import { InternalCognitoTokenVerifier } from './internal-cognito-token-verifier';
 import { InternalLocalDevTokenVerifier } from './internal-local-dev-token-verifier';
@@ -60,6 +63,7 @@ export class InternalAuthGuard implements CanActivate {
     private readonly localDevVerifier: InternalLocalDevTokenVerifier,
     private readonly internalUsers: InternalUsersService,
     private readonly memberships: InternalTenantMembershipService,
+    private readonly reflector: Reflector,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -111,6 +115,25 @@ export class InternalAuthGuard implements CanActivate {
       throw new ForbiddenException(NOT_PERMITTED);
     }
 
+    // SC3c-1 — a business suspended for BILLING admits its staff only to
+    // the routes explicitly marked for the operational wind-down. Fail
+    // closed: an unmarked route (including one added later) refuses.
+    if (
+      selection.access === 'BILLING_WIND_DOWN' &&
+      this.reflector.getAllAndOverride<boolean>(BILLING_WIND_DOWN_ALLOWED, [
+        context.getHandler(),
+        context.getClass(),
+      ]) !== true
+    ) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: BUSINESS_BILLING_SUSPENDED,
+        message:
+          'This business is suspended for billing. Only accepted orders, refunds and billing are available.',
+      });
+    }
+
     request.tenantContext = createTenantContext({
       tenantId: resolution.user.tenantId,
       principalType: 'member',
@@ -118,6 +141,7 @@ export class InternalAuthGuard implements CanActivate {
     });
     request.internalIdentity = identity;
     request.internalUser = resolution.user;
+    request.internalBusinessAccess = selection.access;
     return true;
   }
 }

@@ -6,11 +6,18 @@ import {
 } from '@mocha-house/contracts';
 import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { entitledToPlanModules } from '../../saas-billing/domain/billing-lifecycle';
+import { billingEnforcementEnabled } from '../../saas-billing/application/billing-enforcement.config';
 
 // SC2a — what a business's subscription entitles it to, computed in ONE
 // place: core (always) + the modules of its subscribed plan version + its
 // add-on grants. A business with NO subscription has core only — never
 // "everything" (fail closed). Read-only.
+//
+// SC3c-1 — with billing enforcement on, a BILLED subscription that is not in
+// good standing (an expired trial — including its recovery window — unpaid,
+// or ended) loses its PLAN's modules: core and explicit operator add-on
+// grants remain. Grace (PAST_DUE) keeps everything.
 //
 // Customer-facing surfaces (checkout, public forms, workers) are SC2b; this
 // slice enforces entitlements on the business admin (staff) API.
@@ -62,16 +69,30 @@ export class EntitlementsService {
     const subscription = await db.tenantSubscription.findUnique({
       where: { subscriberTenantId: tenantId },
       select: {
+        billingMode: true,
+        status: true,
         planVersion: {
-          select: { moduleKeys: true, plan: { select: { name: true } } },
+          select: {
+            moduleKeys: true,
+            plan: { select: { name: true, key: true } },
+          },
         },
         moduleGrants: { select: { moduleKey: true } },
       },
     });
     if (!subscription) return CORE_ONLY;
+    // Founding businesses (Mocha House, Tenant #1, among them) are exempt
+    // from billing enforcement, as from billing suspension.
+    const exempt = subscription.planVersion.plan.key === 'founding';
+    const planModules =
+      billingEnforcementEnabled() &&
+      !exempt &&
+      !entitledToPlanModules(subscription)
+        ? []
+        : subscription.planVersion.moduleKeys;
     return {
       modules: effectiveModules(
-        subscription.planVersion.moduleKeys,
+        planModules,
         subscription.moduleGrants.map((grant) => grant.moduleKey),
       ),
       planName: subscription.planVersion.plan.name,

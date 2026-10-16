@@ -21,6 +21,11 @@
 //       billing state and NEVER a tenant suspension.
 //   E8  an upgrade is pending until ITS payment is confirmed (then the new
 //       plan's modules apply); a downgrade applies at the period boundary.
+//   SC3c Q1  an expired trial keeps the CORE business (storefront, basic
+//       administration) for a short recovery window (policy
+//       trialRecoveryDays, fixed when the trial expires) but never the
+//       plan's premium modules (entitledToPlanModules); when the window ends
+//       the business is suspended for billing. Nothing is charged.
 
 export type BillingStatus =
   'ACTIVE' | 'TRIALING' | 'PAST_DUE' | 'UNPAID' | 'TRIAL_EXPIRED' | 'CANCELED';
@@ -50,6 +55,9 @@ export interface BillingState {
   currentPeriodEnd: Date | null;
   pastDueAt: Date | null;
   graceEndsAt: Date | null;
+  // SC3c — TRIAL_EXPIRED only: when the restricted recovery window ends
+  // (then the business is suspended for billing and this is cleared).
+  recoveryEndsAt: Date | null;
   cancelAtPeriodEnd: boolean;
   canceledAt: Date | null;
   pending: PendingPlanChange | null;
@@ -92,14 +100,18 @@ export type BillingEvent =
       reference: string;
       gracePeriodDays: number;
     }
-  // Provider: the trial period is over.
-  | { type: 'TRIAL_ENDED'; at: Date }
+  // Provider: the trial period is over. SC3c — `trialRecoveryDays` (billing
+  // policy) is the recovery window an unauthorized trial gets on expiry.
+  | { type: 'TRIAL_ENDED'; at: Date; trialRecoveryDays: number }
   // System: the grace period is over.
   | { type: 'GRACE_EXPIRED'; at: Date }
+  // SC3c — system: an expired trial's recovery window is over.
+  | { type: 'RECOVERY_EXPIRED'; at: Date }
   | { type: 'CANCEL_SCHEDULED'; at: Date }
   | { type: 'CANCEL_UNDONE'; at: Date }
-  // Provider: the subscription ended (after a scheduled cancellation).
-  | { type: 'SUBSCRIPTION_ENDED'; at: Date }
+  // Provider: the subscription ended (after a scheduled cancellation, or a
+  // cardless trial the provider ended).
+  | { type: 'SUBSCRIPTION_ENDED'; at: Date; trialRecoveryDays: number }
   // Operator: request an upgrade; it waits for payment `reference`.
   | {
       type: 'UPGRADE_REQUESTED';
@@ -128,6 +140,7 @@ export interface BillingHistoryEntry {
     | 'PAYMENT_FAILED'
     | 'GRACE_EXPIRED'
     | 'TRIAL_EXPIRED'
+    | 'RECOVERY_EXPIRED'
     | 'CANCEL_SCHEDULED'
     | 'CANCEL_UNDONE'
     | 'CANCELED'
@@ -154,6 +167,8 @@ export type RefusalReason =
   | 'INVALID_TRIAL'
   | 'NOT_PAST_DUE'
   | 'GRACE_NOT_OVER'
+  | 'NOT_IN_RECOVERY'
+  | 'RECOVERY_NOT_OVER'
   | 'NOT_AUTHORIZED'
   | 'NOTHING_TO_CANCEL'
   | 'CHANGE_PENDING'
@@ -241,6 +256,44 @@ export function billingAccess(state: BillingState): BillingAccess {
     case 'CANCELED':
       return 'BILLING_RECOVERY_ONLY';
   }
+}
+
+// SC3c — whether the business keeps its plan's modules (beyond core).
+// COMPLIMENTARY, and any subscription in good standing or within its grace
+// period, keeps them. An expired trial (including its recovery window), an
+// unpaid or an ended subscription does not: the recovery window never
+// extends premium access.
+export function entitledToPlanModules(
+  state: Pick<BillingState, 'billingMode' | 'status'>,
+): boolean {
+  if (state.billingMode === 'COMPLIMENTARY') return true;
+  return (
+    state.status === 'ACTIVE' ||
+    state.status === 'TRIALING' ||
+    state.status === 'PAST_DUE'
+  );
+}
+
+// SC3c — an unauthorized trial expires: NOTHING is charged, and the
+// business gets the recovery window (core access) before any suspension.
+function expireTrial(
+  state: BillingState,
+  at: Date,
+  trialRecoveryDays: number,
+): TransitionResult {
+  if (
+    !Number.isInteger(trialRecoveryDays) ||
+    trialRecoveryDays < 1 ||
+    trialRecoveryDays > 14
+  ) {
+    return refuse('NOT_CHANGEABLE');
+  }
+  const next: BillingState = {
+    ...state,
+    status: 'TRIAL_EXPIRED',
+    recoveryEndsAt: new Date(at.getTime() + trialRecoveryDays * DAY_MS),
+  };
+  return changed(state, next, [entry('TRIAL_EXPIRED', state, next)]);
 }
 
 export function transition(
@@ -339,6 +392,7 @@ export function transition(
         status: 'ACTIVE',
         pastDueAt: null,
         graceEndsAt: null,
+        recoveryEndsAt: null,
         currentPeriodStart: newerPeriod
           ? event.periodStart
           : state.currentPeriodStart,
@@ -435,11 +489,21 @@ export function transition(
         return unchanged(state);
       }
       // No authorization: the trial expires and NOTHING is charged.
-      const next: BillingState = { ...state, status: 'TRIAL_EXPIRED' };
+      return expireTrial(state, event.at, event.trialRecoveryDays);
+    }
+
+    case 'RECOVERY_EXPIRED': {
+      if (state.status !== 'TRIAL_EXPIRED' || state.recoveryEndsAt === null) {
+        return refuse('NOT_IN_RECOVERY');
+      }
+      if (event.at < state.recoveryEndsAt) return refuse('RECOVERY_NOT_OVER');
+      // The window is over: the business is suspended for billing (still
+      // TRIAL_EXPIRED; still never charged).
+      const next: BillingState = { ...state, recoveryEndsAt: null };
       return changed(
         state,
         next,
-        [entry('TRIAL_EXPIRED', state, next)],
+        [entry('RECOVERY_EXPIRED', state, next)],
         'SUSPEND_FOR_BILLING',
       );
     }
@@ -478,13 +542,7 @@ export function transition(
         state.status === 'TRIALING' &&
         state.recurringPaymentAuthorizedAt === null
       ) {
-        const expired: BillingState = { ...state, status: 'TRIAL_EXPIRED' };
-        return changed(
-          state,
-          expired,
-          [entry('TRIAL_EXPIRED', state, expired)],
-          'SUSPEND_FOR_BILLING',
-        );
+        return expireTrial(state, event.at, event.trialRecoveryDays);
       }
       // Already expired as a trial: the provider ending it changes nothing.
       if (state.status === 'TRIAL_EXPIRED') return unchanged(state);

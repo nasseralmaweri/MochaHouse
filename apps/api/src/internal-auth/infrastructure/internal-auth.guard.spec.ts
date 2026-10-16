@@ -6,7 +6,9 @@ import {
   InternalServerErrorException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
+import { AllowDuringBillingWindDown } from './billing-wind-down.decorator';
 import { InternalAuthGuard } from './internal-auth.guard';
 import { InternalCognitoTokenVerifier } from './internal-cognito-token-verifier';
 import { InternalLocalDevTokenVerifier } from './internal-local-dev-token-verifier';
@@ -21,9 +23,26 @@ import type { InternalIdentity } from './internal-identity';
 // server-side request id (RequestIdMiddleware) and, optionally, the
 // client's X-Tenant-Id intent. `requestId: null` omits the id, for the one
 // test proving the guard's own fail-closed check.
+// SC3c-1 — what the guard leaves on the request.
+interface WindDownRequest {
+  internalBusinessAccess?: string;
+  tenantContext?: unknown;
+}
+
+// SC3c-1 — route handlers, with and without the wind-down mark.
+class WindDownRoutes {
+  @AllowDuringBillingWindDown()
+  allowed() {}
+  unmarked() {}
+}
+
 function contextWithHeader(
   authorization?: string,
-  opts: { tenantHeader?: string | string[]; requestId?: string | null } = {},
+  opts: {
+    tenantHeader?: string | string[];
+    requestId?: string | null;
+    handler?: 'allowed' | 'unmarked';
+  } = {},
 ): ExecutionContext {
   const request: {
     headers: Record<string, string | string[] | undefined>;
@@ -36,8 +55,16 @@ function contextWithHeader(
   if (opts.requestId !== null) {
     request.requestId = opts.requestId ?? 'req-guard-spec';
   }
+  /* eslint-disable @typescript-eslint/unbound-method */
+  const handler =
+    opts.handler === 'allowed'
+      ? WindDownRoutes.prototype.allowed
+      : WindDownRoutes.prototype.unmarked;
+  /* eslint-enable @typescript-eslint/unbound-method */
   return {
     switchToHttp: () => ({ getRequest: () => request }),
+    getHandler: () => handler,
+    getClass: () => WindDownRoutes,
   } as unknown as ExecutionContext;
 }
 
@@ -81,6 +108,7 @@ describe('InternalAuthGuard', () => {
     new InternalLocalDevTokenVerifier(),
     internalUsersStub as never,
     membershipsStub as never,
+    new Reflector(),
   );
 
   const activeUser = {
@@ -105,7 +133,11 @@ describe('InternalAuthGuard', () => {
     process.env.INTERNAL_AUTH_DEV_JWT_SECRET = internalSecret;
     process.env.AUTH_DEV_JWT_SECRET = customerSecret;
     resolution = { outcome: 'not-found' };
-    selection = { outcome: 'selected', tenantId: TENANT_1_MOCHA_HOUSE_ID };
+    selection = {
+      outcome: 'selected',
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
+      access: 'FULL',
+    };
     seenIdentity = null;
     seenTenantId = null;
     seenRequestedTenantId = undefined;
@@ -224,12 +256,54 @@ describe('InternalAuthGuard', () => {
     });
   });
 
+  // --- SC3c-1: billing wind-down -----------------------------------------
+
+  it('a business suspended for BILLING admits its staff ONLY to routes marked for the wind-down', async () => {
+    selection = {
+      outcome: 'selected',
+      tenantId: TENANT_1_MOCHA_HOUSE_ID,
+      access: 'BILLING_WIND_DOWN',
+    };
+    resolution = { outcome: 'active', user: activeUser };
+    const allowed = contextWithHeader(`Bearer ${internalToken()}`, {
+      handler: 'allowed',
+    });
+    await expect(guard.canActivate(allowed)).resolves.toBe(true);
+    expect(
+      allowed.switchToHttp().getRequest<WindDownRequest>()
+        .internalBusinessAccess,
+    ).toBe('BILLING_WIND_DOWN');
+
+    // Unmarked (any other route, including one added later): refused.
+    const unmarked = contextWithHeader(`Bearer ${internalToken()}`, {
+      handler: 'unmarked',
+    });
+    await expect(guard.canActivate(unmarked)).rejects.toMatchObject({
+      response: { code: 'BUSINESS_BILLING_SUSPENDED' },
+    });
+    expect(
+      unmarked.switchToHttp().getRequest<WindDownRequest>().tenantContext,
+    ).toBeUndefined();
+  });
+
+  it('full access is unaffected by the wind-down mark', async () => {
+    resolution = { outcome: 'active', user: activeUser };
+    const unmarked = contextWithHeader(`Bearer ${internalToken()}`, {
+      handler: 'unmarked',
+    });
+    await expect(guard.canActivate(unmarked)).resolves.toBe(true);
+    expect(
+      unmarked.switchToHttp().getRequest<WindDownRequest>()
+        .internalBusinessAccess,
+    ).toBe('FULL');
+  });
+
   // --- Milestone S0F: active business resolution ----------------------
 
   const TENANT_B = '01a0db02-f800-7000-8000-7e570000000b';
 
   it('builds a member TenantContext for the SELECTED tenant (never a default) and resolves the user inside it', async () => {
-    selection = { outcome: 'selected', tenantId: TENANT_B };
+    selection = { outcome: 'selected', tenantId: TENANT_B, access: 'FULL' };
     resolution = {
       outcome: 'active',
       user: { ...activeUser, tenantId: TENANT_B },

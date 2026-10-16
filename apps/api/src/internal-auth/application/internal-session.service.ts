@@ -4,6 +4,7 @@ import type {
   InternalPermissionCapability,
   InternalPermissionKey,
   LocationSummary,
+  InternalBusinessAccess,
 } from '@mocha-house/contracts';
 import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -26,6 +27,7 @@ export class InternalSessionService {
   async buildMeResponse(
     user: InternalUserRow,
     tenant: TenantContext,
+    access: InternalBusinessAccess = 'FULL',
   ): Promise<InternalMeResponse> {
     const context = await this.authorizationService.loadContext(
       user.id,
@@ -88,7 +90,7 @@ export class InternalSessionService {
     });
 
     return {
-      business,
+      business: { ...business, access },
       user: this.internalUsers.toProfile(user),
       entitlements: context.entitlementsSummary(),
       authorization: {

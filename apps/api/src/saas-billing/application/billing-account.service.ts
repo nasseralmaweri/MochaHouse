@@ -23,6 +23,8 @@ import {
 } from '@mocha-house/contracts';
 import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { entitledToPlanModules } from '../domain/billing-lifecycle';
+import { billingEnforcementEnabled } from './billing-enforcement.config';
 import { runSerializable } from '../../prisma/serializable-transaction';
 import { PLATFORM_AUDIT_ACTIONS } from '../../platform-auth/application/platform-operators.service';
 import type { PlatformOperatorRow } from '../../platform-auth/infrastructure/platform-identity';
@@ -50,7 +52,9 @@ import {
 const SUBSCRIPTION_INCLUDE = {
   planVersion: { include: { plan: true } },
   planPrice: true,
-  subscriberTenant: { select: { id: true, name: true } },
+  subscriberTenant: {
+    select: { id: true, name: true, status: true, suspensionReason: true },
+  },
 } as const satisfies Prisma.TenantSubscriptionInclude;
 
 type SubscriptionView = Prisma.TenantSubscriptionGetPayload<{
@@ -87,6 +91,7 @@ function unavailable(): ServiceUnavailableException {
 }
 
 export function billingSummary(row: SubscriptionView): BusinessBillingSummary {
+  const enforced = billingEnforcementEnabled();
   const state: BusinessBillingSummary['state'] =
     row.billingMode === 'COMPLIMENTARY'
       ? 'COMPLIMENTARY'
@@ -106,6 +111,13 @@ export function billingSummary(row: SubscriptionView): BusinessBillingSummary {
     trialEndsAt: row.trialEndsAt?.toISOString() ?? null,
     currentPeriodEnd: row.currentPeriodEnd?.toISOString() ?? null,
     graceEndsAt: row.graceEndsAt?.toISOString() ?? null,
+    recoveryEndsAt: row.recoveryEndsAt?.toISOString() ?? null,
+    enforced,
+    premiumPaused:
+      enforced && row.billingMode === 'BILLED' && !entitledToPlanModules(row),
+    suspendedForBilling:
+      row.subscriberTenant.status === 'SUSPENDED' &&
+      row.subscriberTenant.suspensionReason === 'BILLING',
     cancelAtPeriodEnd: row.cancelAtPeriodEnd,
     paymentMethodOnFile: row.recurringPaymentAuthorizedAt !== null,
   };

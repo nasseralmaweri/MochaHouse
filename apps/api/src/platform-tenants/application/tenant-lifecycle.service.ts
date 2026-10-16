@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   PLATFORM_ADMINISTRATOR_ROLE,
+  PLATFORM_BILLING_SUSPENSION_ACTIVE,
   PLATFORM_LIFECYCLE_RECENT_SIGN_IN_SECONDS,
   PLATFORM_OWNER_ALREADY_SIGNED_IN,
   PLATFORM_OWNER_EMAIL_IN_USE,
@@ -26,6 +27,7 @@ import type {
   PlatformOperatorRow,
 } from '../../platform-auth/infrastructure/platform-identity';
 import { isTenantId } from './platform-tenant-query';
+import { billingEnforcementEnabled } from '../../saas-billing/application/billing-enforcement.config';
 
 // SC1e — a business's lifecycle, changed by a platform operator: suspend
 // (with a reason), reactivate, and correct the first owner's email while
@@ -173,10 +175,43 @@ export class TenantLifecycleService {
           'This business cannot be suspended from the platform console.',
         );
       }
+      // SC3c-1 — a SECURITY or REQUESTED suspension takes precedence over a
+      // BILLING one: it replaces the reason, so a later billing payment can
+      // never lift it.
+      if (
+        tenant.status === 'SUSPENDED' &&
+        tenant.suspensionReason === 'BILLING' &&
+        reason !== 'BILLING'
+      ) {
+        const escalated = await tx.tenant.updateMany({
+          where: {
+            id: tenant.id,
+            status: 'SUSPENDED',
+            suspensionReason: 'BILLING',
+          },
+          data: { suspensionReason: reason },
+        });
+        if (escalated.count === 1) {
+          await this.audit(
+            tx,
+            PLATFORM_AUDIT_ACTIONS.tenantSuspended,
+            operator,
+            tenant.id,
+            reason,
+            requestReference,
+          );
+          return {
+            status: 'SUSPENDED',
+            suspensionReason: reason,
+            changed: true,
+          };
+        }
+      }
       if (tenant.status === 'SUSPENDED') {
+        const now = await this.findTenant(tx, tenant.id);
         return {
-          status: tenant.status,
-          suspensionReason: tenant.suspensionReason,
+          status: now.status,
+          suspensionReason: now.suspensionReason,
           changed: false,
         };
       }
@@ -213,6 +248,69 @@ export class TenantLifecycleService {
       const tenant = await this.findTenant(tx, tenantId);
       if (tenant.status === 'ACTIVE') {
         return { status: 'ACTIVE', suspensionReason: null, changed: false };
+      }
+      // SC3c-1 — with enforcement on, a business that still owes is never
+      // simply reactivated: its billing suspension is lifted only by its
+      // confirmed payment, and lifting any OTHER suspension (SECURITY,
+      // REQUESTED) returns it to that billing suspension.
+      if (billingEnforcementEnabled()) {
+        const subscription = await tx.tenantSubscription.findUnique({
+          where: { subscriberTenantId: tenant.id },
+          select: {
+            id: true,
+            billingMode: true,
+            status: true,
+            recoveryEndsAt: true,
+          },
+        });
+        const delinquent =
+          subscription?.billingMode === 'BILLED' &&
+          (subscription.status === 'UNPAID' ||
+            (subscription.status === 'TRIAL_EXPIRED' &&
+              subscription.recoveryEndsAt === null));
+        if (delinquent && tenant.suspensionReason === 'BILLING') {
+          throw conflict(
+            PLATFORM_BILLING_SUSPENSION_ACTIVE,
+            'This business is suspended for unpaid billing. It is restored when its payment is confirmed.',
+          );
+        }
+        if (delinquent) {
+          const toBilling = await tx.tenant.updateMany({
+            where: {
+              id: tenant.id,
+              status: 'SUSPENDED',
+              suspensionReason: tenant.suspensionReason,
+            },
+            data: { suspensionReason: 'BILLING' },
+          });
+          if (toBilling.count === 1) {
+            // Recorded as a billing suspension, so the confirmed payment
+            // lifts it like any other.
+            await tx.tenantSubscriptionEvent.create({
+              data: {
+                subscriptionId: subscription.id,
+                type: 'BILLING_SUSPENDED',
+                fromStatus: subscription.status,
+                toStatus: subscription.status,
+                source: 'OPERATOR',
+                actorPlatformOperatorId: operator.id,
+              },
+            });
+            await this.audit(
+              tx,
+              PLATFORM_AUDIT_ACTIONS.tenantReactivated,
+              operator,
+              tenant.id,
+              tenant.suspensionReason,
+              requestReference,
+            );
+            return {
+              status: 'SUSPENDED',
+              suspensionReason: 'BILLING',
+              changed: true,
+            };
+          }
+        }
       }
       const updated = await tx.tenant.updateMany({
         where: { id: tenant.id, status: 'SUSPENDED' },

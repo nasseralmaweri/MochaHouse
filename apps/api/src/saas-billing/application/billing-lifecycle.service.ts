@@ -4,6 +4,7 @@ import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { runSerializable } from '../../prisma/serializable-transaction';
 import {
+  decideSuspension,
   transition,
   type BillingEvent,
   type BillingHistoryEntry,
@@ -24,6 +25,7 @@ import {
   type SaasBillingProvider,
   type VerifiedBillingProviderEvent,
 } from '../provider/saas-billing-provider';
+import { billingEnforcementEnabled } from './billing-enforcement.config';
 
 // SC3b — what the provider says NOW about the thing an event concerns, read
 // BEFORE the database transaction (no provider call ever runs while rows are
@@ -138,6 +140,7 @@ export function toBillingState(row: SubscriptionRow): BillingState {
     currentPeriodEnd: row.currentPeriodEnd,
     pastDueAt: row.pastDueAt,
     graceEndsAt: row.graceEndsAt,
+    recoveryEndsAt: row.recoveryEndsAt,
     cancelAtPeriodEnd: row.cancelAtPeriodEnd,
     canceledAt: row.canceledAt,
     pending:
@@ -166,6 +169,7 @@ function stateColumns(next: BillingState) {
     currentPeriodEnd: next.currentPeriodEnd,
     pastDueAt: next.pastDueAt,
     graceEndsAt: next.graceEndsAt,
+    recoveryEndsAt: next.recoveryEndsAt,
     cancelAtPeriodEnd: next.cancelAtPeriodEnd,
     canceledAt: next.canceledAt,
     pendingChangeKind: next.pending?.kind ?? null,
@@ -590,6 +594,11 @@ export class BillingLifecycleService {
       billingProviderEventId: ledgerId,
       actorPlatformOperatorId: null,
     });
+    await this.enforce(tx, subscription, result.next, result.suspension, {
+      source: 'BILLING_PROVIDER',
+      billingProviderEventId: ledgerId,
+      actorPlatformOperatorId: null,
+    });
     const outcome = `${subscription.status}->${result.next.status}`;
     await tx.billingProviderEvent.update({
       where: { id: ledgerId },
@@ -642,13 +651,21 @@ export class BillingLifecycleService {
         };
       }
       case 'TRIAL_ENDED':
-        return { type: 'TRIAL_ENDED', at };
+        return {
+          type: 'TRIAL_ENDED',
+          at,
+          trialRecoveryDays: (await this.policy(tx)).trialRecoveryDays,
+        };
       case 'CANCEL_SCHEDULED':
         return { type: 'CANCEL_SCHEDULED', at };
       case 'CANCEL_UNDONE':
         return { type: 'CANCEL_UNDONE', at };
       case 'SUBSCRIPTION_ENDED':
-        return { type: 'SUBSCRIPTION_ENDED', at };
+        return {
+          type: 'SUBSCRIPTION_ENDED',
+          at,
+          trialRecoveryDays: (await this.policy(tx)).trialRecoveryDays,
+        };
     }
   }
 
@@ -781,6 +798,11 @@ export class BillingLifecycleService {
       billingProviderEventId: ledgerId,
       actorPlatformOperatorId: null,
     });
+    await this.enforce(tx, subscription, result.next, result.suspension, {
+      source: 'BILLING_PROVIDER',
+      billingProviderEventId: ledgerId,
+      actorPlatformOperatorId: null,
+    });
     return this.applied(
       tx,
       ledgerId,
@@ -854,6 +876,11 @@ export class BillingLifecycleService {
       billingProviderEventId: ledgerId,
       actorPlatformOperatorId: null,
     });
+    await this.enforce(tx, subscription, result.next, result.suspension, {
+      source: 'BILLING_PROVIDER',
+      billingProviderEventId: ledgerId,
+      actorPlatformOperatorId: null,
+    });
     return this.applied(
       tx,
       ledgerId,
@@ -891,7 +918,14 @@ export class BillingLifecycleService {
             trialDays: checkout.trialDays,
             requiresPaymentMethod: checkout.requiresPaymentMethod,
           };
-    const sync = eventsFromSnapshot(state, snapshot, offered, at);
+    const { trialRecoveryDays } = await this.policy(tx);
+    const sync = eventsFromSnapshot(
+      state,
+      snapshot,
+      offered,
+      at,
+      trialRecoveryDays,
+    );
     if (!sync.events.some((event) => event.type === 'TRIAL_STARTED')) {
       return sync;
     }
@@ -904,7 +938,7 @@ export class BillingLifecycleService {
     ) {
       return sync;
     }
-    return eventsFromSnapshot(state, snapshot, null, at);
+    return eventsFromSnapshot(state, snapshot, null, at, trialRecoveryDays);
   }
 
   // Records the owner's one-time trial claim for this subscription. Retried
@@ -1089,7 +1123,13 @@ export class BillingLifecycleService {
     subscriptionId: string,
     event: Extract<
       BillingEvent,
-      { type: 'GRACE_EXPIRED' | 'UPGRADE_REQUESTED' | 'DOWNGRADE_SCHEDULED' }
+      {
+        type:
+          | 'GRACE_EXPIRED'
+          | 'RECOVERY_EXPIRED'
+          | 'UPGRADE_REQUESTED'
+          | 'DOWNGRADE_SCHEDULED';
+      }
     >,
     actorPlatformOperatorId: string | null,
   ): Promise<{ state: BillingState; suspension: SuspensionEffect }> {
@@ -1106,13 +1146,154 @@ export class BillingLifecycleService {
         result.next,
         subscription.lastBillingEventAt,
       );
-      await this.history(tx, subscription.id, result.history, {
-        source: actorPlatformOperatorId ? 'OPERATOR' : 'SYSTEM',
+      const origin = {
+        source: actorPlatformOperatorId
+          ? ('OPERATOR' as const)
+          : ('SYSTEM' as const),
         billingProviderEventId: null,
         actorPlatformOperatorId,
-      });
+      };
+      await this.history(tx, subscription.id, result.history, origin);
+      await this.enforce(
+        tx,
+        subscription,
+        result.next,
+        result.suspension,
+        origin,
+      );
       return { state: result.next, suspension: result.suspension };
     });
+  }
+
+  // SC3c-1 — applies a billing change's effect on the BUSINESS, in the same
+  // transaction as the change itself (BILLING_ENFORCEMENT_ENABLED only).
+  // decideSuspension never overrides an administrative decision: billing
+  // suspends only an ACTIVE business (reason BILLING) and lifts only a
+  // BILLING suspension — a SECURITY or REQUESTED suspension is never
+  // touched, by a suspension or by a payment. Non-billed and Founding
+  // businesses (Mocha House, Tenant #1, is Founding) are never suspended for
+  // billing:
+  // such an effect is handed to review instead. Each applied change is
+  // recorded in the subscription history.
+  private async enforce(
+    tx: Tx,
+    subscription: SubscriptionRow,
+    next: BillingState,
+    effect: SuspensionEffect,
+    origin: {
+      source: 'OPERATOR' | 'BILLING_PROVIDER' | 'SYSTEM';
+      billingProviderEventId: string | null;
+      actorPlatformOperatorId: string | null;
+    },
+  ): Promise<void> {
+    if (effect === 'NONE' || !billingEnforcementEnabled()) return;
+    const tenant = await tx.tenant.findUniqueOrThrow({
+      where: { id: subscription.subscriberTenantId },
+      select: { id: true, status: true, suspensionReason: true },
+    });
+    if (effect === 'SUSPEND_FOR_BILLING') {
+      const plan = await tx.subscriptionPlanVersion.findUniqueOrThrow({
+        where: { id: subscription.planVersionId },
+        select: { plan: { select: { key: true } } },
+      });
+      if (
+        subscription.billingMode !== 'BILLED' ||
+        plan.plan.key === 'founding'
+      ) {
+        await this.openCase(
+          tx,
+          'SUSPENSION_EXEMPT',
+          subscription.id,
+          origin.billingProviderEventId,
+        );
+        return;
+      }
+    }
+    const action = decideSuspension(effect, tenant);
+    if (action === 'NONE') return;
+    if (action === 'LIFT_BILLING') {
+      const latest = await tx.tenantSubscriptionEvent.findFirst({
+        where: {
+          subscriptionId: subscription.id,
+          type: { in: ['BILLING_SUSPENDED', 'BILLING_SUSPENSION_LIFTED'] },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { type: true },
+      });
+      if (latest?.type !== 'BILLING_SUSPENDED') return;
+    }
+    // Compare-and-set: only the state decideSuspension saw is changed.
+    const { count } =
+      action === 'SUSPEND_BILLING'
+        ? await tx.tenant.updateMany({
+            where: { id: tenant.id, status: 'ACTIVE' },
+            data: { status: 'SUSPENDED', suspensionReason: 'BILLING' },
+          })
+        : await tx.tenant.updateMany({
+            where: {
+              id: tenant.id,
+              status: 'SUSPENDED',
+              suspensionReason: 'BILLING',
+            },
+            data: { status: 'ACTIVE', suspensionReason: null },
+          });
+    if (count !== 1) return;
+    await tx.tenantSubscriptionEvent.create({
+      data: {
+        subscriptionId: subscription.id,
+        type:
+          action === 'SUSPEND_BILLING'
+            ? 'BILLING_SUSPENDED'
+            : 'BILLING_SUSPENSION_LIFTED',
+        fromStatus: subscription.status,
+        toStatus: next.status,
+        source: origin.source,
+        billingProviderEventId: origin.billingProviderEventId,
+        actorPlatformOperatorId: origin.actorPlatformOperatorId,
+      },
+    });
+  }
+
+  // SC3c-1 — the subscriptions whose grace period or trial recovery window
+  // is over (the enforcement sweep's work list). Oldest deadline first.
+  async dueForEnforcement(
+    now: Date,
+    limit: number,
+  ): Promise<
+    { subscriptionId: string; event: 'GRACE_EXPIRED' | 'RECOVERY_EXPIRED' }[]
+  > {
+    const [grace, recovery] = await Promise.all([
+      this.prisma.tenantSubscription.findMany({
+        where: {
+          billingMode: 'BILLED',
+          status: 'PAST_DUE',
+          graceEndsAt: { lte: now },
+        },
+        orderBy: { graceEndsAt: 'asc' },
+        take: limit,
+        select: { id: true },
+      }),
+      this.prisma.tenantSubscription.findMany({
+        where: {
+          billingMode: 'BILLED',
+          status: 'TRIAL_EXPIRED',
+          recoveryEndsAt: { lte: now },
+        },
+        orderBy: { recoveryEndsAt: 'asc' },
+        take: limit,
+        select: { id: true },
+      }),
+    ]);
+    return [
+      ...grace.map((row) => ({
+        subscriptionId: row.id,
+        event: 'GRACE_EXPIRED' as const,
+      })),
+      ...recovery.map((row) => ({
+        subscriptionId: row.id,
+        event: 'RECOVERY_EXPIRED' as const,
+      })),
+    ];
   }
 
   // --- shared ----------------------------------------------------------------

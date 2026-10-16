@@ -1,4 +1,5 @@
 import type { Request } from 'express';
+import type { InternalBusinessAccess } from '@mocha-house/contracts';
 import type { Prisma } from '@mocha-house/database';
 // Type-only import (erased at compile time) — no runtime dependency from
 // the infrastructure layer on the authorization layer.
@@ -44,6 +45,9 @@ export interface InternalIdentity {
 export interface InternalAuthenticatedRequest extends Request {
   internalIdentity?: InternalIdentity;
   internalUser?: InternalUserRow;
+  // SC3c-1 — set by InternalAuthGuard with internalUser: FULL, or the
+  // narrow BILLING_WIND_DOWN of a business suspended for billing.
+  internalBusinessAccess?: InternalBusinessAccess;
   // Set by PermissionGuard (Milestone 5B), never by InternalAuthGuard. Its
   // presence means the route's required permission has been checked and the
   // effective grants are available to the service layer for

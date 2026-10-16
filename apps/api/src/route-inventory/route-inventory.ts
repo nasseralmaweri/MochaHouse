@@ -379,6 +379,10 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     scope: 'platform',
     note: 'SC3b — review-only reconciliation sweep (never moves money); audited.',
   },
+  'POST /api/v1/platform/billing/enforcement/sweep': {
+    scope: 'platform',
+    note: 'SC3c-1 — apply due grace / trial-recovery expiries now (no-op while enforcement is off); audited.',
+  },
   'GET /api/v1/platform/billing/reconciliation-cases': {
     scope: 'platform',
     note: 'SC3b — billing cases to review.',

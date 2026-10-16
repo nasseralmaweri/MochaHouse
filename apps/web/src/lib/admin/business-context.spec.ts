@@ -1,7 +1,7 @@
 import { resolveActiveBusiness } from "./business-context";
 
-const mocha = { id: "t-mocha", name: "Mocha House", slug: "mocha-house" };
-const other = { id: "t-other", name: "Northside Cafe", slug: "northside" };
+const mocha = { id: "t-mocha", name: "Mocha House", slug: "mocha-house", access: "FULL" as const };
+const other = { id: "t-other", name: "Northside Cafe", slug: "northside", access: "FULL" as const };
 
 describe("resolveActiveBusiness", () => {
   it("selects the only business implicitly", () => {

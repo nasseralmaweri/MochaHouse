@@ -757,10 +757,13 @@ export interface InternalAuthorizationSummary {
     locations: LocationSummary[];
     capabilities: Partial<Record<InternalPermissionKey, InternalPermissionCapability>>;
 }
+export type InternalBusinessAccess = "FULL" | "BILLING_WIND_DOWN";
+export declare const BUSINESS_BILLING_SUSPENDED = "BUSINESS_BILLING_SUSPENDED";
 export interface InternalBusinessSummary {
     id: string;
     name: string;
     slug: string;
+    access: InternalBusinessAccess;
 }
 export interface InternalBusinessesResponse {
     businesses: InternalBusinessSummary[];
@@ -878,6 +881,7 @@ export interface PlatformTenantProvisionResponse {
 export declare const PLATFORM_LIFECYCLE_RECENT_SIGN_IN_SECONDS: number;
 export declare const PLATFORM_REAUTHENTICATION_REQUIRED = "REAUTHENTICATION_REQUIRED";
 export declare const PLATFORM_TENANT_PROTECTED = "TENANT_PROTECTED";
+export declare const PLATFORM_BILLING_SUSPENSION_ACTIVE = "BILLING_SUSPENSION_ACTIVE";
 export declare const PLATFORM_OWNER_ALREADY_SIGNED_IN = "OWNER_ALREADY_SIGNED_IN";
 export declare const PLATFORM_OWNER_EMAIL_IN_USE = "OWNER_EMAIL_IN_USE";
 export interface PlatformTenantOwner {
@@ -981,6 +985,10 @@ export interface BusinessBillingSummary {
     trialEndsAt: string | null;
     currentPeriodEnd: string | null;
     graceEndsAt: string | null;
+    recoveryEndsAt: string | null;
+    enforced: boolean;
+    premiumPaused: boolean;
+    suspendedForBilling: boolean;
     cancelAtPeriodEnd: boolean;
     paymentMethodOnFile: boolean;
 }
@@ -1027,6 +1035,11 @@ export interface PlatformReconciliationRunResponse {
     casesOpened: number;
     checkoutsExpired: number;
 }
+export interface PlatformBillingEnforcementSweepResponse {
+    enabled: boolean;
+    applied: number;
+    failed: number;
+}
 export interface PlatformPlanListResponse {
     plans: PlatformPlan[];
     subscriptions: {
@@ -1042,7 +1055,7 @@ export interface PlatformPlanCreateRequest {
 export interface PlatformPlanVersionModulesRequest {
     moduleKeys: OptionalModuleKey[];
 }
-export type PlatformSubscriptionEventType = "PLAN_ASSIGNED" | "PLAN_CHANGED" | "ADDON_GRANTED" | "ADDON_REVOKED" | "TRIAL_STARTED" | "PAYMENT_AUTHORIZED" | "PAYMENT_SUCCEEDED" | "PAYMENT_FAILED" | "GRACE_EXPIRED" | "TRIAL_EXPIRED" | "CANCEL_SCHEDULED" | "CANCEL_UNDONE" | "CANCELED" | "PLAN_CHANGE_PENDING" | "PLAN_CHANGE_APPLIED" | "PLAN_CHANGE_ABANDONED";
+export type PlatformSubscriptionEventType = "PLAN_ASSIGNED" | "PLAN_CHANGED" | "ADDON_GRANTED" | "ADDON_REVOKED" | "TRIAL_STARTED" | "PAYMENT_AUTHORIZED" | "PAYMENT_SUCCEEDED" | "PAYMENT_FAILED" | "GRACE_EXPIRED" | "TRIAL_EXPIRED" | "CANCEL_SCHEDULED" | "CANCEL_UNDONE" | "CANCELED" | "PLAN_CHANGE_PENDING" | "PLAN_CHANGE_APPLIED" | "PLAN_CHANGE_ABANDONED" | "RECOVERY_EXPIRED" | "BILLING_SUSPENDED" | "BILLING_SUSPENSION_LIFTED";
 export type PlatformSubscriptionStatus = "ACTIVE" | "TRIALING" | "PAST_DUE" | "UNPAID" | "TRIAL_EXPIRED" | "CANCELED";
 export type PlatformBillingMode = "COMPLIMENTARY" | "BILLED";
 export interface PlatformTenantSubscription {

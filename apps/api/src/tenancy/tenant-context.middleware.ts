@@ -64,7 +64,9 @@ export function isAllowedWhileTenantInactive(
 // /api/v1/internal/*; see TenancyModule). Their tenant is the authenticated
 // administrator's validated active business, which only InternalAuthGuard
 // can establish — a deployment-wide tenant must never stand in for it. That
-// guard already refuses a non-ACTIVE business (InternalTenantMembershipService).
+// guard already refuses a non-ACTIVE business (InternalTenantMembershipService)
+// — except, since SC3c-1, a business suspended for BILLING, whose staff it
+// admits only to the routes marked for the operational wind-down.
 @Injectable()
 export class TenantContextMiddleware implements NestMiddleware {
   constructor(

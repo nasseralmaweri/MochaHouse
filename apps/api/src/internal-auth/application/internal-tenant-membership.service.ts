@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import type { InternalBusinessSummary } from '@mocha-house/contracts';
+import type {
+  InternalBusinessAccess,
+  InternalBusinessSummary,
+} from '@mocha-house/contracts';
 import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -41,6 +44,8 @@ export interface InternalTenantMembership {
   tenantName: string;
   tenantSlug: string;
   tenantStatus: 'ACTIVE' | 'SUSPENDED';
+  // SC3c-1 — why a SUSPENDED tenant is suspended (null when ACTIVE).
+  tenantSuspensionReason: 'SECURITY' | 'BILLING' | 'REQUESTED' | null;
   userStatus: 'INVITED' | 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
 }
 
@@ -56,7 +61,7 @@ export interface InternalTenantMembership {
 //                        collapses to this one outcome so a caller can never
 //                        probe which tenants exist.
 export type ActiveTenantSelection =
-  | { outcome: 'selected'; tenantId: string }
+  | { outcome: 'selected'; tenantId: string; access: InternalBusinessAccess }
   | { outcome: 'selection-required' }
   | { outcome: 'denied' };
 
@@ -100,7 +105,15 @@ export class InternalTenantMembershipService {
       select: {
         status: true,
         externalSubject: true,
-        tenant: { select: { id: true, name: true, slug: true, status: true } },
+        tenant: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            status: true,
+            suspensionReason: true,
+          },
+        },
       },
     });
 
@@ -122,6 +135,7 @@ export class InternalTenantMembershipService {
           tenantName: row.tenant.name,
           tenantSlug: row.tenant.slug,
           tenantStatus: row.tenant.status,
+          tenantSuspensionReason: row.tenant.suspensionReason,
           userStatus: row.status,
         },
       });
@@ -137,17 +151,27 @@ export class InternalTenantMembershipService {
   }
 
   // The businesses this identity may actually enter right now: an ACTIVE
-  // membership in an ACTIVE tenant. This is the Business switcher's source;
-  // a suspended tenant or a non-ACTIVE membership is simply absent.
+  // membership in an ACTIVE tenant (FULL), or — SC3c-1 — in a tenant
+  // suspended for BILLING (BILLING_WIND_DOWN). This is the Business
+  // switcher's source; a tenant suspended for any other reason, or a
+  // non-ACTIVE membership, is simply absent.
   async listAccessibleBusinesses(
     identity: InternalIdentity,
   ): Promise<InternalBusinessSummary[]> {
     const memberships = await this.findMemberships(identity);
-    return memberships.filter(isEnterable).map((membership) => ({
-      id: membership.tenantId,
-      name: membership.tenantName,
-      slug: membership.tenantSlug,
-    }));
+    return memberships.flatMap((membership) => {
+      const access = accessFor(membership);
+      return access === null
+        ? []
+        : [
+            {
+              id: membership.tenantId,
+              name: membership.tenantName,
+              slug: membership.tenantSlug,
+              access,
+            },
+          ];
+    });
   }
 
   // Chooses the request's active tenant. `requestedTenantId` is the
@@ -160,18 +184,34 @@ export class InternalTenantMembershipService {
     requestedTenantId: string | null,
   ): Promise<ActiveTenantSelection> {
     const enterable = (await this.findMemberships(identity)).filter(
-      isEnterable,
+      (membership) => accessFor(membership) !== null,
     );
 
     if (requestedTenantId !== null) {
       const match = enterable.find((m) => m.tenantId === requestedTenantId);
       return match
-        ? { outcome: 'selected', tenantId: match.tenantId }
+        ? {
+            outcome: 'selected',
+            tenantId: match.tenantId,
+            access: accessFor(match)!,
+          }
         : { outcome: 'denied' };
     }
 
     if (enterable.length === 1) {
-      return { outcome: 'selected', tenantId: enterable[0].tenantId };
+      return {
+        outcome: 'selected',
+        tenantId: enterable[0].tenantId,
+        access: accessFor(enterable[0])!,
+      };
+    }
+    const full = enterable.filter((m) => accessFor(m) === 'FULL');
+    if (full.length === 1) {
+      return {
+        outcome: 'selected',
+        tenantId: full[0].tenantId,
+        access: 'FULL',
+      };
     }
     return enterable.length === 0
       ? { outcome: 'denied' }
@@ -179,8 +219,20 @@ export class InternalTenantMembershipService {
   }
 }
 
-function isEnterable(membership: InternalTenantMembership): boolean {
-  return (
-    membership.userStatus === 'ACTIVE' && membership.tenantStatus === 'ACTIVE'
-  );
+// SC3c-1 — FULL for an ACTIVE member of an ACTIVE business; the narrow
+// BILLING_WIND_DOWN for an ACTIVE member of a business suspended for
+// BILLING; nothing otherwise (a SECURITY or REQUESTED suspension admits no
+// one).
+function accessFor(
+  membership: InternalTenantMembership,
+): InternalBusinessAccess | null {
+  if (membership.userStatus !== 'ACTIVE') return null;
+  if (membership.tenantStatus === 'ACTIVE') return 'FULL';
+  if (
+    membership.tenantStatus === 'SUSPENDED' &&
+    membership.tenantSuspensionReason === 'BILLING'
+  ) {
+    return 'BILLING_WIND_DOWN';
+  }
+  return null;
 }
