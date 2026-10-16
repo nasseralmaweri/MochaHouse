@@ -38,7 +38,7 @@ export default async function CareersPage() {
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-8">
       <PageHeader
         title="Careers"
-        subtitle="Open positions at Mocha House."
+        subtitle={unavailable ? undefined : "Open positions at Mocha House."}
       />
 
       {unavailable ? (

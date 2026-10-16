@@ -276,10 +276,13 @@ export default function CheckoutPage() {
       setCouponDraft("");
       setSelectedRewardId(null);
       setQuoteRefresh((n) => n + 1);
+      const charged = result.message.includes("Nothing was charged")
+        ? result.message
+        : `${result.message} Nothing was charged.`;
       setSubmitError(
         removed.length > 0
-          ? `${result.message} We removed your ${removed.join(" and ")} — please review your total and place your order again.`
-          : result.message,
+          ? `${charged} We removed your ${removed.join(" and ")} — please review your total and place your order again.`
+          : charged,
       );
       return;
     }

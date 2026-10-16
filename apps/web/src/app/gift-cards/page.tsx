@@ -24,7 +24,11 @@ export default async function GiftCardsPage() {
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
       <PageHeader
         title="Gift Cards"
-        subtitle="Buy a digital gift card, or check a balance."
+        subtitle={
+          features?.giftcards === false
+            ? "Check the balance on a gift card you already have."
+            : "Buy a digital gift card, or check a balance."
+        }
       />
       <GiftCardsClient purchaseAvailable={features?.giftcards !== false} />
     </main>
