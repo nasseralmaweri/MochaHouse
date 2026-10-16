@@ -23,6 +23,9 @@ export interface PlatformDevJwtClaims {
   sub: string;
   // Whether the dev "sign-in" completed MFA. Must be exactly true.
   mfa: boolean;
+  // SC1e — sign-in time (epoch seconds). Defaults to now; tests may set an
+  // earlier time to prove the recent-sign-in check.
+  iat?: number;
 }
 
 interface PlatformDevJwtPayload extends PlatformDevJwtClaims {
@@ -42,6 +45,7 @@ export function signPlatformDevJwt(
   const header = base64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const payload = base64url(
     JSON.stringify({
+      iat: Math.floor(Date.now() / 1000),
       ...claims,
       marker: PLATFORM_DEV_MARKER,
       exp: Math.floor(Date.now() / 1000) + ttlSeconds,
@@ -56,7 +60,7 @@ export function signPlatformDevJwt(
 export function verifyPlatformDevJwt(
   token: string,
   secret: string,
-): { sub: string } {
+): { sub: string; iat: number | null } {
   const parts = token.split('.');
   if (parts.length !== 3) {
     throw new Error('Malformed token.');
@@ -96,5 +100,8 @@ export function verifyPlatformDevJwt(
   if (parsed.mfa !== true) {
     throw new Error('Multi-factor authentication was not completed.');
   }
-  return { sub: parsed.sub };
+  return {
+    sub: parsed.sub,
+    iat: typeof parsed.iat === 'number' ? parsed.iat : null,
+  };
 }

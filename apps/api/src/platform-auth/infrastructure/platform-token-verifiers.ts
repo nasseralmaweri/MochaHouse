@@ -53,7 +53,13 @@ export class PlatformCognitoTokenVerifier {
       };
     }
     const payload = await this.cached.verifier.verify(token);
-    return { provider: PLATFORM_COGNITO_PROVIDER, subject: payload.sub };
+    const signedInAt =
+      typeof payload.auth_time === 'number' ? payload.auth_time : payload.iat;
+    return {
+      provider: PLATFORM_COGNITO_PROVIDER,
+      subject: payload.sub,
+      authenticatedAt: typeof signedInAt === 'number' ? signedInAt : null,
+    };
   }
 }
 
@@ -76,8 +82,12 @@ export class PlatformLocalDevTokenVerifier {
           'PLATFORM_AUTH_DEV_JWT_SECRET must differ from the other dev secrets.',
         );
       }
-      const { sub } = verifyPlatformDevJwt(token, secret);
-      return Promise.resolve({ provider: PLATFORM_DEV_PROVIDER, subject: sub });
+      const { sub, iat } = verifyPlatformDevJwt(token, secret);
+      return Promise.resolve({
+        provider: PLATFORM_DEV_PROVIDER,
+        subject: sub,
+        authenticatedAt: iat,
+      });
     } catch (error) {
       return Promise.reject(
         error instanceof Error ? error : new Error('Invalid platform token.'),
