@@ -80,6 +80,8 @@ describe('Tenant query audit (report-only)', () => {
           // SC3c-3
           'BillingGraceExtension',
           'BillingNotification',
+          // SC3d-1
+          'BillingPlanChange',
         ].sort(),
       );
     });

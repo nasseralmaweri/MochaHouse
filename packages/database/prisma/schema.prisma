@@ -183,6 +183,7 @@ model PlatformOperator {
   // SC3b — reconciliation cases this operator resolved.
   billingReconciliationCases   BillingReconciliationCase[]   @relation("BillingReconciliationCaseResolver")
   billingGraceExtensions       BillingGraceExtension[]       @relation("BillingGraceExtensionActor")
+  billingPlanChanges           BillingPlanChange[]           @relation("BillingPlanChangeActor")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -347,6 +348,8 @@ model SubscriptionPlanVersion {
   plan                 SubscriptionPlan          @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   subscriptions        TenantSubscription[]
   pendingSubscriptions TenantSubscription[]      @relation("TenantSubscriptionPendingPlanVersion")
+  planChangesFrom      BillingPlanChange[]       @relation("BillingPlanChangeFromVersion")
+  planChangesTo        BillingPlanChange[]       @relation("BillingPlanChangeToVersion")
   eventsFrom           TenantSubscriptionEvent[] @relation("TenantSubscriptionEventFrom")
   eventsTo             TenantSubscriptionEvent[] @relation("TenantSubscriptionEventTo")
 
@@ -408,19 +411,20 @@ model TenantSubscription {
   lastBillingEventAt           DateTime?
   billingStateVersion          Int                   @default(0)
 
-  subscriberTenant    Tenant                      @relation("TenantSubscriptionSubscriber", fields: [subscriberTenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  planVersion         SubscriptionPlanVersion     @relation(fields: [planVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  planPrice           SubscriptionPlanPrice?      @relation("TenantSubscriptionPlanPrice", fields: [planPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  pendingPlanVersion  SubscriptionPlanVersion?    @relation("TenantSubscriptionPendingPlanVersion", fields: [pendingPlanVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  pendingPlanPrice    SubscriptionPlanPrice?      @relation("TenantSubscriptionPendingPlanPrice", fields: [pendingPlanPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  moduleGrants        TenantModuleGrant[]
-  events              TenantSubscriptionEvent[]
-  trialClaim          BillingTrialClaim?
-  graceExtensions     BillingGraceExtension[]
+  subscriberTenant     Tenant                      @relation("TenantSubscriptionSubscriber", fields: [subscriberTenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  planVersion          SubscriptionPlanVersion     @relation(fields: [planVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  planPrice            SubscriptionPlanPrice?      @relation("TenantSubscriptionPlanPrice", fields: [planPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  pendingPlanVersion   SubscriptionPlanVersion?    @relation("TenantSubscriptionPendingPlanVersion", fields: [pendingPlanVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  pendingPlanPrice     SubscriptionPlanPrice?      @relation("TenantSubscriptionPendingPlanPrice", fields: [pendingPlanPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  moduleGrants         TenantModuleGrant[]
+  events               TenantSubscriptionEvent[]
+  trialClaim           BillingTrialClaim?
+  graceExtensions      BillingGraceExtension[]
   billingNotifications BillingNotification[]
-  billingEvents       BillingProviderEvent[]
-  checkoutSessions    BillingCheckoutSession[]
-  reconciliationCases BillingReconciliationCase[]
+  planChanges          BillingPlanChange[]
+  billingEvents        BillingProviderEvent[]
+  checkoutSessions     BillingCheckoutSession[]
+  reconciliationCases  BillingReconciliationCase[]
 
   @@unique([billingProvider, externalSubscriptionId])
   @@unique([billingProvider, externalCustomerId])
@@ -453,6 +457,8 @@ model SubscriptionPlanPrice {
   actorPlatformOperator PlatformOperator?         @relation("SubscriptionPlanPriceActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   subscriptions         TenantSubscription[]      @relation("TenantSubscriptionPlanPrice")
   pendingSubscriptions  TenantSubscription[]      @relation("TenantSubscriptionPendingPlanPrice")
+  planChangesFrom       BillingPlanChange[]       @relation("BillingPlanChangeFromPrice")
+  planChangesTo         BillingPlanChange[]       @relation("BillingPlanChangeToPrice")
   events                TenantSubscriptionEvent[]
   checkoutSessions      BillingCheckoutSession[]
 
@@ -3886,4 +3892,70 @@ model BillingNotification {
 
   @@index([status, nextAttemptAt])
   @@index([subscriptionId])
+}
+
+// SC3d — a change of a BILLED business's plan or price: previewed (with the
+// billing provider's own calculation), then — in later SC3d steps — requested,
+// paid or scheduled, and applied. Platform data (no tenantId): the business is
+// reached only through its subscription.
+//
+//   timing  IMMEDIATE   an upgrade (or monthly -> annual): charged now with
+//                       proration; the new plan applies only after the
+//                       provider's invoice is VERIFIED paid;
+//           PERIOD_END  a downgrade (or annual -> monthly): at the end of
+//                       the current period, no refund or credit;
+//           TRIAL_END   the plan a trial becomes (no charge, no new modules
+//                       during the trial).
+//   status  PREVIEWED -> REQUESTED -> AWAITING_PAYMENT / SCHEDULED -> APPLIED,
+//           or CANCELED / EXPIRED / FAILED; REVIEW when the provider and our
+//           records disagree. At most ONE open (non-preview) change per
+//           subscription (partial unique index). The previewed amounts and
+//           proration date never change once recorded (trigger): a different
+//           charge needs a NEW preview the business confirms again.
+model BillingPlanChange {
+  id                         String    @id @default(uuid(7))
+  subscriptionId             String
+  timing                     String
+  status                     String    @default("PREVIEWED")
+  fromPlanVersionId          String
+  fromPlanPriceId            String
+  toPlanVersionId            String
+  toPlanPriceId              String
+  currency                   String
+  // IMMEDIATE only: the provider's preview of the charge now (minor units).
+  previewAmountDueMinorUnits Int?
+  previewTotalMinorUnits     Int?
+  previewTaxMinorUnits       Int?
+  previewDiscountMinorUnits  Int?
+  previewProrationMinorUnits Int?
+  prorationDate              DateTime?
+  externalItemId             String?
+  // The recurring price after the change, and from when.
+  nextRecurringMinorUnits    Int
+  nextRecurringStartsAt      DateTime?
+  previewExpiresAt           DateTime
+  // Later SC3d steps: the provider's invoice / schedule and what was paid.
+  externalInvoiceId          String?
+  externalScheduleId         String?
+  amountPaidMinorUnits       Int?
+  failureCode                String?
+  actorKind                  String
+  actorPlatformOperatorId    String?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+  finishedAt                 DateTime?
+
+  subscription          TenantSubscription      @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  fromPlanVersion       SubscriptionPlanVersion @relation("BillingPlanChangeFromVersion", fields: [fromPlanVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  toPlanVersion         SubscriptionPlanVersion @relation("BillingPlanChangeToVersion", fields: [toPlanVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  fromPlanPrice         SubscriptionPlanPrice   @relation("BillingPlanChangeFromPrice", fields: [fromPlanPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  toPlanPrice           SubscriptionPlanPrice   @relation("BillingPlanChangeToPrice", fields: [toPlanPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actorPlatformOperator PlatformOperator?       @relation("BillingPlanChangeActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([subscriptionId, status])
+  @@index([fromPlanVersionId])
+  @@index([toPlanVersionId])
+  @@index([fromPlanPriceId])
+  @@index([toPlanPriceId])
+  @@index([actorPlatformOperatorId])
 }

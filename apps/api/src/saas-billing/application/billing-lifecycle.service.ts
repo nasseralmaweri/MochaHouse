@@ -28,6 +28,7 @@ import {
 } from '../provider/saas-billing-provider';
 import { billingEnforcementEnabled } from './billing-enforcement.config';
 import { enqueueBillingNotice } from './billing-notifications';
+import { verifyBilledPrice } from '../domain/plan-change';
 import { PLATFORM_AUDIT_ACTIONS } from '../../platform-auth/application/platform-operators.service';
 
 // SC3b — what the provider says NOW about the thing an event concerns, read
@@ -1278,6 +1279,32 @@ export class BillingLifecycleService {
         ledgerId,
       );
       return finish('REJECTED', 'SUBSCRIPTION_MISMATCH', subscription.id);
+    }
+    // SC3d-1 — the provider must bill exactly OUR recorded price (one item,
+    // quantity 1). A difference is reviewed, never adopted: the state sync
+    // below still applies (it never changes the plan or price).
+    if (
+      snapshot.items !== undefined &&
+      snapshot.items.length > 0 &&
+      subscription.planPriceId !== null
+    ) {
+      const price = await tx.subscriptionPlanPrice.findUnique({
+        where: { id: subscription.planPriceId },
+        select: { externalPriceId: true },
+      });
+      const billed = verifyBilledPrice(
+        { ...snapshot, scheduleId: null, hasPendingUpdate: false },
+        price?.externalPriceId ?? null,
+      );
+      if (!billed.ok) {
+        await this.openCase(
+          tx,
+          'PRICE_MISMATCH',
+          subscription.id,
+          ledgerId,
+          `The provider subscription does not bill our recorded price (${billed.problem}).`,
+        );
+      }
     }
     const completed = await tx.billingCheckoutSession.findFirst({
       where: { subscriptionId: subscription.id, status: 'COMPLETED' },

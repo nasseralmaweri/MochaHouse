@@ -55,6 +55,9 @@ export const PLATFORM_AUDIT_ACTIONS = {
   // (target: the tenant).
   billingGraceExtended: 'platform.billing.grace_extended',
   billingContactAssigned: 'platform.billing.contact_assigned',
+  // SC3d-1 — an operator previewed a plan change for a business (target:
+  // the tenant; nothing charged or changed).
+  billingPlanChangePreviewed: 'platform.billing.plan_change_previewed',
 } as const;
 
 @Injectable()

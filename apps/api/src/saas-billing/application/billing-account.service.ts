@@ -31,6 +31,7 @@ import { InternalAuditService } from '../../audit/internal-audit.service';
 import { UNLINKED_REPLACEMENT_CASE } from './billing-lifecycle.service';
 import { portalConfigurationRefusal } from '../provider/portal-configuration';
 import { entitledToPlanModules } from '../domain/billing-lifecycle';
+import { syncProviderPrice } from './price-sync';
 import { billingOperationsView } from './billing-operations.service';
 import { billingEnforcementEnabled } from './billing-enforcement.config';
 import { runSerializable } from '../../prisma/serializable-transaction';
@@ -833,43 +834,13 @@ export class BillingAccountService {
   // trigger refuses a change). The provider calls are deterministic, so
   // concurrent requests converge on the same objects.
   private async syncPrice(subscription: SubscriptionView): Promise<string> {
-    const plan = subscription.planVersion.plan;
-    const price = subscription.planPrice!;
     try {
-      let externalProductId = plan.externalProductId;
-      if (externalProductId === null) {
-        ({ externalProductId } = await this.provider.ensureProduct({
-          planId: plan.id,
-          planName: plan.name,
-        }));
-        await this.prisma.subscriptionPlan.updateMany({
-          where: { id: plan.id, externalProductId: null },
-          data: { externalProductId },
-        });
-        externalProductId = (
-          await this.prisma.subscriptionPlan.findUniqueOrThrow({
-            where: { id: plan.id },
-            select: { externalProductId: true },
-          })
-        ).externalProductId!;
-      }
-      if (price.externalPriceId !== null) return price.externalPriceId;
-      const { externalPriceId } = await this.provider.ensurePrice({
-        priceId: price.id,
-        externalProductId,
-        amountMinorUnits: price.amountMinorUnits,
-        currency: price.currency,
-        interval: price.interval,
-      });
-      await this.prisma.subscriptionPlanPrice.updateMany({
-        where: { id: price.id, externalPriceId: null },
-        data: { externalPriceId },
-      });
-      const stored = await this.prisma.subscriptionPlanPrice.findUniqueOrThrow({
-        where: { id: price.id },
-        select: { externalPriceId: true },
-      });
-      return stored.externalPriceId!;
+      return await syncProviderPrice(
+        this.prisma,
+        this.provider,
+        subscription.planVersion.plan,
+        subscription.planPrice!,
+      );
     } catch (error) {
       if (error instanceof SaasBillingProviderError) throw unavailable();
       throw error;

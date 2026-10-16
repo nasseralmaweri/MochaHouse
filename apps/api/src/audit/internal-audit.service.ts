@@ -57,6 +57,36 @@ export class InternalAuditService {
     });
   }
 
+  // SC3d-1 — a staff member previewed a plan change (nothing charged or
+  // changed): which change, to which price, and how it would take effect.
+  async recordPlanChangePreviewed(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      subscriptionId: string;
+      planChangeId: string;
+      toPlanPriceId: string;
+      timing: 'IMMEDIATE' | 'PERIOD_END' | 'TRIAL_END';
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'billing.plan_change_previewed',
+        targetType: 'billing_subscription',
+        targetId: 'company',
+        afterData: {
+          subscriptionId: input.subscriptionId,
+          planChangeId: input.planChangeId,
+          toPlanPriceId: input.toPlanPriceId,
+          timing: input.timing,
+        },
+        reason: 'Plan change preview',
+      },
+    });
+  }
+
   // Records a completed internal-user status change. Call this with the
   // SAME `tx` that performed the InternalUser.update, so the update and the
   // audit row commit or roll back together.

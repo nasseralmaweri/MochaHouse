@@ -110,6 +110,37 @@ export class SaasBillingUnavailableError extends Error {
   }
 }
 
+// SC3d-1 — the provider's OWN calculation of a price change (nothing
+// changes). Minor units, the provider's (lower-case) currency.
+export interface ProviderChargePreview {
+  livemode: boolean;
+  currency: string;
+  // What would be charged now (after credits, discounts and tax).
+  amountDueMinorUnits: number;
+  // The invoice total (negative when credits exceed the charge).
+  totalMinorUnits: number;
+  taxMinorUnits: number;
+  discountMinorUnits: number;
+  // The net of the proration lines (the unused-time credit is negative).
+  prorationMinorUnits: number;
+}
+
+export interface ProviderRecurringPreview {
+  livemode: boolean;
+  currency: string;
+  // The recurring bill after the change (discounts and tax included).
+  totalMinorUnits: number;
+}
+
+// SC3d-1 — the result of an immediate price change sent with "apply only if
+// paid": the subscription as the provider now reports it, the invoice the
+// change created, and whether the change is still waiting for payment.
+export interface ProviderPriceChangeResult {
+  snapshot: ProviderSubscriptionSnapshot;
+  externalInvoiceId: string | null;
+  pendingUpdate: boolean;
+}
+
 // A provider call that failed (network, provider outage, rate limit):
 // retryable. Never carries provider error text beyond a short code.
 export class SaasBillingProviderError extends Error {
@@ -192,6 +223,55 @@ export interface SaasBillingProvider {
     returnUrl: string;
   }): Promise<{ url: string; livemode: boolean }>;
 
+  // --- SC3d-1: plan changes ---------------------------------------------------
+  // Previews change NOTHING. The change methods are the foundation for later
+  // SC3d steps (no route calls them in SC3d-1):
+  //   * an immediate change is ALWAYS sent so that the provider applies it
+  //     only if the invoice it creates is paid ("pending if incomplete"),
+  //     prorated and invoiced at once, at the previewed proration date;
+  //   * a period-end change is a subscription schedule that releases the
+  //     subscription after it;
+  //   * removing a scheduled change RELEASES the schedule — the subscription
+  //     stays exactly as it is (a schedule is never cancelled: that would end
+  //     the subscription).
+
+  // The charge NOW for moving one item to another price, prorated at
+  // `prorationDate` (which the real change must reuse).
+  previewImmediateChange(input: {
+    externalSubscriptionId: string;
+    externalItemId: string;
+    toExternalPriceId: string;
+    prorationDate: Date;
+  }): Promise<ProviderChargePreview>;
+
+  // The recurring bill once the item is on the other price.
+  previewRecurring(input: {
+    externalSubscriptionId: string;
+    externalItemId: string;
+    toExternalPriceId: string;
+  }): Promise<ProviderRecurringPreview>;
+
+  changePriceNow(input: {
+    idempotencyKey: string;
+    externalSubscriptionId: string;
+    externalItemId: string;
+    toExternalPriceId: string;
+    prorationDate: Date;
+  }): Promise<ProviderPriceChangeResult>;
+
+  schedulePriceChangeAtPeriodEnd(input: {
+    idempotencyKey: string;
+    externalSubscriptionId: string;
+    fromExternalPriceId: string;
+    toExternalPriceId: string;
+    toInterval: 'MONTH' | 'YEAR';
+  }): Promise<{ externalScheduleId: string }>;
+
+  releaseSchedule(input: {
+    idempotencyKey: string;
+    externalScheduleId: string;
+  }): Promise<{ releasedSubscriptionId: string | null }>;
+
   // Verifies an incoming event's signature and freshness and normalizes it.
   // Throws BillingEventVerificationError for anything unverifiable.
   verifyEvent(input: {
@@ -224,6 +304,11 @@ export class DisabledSaasBillingProvider implements SaasBillingProvider {
   readonly expectedAccountId = null;
   retrievePortalConfiguration = unavailable;
   createPortalSession = unavailable;
+  previewImmediateChange = unavailable;
+  previewRecurring = unavailable;
+  changePriceNow = unavailable;
+  schedulePriceChangeAtPeriodEnd = unavailable;
+  releaseSchedule = unavailable;
   verifyEvent(): VerifiedBillingProviderEvent {
     throw new BillingEventVerificationError('SaaS billing is not configured.');
   }

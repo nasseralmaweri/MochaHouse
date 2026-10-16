@@ -1019,6 +1019,44 @@ export interface AdminBillingCheckoutResponse {
 export interface AdminBillingRecoveryResponse {
     url: string;
 }
+export declare const BILLING_PLAN_CHANGE_UNAVAILABLE = "BILLING_PLAN_CHANGE_UNAVAILABLE";
+export declare const BILLING_PLAN_CHANGE_SAME_PRICE = "BILLING_PLAN_CHANGE_SAME_PRICE";
+export declare const BILLING_PLAN_CHANGE_CURRENCY = "BILLING_PLAN_CHANGE_CURRENCY";
+export declare const BILLING_PLAN_CHANGE_IN_PROGRESS = "BILLING_PLAN_CHANGE_IN_PROGRESS";
+export declare const BILLING_PLAN_CHANGE_UNVERIFIED = "BILLING_PLAN_CHANGE_UNVERIFIED";
+export type BillingPlanChangeTiming = "IMMEDIATE" | "PERIOD_END" | "TRIAL_END";
+export interface BillingPlanChangePreviewRequest {
+    planPriceId: string;
+}
+export interface BillingPlanChangeSide {
+    planName: string;
+    price: {
+        amountMinorUnits: number;
+        currency: string;
+        interval: PlatformBillingInterval;
+    };
+}
+export interface BillingPlanChangePreview {
+    previewId: string;
+    timing: BillingPlanChangeTiming;
+    current: BillingPlanChangeSide;
+    target: BillingPlanChangeSide;
+    chargeNow: {
+        amountDueMinorUnits: number;
+        totalMinorUnits: number;
+        taxMinorUnits: number;
+        discountMinorUnits: number;
+        prorationMinorUnits: number;
+        currency: string;
+    } | null;
+    nextRecurring: {
+        amountMinorUnits: number;
+        currency: string;
+        interval: PlatformBillingInterval;
+        startsAt: string | null;
+    };
+    expiresAt: string;
+}
 export declare const PLATFORM_ALREADY_BILLED = "ALREADY_BILLED";
 export declare const PLATFORM_FOUNDING_COMPLIMENTARY = "FOUNDING_COMPLIMENTARY";
 export declare const PLATFORM_PRICE_NOT_FOR_PLAN = "PRICE_NOT_FOR_PLAN";

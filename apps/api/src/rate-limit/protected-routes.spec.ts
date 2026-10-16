@@ -151,6 +151,7 @@ const PROTECTED: ReadonlyArray<{
       'sweepEnforcement',
       'assignBillingContact',
       'extendGrace',
+      'previewPlanChange',
       'resolveCase',
     ] as const
   ).map((method) => ({
@@ -158,7 +159,9 @@ const PROTECTED: ReadonlyArray<{
     method,
     policy: 'platform-lifecycle' as const,
   })),
-  ...(['checkout', 'payInvoice', 'openPortal'] as const).map((method) => ({
+  ...(
+    ['checkout', 'payInvoice', 'openPortal', 'previewPlanChange'] as const
+  ).map((method) => ({
     controller: AdminBillingController,
     method,
     policy: 'billing-checkout' as const,

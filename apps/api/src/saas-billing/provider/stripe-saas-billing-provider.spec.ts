@@ -741,3 +741,284 @@ describe('SC3b Stripe adapter (mocked HTTP)', () => {
     }
   });
 });
+
+// SC3d-1 — plan change foundations against the real SDK (mocked HTTP): the
+// billed price is read, previews create nothing, an immediate change is ONLY
+// ever "apply if paid" at the previewed proration date, a period-end change
+// is a schedule that releases the subscription, and a schedule is RELEASED —
+// never cancelled (that would end the subscription).
+describe('SC3d-1 Stripe plan change foundations (mocked HTTP)', () => {
+  const PRORATION = new Date(1_800_000_000_000);
+  const subscription = (over: Record<string, unknown> = {}) => ({
+    id: 'sub_1',
+    object: 'subscription',
+    customer: 'cus_1',
+    status: 'active',
+    livemode: false,
+    default_payment_method: 'pm_1',
+    default_source: null,
+    cancel_at_period_end: false,
+    trial_start: null,
+    trial_end: null,
+    latest_invoice: 'in_latest',
+    schedule: null,
+    pending_update: null,
+    items: {
+      object: 'list',
+      has_more: false,
+      data: [
+        {
+          id: 'si_1',
+          object: 'subscription_item',
+          price: { id: 'price_m49', object: 'price' },
+          quantity: 1,
+          current_period_end: 1_802_000_000,
+        },
+      ],
+    },
+    ...over,
+  });
+  const previewInvoice = (over: Record<string, unknown> = {}) => ({
+    object: 'invoice',
+    livemode: false,
+    currency: 'usd',
+    amount_due: 2750,
+    total: 2750,
+    total_taxes: [{ amount: 250 }],
+    total_discount_amounts: [{ amount: 500 }],
+    lines: {
+      object: 'list',
+      has_more: false,
+      data: [
+        {
+          amount: -2000,
+          parent: { subscription_item_details: { proration: true } },
+        },
+        {
+          amount: 5000,
+          parent: { subscription_item_details: { proration: true } },
+        },
+        { amount: 250, parent: null },
+      ],
+    },
+    ...over,
+  });
+
+  it('reads what Stripe bills: items, schedule, pending update and period end', async () => {
+    const { provider } = harness({
+      'GET /v1/subscriptions/sub_1': () => [
+        200,
+        subscription({
+          schedule: 'sub_sched_1',
+          pending_update: { expires_at: 1_800_100_000, subscription_items: [] },
+        }),
+      ],
+    });
+    await expect(provider.retrieveSubscription('sub_1')).resolves.toMatchObject(
+      {
+        items: [
+          { externalItemId: 'si_1', externalPriceId: 'price_m49', quantity: 1 },
+        ],
+        scheduleId: 'sub_sched_1',
+        hasPendingUpdate: true,
+        currentPeriodEnd: new Date(1_802_000_000_000),
+      },
+    );
+  });
+
+  it('a truncated item list is not trusted', async () => {
+    const { provider } = harness({
+      'GET /v1/subscriptions/sub_1': () => [
+        200,
+        subscription({ items: { object: 'list', has_more: true, data: [] } }),
+      ],
+    });
+    await expect(provider.retrieveSubscription('sub_1')).resolves.toMatchObject(
+      { items: [] },
+    );
+  });
+
+  it("previews the charge with Stripe's own proration (tax, discounts, credits) at the given proration date", async () => {
+    const { provider, sent } = harness({
+      'POST /v1/invoices/create_preview': () => [200, previewInvoice()],
+    });
+    await expect(
+      provider.previewImmediateChange({
+        externalSubscriptionId: 'sub_1',
+        externalItemId: 'si_1',
+        toExternalPriceId: 'price_m99',
+        prorationDate: PRORATION,
+      }),
+    ).resolves.toEqual({
+      livemode: false,
+      currency: 'usd',
+      amountDueMinorUnits: 2750,
+      totalMinorUnits: 2750,
+      taxMinorUnits: 250,
+      discountMinorUnits: 500,
+      prorationMinorUnits: 3000,
+    });
+    const [request] = sent;
+    expect(request.body.get('subscription')).toBe('sub_1');
+    expect(request.body.get('subscription_details[items][0][id]')).toBe('si_1');
+    expect(request.body.get('subscription_details[items][0][price]')).toBe(
+      'price_m99',
+    );
+    expect(request.body.get('subscription_details[proration_behavior]')).toBe(
+      'always_invoice',
+    );
+    expect(request.body.get('subscription_details[proration_date]')).toBe(
+      '1800000000',
+    );
+  });
+
+  it('a preview with truncated lines, a live preview or an unreadable amount is refused', async () => {
+    for (const over of [
+      { lines: { object: 'list', has_more: true, data: [] } },
+      { livemode: true },
+      { total: 'x' },
+    ]) {
+      const { provider } = harness({
+        'POST /v1/invoices/create_preview': () => [200, previewInvoice(over)],
+      });
+      await expect(
+        provider.previewImmediateChange({
+          externalSubscriptionId: 'sub_1',
+          externalItemId: 'si_1',
+          toExternalPriceId: 'price_m99',
+          prorationDate: PRORATION,
+        }),
+      ).rejects.toBeInstanceOf(SaasBillingProviderError);
+    }
+  });
+
+  it('previews the recurring bill after the change', async () => {
+    const { provider, sent } = harness({
+      'POST /v1/invoices/create_preview': () => [
+        200,
+        previewInvoice({ total: 9900 }),
+      ],
+    });
+    await expect(
+      provider.previewRecurring({
+        externalSubscriptionId: 'sub_1',
+        externalItemId: 'si_1',
+        toExternalPriceId: 'price_m99',
+      }),
+    ).resolves.toEqual({
+      livemode: false,
+      currency: 'usd',
+      totalMinorUnits: 9900,
+    });
+    expect(sent[0].body.get('preview_mode')).toBe('recurring');
+  });
+
+  it('an immediate change is ALWAYS "apply only if paid", prorated and invoiced now, idempotent', async () => {
+    const { provider, sent } = harness({
+      'POST /v1/subscriptions/sub_1': () => [
+        200,
+        subscription({
+          latest_invoice: 'in_change',
+          pending_update: { expires_at: 1_800_100_000, subscription_items: [] },
+        }),
+      ],
+    });
+    await expect(
+      provider.changePriceNow({
+        idempotencyKey: 'centerivo-plan-change-c1-change-now',
+        externalSubscriptionId: 'sub_1',
+        externalItemId: 'si_1',
+        toExternalPriceId: 'price_m99',
+        prorationDate: PRORATION,
+      }),
+    ).resolves.toMatchObject({
+      externalInvoiceId: 'in_change',
+      pendingUpdate: true,
+    });
+    const [request] = sent;
+    expect(request.body.get('payment_behavior')).toBe('pending_if_incomplete');
+    expect(request.body.get('proration_behavior')).toBe('always_invoice');
+    expect(request.body.get('proration_date')).toBe('1800000000');
+    expect(request.body.get('items[0][id]')).toBe('si_1');
+    expect(request.body.get('items[0][price]')).toBe('price_m99');
+    expect(request.idempotencyKey).toBe('centerivo-plan-change-c1-change-now');
+  });
+
+  it('a period-end change is a schedule: current price to the period end, then the new one, then released', async () => {
+    const { provider, sent } = harness({
+      'POST /v1/subscription_schedules': () => [
+        200,
+        {
+          id: 'sub_sched_1',
+          object: 'subscription_schedule',
+          livemode: false,
+          phases: [
+            { start_date: 1_799_000_000, end_date: 1_802_000_000, items: [] },
+          ],
+        },
+      ],
+      'POST /v1/subscription_schedules/sub_sched_1': () => [
+        200,
+        {
+          id: 'sub_sched_1',
+          object: 'subscription_schedule',
+          livemode: false,
+          phases: [],
+        },
+      ],
+    });
+    await expect(
+      provider.schedulePriceChangeAtPeriodEnd({
+        idempotencyKey: 'centerivo-plan-change-c2-schedule',
+        externalSubscriptionId: 'sub_1',
+        fromExternalPriceId: 'price_m99',
+        toExternalPriceId: 'price_m49',
+        toInterval: 'MONTH',
+      }),
+    ).resolves.toEqual({ externalScheduleId: 'sub_sched_1' });
+    const [create, update] = sent;
+    expect(create.body.get('from_subscription')).toBe('sub_1');
+    expect(create.idempotencyKey).toBe(
+      'centerivo-plan-change-c2-schedule-create',
+    );
+    expect(update.body.get('end_behavior')).toBe('release');
+    expect(update.body.get('phases[0][items][0][price]')).toBe('price_m99');
+    expect(update.body.get('phases[0][start_date]')).toBe('1799000000');
+    expect(update.body.get('phases[0][end_date]')).toBe('1802000000');
+    expect(update.body.get('phases[0][proration_behavior]')).toBe('none');
+    expect(update.body.get('phases[1][items][0][price]')).toBe('price_m49');
+    expect(update.body.get('phases[1][duration][interval]')).toBe('month');
+    expect(update.body.get('phases[1][proration_behavior]')).toBe('none');
+    expect(update.idempotencyKey).toBe(
+      'centerivo-plan-change-c2-schedule-phases',
+    );
+  });
+
+  it('removing a scheduled change RELEASES the schedule and never cancels it (or the subscription)', async () => {
+    const { provider, sent } = harness({
+      'POST /v1/subscription_schedules/sub_sched_1/release': () => [
+        200,
+        {
+          id: 'sub_sched_1',
+          object: 'subscription_schedule',
+          livemode: false,
+          status: 'released',
+          released_subscription: 'sub_1',
+        },
+      ],
+    });
+    await expect(
+      provider.releaseSchedule({
+        idempotencyKey: 'centerivo-plan-change-c2-release',
+        externalScheduleId: 'sub_sched_1',
+      }),
+    ).resolves.toEqual({ releasedSubscriptionId: 'sub_1' });
+    expect(sent.map((r) => `${r.method} ${r.path}`)).toEqual([
+      'POST /v1/subscription_schedules/sub_sched_1/release',
+    ]);
+    expect(sent[0].body.get('preserve_cancel_date')).toBe('true');
+    expect(
+      sent.some((r) => r.path.endsWith('/cancel') || r.method === 'DELETE'),
+    ).toBe(false);
+  });
+});

@@ -13,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type {
+  BillingPlanChangePreview,
   PlatformBillingOverview,
   PlatformBillingEnforcementSweepResponse,
   PlatformBillingPolicy,
@@ -35,6 +36,10 @@ import { BillingCatalogService } from '../application/billing-catalog.service';
 import { BillingAccountService } from '../application/billing-account.service';
 import { BillingReconciliationService } from '../application/billing-reconciliation.service';
 import { BillingEnforcementService } from '../application/billing-enforcement.service';
+import {
+  BillingPlanChangeService,
+  parsePlanChangePreview,
+} from '../application/billing-plan-change.service';
 import {
   BillingOperationsService,
   parseContactAssignment,
@@ -78,7 +83,27 @@ export class PlatformBillingController {
     private readonly reconciliation: BillingReconciliationService,
     private readonly enforcement: BillingEnforcementService,
     private readonly operations: BillingOperationsService,
+    private readonly planChanges: BillingPlanChangeService,
   ) {}
+
+  // SC3d-1 — a PREVIEW of a business's plan change on its behalf (nothing
+  // charged or changed; audited).
+  @UseGuards(RateLimitGuard)
+  @RateLimit('platform-lifecycle')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @Post('tenants/:tenantId/billing/plan-change/preview')
+  previewPlanChange(
+    @Param('tenantId') tenantId: string,
+    @Body() body: unknown,
+    @Req() request: PlatformAuthenticatedRequest,
+  ): Promise<BillingPlanChangePreview> {
+    return this.planChanges.preview(tenantId, parsePlanChangePreview(body), {
+      kind: 'OPERATOR',
+      platformOperatorId: request.platformOperator!.id,
+      requestReference: request.requestId ?? null,
+    });
+  }
 
   // --- SC3c-3: billing contact, grace extensions, overview ---------------------
 

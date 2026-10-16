@@ -8,7 +8,10 @@ import type {
 import {
   BillingEventVerificationError,
   SaasBillingProviderError,
+  type ProviderChargePreview,
   type ProviderCheckoutSession,
+  type ProviderPriceChangeResult,
+  type ProviderRecurringPreview,
   type ProviderInvoice,
   type ProviderInvoiceStatus,
   type ProviderPayableInvoice,
@@ -113,6 +116,22 @@ function date(seconds: unknown): Date | null {
 }
 
 const OPEN_INVOICE_CAP = 500;
+
+// SC3d-1 — an integer amount that may be negative (an invoice total after
+// credits); anything else is refused rather than guessed.
+function signedAmount(value: unknown): number {
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  throw new SaasBillingProviderError('preview_amount_unreadable');
+}
+
+function sum(values: unknown[]): number {
+  return values.reduce<number>(
+    (total, value) => total + signedAmount(value),
+    0,
+  );
+}
+
+const seconds = (at: Date) => Math.floor(at.getTime() / 1000);
 
 function amount(value: unknown): number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0
@@ -394,31 +413,230 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
         externalSubscriptionId,
         { expand: ['customer'] },
       );
-      this.assertTestMode(sub.livemode);
-      if (typeof sub.customer === 'object' && 'livemode' in sub.customer) {
-        this.assertTestMode(sub.customer.livemode);
+      return this.toSnapshot(sub);
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  private toSnapshot(sub: Stripe.Subscription): ProviderSubscriptionSnapshot {
+    this.assertTestMode(sub.livemode);
+    if (typeof sub.customer === 'object' && 'livemode' in sub.customer) {
+      this.assertTestMode(sub.customer.livemode);
+    }
+    const source = paymentMethodSource(sub);
+    const status = SUBSCRIPTION_STATUSES.includes(
+      sub.status as ProviderSubscriptionStatus,
+    )
+      ? (sub.status as ProviderSubscriptionStatus)
+      : 'incomplete';
+    const customer = id(sub.customer);
+    if (!customer) throw new SaasBillingProviderError('subscription_customer');
+    return {
+      externalSubscriptionId: sub.id,
+      externalCustomerId: customer,
+      status,
+      livemode: sub.livemode,
+      hasPaymentMethod: source !== null,
+      paymentMethodSource: source,
+      cancelAtPeriodEnd: sub.cancel_at_period_end === true,
+      trialStart: date(sub.trial_start),
+      trialEnd: date(sub.trial_end),
+      latestInvoiceId: id(sub.latest_invoice),
+      // SC3d-1 — what Stripe bills. An item list that is truncated is not
+      // trusted (fails closed upstream: one item is expected).
+      items: sub.items?.has_more
+        ? []
+        : (sub.items?.data ?? []).map((item) => ({
+            externalItemId: item.id,
+            externalPriceId: id(item.price),
+            quantity: typeof item.quantity === 'number' ? item.quantity : 1,
+          })),
+      scheduleId: id(sub.schedule),
+      hasPendingUpdate:
+        sub.pending_update !== null && sub.pending_update !== undefined,
+      currentPeriodEnd: date(sub.items?.data?.[0]?.current_period_end),
+    };
+  }
+
+  // --- SC3d-1: plan changes -------------------------------------------------------
+
+  // Stripe's preview of an update (nothing is created). The proration date is
+  // the one the real update must reuse, so the charge is computed the same way.
+  async previewImmediateChange(input: {
+    externalSubscriptionId: string;
+    externalItemId: string;
+    toExternalPriceId: string;
+    prorationDate: Date;
+  }): Promise<ProviderChargePreview> {
+    try {
+      const invoice = await this.stripe.invoices.createPreview({
+        subscription: input.externalSubscriptionId,
+        subscription_details: {
+          items: [{ id: input.externalItemId, price: input.toExternalPriceId }],
+          proration_behavior: 'always_invoice',
+          proration_date: seconds(input.prorationDate),
+        },
+      });
+      this.assertTestMode(invoice.livemode);
+      // Every line is needed to total the proration: a truncated preview is
+      // not trusted.
+      if (invoice.lines?.has_more) {
+        throw new SaasBillingProviderError('preview_lines_truncated');
       }
-      const source = paymentMethodSource(sub);
-      const status = SUBSCRIPTION_STATUSES.includes(
-        sub.status as ProviderSubscriptionStatus,
-      )
-        ? (sub.status as ProviderSubscriptionStatus)
-        : 'incomplete';
-      const customer = id(sub.customer);
-      if (!customer)
-        throw new SaasBillingProviderError('subscription_customer');
+      const currency = text(invoice.currency, 3);
+      if (!currency) throw new SaasBillingProviderError('preview_currency');
       return {
-        externalSubscriptionId: sub.id,
-        externalCustomerId: customer,
-        status,
-        livemode: sub.livemode,
-        hasPaymentMethod: source !== null,
-        paymentMethodSource: source,
-        cancelAtPeriodEnd: sub.cancel_at_period_end === true,
-        trialStart: date(sub.trial_start),
-        trialEnd: date(sub.trial_end),
-        latestInvoiceId: id(sub.latest_invoice),
+        livemode: invoice.livemode,
+        currency,
+        amountDueMinorUnits: amount(invoice.amount_due),
+        totalMinorUnits: signedAmount(invoice.total),
+        taxMinorUnits: sum((invoice.total_taxes ?? []).map((t) => t.amount)),
+        discountMinorUnits: sum(
+          (invoice.total_discount_amounts ?? []).map((d) => d.amount),
+        ),
+        prorationMinorUnits: sum(
+          (invoice.lines?.data ?? [])
+            .filter(
+              (line) =>
+                line.parent?.subscription_item_details?.proration === true,
+            )
+            .map((line) => line.amount),
+        ),
       };
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  // Stripe's estimate of the long-term recurring bill after the change.
+  async previewRecurring(input: {
+    externalSubscriptionId: string;
+    externalItemId: string;
+    toExternalPriceId: string;
+  }): Promise<ProviderRecurringPreview> {
+    try {
+      const invoice = await this.stripe.invoices.createPreview({
+        subscription: input.externalSubscriptionId,
+        preview_mode: 'recurring',
+        subscription_details: {
+          items: [{ id: input.externalItemId, price: input.toExternalPriceId }],
+        },
+      });
+      this.assertTestMode(invoice.livemode);
+      const currency = text(invoice.currency, 3);
+      if (!currency) throw new SaasBillingProviderError('preview_currency');
+      return {
+        livemode: invoice.livemode,
+        currency,
+        totalMinorUnits: signedAmount(invoice.total),
+      };
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  // Applied by Stripe only if the invoice it creates is PAID (a pending update
+  // otherwise — nothing changes), prorated and invoiced at once, at the
+  // previewed proration date. Idempotent per operation.
+  async changePriceNow(input: {
+    idempotencyKey: string;
+    externalSubscriptionId: string;
+    externalItemId: string;
+    toExternalPriceId: string;
+    prorationDate: Date;
+  }): Promise<ProviderPriceChangeResult> {
+    try {
+      const sub = await this.stripe.subscriptions.update(
+        input.externalSubscriptionId,
+        {
+          items: [{ id: input.externalItemId, price: input.toExternalPriceId }],
+          proration_behavior: 'always_invoice',
+          proration_date: seconds(input.prorationDate),
+          payment_behavior: 'pending_if_incomplete',
+          expand: ['customer'],
+        },
+        { idempotencyKey: input.idempotencyKey },
+      );
+      const snapshot = this.toSnapshot(sub);
+      return {
+        snapshot,
+        externalInvoiceId: snapshot.latestInvoiceId,
+        pendingUpdate: snapshot.hasPendingUpdate === true,
+      };
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  // A schedule built from the subscription: the current price until the end
+  // of the current period, then the new one; the schedule then RELEASES the
+  // subscription (it continues on the new price). Never prorated.
+  async schedulePriceChangeAtPeriodEnd(input: {
+    idempotencyKey: string;
+    externalSubscriptionId: string;
+    fromExternalPriceId: string;
+    toExternalPriceId: string;
+    toInterval: 'MONTH' | 'YEAR';
+  }): Promise<{ externalScheduleId: string }> {
+    try {
+      const created = await this.stripe.subscriptionSchedules.create(
+        { from_subscription: input.externalSubscriptionId },
+        { idempotencyKey: `${input.idempotencyKey}-create` },
+      );
+      this.assertTestMode(created.livemode);
+      const current = created.phases?.[0];
+      if (
+        !current ||
+        typeof current.start_date !== 'number' ||
+        typeof current.end_date !== 'number'
+      ) {
+        throw new SaasBillingProviderError('schedule_phase_unreadable');
+      }
+      const updated = await this.stripe.subscriptionSchedules.update(
+        created.id,
+        {
+          end_behavior: 'release',
+          phases: [
+            {
+              items: [{ price: input.fromExternalPriceId, quantity: 1 }],
+              start_date: current.start_date,
+              end_date: current.end_date,
+              proration_behavior: 'none',
+            },
+            {
+              items: [{ price: input.toExternalPriceId, quantity: 1 }],
+              duration: {
+                interval: input.toInterval === 'YEAR' ? 'year' : 'month',
+                interval_count: 1,
+              },
+              proration_behavior: 'none',
+            },
+          ],
+        },
+        { idempotencyKey: `${input.idempotencyKey}-phases` },
+      );
+      this.assertTestMode(updated.livemode);
+      return { externalScheduleId: updated.id };
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  // RELEASE (never cancel — cancelling a schedule cancels its subscription):
+  // the schedule stops, the subscription stays exactly as it is.
+  async releaseSchedule(input: {
+    idempotencyKey: string;
+    externalScheduleId: string;
+  }): Promise<{ releasedSubscriptionId: string | null }> {
+    try {
+      const released = await this.stripe.subscriptionSchedules.release(
+        input.externalScheduleId,
+        { preserve_cancel_date: true },
+        { idempotencyKey: input.idempotencyKey },
+      );
+      this.assertTestMode(released.livemode);
+      return { releasedSubscriptionId: id(released.released_subscription) };
     } catch (error) {
       throw providerError(error);
     }

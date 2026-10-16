@@ -24,6 +24,8 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/admin/billing/checkout': { scope: 'tenant' },
   'POST /api/v1/admin/billing/recovery/invoice': { scope: 'tenant' },
   'POST /api/v1/admin/billing/recovery/portal': { scope: 'tenant' },
+  // SC3d-1 — plan change preview (nothing charged or changed).
+  'POST /api/v1/admin/billing/plan-change/preview': { scope: 'tenant' },
   'GET /api/v1/admin/approvals/:approvalRequestId': { scope: 'tenant' },
   'GET /api/v1/admin/audit': { scope: 'tenant' },
   'GET /api/v1/admin/careers/applications': { scope: 'tenant' },
@@ -393,6 +395,11 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/platform/tenants/:tenantId/billing/grace-extension': {
     scope: 'platform',
     note: 'SC3c-3 — extend a PAST_DUE grace period / grant an UNPAID grace exception (14 days each, 60 per episode; never marks paid); audited.',
+  },
+  // SC3d-1 — plan change previews (nothing charged or changed).
+  'POST /api/v1/platform/tenants/:tenantId/billing/plan-change/preview': {
+    scope: 'platform',
+    note: "SC3d-1 — preview a business's plan change with the provider's own calculation; audited.",
   },
   'GET /api/v1/platform/billing/overview': {
     scope: 'platform',

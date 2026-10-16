@@ -8,8 +8,11 @@ import type { ProviderSubscriptionSnapshot } from '../domain/provider-sync';
 import {
   BillingEventVerificationError,
   SaasBillingProviderError,
+  type ProviderChargePreview,
   type ProviderCheckoutSession,
   type ProviderInvoice,
+  type ProviderPriceChangeResult,
+  type ProviderRecurringPreview,
   type ProviderInvoiceStatus,
   type ProviderPayableInvoice,
   type ProviderLifecycleEvent,
@@ -123,6 +126,27 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
   private readonly checkoutsByKey = new Map<string, string>();
   readonly subscriptions = new Map<string, ProviderSubscriptionSnapshot>();
   readonly invoices = new Map<string, ProviderPayableInvoice>();
+  // SC3d-1 — the provider's prices (amount, currency, interval), the
+  // subscription schedules it holds, and test hooks for plan changes.
+  readonly priceCatalog = new Map<
+    string,
+    { amountMinorUnits: number; currency: string; interval: 'MONTH' | 'YEAR' }
+  >();
+  readonly schedules = new Map<
+    string,
+    {
+      externalSubscriptionId: string;
+      fromExternalPriceId: string;
+      toExternalPriceId: string;
+      status: 'active' | 'released';
+    }
+  >();
+  private readonly changeResults = new Map<string, ProviderPriceChangeResult>();
+  private readonly schedulesByKey = new Map<string, string>();
+  // Test hooks: adjust the next preview (tax, discount, a different charge);
+  // make the next immediate change's payment fail (pending update).
+  previewAdjust: Partial<ProviderChargePreview> | null = null;
+  failNextChangePayment = false;
   // SC3c-2 — the Customer Portal (test settings; a safe configuration by
   // default, changeable by tests).
   portalConfigurationId: string | null = 'bpc_fake00000001';
@@ -176,11 +200,25 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
 
   ensurePrice(input: {
     priceId: string;
+    amountMinorUnits?: number;
+    currency?: string;
+    interval?: 'MONTH' | 'YEAR';
   }): Promise<{ externalPriceId: string }> {
     this.call('ensurePrice', input.priceId);
     const existing = this.prices.get(input.priceId);
     const priceId = existing ?? `fake_price_${hex()}`;
     this.prices.set(input.priceId, priceId);
+    if (
+      input.amountMinorUnits !== undefined &&
+      input.currency &&
+      input.interval
+    ) {
+      this.priceCatalog.set(priceId, {
+        amountMinorUnits: input.amountMinorUnits,
+        currency: input.currency.toLowerCase(),
+        interval: input.interval,
+      });
+    }
     return Promise.resolve({ externalPriceId: priceId });
   }
 
@@ -303,6 +341,210 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
     });
   }
 
+  // --- SC3d-1: plan changes ----------------------------------------------------
+
+  // A simple, deterministic proration (days of the period left): the
+  // unused time of the current price is credited; a same-interval change
+  // charges the new price for the time left, an interval change charges the
+  // new price in full (a new period starts).
+  private quote(
+    externalSubscriptionId: string,
+    externalItemId: string,
+    toExternalPriceId: string,
+    at: Date,
+  ): ProviderChargePreview {
+    const sub = this.subscriptions.get(externalSubscriptionId);
+    const item = sub?.items?.find((i) => i.externalItemId === externalItemId);
+    const from = item?.externalPriceId
+      ? this.priceCatalog.get(item.externalPriceId)
+      : undefined;
+    const to = this.priceCatalog.get(toExternalPriceId);
+    if (!sub || !item || !from || !to) {
+      throw new SaasBillingProviderError('resource_missing');
+    }
+    if (from.currency !== to.currency) {
+      throw new SaasBillingProviderError('currency_mismatch');
+    }
+    const length = (from.interval === 'YEAR' ? 365 : 30) * 86_400_000;
+    const end = sub.currentPeriodEnd?.getTime() ?? at.getTime() + length;
+    const left = Math.min(1, Math.max(0, (end - at.getTime()) / length));
+    const credit = Math.round(from.amountMinorUnits * left);
+    const charge =
+      from.interval === to.interval
+        ? Math.round(to.amountMinorUnits * left)
+        : to.amountMinorUnits;
+    const adjust = this.previewAdjust ?? {};
+    this.previewAdjust = null;
+    const total = charge - credit;
+    return {
+      livemode: false,
+      currency: to.currency,
+      amountDueMinorUnits: Math.max(0, total),
+      totalMinorUnits: total,
+      taxMinorUnits: 0,
+      discountMinorUnits: 0,
+      prorationMinorUnits: total,
+      ...adjust,
+    };
+  }
+
+  previewImmediateChange(input: {
+    externalSubscriptionId: string;
+    externalItemId: string;
+    toExternalPriceId: string;
+    prorationDate: Date;
+  }): Promise<ProviderChargePreview> {
+    this.call('previewImmediateChange', input.externalSubscriptionId);
+    try {
+      return Promise.resolve(
+        this.quote(
+          input.externalSubscriptionId,
+          input.externalItemId,
+          input.toExternalPriceId,
+          input.prorationDate,
+        ),
+      );
+    } catch (error) {
+      return Promise.reject(error as Error);
+    }
+  }
+
+  previewRecurring(input: {
+    externalSubscriptionId: string;
+    externalItemId: string;
+    toExternalPriceId: string;
+  }): Promise<ProviderRecurringPreview> {
+    this.call('previewRecurring', input.externalSubscriptionId);
+    const to = this.priceCatalog.get(input.toExternalPriceId);
+    const sub = this.subscriptions.get(input.externalSubscriptionId);
+    if (
+      !to ||
+      !sub?.items?.some((i) => i.externalItemId === input.externalItemId)
+    ) {
+      return Promise.reject(new SaasBillingProviderError('resource_missing'));
+    }
+    return Promise.resolve({
+      livemode: false,
+      currency: to.currency,
+      totalMinorUnits: to.amountMinorUnits,
+    });
+  }
+
+  changePriceNow(input: {
+    idempotencyKey: string;
+    externalSubscriptionId: string;
+    externalItemId: string;
+    toExternalPriceId: string;
+    prorationDate: Date;
+  }): Promise<ProviderPriceChangeResult> {
+    this.call('changePriceNow', input.idempotencyKey);
+    const replay = this.changeResults.get(input.idempotencyKey);
+    if (replay) return Promise.resolve({ ...replay });
+    let preview: ProviderChargePreview;
+    try {
+      preview = this.quote(
+        input.externalSubscriptionId,
+        input.externalItemId,
+        input.toExternalPriceId,
+        input.prorationDate,
+      );
+    } catch (error) {
+      return Promise.reject(error as Error);
+    }
+    const sub = this.subscriptions.get(input.externalSubscriptionId)!;
+    if (sub.scheduleId) {
+      return Promise.reject(new SaasBillingProviderError('schedule_attached'));
+    }
+    const invoiceId = `fake_in_change_${hex()}`;
+    const paid = !this.failNextChangePayment;
+    this.failNextChangePayment = false;
+    this.setInvoice(
+      invoiceId,
+      paid ? 'paid' : 'open',
+      input.externalSubscriptionId,
+      sub.externalCustomerId,
+      { amountMinorUnits: preview.amountDueMinorUnits },
+    );
+    // "Apply only if paid": unpaid, the subscription is unchanged.
+    const next: ProviderSubscriptionSnapshot = paid
+      ? {
+          ...sub,
+          items: sub.items!.map((i) =>
+            i.externalItemId === input.externalItemId
+              ? { ...i, externalPriceId: input.toExternalPriceId }
+              : i,
+          ),
+          latestInvoiceId: invoiceId,
+          hasPendingUpdate: false,
+        }
+      : { ...sub, latestInvoiceId: invoiceId, hasPendingUpdate: true };
+    this.subscriptions.set(input.externalSubscriptionId, next);
+    const result = {
+      snapshot: { ...next },
+      externalInvoiceId: invoiceId,
+      pendingUpdate: !paid,
+    };
+    this.changeResults.set(input.idempotencyKey, result);
+    return Promise.resolve({ ...result });
+  }
+
+  schedulePriceChangeAtPeriodEnd(input: {
+    idempotencyKey: string;
+    externalSubscriptionId: string;
+    fromExternalPriceId: string;
+    toExternalPriceId: string;
+    toInterval: 'MONTH' | 'YEAR';
+  }): Promise<{ externalScheduleId: string }> {
+    this.call('schedulePriceChangeAtPeriodEnd', input.idempotencyKey);
+    const replay = this.schedulesByKey.get(input.idempotencyKey);
+    if (replay) return Promise.resolve({ externalScheduleId: replay });
+    const sub = this.subscriptions.get(input.externalSubscriptionId);
+    if (!sub) {
+      return Promise.reject(new SaasBillingProviderError('resource_missing'));
+    }
+    if (sub.scheduleId) {
+      return Promise.reject(new SaasBillingProviderError('schedule_attached'));
+    }
+    const scheduleId = `fake_sub_sched_${hex()}`;
+    this.schedules.set(scheduleId, {
+      externalSubscriptionId: input.externalSubscriptionId,
+      fromExternalPriceId: input.fromExternalPriceId,
+      toExternalPriceId: input.toExternalPriceId,
+      status: 'active',
+    });
+    this.schedulesByKey.set(input.idempotencyKey, scheduleId);
+    this.subscriptions.set(input.externalSubscriptionId, {
+      ...sub,
+      scheduleId,
+    });
+    return Promise.resolve({ externalScheduleId: scheduleId });
+  }
+
+  // Releases the schedule: the subscription itself is left exactly as it is.
+  releaseSchedule(input: {
+    idempotencyKey: string;
+    externalScheduleId: string;
+  }): Promise<{ releasedSubscriptionId: string | null }> {
+    this.call('releaseSchedule', input.idempotencyKey);
+    const schedule = this.schedules.get(input.externalScheduleId);
+    if (!schedule) {
+      return Promise.reject(new SaasBillingProviderError('resource_missing'));
+    }
+    if (schedule.status === 'active') {
+      schedule.status = 'released';
+      const sub = this.subscriptions.get(schedule.externalSubscriptionId);
+      if (sub && sub.scheduleId === input.externalScheduleId) {
+        this.subscriptions.set(schedule.externalSubscriptionId, {
+          ...sub,
+          scheduleId: null,
+        });
+      }
+    }
+    return Promise.resolve({
+      releasedSubscriptionId: schedule.externalSubscriptionId,
+    });
+  }
+
   // --- test helpers (the provider side) --------------------------------------
 
   // The owner finished Checkout: the provider created a subscription.
@@ -334,6 +576,18 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
         ? new Date(now.getTime() + checkout.trialDays * 86_400_000)
         : null,
       latestInvoiceId: firstInvoiceId,
+      items: [
+        {
+          externalItemId: `fake_si_${hex()}`,
+          externalPriceId: checkout.externalPriceId,
+          quantity: 1,
+        },
+      ],
+      scheduleId: null,
+      hasPendingUpdate: false,
+      currentPeriodEnd: trial
+        ? new Date(now.getTime() + checkout.trialDays * 86_400_000)
+        : new Date(now.getTime() + 30 * 86_400_000),
     };
     this.subscriptions.set(subscriptionId, snapshot);
     if (firstInvoiceId !== null) {
