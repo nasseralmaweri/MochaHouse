@@ -766,6 +766,15 @@ export interface InternalMeResponse {
     user: InternalUserProfile;
     authorization: InternalAuthorizationSummary;
 }
+export interface PlatformOperatorProfile {
+    id: string;
+    email: string;
+    displayName: string | null;
+    status: "ACTIVE";
+}
+export interface PlatformMeResponse {
+    operator: PlatformOperatorProfile;
+}
 export type AdminUserLocationAccess = {
     kind: "all";
 } | {

@@ -129,6 +129,81 @@ model Tenant {
   notificationRecipients               NotificationRecipient[]
 }
 
+// --- SC1a, CENTERIVO platform operators ----------------------------
+// The people who administer the SaaS platform itself — NOT any tenant's
+// staff. PLATFORM-PLANE data (MODEL_TENANCY 'platform'): no tenantId, no
+// reference to any business record, and no relation to InternalUser or to
+// any tenant role (a tenant's "platform-administrator" role confers nothing
+// here).
+//
+// An operator is identified by the VERIFIED identity of the dedicated
+// platform Cognito user pool — (externalProvider, externalSubject) — never
+// by email. Rows are created only by the provisioning CLI (no API, no
+// self-registration, no seed), and `status` has no default: provisioning
+// chooses it explicitly. Every authenticated platform request re-reads the
+// row, so DISABLED takes effect on the next request.
+enum PlatformOperatorStatus {
+  ACTIVE
+  DISABLED
+}
+
+model PlatformOperator {
+  id                  String                 @id @default(uuid(7))
+  // "cognito-platform" (the dedicated platform pool) or "platform-dev"
+  // (local/test only). A dev-provisioned row can never match a Cognito
+  // identity, and vice versa.
+  externalProvider    String
+  // The pool's immutable `sub`.
+  externalSubject     String
+  // Lower-case (CHECK in the migration); informational and unique, never
+  // used to authenticate.
+  email               String                 @unique
+  displayName         String?
+  status              PlatformOperatorStatus
+  // Observational only; set when the operator's profile is read
+  // (GET /api/v1/platform/me). Never widens access.
+  lastAuthenticatedAt DateTime?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  auditEventsActed PlatformAuditEvent[] @relation("PlatformAuditEventActor")
+
+  @@unique([externalProvider, externalSubject])
+}
+
+enum PlatformAuditOutcome {
+  SUCCEEDED
+  DENIED
+}
+
+// Security-relevant platform-operator events (sign-in to the platform API,
+// denied access, provisioning changes). Append-only by convention, written
+// synchronously. Never holds a token, credential or request payload.
+model PlatformAuditEvent {
+  id                      String               @id @default(uuid(7))
+  // Null when no operator could be established (e.g. a verified identity
+  // with no operator record) or for a CLI action with no operator actor.
+  actorPlatformOperatorId String?
+  action                  String
+  outcome                 PlatformAuditOutcome
+  // A short machine code (e.g. OPERATOR_DISABLED); never free text from a
+  // request.
+  reasonCode              String?
+  // The verified identity involved when there is no operator row to point
+  // at — identifiers only, never a token.
+  identityProvider        String?
+  identitySubject         String?
+  // The server-assigned request id, when the event came from a request.
+  requestReference        String?
+  createdAt               DateTime             @default(now())
+
+  actorPlatformOperator PlatformOperator? @relation("PlatformAuditEventActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([actorPlatformOperatorId])
+  @@index([action, createdAt])
+  @@index([createdAt])
+}
+
 model Location {
   id                               String                                @id @default(uuid(7))
   name                             String

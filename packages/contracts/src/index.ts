@@ -1570,6 +1570,22 @@ export interface InternalMeResponse {
   authorization: InternalAuthorizationSummary;
 }
 
+// --- CENTERIVO platform operators (SC1a) -------------------------------
+// GET /api/v1/platform/me — the authenticated CENTERIVO platform operator.
+// Platform-plane: no business, no tenant role, no permission list (SC1a has
+// one operator capability: being an ACTIVE operator). Never includes the
+// identity provider's subject or any token claim.
+export interface PlatformOperatorProfile {
+  id: string;
+  email: string;
+  displayName: string | null;
+  status: "ACTIVE";
+}
+
+export interface PlatformMeResponse {
+  operator: PlatformOperatorProfile;
+}
+
 // --- Admin: internal user access review (Milestone 5E-1) --------------
 // The business-facing read model for the Administration → Users screens.
 // Served only from `/api/v1/admin/internal-users*` (InternalAuthGuard +

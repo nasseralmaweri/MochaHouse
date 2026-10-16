@@ -23,7 +23,12 @@ import type { Prisma } from '../generated/prisma/client';
 // the enforcement. The inventory drives the read-only integrity checker
 // (tenant-integrity-checker.ts) and the 4C-2+ migration plan.
 
-export type TenantOwnedModel = Exclude<Prisma.ModelName, 'Tenant'>;
+// Every model except the platform-plane ones (MODEL_TENANCY 'platform'),
+// which hold no tenantId and no reference to a business record.
+export type TenantOwnedModel = Exclude<
+  Prisma.ModelName,
+  'Tenant' | 'PlatformOperator' | 'PlatformAuditEvent'
+>;
 
 export type ReferentialAction = 'Cascade' | 'Restrict' | 'SetNull' | 'NoAction';
 

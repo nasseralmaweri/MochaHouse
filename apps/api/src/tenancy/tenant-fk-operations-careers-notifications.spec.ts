@@ -222,7 +222,15 @@ async function tenantEnforcement(client: Client): Promise<string[]> {
 // Tables allowed WITHOUT a "tenantId" column: the approved global models
 // (pinned in tenant-relationship-inventory.spec.ts as APPROVED_GLOBAL_MODELS)
 // and Prisma's own migration history, which is not an application model.
-const GLOBAL_TABLES = ['Tenant', '_prisma_migrations'];
+// SC1a — plus the CENTERIVO platform-operator tables (no tenant by design;
+// their only foreign key is audit event -> operator, which the
+// "untenantedReferences" check below still covers).
+const GLOBAL_TABLES = [
+  'Tenant',
+  'PlatformOperator',
+  'PlatformAuditEvent',
+  '_prisma_migrations',
+];
 
 // The whole-database guard (Security 4C-7 and its review), against the live
 // catalog: business-owned tables (a "tenantId" column) without the

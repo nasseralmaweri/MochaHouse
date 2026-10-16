@@ -276,7 +276,12 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/auth/verification/resend': { scope: 'public-auth' },
   'POST /api/v1/auth/verify': { scope: 'public-auth' },
   'POST /api/v1/internal/auth/sign-in': { scope: 'public-auth' },
-  // --- Platform-only — none today.
+  // --- Platform-only — CENTERIVO platform operators (SC1a). PlatformAuthGuard
+  // only: no tenant, no tenant header, no tenant role.
+  'GET /api/v1/platform/me': {
+    scope: 'platform',
+    note: 'The signed-in ACTIVE platform operator (dedicated platform pool).',
+  },
   // --- Internal/system.
   'GET /': {
     scope: 'system',

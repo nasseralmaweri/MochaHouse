@@ -28,6 +28,7 @@ import { ApprovalsModule } from './approvals/approvals.module';
 import { ReportsModule } from './reports/reports.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { PlatformAuthModule } from './platform-auth/platform-auth.module';
 
 @Module({
   imports: [
@@ -61,6 +62,9 @@ import { NotificationsModule } from './notifications/notifications.module';
     ApprovalsModule,
     ReportsModule,
     NotificationsModule,
+    // SC1a — CENTERIVO platform operators (/api/v1/platform/*), outside
+    // every tenant boundary.
+    PlatformAuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],
