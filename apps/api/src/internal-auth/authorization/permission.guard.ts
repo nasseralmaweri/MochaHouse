@@ -1,3 +1,4 @@
+import { MODULE_NOT_ENTITLED } from '@mocha-house/contracts';
 import {
   CanActivate,
   ExecutionContext,
@@ -84,6 +85,15 @@ export class PermissionGuard implements CanActivate {
     );
 
     if (!authorization.has(required)) {
+      // SC2a — the role grants it, the business's plan does not.
+      if (authorization.isBlockedByPlan(required)) {
+        throw new ForbiddenException({
+          statusCode: 403,
+          error: 'Forbidden',
+          code: MODULE_NOT_ENTITLED,
+          message: "This feature is not included in your business's plan.",
+        });
+      }
       throw new ForbiddenException(
         'You do not have permission to perform this action.',
       );

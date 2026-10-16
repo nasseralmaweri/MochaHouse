@@ -232,6 +232,13 @@ const GLOBAL_TABLES = [
   // SC1d — business provisioning records (platform-plane; no tenantId, and
   // the business id they hold is a plain value, not a foreign key).
   'TenantProvisioningOperation',
+  // SC2a — SaaS plans and subscriptions (platform-plane; no tenantId column —
+  // the one link to a business is TenantSubscription.subscriberTenantId).
+  'SubscriptionPlan',
+  'SubscriptionPlanVersion',
+  'TenantSubscription',
+  'TenantModuleGrant',
+  'TenantSubscriptionEvent',
   '_prisma_migrations',
 ];
 

@@ -36,6 +36,55 @@ interface TenantFixtureClient {
     }): Promise<{ id: string }>;
     deleteMany(args: { where: { id: string } }): Promise<{ count: number }>;
   };
+  // SC2a — raw statements for the subscription fixtures below.
+  $executeRawUnsafe(query: string, ...values: unknown[]): Promise<number>;
+}
+
+// SC2a — a test business is subscribed to the Founding plan (every module),
+// like every business that existed when plans were introduced, so isolation
+// suites keep exercising every module. No history row is written (history
+// is append-only and would block the business's removal). A no-op on a
+// scratch database migrated to before plans existed. The id is a validated
+// test-only business id, never caller-supplied text.
+async function subscribeToFoundingPlan(
+  client: TenantFixtureClient,
+  tenantId: string,
+): Promise<void> {
+  assertDeletableTestTenantId(tenantId);
+  await client.$executeRawUnsafe(`
+    DO $test_subscription$
+    BEGIN
+      IF to_regclass('public."TenantSubscription"') IS NOT NULL THEN
+        INSERT INTO "TenantSubscription"
+          ("id", "subscriberTenantId", "planVersionId", "status", "startedAt", "updatedAt")
+        SELECT gen_random_uuid()::text, '${tenantId}', v."id", 'ACTIVE', now(), now()
+        FROM "SubscriptionPlanVersion" v
+        JOIN "SubscriptionPlan" p ON p."id" = v."planId"
+        WHERE p."key" = 'founding' AND v."version" = 1
+        ON CONFLICT ("subscriberTenantId") DO NOTHING;
+      END IF;
+    END
+    $test_subscription$`);
+}
+
+// SC2a — removes a test business's subscription and add-ons (a business
+// with subscription history cannot be removed: the history is append-only).
+async function removeSubscription(
+  client: TenantFixtureClient,
+  tenantId: string,
+): Promise<void> {
+  assertDeletableTestTenantId(tenantId);
+  await client.$executeRawUnsafe(`
+    DO $test_subscription_removal$
+    BEGIN
+      IF to_regclass('public."TenantSubscription"') IS NOT NULL THEN
+        DELETE FROM "TenantModuleGrant" g
+          USING "TenantSubscription" s
+          WHERE g."subscriptionId" = s."id" AND s."subscriberTenantId" = '${tenantId}';
+        DELETE FROM "TenantSubscription" WHERE "subscriberTenantId" = '${tenantId}';
+      END IF;
+    END
+    $test_subscription_removal$`);
 }
 
 // Idempotent: returns the fixed Tenant B id whether or not it existed.
@@ -51,6 +100,7 @@ export async function createTestTenantB(client: TenantFixtureClient): Promise<st
       status: 'ACTIVE',
     },
   });
+  await subscribeToFoundingPlan(client, tenant.id);
   return tenant.id;
 }
 
@@ -69,6 +119,7 @@ export async function removeTestTenant(
 ): Promise<void> {
   assertDeletableTestTenantId(tenantId);
   await assertDisposableDatabase();
+  await removeSubscription(client, tenantId);
   await client.tenant.deleteMany({ where: { id: tenantId } });
 }
 
@@ -93,6 +144,7 @@ export async function createTestTenantC(client: TenantFixtureClient): Promise<st
       status: 'ACTIVE',
     },
   });
+  await subscribeToFoundingPlan(client, tenant.id);
   return tenant.id;
 }
 

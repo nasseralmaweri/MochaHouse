@@ -765,6 +765,7 @@ export interface InternalMeResponse {
     business: InternalBusinessSummary;
     user: InternalUserProfile;
     authorization: InternalAuthorizationSummary;
+    entitlements: InternalEntitlementsSummary;
 }
 export interface PlatformOperatorProfile {
     id: string;
@@ -854,6 +855,7 @@ export interface PlatformTenantProvisionRequest {
     slug: string;
     ownerEmail: string;
     ownerDisplayName?: string | null;
+    planVersionId: string;
 }
 export interface PlatformTenantProvisionResponse {
     tenant: {
@@ -905,6 +907,87 @@ export interface PlatformTenantOwnerEmailRequest {
 }
 export interface PlatformTenantOwnerEmailResponse {
     owner: PlatformTenantOwner;
+    changed: boolean;
+}
+export type PlatformPlanVersionStatus = "DRAFT" | "PUBLISHED" | "RETIRED";
+export declare const PLATFORM_PLAN_KEY_TAKEN = "PLAN_KEY_TAKEN";
+export declare const PLATFORM_PLAN_DRAFT_EXISTS = "PLAN_DRAFT_EXISTS";
+export declare const PLATFORM_PLAN_VERSION_NOT_DRAFT = "PLAN_VERSION_NOT_DRAFT";
+export declare const PLATFORM_PLAN_VERSION_NOT_PUBLISHED = "PLAN_VERSION_NOT_PUBLISHED";
+export declare const PLATFORM_NO_SUBSCRIPTION = "NO_SUBSCRIPTION";
+export declare const PLATFORM_ADDON_IN_PLAN = "ADDON_IN_PLAN";
+export interface PlatformPlanVersion {
+    id: string;
+    version: number;
+    status: PlatformPlanVersionStatus;
+    moduleKeys: OptionalModuleKey[];
+    publishedAt: string | null;
+    retiredAt: string | null;
+    subscriberCount: number;
+}
+export interface PlatformPlan {
+    id: string;
+    key: string;
+    name: string;
+    description: string | null;
+    versions: PlatformPlanVersion[];
+}
+export interface PlatformPlanListResponse {
+    plans: PlatformPlan[];
+    subscriptions: {
+        total: number;
+    };
+}
+export interface PlatformPlanCreateRequest {
+    key: string;
+    name: string;
+    description?: string | null;
+    moduleKeys: OptionalModuleKey[];
+}
+export interface PlatformPlanVersionModulesRequest {
+    moduleKeys: OptionalModuleKey[];
+}
+export type PlatformSubscriptionEventType = "PLAN_ASSIGNED" | "PLAN_CHANGED" | "ADDON_GRANTED" | "ADDON_REVOKED";
+export interface PlatformTenantSubscription {
+    id: string;
+    status: "ACTIVE" | "TRIALING";
+    startedAt: string;
+    plan: {
+        id: string;
+        key: string;
+        name: string;
+    };
+    version: {
+        id: string;
+        version: number;
+        status: PlatformPlanVersionStatus;
+    };
+    addOns: OptionalModuleKey[];
+}
+export interface PlatformTenantSubscriptionResponse {
+    tenantId: string;
+    subscription: PlatformTenantSubscription | null;
+    modules: SubscriptionModuleKey[];
+    history: Array<{
+        type: PlatformSubscriptionEventType;
+        at: string;
+        fromVersion: string | null;
+        toVersion: string | null;
+        moduleKey: OptionalModuleKey | null;
+    }>;
+}
+export interface PlatformSubscriptionChangeRequest {
+    planVersionId?: string;
+    grant?: OptionalModuleKey;
+    revoke?: OptionalModuleKey;
+}
+export interface PlatformSubscriptionPreviewResponse {
+    current: SubscriptionModuleKey[];
+    proposed: SubscriptionModuleKey[];
+    gained: SubscriptionModuleKey[];
+    lost: SubscriptionModuleKey[];
+}
+export interface PlatformSubscriptionChangeResponse extends PlatformTenantSubscriptionResponse {
     changed: boolean;
 }
 export type AdminUserLocationAccess = {
@@ -1053,6 +1136,24 @@ export interface BuiltInInternalRole {
 export declare const PLATFORM_ADMINISTRATOR_ROLE: BuiltInInternalRole;
 export declare const STORE_MANAGER_ROLE: BuiltInInternalRole;
 export declare const BUILT_IN_INTERNAL_ROLES: readonly BuiltInInternalRole[];
+export type SubscriptionModuleKey = "core" | "operations" | "loyalty" | "promotions" | "giftcards" | "crm" | "careers" | "franchising" | "cms" | "marketing";
+export type OptionalModuleKey = Exclude<SubscriptionModuleKey, "core">;
+export interface SubscriptionModule {
+    key: SubscriptionModuleKey;
+    label: string;
+    description: string;
+}
+export declare const SUBSCRIPTION_MODULES: readonly SubscriptionModule[];
+export declare const OPTIONAL_MODULE_KEYS: readonly OptionalModuleKey[];
+export declare function isOptionalModuleKey(value: unknown): value is OptionalModuleKey;
+export declare const PERMISSION_MODULE: Readonly<Record<InternalPermissionKey, SubscriptionModuleKey>>;
+export declare const LIFECYCLE_RETAINED_PERMISSIONS: readonly InternalPermissionKey[];
+export declare function isPermissionEntitled(key: InternalPermissionKey, modules: ReadonlySet<SubscriptionModuleKey>): boolean;
+export declare const MODULE_NOT_ENTITLED = "MODULE_NOT_ENTITLED";
+export interface InternalEntitlementsSummary {
+    modules: SubscriptionModuleKey[];
+    planName: string | null;
+}
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
 export interface InternalPermissionMetadata {

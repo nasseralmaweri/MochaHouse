@@ -90,6 +90,7 @@ export class InternalSessionService {
     return {
       business,
       user: this.internalUsers.toProfile(user),
+      entitlements: context.entitlementsSummary(),
       authorization: {
         permissions: summary.permissions,
         isCorporate: summary.isCorporate,

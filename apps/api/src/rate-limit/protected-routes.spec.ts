@@ -9,6 +9,8 @@ import { RATE_LIMIT_POLICY_KEY } from './rate-limit.decorator';
 import { RateLimitGuard } from './rate-limit.guard';
 import { PlatformTenantsController } from '../platform-tenants/api/platform-tenants.controller';
 import { PlatformTenantLifecycleController } from '../platform-tenants/api/platform-tenant-lifecycle.controller';
+import { PlatformPlansController } from '../platform-subscriptions/api/platform-plans.controller';
+import { PlatformTenantSubscriptionController } from '../platform-subscriptions/api/platform-tenant-subscription.controller';
 import type { PolicyName } from './rate-limit.config';
 
 // The list of public routes protected by S3a. If a route here loses its
@@ -121,6 +123,19 @@ const PROTECTED: ReadonlyArray<{
     method: 'correctOwnerEmail',
     policy: 'platform-lifecycle',
   },
+  // SC2a — plan and subscription changes.
+  ...(
+    ['create', 'createVersion', 'updateDraft', 'publish', 'retire'] as const
+  ).map((method) => ({
+    controller: PlatformPlansController,
+    method,
+    policy: 'platform-lifecycle' as const,
+  })),
+  ...(['changePlan', 'grantAddOn', 'revokeAddOn'] as const).map((method) => ({
+    controller: PlatformTenantSubscriptionController,
+    method,
+    policy: 'platform-lifecycle' as const,
+  })),
 ];
 
 function guardsFor(controller: Constructor, method: string): unknown[] {

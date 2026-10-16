@@ -316,6 +316,51 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     scope: 'platform',
     note: "SC1e — correct a never-signed-in first owner's email; audited.",
   },
+  // SC2a — SaaS plans and subscriptions (recent sign-in for changes).
+  'GET /api/v1/platform/plans': {
+    scope: 'platform',
+    note: 'SC2a — every plan and version, with subscriber counts.',
+  },
+  'POST /api/v1/platform/plans': {
+    scope: 'platform',
+    note: 'SC2a — a new plan with a draft version 1; audited.',
+  },
+  'POST /api/v1/platform/plans/:planId/versions': {
+    scope: 'platform',
+    note: 'SC2a — a new draft version; audited.',
+  },
+  'PUT /api/v1/platform/plans/:planId/versions/:versionId': {
+    scope: 'platform',
+    note: "SC2a — edit a draft version's modules; audited.",
+  },
+  'POST /api/v1/platform/plans/:planId/versions/:versionId/publish': {
+    scope: 'platform',
+    note: 'SC2a — publish (then immutable); audited.',
+  },
+  'POST /api/v1/platform/plans/:planId/versions/:versionId/retire': {
+    scope: 'platform',
+    note: 'SC2a — stop offering a version; audited.',
+  },
+  'GET /api/v1/platform/tenants/:tenantId/subscription': {
+    scope: 'platform',
+    note: "SC2a — a business's plan, add-ons, effective modules and history.",
+  },
+  'POST /api/v1/platform/tenants/:tenantId/subscription/preview': {
+    scope: 'platform',
+    note: 'SC2a — what a plan or add-on change would do; changes nothing.',
+  },
+  'PUT /api/v1/platform/tenants/:tenantId/subscription': {
+    scope: 'platform',
+    note: 'SC2a — assign or change the plan; audited.',
+  },
+  'POST /api/v1/platform/tenants/:tenantId/subscription/add-ons': {
+    scope: 'platform',
+    note: 'SC2a — grant an add-on module; audited.',
+  },
+  'DELETE /api/v1/platform/tenants/:tenantId/subscription/add-ons/:moduleKey': {
+    scope: 'platform',
+    note: 'SC2a — revoke an add-on module; audited.',
+  },
   'GET /api/v1/platform/tenants': {
     scope: 'platform',
     note: 'SC1c — every business on the platform, searchable and paged.',

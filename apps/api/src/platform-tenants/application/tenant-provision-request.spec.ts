@@ -9,12 +9,15 @@ import {
 
 // SC1d — the provisioning request: normalised (trim, collapse spaces,
 // lowercase slug and email), validated, and fingerprinted for idempotency.
+const PLAN = '0192f0a1-2b3c-7d4e-8f50-123456789abc';
+
 describe('tenant provisioning request', () => {
   const valid = {
     name: '  Blue   Bean  Café ',
     slug: ' Blue-Bean ',
     ownerEmail: '  Owner@Example.COM ',
     ownerDisplayName: '  Ada   Owner ',
+    planVersionId: PLAN,
   };
   const refused = (body: unknown) =>
     expect(() => parseProvisionRequest(body)).toThrow(
@@ -27,6 +30,7 @@ describe('tenant provisioning request', () => {
       slug: 'blue-bean',
       ownerEmail: 'owner@example.com',
       ownerDisplayName: 'Ada Owner',
+      planVersionId: PLAN,
     });
     expect(
       parseProvisionRequest({ ...valid, ownerDisplayName: '  ' })
@@ -62,6 +66,15 @@ describe('tenant provisioning request', () => {
       refused({ ...valid, ownerEmail });
     }
     refused({ ...valid, ownerDisplayName: 'x'.repeat(121) });
+    // SC2a — a plan is required.
+    for (const planVersionId of [
+      undefined,
+      '',
+      'founding',
+      PLAN.toUpperCase(),
+    ]) {
+      refused({ ...valid, planVersionId });
+    }
   });
 
   it('refuses every reserved slug, in any case', () => {
@@ -89,6 +102,7 @@ describe('tenant provisioning request', () => {
         slug: 'blue-bean',
         ownerEmail: 'owner@example.com',
         ownerDisplayName: 'Ada Owner',
+        planVersionId: PLAN,
       }),
     );
     expect(a).toMatch(/^[0-9a-f]{64}$/);
@@ -98,6 +112,7 @@ describe('tenant provisioning request', () => {
       { slug: 'blue-beans' },
       { ownerEmail: 'other@example.com' },
       { ownerDisplayName: null },
+      { planVersionId: '0192f0a1-2b3c-7d4e-8f50-123456789abd' },
     ]) {
       expect(
         provisionRequestHash(parseProvisionRequest({ ...valid, ...change })),

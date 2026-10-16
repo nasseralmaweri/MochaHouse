@@ -8,6 +8,7 @@ import {
   PLATFORM_ADMINISTRATOR_ROLE,
   PLATFORM_IDEMPOTENCY_KEY_REUSED,
   PLATFORM_TENANT_SLUG_TAKEN,
+  PLATFORM_PLAN_VERSION_NOT_PUBLISHED,
   type PlatformTenantProvisionResponse,
 } from '@mocha-house/contracts';
 import type { Prisma } from '@mocha-house/database';
@@ -31,6 +32,8 @@ import {
 //      with it;
 //   2. its built-in staff roles and their permissions (the shared
 //      definitions Tenant #1 uses);
+//   2b. (SC2a) its subscription to the chosen PUBLISHED plan version, with
+//      its first history row;
 //   3. its first owner: an ACTIVE staff member with NO login yet
 //      (externalSubject null), holding the full administrator role at
 //      corporate scope. Sign-in binds a login to it only for a VERIFIED
@@ -49,7 +52,8 @@ import {
 type Outcome =
   | { kind: 'created' | 'replayed'; tenantId: string }
   | { kind: 'key-reused' }
-  | { kind: 'slug-taken' };
+  | { kind: 'slug-taken' }
+  | { kind: 'plan-unavailable' };
 
 const SLUG_TAKEN_MESSAGE = 'Another business already uses that slug.';
 const KEY_REUSED_MESSAGE =
@@ -124,6 +128,11 @@ export class TenantProvisioningService {
         throw conflict(PLATFORM_IDEMPOTENCY_KEY_REUSED, KEY_REUSED_MESSAGE);
       case 'slug-taken':
         throw conflict(PLATFORM_TENANT_SLUG_TAKEN, SLUG_TAKEN_MESSAGE);
+      case 'plan-unavailable':
+        throw conflict(
+          PLATFORM_PLAN_VERSION_NOT_PUBLISHED,
+          'That plan is not available. Choose a published plan.',
+        );
       default:
         return this.result(outcome.tenantId, outcome.kind === 'replayed');
     }
@@ -145,6 +154,15 @@ export class TenantProvisioningService {
       operator,
     );
     if (existing) return existing;
+
+    // SC2a — the business starts on a PUBLISHED plan version.
+    const planVersion = await tx.subscriptionPlanVersion.findUnique({
+      where: { id: request.planVersionId },
+      select: { id: true, status: true },
+    });
+    if (!planVersion || planVersion.status !== 'PUBLISHED') {
+      return { kind: 'plan-unavailable' };
+    }
 
     const tenant = await tx.tenant.create({
       data: { slug: request.slug, name: request.name, status: 'ACTIVE' },
@@ -198,6 +216,18 @@ export class TenantProvisioningService {
         roleId: administratorRoleId,
         scopeType: 'CORPORATE',
         scopeId: null,
+      },
+    });
+
+    const subscription = await tx.tenantSubscription.create({
+      data: { subscriberTenantId: tenant.id, planVersionId: planVersion.id },
+    });
+    await tx.tenantSubscriptionEvent.create({
+      data: {
+        subscriptionId: subscription.id,
+        type: 'PLAN_ASSIGNED',
+        toPlanVersionId: planVersion.id,
+        actorPlatformOperatorId: operator.id,
       },
     });
 

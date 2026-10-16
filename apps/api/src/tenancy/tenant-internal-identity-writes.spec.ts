@@ -12,6 +12,7 @@ import {
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditModule } from '../audit/audit.module';
+import { EntitlementsService } from '../subscriptions/application/entitlements.service';
 import { AuthorizationService } from '../internal-auth/authorization/authorization.service';
 import { AuthorizationContext } from '../internal-auth/authorization/authorization-context';
 import { AdminInternalUsersService } from '../internal-users/application/admin-internal-users.service';
@@ -49,10 +50,7 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
   const locationIds: string[] = [];
   let actorId: string;
 
-  async function makeUser(
-    tenantId: string,
-    label: string,
-  ): Promise<string> {
+  async function makeUser(tenantId: string, label: string): Promise<string> {
     const email = `s0d2e-${label}-${suffix}@example.com`;
     const user = await prisma.internalUser.create({
       data: {
@@ -109,7 +107,10 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
     return role.id;
   }
 
-  async function makeLocation(tenantId: string, label: string): Promise<string> {
+  async function makeLocation(
+    tenantId: string,
+    label: string,
+  ): Promise<string> {
     const location = await prisma.location.create({
       data: {
         tenantId,
@@ -126,6 +127,7 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
       imports: [PrismaModule, AuditModule],
       providers: [
         AuthorizationService,
+        EntitlementsService,
         AdminInternalUsersService,
         AdminInternalRolesService,
       ],
@@ -211,8 +213,16 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
       },
     });
 
-    expect((await authorizationService.loadContext(userA, tenantOne)).has('catalog.products.edit')).toBe(true);
-    expect((await authorizationService.loadContext(userA, tenantB)).has('catalog.products.edit')).toBe(false);
+    expect(
+      (await authorizationService.loadContext(userA, tenantOne)).has(
+        'catalog.products.edit',
+      ),
+    ).toBe(true);
+    expect(
+      (await authorizationService.loadContext(userA, tenantB)).has(
+        'catalog.products.edit',
+      ),
+    ).toBe(false);
   });
 
   it('(4) Tenant B role assignments are invisible to Tenant A authorization evaluation', async () => {
@@ -228,8 +238,16 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
       },
     });
 
-    expect((await authorizationService.loadContext(userB, tenantB)).has('catalog.products.edit')).toBe(true);
-    expect((await authorizationService.loadContext(userB, tenantOne)).has('catalog.products.edit')).toBe(false);
+    expect(
+      (await authorizationService.loadContext(userB, tenantB)).has(
+        'catalog.products.edit',
+      ),
+    ).toBe(true);
+    expect(
+      (await authorizationService.loadContext(userB, tenantOne)).has(
+        'catalog.products.edit',
+      ),
+    ).toBe(false);
   });
 
   // --- Proof 5/6: a user cannot be ASSIGNED a foreign-tenant role, in
@@ -242,7 +260,11 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
     await expect(
       usersService.assignRole(
         userA,
-        { roleId: roleB, scope: { kind: 'corporate' }, reason: 'cross-tenant attempt' },
+        {
+          roleId: roleB,
+          scope: { kind: 'corporate' },
+          reason: 'cross-tenant attempt',
+        },
         actorId,
         fullAdmin,
         tenantOne,
@@ -258,12 +280,19 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
 
   it('(6) a Tenant B user cannot be assigned a Tenant A role', async () => {
     const userB = await makeUser(TEST_TENANT_B_ID, 'assign-b-user');
-    const roleA = await makeCorporateRole(TENANT_1_MOCHA_HOUSE_ID, 'assign-b-role');
+    const roleA = await makeCorporateRole(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'assign-b-role',
+    );
 
     await expect(
       usersService.assignRole(
         userB,
-        { roleId: roleA, scope: { kind: 'corporate' }, reason: 'cross-tenant attempt' },
+        {
+          roleId: roleA,
+          scope: { kind: 'corporate' },
+          reason: 'cross-tenant attempt',
+        },
         actorId,
         fullAdmin,
         tenantB,
@@ -279,12 +308,19 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
 
   it('a Tenant A admin cannot target a Tenant B user at all — no row is EVER persisted, whatever the rejection reason', async () => {
     const userB = await makeUser(TEST_TENANT_B_ID, 'target-b');
-    const roleA = await makeCorporateRole(TENANT_1_MOCHA_HOUSE_ID, 'target-a-role');
+    const roleA = await makeCorporateRole(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'target-a-role',
+    );
 
     await expect(
       usersService.assignRole(
         userB,
-        { roleId: roleA, scope: { kind: 'corporate' }, reason: 'cross-tenant target' },
+        {
+          roleId: roleA,
+          scope: { kind: 'corporate' },
+          reason: 'cross-tenant target',
+        },
         actorId,
         fullAdmin,
         tenantOne,
@@ -315,7 +351,9 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
     const permsB = await prisma.internalRolePermission.findMany({
       where: { roleId: roleB },
     });
-    expect(permsA.every((p) => p.tenantId === TENANT_1_MOCHA_HOUSE_ID)).toBe(true);
+    expect(permsA.every((p) => p.tenantId === TENANT_1_MOCHA_HOUSE_ID)).toBe(
+      true,
+    );
     expect(permsB.every((p) => p.tenantId === TEST_TENANT_B_ID)).toBe(true);
   });
 
@@ -372,7 +410,11 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
     );
     expect(detail.assignments).toHaveLength(1);
 
-    expect((await authorizationService.loadContext(userA, tenantOne)).has('catalog.products.edit')).toBe(true);
+    expect(
+      (await authorizationService.loadContext(userA, tenantOne)).has(
+        'catalog.products.edit',
+      ),
+    ).toBe(true);
 
     const assignmentId = detail.assignments[0].id;
     const afterRemoval = await usersService.removeRoleAssignment(
@@ -384,7 +426,11 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
       tenantOne,
     );
     expect(afterRemoval.assignments).toHaveLength(0);
-    expect((await authorizationService.loadContext(userA, tenantOne)).has('catalog.products.edit')).toBe(false);
+    expect(
+      (await authorizationService.loadContext(userA, tenantOne)).has(
+        'catalog.products.edit',
+      ),
+    ).toBe(false);
   });
 
   it('(10) listUsers / getAccessOptions / getUserDetail remain tenant-scoped and behaviorally correct for the owning tenant', async () => {
@@ -399,7 +445,11 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
     expect(listB.some((u) => u.id === userB)).toBe(true);
     expect(listB.some((u) => u.id === userA)).toBe(false);
 
-    const detailA = await usersService.getUserDetail(userA, fullAdmin, tenantOne);
+    const detailA = await usersService.getUserDetail(
+      userA,
+      fullAdmin,
+      tenantOne,
+    );
     expect(detailA.id).toBe(userA);
     await expect(
       usersService.getUserDetail(userB, fullAdmin, tenantOne),
@@ -418,7 +468,10 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
 
   it('a LOCATION-scoped assignment cannot be pointed at a foreign-tenant location', async () => {
     const userA = await makeUser(TENANT_1_MOCHA_HOUSE_ID, 'loc-scope-a');
-    const roleA = await makeLocationRole(TENANT_1_MOCHA_HOUSE_ID, 'loc-scope-a');
+    const roleA = await makeLocationRole(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'loc-scope-a',
+    );
     const locationB = await makeLocation(TEST_TENANT_B_ID, 'loc-scope-b');
 
     await expect(
@@ -433,9 +486,7 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
         fullAdmin,
         tenantOne,
       ),
-    ).rejects.toThrow(
-      'One or more of the chosen locations no longer exists.',
-    );
+    ).rejects.toThrow('One or more of the chosen locations no longer exists.');
 
     expect(
       await prisma.internalUserRoleAssignment.count({
@@ -448,7 +499,10 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
   // tenant-scoped ------------------------------------------------------
 
   it('(11) AdminInternalRolesService.listRoles / getRoleDetail are tenant-scoped', async () => {
-    const roleA = await makeCorporateRole(TENANT_1_MOCHA_HOUSE_ID, 'roles-read-a');
+    const roleA = await makeCorporateRole(
+      TENANT_1_MOCHA_HOUSE_ID,
+      'roles-read-a',
+    );
     const roleB = await makeCorporateRole(TEST_TENANT_B_ID, 'roles-read-b');
 
     const rolesA = await rolesService.listRoles(fullAdmin, tenantOne);

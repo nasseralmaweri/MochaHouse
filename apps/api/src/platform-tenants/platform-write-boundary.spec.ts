@@ -8,7 +8,12 @@ import { MODEL_TENANCY } from '@mocha-house/database';
 // model, or runs raw SQL that writes, fails this test until it is reviewed.
 
 const SRC = join(__dirname, '..');
-const PLATFORM_DIRS = ['platform-auth', 'platform-tenants'];
+const PLATFORM_DIRS = [
+  'platform-auth',
+  'platform-tenants',
+  // SC2a — writes platform data only (plans, subscriptions).
+  'platform-subscriptions',
+];
 // SC1e — plus the lifecycle service (owner email correction only).
 const ALLOWED_WRITERS = [
   join('platform-tenants', 'application', 'tenant-lifecycle.service.ts'),

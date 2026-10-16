@@ -37,6 +37,9 @@ import { signDevJwt } from '../customer-auth/infrastructure/dev-jwt';
 // conflicts and concurrency; the first owner's verified, case-insensitive,
 // business-scoped sign-in; that ACTIVE turns on no storefront; tenant
 // integrity.
+// SC2a — the Founding plan's published version 1 (from the migrations).
+const FOUNDING_VERSION = '01a0db02-f800-7000-8000-00000000f002';
+
 describe('SC1d tenant provisioning (integration, scratch database)', () => {
   let scratch: ScratchDatabase;
   let app: INestApplication<App>;
@@ -79,6 +82,8 @@ describe('SC1d tenant provisioning (integration, scratch database)', () => {
     slug: `SC1D-${n}-${run}`,
     ownerEmail: `  Owner.${n}-${run}@Example.COM `,
     ownerDisplayName: 'First Owner',
+    // SC2a — every new business starts on a published plan.
+    planVersionId: FOUNDING_VERSION,
   });
   const result = (res: { body: unknown }) =>
     res.body as PlatformTenantProvisionResponse;
@@ -223,6 +228,12 @@ describe('SC1d tenant provisioning (integration, scratch database)', () => {
     expect(
       await prisma.giftCardConfiguration.count({ where: { tenantId } }),
     ).toBe(0);
+    // SC2a — subscribed to the chosen plan, in the same transaction.
+    expect(
+      await prisma.tenantSubscription.findUnique({
+        where: { subscriberTenantId: tenantId },
+      }),
+    ).toMatchObject({ planVersionId: FOUNDING_VERSION, status: 'ACTIVE' });
   });
 
   it('the first owner signs in with a VERIFIED email in any letter case — into this business only — and holds full administration', async () => {

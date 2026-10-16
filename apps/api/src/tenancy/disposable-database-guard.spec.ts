@@ -449,6 +449,8 @@ describe('Disposable database guard (Security 4C-1)', () => {
           upsert: jest.fn(),
           deleteMany: jest.fn(),
         },
+        // SC2a — subscription cleanup runs through raw statements.
+        $executeRawUnsafe: jest.fn(),
       };
       for (const id of [
         TENANT_1_MOCHA_HOUSE_ID,
@@ -460,6 +462,7 @@ describe('Disposable database guard (Security 4C-1)', () => {
         );
       }
       expect(client.tenant.deleteMany).not.toHaveBeenCalled();
+      expect(client.$executeRawUnsafe).not.toHaveBeenCalled();
     });
   });
 

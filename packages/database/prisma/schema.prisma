@@ -127,6 +127,9 @@ model Tenant {
   campaignProducts                     CampaignProduct[]
   approvalRequests                     ApprovalRequest[]
   notificationRecipients               NotificationRecipient[]
+
+  // SC2a — the business's SaaS subscription (platform data; at most one).
+  subscription TenantSubscription? @relation("TenantSubscriptionSubscriber")
 }
 
 // --- SC1a, CENTERIVO platform operators ----------------------------
@@ -169,6 +172,9 @@ model PlatformOperator {
   auditEventsActed PlatformAuditEvent[] @relation("PlatformAuditEventActor")
   // SC1d — the businesses this operator provisioned.
   tenantProvisioningOperations TenantProvisioningOperation[] @relation("TenantProvisioningOperationActor")
+  // SC2a — subscription changes this operator made.
+  tenantModuleGrants       TenantModuleGrant[]       @relation("TenantModuleGrantActor")
+  tenantSubscriptionEvents TenantSubscriptionEvent[] @relation("TenantSubscriptionEventActor")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -192,6 +198,123 @@ model TenantProvisioningOperation {
   actorPlatformOperator PlatformOperator @relation("TenantProvisioningOperationActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([actorPlatformOperatorId])
+}
+
+// --- CENTERIVO SaaS: plans and subscriptions (SC2a) -----------------------
+// Platform data (MODEL_TENANCY 'platform'), entirely separate from a
+// business's customer payments. A plan has versions; a PUBLISHED version is
+// immutable (database trigger) and can only be RETIRED. A business has at
+// most one current subscription (to one plan version) — the ONLY link from
+// platform subscription data to a business (a reviewed exception to the
+// tenancy guards) — plus add-on module grants and an append-only history.
+// Prices, billing intervals, trials and proration are deliberately absent;
+// they arrive with subscription billing as new columns or tables.
+
+enum SubscriptionPlanVersionStatus {
+  DRAFT
+  PUBLISHED
+  RETIRED
+}
+
+// Informational until billing exists; nothing enforces it in SC2a.
+enum TenantSubscriptionStatus {
+  ACTIVE
+  TRIALING
+}
+
+enum TenantSubscriptionEventType {
+  PLAN_ASSIGNED
+  PLAN_CHANGED
+  ADDON_GRANTED
+  ADDON_REVOKED
+}
+
+model SubscriptionPlan {
+  id          String   @id @default(uuid(7))
+  // Stable identifier, e.g. "founding" (lowercase words, single hyphens).
+  key         String   @unique
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  versions SubscriptionPlanVersion[]
+}
+
+model SubscriptionPlanVersion {
+  id          String                        @id @default(uuid(7))
+  planId      String
+  version     Int
+  status      SubscriptionPlanVersionStatus @default(DRAFT)
+  // Optional module keys (core is implicit). Frozen once PUBLISHED.
+  moduleKeys  String[]
+  publishedAt DateTime?
+  retiredAt   DateTime?
+  createdAt   DateTime                      @default(now())
+  updatedAt   DateTime                      @updatedAt
+
+  plan          SubscriptionPlan          @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subscriptions TenantSubscription[]
+  eventsFrom    TenantSubscriptionEvent[] @relation("TenantSubscriptionEventFrom")
+  eventsTo      TenantSubscriptionEvent[] @relation("TenantSubscriptionEventTo")
+
+  @@unique([planId, version])
+  @@index([status])
+}
+
+model TenantSubscription {
+  id                     String                   @id @default(uuid(7))
+  // The business — a real foreign key (owner decision S3), one per business.
+  subscriberTenantId     String                   @unique
+  planVersionId          String
+  status                 TenantSubscriptionStatus @default(ACTIVE)
+  startedAt              DateTime                 @default(now())
+  // Reserved for subscription billing (always null in SC2a).
+  billingProvider        String?
+  externalSubscriptionId String?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+
+  subscriberTenant Tenant                    @relation("TenantSubscriptionSubscriber", fields: [subscriberTenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  planVersion      SubscriptionPlanVersion   @relation(fields: [planVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  moduleGrants     TenantModuleGrant[]
+  events           TenantSubscriptionEvent[]
+
+  @@index([planVersionId])
+}
+
+// An add-on: one optional module granted to one business beyond its plan.
+model TenantModuleGrant {
+  id                      String   @id @default(uuid(7))
+  subscriptionId          String
+  moduleKey               String
+  actorPlatformOperatorId String?
+  grantedAt               DateTime @default(now())
+
+  subscription          TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actorPlatformOperator PlatformOperator?  @relation("TenantModuleGrantActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([subscriptionId, moduleKey])
+}
+
+// Append-only (database trigger): every assignment, plan change and add-on
+// grant or revocation, for the record and for future billing.
+model TenantSubscriptionEvent {
+  id                      String                      @id @default(uuid(7))
+  subscriptionId          String
+  type                    TenantSubscriptionEventType
+  fromPlanVersionId       String?
+  toPlanVersionId         String?
+  moduleKey               String?
+  actorPlatformOperatorId String?
+  createdAt               DateTime                    @default(now())
+
+  subscription          TenantSubscription       @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  fromPlanVersion       SubscriptionPlanVersion? @relation("TenantSubscriptionEventFrom", fields: [fromPlanVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  toPlanVersion         SubscriptionPlanVersion? @relation("TenantSubscriptionEventTo", fields: [toPlanVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actorPlatformOperator PlatformOperator?        @relation("TenantSubscriptionEventActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([subscriptionId, createdAt])
 }
 
 enum PlatformAuditOutcome {

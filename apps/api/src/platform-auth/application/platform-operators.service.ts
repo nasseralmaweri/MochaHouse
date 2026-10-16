@@ -31,6 +31,15 @@ export const PLATFORM_AUDIT_ACTIONS = {
   tenantSuspended: 'platform.tenant.suspended',
   tenantReactivated: 'platform.tenant.reactivated',
   tenantOwnerEmailCorrected: 'platform.tenant.owner_email_corrected',
+  // SC2a — plans (target: the plan) and subscriptions (target: the tenant).
+  planCreated: 'platform.plan.created',
+  planVersionCreated: 'platform.plan.version_created',
+  planVersionUpdated: 'platform.plan.version_updated',
+  planVersionPublished: 'platform.plan.version_published',
+  planVersionRetired: 'platform.plan.version_retired',
+  tenantSubscriptionChanged: 'platform.tenant.subscription_changed',
+  tenantAddonGranted: 'platform.tenant.addon_granted',
+  tenantAddonRevoked: 'platform.tenant.addon_revoked',
 } as const;
 
 @Injectable()

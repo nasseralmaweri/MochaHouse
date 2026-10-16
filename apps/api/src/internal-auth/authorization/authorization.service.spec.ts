@@ -10,6 +10,7 @@ import {
 } from '@mocha-house/testing';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EntitlementsService } from '../../subscriptions/application/entitlements.service';
 import { AuthorizationService } from './authorization.service';
 
 // Integration test against the real local Postgres instance: proves the
@@ -43,7 +44,7 @@ describe('AuthorizationService (integration)', () => {
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({
       imports: [PrismaModule],
-      providers: [AuthorizationService],
+      providers: [AuthorizationService, EntitlementsService],
     }).compile();
     prisma = moduleRef.get(PrismaService);
     service = moduleRef.get(AuthorizationService);
