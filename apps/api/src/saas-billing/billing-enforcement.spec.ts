@@ -191,7 +191,11 @@ describe('SC3c-1 billing enforcement (integration, scratch database)', () => {
     };
   }
 
-  async function order(b: Business, status: 'RECEIVED' | 'ACCEPTED') {
+  async function order(
+    b: Business,
+    status: 'RECEIVED' | 'ACCEPTED',
+    payment: 'SUCCEEDED' | 'PENDING' = 'SUCCEEDED',
+  ) {
     const attempt = await prisma.paymentAttempt.create({
       data: {
         tenantId: b.tenantId,
@@ -200,7 +204,7 @@ describe('SC3c-1 billing enforcement (integration, scratch database)', () => {
         locationId: b.locationId,
         amount: 400,
         currency: 'USD',
-        status: 'SUCCEEDED',
+        status: payment,
       },
     });
     return (
@@ -542,14 +546,34 @@ describe('SC3c-1 billing enforcement (integration, scratch database)', () => {
 
   // --- The operational wind-down -------------------------------------------
 
-  it('a BILLING suspension keeps a narrow wind-down: accepted orders, refunds through the existing gate and billing — nothing else, no new sales', async () => {
+  const advance = (
+    b: Business,
+    orderId: string,
+    expectedStatus: string,
+    locationId = b.locationId,
+    tenantId = b.tenantId,
+  ) =>
+    asStaff('post', b.key, tenantId, `/admin/orders/${orderId}/advance`, {
+      locationId,
+      expectedStatus,
+    });
+  const statusOf = async (orderId: string) =>
+    (await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status;
+
+  it('a BILLING suspension keeps a narrow wind-down: orders already taken are fulfilled, billing is readable — nothing else, no new sales', async () => {
     const b = await business('wind', authorized());
     const accepted = await order(b, 'ACCEPTED');
-    const received = await order(b, 'RECEIVED');
-    await prisma.tenant.update({
-      where: { id: b.tenantId },
-      data: { status: 'SUSPENDED', suspensionReason: 'BILLING' },
-    });
+    const paidReceived = await order(b, 'RECEIVED');
+    const unpaidReceived = await order(b, 'RECEIVED', 'PENDING');
+    // Suspended for billing by an operator (recorded), after those orders.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await platform(`/tenants/${b.tenantId}/suspend`, {
+      reason: 'BILLING',
+    }).expect(200);
+    // An order that appears after the suspension began (e.g. written by a
+    // request in flight): never a sale the business may still make.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const newOrder = await order(b, 'RECEIVED');
 
     const me = (
       await asStaff('get', b.key, b.tenantId, '/internal/me').expect(200)
@@ -565,7 +589,7 @@ describe('SC3c-1 billing enforcement (integration, scratch database)', () => {
       expect.objectContaining({ id: b.tenantId, access: 'BILLING_WIND_DOWN' }),
     ]);
 
-    // Orders the business already took: visible and completable.
+    // Orders the business already took: visible.
     const orders = await asStaff(
       'get',
       b.key,
@@ -579,55 +603,46 @@ describe('SC3c-1 billing enforcement (integration, scratch database)', () => {
       b.tenantId,
       `/admin/orders/${accepted}?locationId=${b.locationId}`,
     ).expect(200);
+
+    // An already-accepted order moves on.
+    await advance(b, accepted, 'ACCEPTED').expect(201);
+    expect(await statusOf(accepted)).toBe('PREPARING');
+
+    // A RECEIVED order PAID before the suspension: accepted and fulfilled
+    // through its normal statuses.
+    for (const from of ['RECEIVED', 'ACCEPTED', 'PREPARING', 'READY']) {
+      await advance(b, paidReceived, from).expect(201);
+    }
+    expect(await statusOf(paidReceived)).toBe('COMPLETED');
+
+    // An UNPAID order: refused.
+    expect(
+      (await advance(b, unpaidReceived, 'RECEIVED').expect(403)).body,
+    ).toMatchObject({
+      code: 'BUSINESS_BILLING_SUSPENDED',
+    });
+    expect(await statusOf(unpaidReceived)).toBe('RECEIVED');
+
+    // A NEW order (after the suspension began), even paid: refused.
+    expect(
+      (await advance(b, newOrder, 'RECEIVED').expect(403)).body,
+    ).toMatchObject({
+      code: 'BUSINESS_BILLING_SUSPENDED',
+    });
+    expect(await statusOf(newOrder)).toBe('RECEIVED');
+
+    // Refunds/reversals: no new mechanism — the existing order-closure
+    // workflow stays disabled (404) and remains a separate, unresolved
+    // capability.
     await asStaff(
       'post',
       b.key,
       b.tenantId,
-      `/admin/orders/${accepted}/advance`,
-      {
-        locationId: b.locationId,
-        expectedStatus: 'ACCEPTED',
-      },
-    ).expect(201);
-    expect(
-      (await prisma.order.findUniqueOrThrow({ where: { id: accepted } }))
-        .status,
-    ).toBe('PREPARING');
-
-    // A RECEIVED order is not accepted now (that would be a new sale).
-    expect(
-      (
-        await asStaff(
-          'post',
-          b.key,
-          b.tenantId,
-          `/admin/orders/${received}/advance`,
-          {
-            locationId: b.locationId,
-            expectedStatus: 'RECEIVED',
-          },
-        ).expect(403)
-      ).body,
-    ).toMatchObject({ code: 'BUSINESS_BILLING_SUSPENDED' });
-    expect(
-      (await prisma.order.findUniqueOrThrow({ where: { id: received } }))
-        .status,
-    ).toBe('RECEIVED');
-
-    // Refunds/reversals pass the wind-down gate but stay behind the existing
-    // order-closure workflow, which remains disabled (404).
-    await asStaff(
-      'post',
-      b.key,
-      b.tenantId,
-      `/admin/orders/${received}/reject`,
-      {
-        locationId: b.locationId,
-        reasonCode: 'OUT_OF_STOCK',
-      },
+      `/admin/orders/${unpaidReceived}/reject`,
+      { locationId: b.locationId, reasonCode: 'OUT_OF_STOCK' },
     ).expect(404);
 
-    // Billing is readable; payment recovery is SC3c-2.
+    // Billing is readable; payment recovery is SC3c-2. Everything else: no.
     await asStaff('get', b.key, b.tenantId, '/admin/billing').expect(200);
     for (const [method, path] of [
       ['post', '/admin/billing/checkout'],
@@ -640,6 +655,34 @@ describe('SC3c-1 billing enforcement (integration, scratch database)', () => {
         (await asStaff(method, b.key, b.tenantId, path, {}).expect(403)).body,
       ).toMatchObject({ code: 'BUSINESS_BILLING_SUSPENDED' });
     }
+  });
+
+  it('the paid-order exception never applies to a SECURITY suspension or across businesses', async () => {
+    // SECURITY: staff cannot reach the order at all.
+    const sec = await business('wind-security', authorized());
+    const secOrder = await order(sec, 'RECEIVED');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await platform(`/tenants/${sec.tenantId}/suspend`, {
+      reason: 'SECURITY',
+    }).expect(200);
+    await advance(sec, secOrder, 'RECEIVED').expect(403);
+    expect(await statusOf(secOrder)).toBe('RECEIVED');
+
+    // Another business's paid order: unreachable from a wind-down session,
+    // by its location (not authorized) or by this business's own location
+    // (not found).
+    const a = await business('wind-cross-a', authorized());
+    const z = await business('wind-cross-z', authorized());
+    const zOrder = await order(z, 'RECEIVED');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await platform(`/tenants/${a.tenantId}/suspend`, {
+      reason: 'BILLING',
+    }).expect(200);
+    await advance(a, zOrder, 'RECEIVED', z.locationId).expect(403);
+    await advance(a, zOrder, 'RECEIVED', a.locationId).expect(404);
+    // Naming the other business itself: not a member (generic refusal).
+    await advance(a, zOrder, 'RECEIVED', z.locationId, z.tenantId).expect(403);
+    expect(await statusOf(zOrder)).toBe('RECEIVED');
   });
 
   // --- Security precedence ---------------------------------------------------

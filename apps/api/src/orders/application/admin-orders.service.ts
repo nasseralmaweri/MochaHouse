@@ -1,13 +1,15 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type {
-  OrderStatus,
-  StoreOrderDetail,
-  StoreOrderSummary,
+import {
+  BUSINESS_BILLING_SUSPENDED,
+  type OrderStatus,
+  type StoreOrderDetail,
+  type StoreOrderSummary,
 } from '@mocha-house/contracts';
 import {
   ACTIVE_ORDER_STATUSES,
@@ -163,12 +165,50 @@ export class AdminOrdersService {
   // The order must belong to it (an order in another tenant is reported
   // exactly like a missing one), and the status-history row and any
   // outbox event written here copy the order's own tenant.
+  // SC3c-1 — when the business's CURRENT billing suspension began: the
+  // latest of billing enforcement suspending it (subscription history) and
+  // an operator suspending it for BILLING (platform audit). Null when no
+  // record exists (the caller then refuses).
+  private async billingSuspensionStartedAt(
+    tenantId: string,
+  ): Promise<Date | null> {
+    const [enforced, operator] = await Promise.all([
+      this.prisma.tenantSubscriptionEvent.findFirst({
+        where: {
+          type: 'BILLING_SUSPENDED',
+          subscription: { subscriberTenantId: tenantId },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      }),
+      this.prisma.platformAuditEvent.findFirst({
+        where: {
+          action: 'platform.tenant.suspended',
+          outcome: 'SUCCEEDED',
+          targetType: 'tenant',
+          targetId: tenantId,
+          reasonCode: 'BILLING',
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      }),
+    ]);
+    const times = [enforced?.createdAt, operator?.createdAt].filter(
+      (t): t is Date => t instanceof Date,
+    );
+    return times.length === 0
+      ? null
+      : new Date(Math.max(...times.map((t) => t.getTime())));
+  }
+
   async advance(
     orderId: string,
     locationId: string,
     expectedStatus: string,
     authorization: AuthorizationContext,
     tenant: TenantContext,
+    // SC3c-1 — the request comes from a business's billing wind-down.
+    billingWindDown = false,
   ): Promise<{ orderId: string; status: OrderStatus; advanced: boolean }> {
     if (typeof locationId !== 'string' || locationId.trim().length === 0) {
       throw new BadRequestException('locationId is required.');
@@ -185,7 +225,14 @@ export class AdminOrdersService {
 
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      select: { id: true, locationId: true, status: true, tenantId: true },
+      select: {
+        id: true,
+        locationId: true,
+        status: true,
+        tenantId: true,
+        createdAt: true,
+        paymentAttempt: { select: { status: true } },
+      },
     });
 
     // ...then the persisted cross-check: the order must actually belong to
@@ -200,6 +247,28 @@ export class AdminOrdersService {
       tenant,
       'Order not found for this location.',
     );
+
+    // SC3c-1 — during a billing wind-down an order is accepted (RECEIVED ->
+    // ACCEPTED) only if it was PAID and placed BEFORE the business's billing
+    // suspension began: finishing a sale already made, never a new one. All
+    // the usual checks above and below still apply. Fail closed: unpaid, or
+    // placed at/after the suspension, or no record of when it began.
+    if (billingWindDown && expectedStatus === 'RECEIVED') {
+      const suspendedAt = await this.billingSuspensionStartedAt(tenantId);
+      if (
+        order.paymentAttempt.status !== 'SUCCEEDED' ||
+        suspendedAt === null ||
+        order.createdAt >= suspendedAt
+      ) {
+        throw new ForbiddenException({
+          statusCode: 403,
+          error: 'Forbidden',
+          code: BUSINESS_BILLING_SUSPENDED,
+          message:
+            'This business is suspended for billing: only orders paid before the suspension can be accepted.',
+        });
+      }
+    }
 
     if (order.status !== expectedStatus) {
       // The caller's view is stale. If the order is sitting exactly where

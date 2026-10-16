@@ -1,7 +1,6 @@
 import {
   Body,
   Controller,
-  ForbiddenException,
   Get,
   Param,
   Post,
@@ -9,11 +8,10 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import {
-  BUSINESS_BILLING_SUSPENDED,
-  type AdvanceOrderStatusRequest,
-  type CancelOrderRequest,
-  type RejectOrderRequest,
+import type {
+  AdvanceOrderStatusRequest,
+  CancelOrderRequest,
+  RejectOrderRequest,
 } from '@mocha-house/contracts';
 import type { TenantContext } from '@mocha-house/database';
 import { AdminOrdersService } from '../application/admin-orders.service';
@@ -125,9 +123,11 @@ export class AdminOrdersController {
     );
   }
 
-  // SC3c-1 — during a billing wind-down only orders the business already
-  // ACCEPTED may be moved on (to completion); a RECEIVED order is not
-  // accepted then (that would be a new sale).
+  // SC3c-1 — during a billing wind-down orders the business already took
+  // may be fulfilled: an ACCEPTED order moves on to completion, and a
+  // RECEIVED order is accepted only if it was paid before the suspension
+  // (checked in the service). New orders cannot arrive (the storefront is
+  // suspended).
   @AllowDuringBillingWindDown()
   @RequirePermission('orders.manage_status')
   @Post(':orderId/advance')
@@ -137,24 +137,13 @@ export class AdminOrdersController {
     @Req() request: InternalAuthenticatedRequest,
     @CurrentTenantContext() tenant: TenantContext,
   ) {
-    if (
-      request.internalBusinessAccess === 'BILLING_WIND_DOWN' &&
-      body?.expectedStatus === 'RECEIVED'
-    ) {
-      throw new ForbiddenException({
-        statusCode: 403,
-        error: 'Forbidden',
-        code: BUSINESS_BILLING_SUSPENDED,
-        message:
-          'This business is suspended for billing: new orders cannot be accepted. Orders already accepted can still be completed.',
-      });
-    }
     return this.adminOrdersService.advance(
       orderId,
       body.locationId,
       body.expectedStatus,
       request.authorization!,
       tenant,
+      request.internalBusinessAccess === 'BILLING_WIND_DOWN',
     );
   }
 }
