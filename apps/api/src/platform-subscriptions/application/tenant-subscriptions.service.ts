@@ -7,6 +7,7 @@ import {
   PLATFORM_ADDON_IN_PLAN,
   PLATFORM_NO_SUBSCRIPTION,
   PLATFORM_PLAN_VERSION_NOT_PUBLISHED,
+  PLATFORM_SUBSCRIPTION_BILLED,
   isOptionalModuleKey,
   type OptionalModuleKey,
   type PlatformSubscriptionChangeResponse,
@@ -114,6 +115,7 @@ function view(
     subscription: {
       id: row.id,
       status: row.status,
+      billingMode: row.billingMode,
       startedAt: row.startedAt.toISOString(),
       plan: {
         id: row.planVersion.plan.id,
@@ -139,6 +141,15 @@ function view(
           : null,
     })),
   };
+}
+
+// SC3a — paid modules follow confirmed payment (E8): a BILLED subscription
+// is never changed directly here.
+function billedConflict() {
+  return conflict(
+    PLATFORM_SUBSCRIPTION_BILLED,
+    'This business is billed: its plan and add-ons change through billing.',
+  );
 }
 
 @Injectable()
@@ -204,6 +215,7 @@ export class TenantSubscriptionsService {
         const existing = await tx.tenantSubscription.findUnique({
           where: { subscriberTenantId: tenantId },
         });
+        if (existing?.billingMode === 'BILLED') throw billedConflict();
         if (existing?.planVersionId === version.id) {
           return {
             ...view(tenantId, await this.load(tx, tenantId)),
@@ -269,6 +281,7 @@ export class TenantSubscriptionsService {
     try {
       return await runSerializable(this.prisma, async (tx) => {
         const subscription = await this.requireSubscription(tx, tenantId);
+        if (subscription.billingMode === 'BILLED') throw billedConflict();
         if (subscription.planVersion.moduleKeys.includes(moduleKey)) {
           throw conflict(
             PLATFORM_ADDON_IN_PLAN,
@@ -321,6 +334,7 @@ export class TenantSubscriptionsService {
   ): Promise<PlatformSubscriptionChangeResponse> {
     return runSerializable(this.prisma, async (tx) => {
       const subscription = await this.requireSubscription(tx, tenantId);
+      if (subscription.billingMode === 'BILLED') throw billedConflict();
       const removed = await tx.tenantModuleGrant.deleteMany({
         where: { subscriptionId: subscription.id, moduleKey },
       });

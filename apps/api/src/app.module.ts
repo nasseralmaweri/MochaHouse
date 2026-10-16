@@ -32,6 +32,7 @@ import { PlatformAuthModule } from './platform-auth/platform-auth.module';
 import { PlatformTenantsModule } from './platform-tenants/platform-tenants.module';
 import { PlatformSubscriptionsModule } from './platform-subscriptions/platform-subscriptions.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
+import { SaasBillingModule } from './saas-billing/saas-billing.module';
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { SubscriptionsModule } from './subscriptions/subscriptions.module';
     ReportsModule,
     NotificationsModule,
     SubscriptionsModule,
+    SaasBillingModule,
     // SC1a — CENTERIVO platform operators (/api/v1/platform/*), outside
     // every tenant boundary.
     PlatformAuthModule,

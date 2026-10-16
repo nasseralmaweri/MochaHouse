@@ -342,6 +342,23 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     scope: 'platform',
     note: 'SC2a — stop offering a version; audited.',
   },
+  // SC3a — SaaS list prices and billing policy (recent sign-in for changes).
+  'POST /api/v1/platform/plans/:planId/prices': {
+    scope: 'platform',
+    note: 'SC3a — a new list price (archives the previous one); audited.',
+  },
+  'POST /api/v1/platform/plans/:planId/prices/:priceId/archive': {
+    scope: 'platform',
+    note: 'SC3a — stop offering a price (subscribers keep it); audited.',
+  },
+  'GET /api/v1/platform/billing/policy': {
+    scope: 'platform',
+    note: 'SC3a — trial and grace-period settings.',
+  },
+  'PUT /api/v1/platform/billing/policy': {
+    scope: 'platform',
+    note: 'SC3a — change trial and grace-period settings; audited.',
+  },
   'GET /api/v1/platform/tenants/:tenantId/subscription': {
     scope: 'platform',
     note: "SC2a — a business's plan, add-ons, effective modules and history.",

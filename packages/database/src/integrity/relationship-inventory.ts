@@ -36,6 +36,10 @@ export type TenantOwnedModel = Exclude<
   | 'TenantSubscription'
   | 'TenantModuleGrant'
   | 'TenantSubscriptionEvent'
+  | 'SubscriptionPlanPrice'
+  | 'BillingPolicy'
+  | 'BillingTrialClaim'
+  | 'BillingProviderEvent'
 >;
 
 export type ReferentialAction = 'Cascade' | 'Restrict' | 'SetNull' | 'NoAction';

@@ -69,6 +69,11 @@ describe('Tenant query audit (report-only)', () => {
           'TenantSubscription',
           'TenantModuleGrant',
           'TenantSubscriptionEvent',
+          // SC3a
+          'SubscriptionPlanPrice',
+          'BillingPolicy',
+          'BillingTrialClaim',
+          'BillingProviderEvent',
         ].sort(),
       );
     });

@@ -920,6 +920,7 @@ export declare const PLATFORM_PLAN_VERSION_NOT_DRAFT = "PLAN_VERSION_NOT_DRAFT";
 export declare const PLATFORM_PLAN_VERSION_NOT_PUBLISHED = "PLAN_VERSION_NOT_PUBLISHED";
 export declare const PLATFORM_NO_SUBSCRIPTION = "NO_SUBSCRIPTION";
 export declare const PLATFORM_ADDON_IN_PLAN = "ADDON_IN_PLAN";
+export declare const PLATFORM_SUBSCRIPTION_BILLED = "SUBSCRIPTION_BILLED";
 export interface PlatformPlanVersion {
     id: string;
     version: number;
@@ -929,12 +930,44 @@ export interface PlatformPlanVersion {
     retiredAt: string | null;
     subscriberCount: number;
 }
+export type PlatformBillingInterval = "MONTH" | "YEAR";
+export type PlatformPlanPriceStatus = "ACTIVE" | "ARCHIVED";
+export interface PlatformPlanPrice {
+    id: string;
+    interval: PlatformBillingInterval;
+    currency: string;
+    amountMinorUnits: number;
+    status: PlatformPlanPriceStatus;
+    createdAt: string;
+    archivedAt: string | null;
+    subscriberCount: number;
+}
 export interface PlatformPlan {
     id: string;
     key: string;
     name: string;
     description: string | null;
     versions: PlatformPlanVersion[];
+    prices: PlatformPlanPrice[];
+}
+export declare const PLATFORM_PRICE_NOT_ACTIVE = "PRICE_NOT_ACTIVE";
+export declare const PLATFORM_NO_MONTHLY_PRICE = "NO_MONTHLY_PRICE";
+export interface PlatformPlanPriceCreateRequest {
+    interval: PlatformBillingInterval;
+    currency?: string;
+    amountMinorUnits?: number;
+    annualDiscountBasisPoints?: number;
+}
+export interface PlatformBillingPolicy {
+    trialDays: number;
+    trialRequiresPaymentMethod: boolean;
+    gracePeriodDays: number;
+    updatedAt: string;
+}
+export interface PlatformBillingPolicyUpdateRequest {
+    trialDays: number;
+    trialRequiresPaymentMethod: boolean;
+    gracePeriodDays: number;
 }
 export interface PlatformPlanListResponse {
     plans: PlatformPlan[];
@@ -951,10 +984,13 @@ export interface PlatformPlanCreateRequest {
 export interface PlatformPlanVersionModulesRequest {
     moduleKeys: OptionalModuleKey[];
 }
-export type PlatformSubscriptionEventType = "PLAN_ASSIGNED" | "PLAN_CHANGED" | "ADDON_GRANTED" | "ADDON_REVOKED";
+export type PlatformSubscriptionEventType = "PLAN_ASSIGNED" | "PLAN_CHANGED" | "ADDON_GRANTED" | "ADDON_REVOKED" | "TRIAL_STARTED" | "PAYMENT_AUTHORIZED" | "PAYMENT_SUCCEEDED" | "PAYMENT_FAILED" | "GRACE_EXPIRED" | "TRIAL_EXPIRED" | "CANCEL_SCHEDULED" | "CANCEL_UNDONE" | "CANCELED" | "PLAN_CHANGE_PENDING" | "PLAN_CHANGE_APPLIED" | "PLAN_CHANGE_ABANDONED";
+export type PlatformSubscriptionStatus = "ACTIVE" | "TRIALING" | "PAST_DUE" | "UNPAID" | "TRIAL_EXPIRED" | "CANCELED";
+export type PlatformBillingMode = "COMPLIMENTARY" | "BILLED";
 export interface PlatformTenantSubscription {
     id: string;
-    status: "ACTIVE" | "TRIALING";
+    status: PlatformSubscriptionStatus;
+    billingMode: PlatformBillingMode;
     startedAt: string;
     plan: {
         id: string;

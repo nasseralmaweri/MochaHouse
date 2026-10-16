@@ -169,12 +169,15 @@ model PlatformOperator {
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @updatedAt
 
-  auditEventsActed PlatformAuditEvent[] @relation("PlatformAuditEventActor")
+  auditEventsActed             PlatformAuditEvent[]          @relation("PlatformAuditEventActor")
   // SC1d — the businesses this operator provisioned.
   tenantProvisioningOperations TenantProvisioningOperation[] @relation("TenantProvisioningOperationActor")
   // SC2a — subscription changes this operator made.
-  tenantModuleGrants       TenantModuleGrant[]       @relation("TenantModuleGrantActor")
-  tenantSubscriptionEvents TenantSubscriptionEvent[] @relation("TenantSubscriptionEventActor")
+  tenantModuleGrants           TenantModuleGrant[]           @relation("TenantModuleGrantActor")
+  tenantSubscriptionEvents     TenantSubscriptionEvent[]     @relation("TenantSubscriptionEventActor")
+  // SC3a — prices and billing-policy changes this operator made.
+  subscriptionPlanPrices       SubscriptionPlanPrice[]       @relation("SubscriptionPlanPriceActor")
+  billingPolicies              BillingPolicy[]               @relation("BillingPolicyActor")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -207,8 +210,13 @@ model TenantProvisioningOperation {
 // most one current subscription (to one plan version) — the ONLY link from
 // platform subscription data to a business (a reviewed exception to the
 // tenancy guards) — plus add-on module grants and an append-only history.
-// Prices, billing intervals, trials and proration are deliberately absent;
-// they arrive with subscription billing as new columns or tables.
+// SC3a adds the subscription-billing foundation on the SAME tables: prices
+// (versioned independently of plan features), the billing lifecycle on
+// TenantSubscription, a platform billing policy, one-trial claims and a
+// durable, idempotent ledger of billing-provider events. SaaS billing is
+// entirely separate from a business's restaurant/customer payments: no table
+// here references PaymentAttempt, orders or refunds, and none of those
+// reference these.
 
 enum SubscriptionPlanVersionStatus {
   DRAFT
@@ -216,10 +224,18 @@ enum SubscriptionPlanVersionStatus {
   RETIRED
 }
 
-// Informational until billing exists; nothing enforces it in SC2a.
+// SC3a — the billing lifecycle of a subscription (see
+// apps/api/src/saas-billing/domain/billing-lifecycle.ts). A COMPLIMENTARY
+// subscription is always ACTIVE. CANCELED is a billing state, deliberately
+// separate from a business's administrative/security suspension
+// (Tenant.status / suspensionReason).
 enum TenantSubscriptionStatus {
   ACTIVE
   TRIALING
+  PAST_DUE
+  UNPAID
+  TRIAL_EXPIRED
+  CANCELED
 }
 
 enum TenantSubscriptionEventType {
@@ -227,6 +243,59 @@ enum TenantSubscriptionEventType {
   PLAN_CHANGED
   ADDON_GRANTED
   ADDON_REVOKED
+  // SC3a — billing lifecycle (each records fromStatus -> toStatus).
+  TRIAL_STARTED
+  PAYMENT_AUTHORIZED
+  PAYMENT_SUCCEEDED
+  PAYMENT_FAILED
+  GRACE_EXPIRED
+  TRIAL_EXPIRED
+  CANCEL_SCHEDULED
+  CANCEL_UNDONE
+  CANCELED
+  PLAN_CHANGE_PENDING
+  PLAN_CHANGE_APPLIED
+  PLAN_CHANGE_ABANDONED
+}
+
+// SC3a — who caused a subscription history entry.
+enum TenantSubscriptionEventSource {
+  OPERATOR
+  BILLING_PROVIDER
+  SYSTEM
+}
+
+// SC3a — COMPLIMENTARY: never billed (Founding businesses, owner decision
+// E3). BILLED: billed through the SaaS billing provider.
+enum TenantBillingMode {
+  COMPLIMENTARY
+  BILLED
+}
+
+enum SubscriptionBillingInterval {
+  MONTH
+  YEAR
+}
+
+// A price row is never edited: a new price is a new row and the old one is
+// ARCHIVED (subscribers keep the price they agreed to).
+enum SubscriptionPlanPriceStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum TenantPlanChangeKind {
+  UPGRADE
+  DOWNGRADE
+}
+
+// SC3a — what happened to one billing-provider event (BillingProviderEvent).
+enum BillingProviderEventStatus {
+  RECEIVED
+  APPLIED
+  IGNORED
+  REJECTED
+  FAILED
 }
 
 model SubscriptionPlan {
@@ -239,6 +308,7 @@ model SubscriptionPlan {
   updatedAt   DateTime @updatedAt
 
   versions SubscriptionPlanVersion[]
+  prices   SubscriptionPlanPrice[]
 }
 
 model SubscriptionPlanVersion {
@@ -253,10 +323,11 @@ model SubscriptionPlanVersion {
   createdAt   DateTime                      @default(now())
   updatedAt   DateTime                      @updatedAt
 
-  plan          SubscriptionPlan          @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  subscriptions TenantSubscription[]
-  eventsFrom    TenantSubscriptionEvent[] @relation("TenantSubscriptionEventFrom")
-  eventsTo      TenantSubscriptionEvent[] @relation("TenantSubscriptionEventTo")
+  plan                 SubscriptionPlan          @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subscriptions        TenantSubscription[]
+  pendingSubscriptions TenantSubscription[]      @relation("TenantSubscriptionPendingPlanVersion")
+  eventsFrom           TenantSubscriptionEvent[] @relation("TenantSubscriptionEventFrom")
+  eventsTo             TenantSubscriptionEvent[] @relation("TenantSubscriptionEventTo")
 
   @@unique([planId, version])
   @@index([status])
@@ -269,18 +340,151 @@ model TenantSubscription {
   planVersionId          String
   status                 TenantSubscriptionStatus @default(ACTIVE)
   startedAt              DateTime                 @default(now())
-  // Reserved for subscription billing (always null in SC2a).
+  // The billing provider's ids for this subscription and its customer (null
+  // while COMPLIMENTARY). A billing event is matched to a business ONLY
+  // through these stored ids — never through event metadata.
   billingProvider        String?
   externalSubscriptionId String?
+  externalCustomerId     String?
   createdAt              DateTime                 @default(now())
   updatedAt              DateTime                 @updatedAt
 
-  subscriberTenant Tenant                    @relation("TenantSubscriptionSubscriber", fields: [subscriberTenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  planVersion      SubscriptionPlanVersion   @relation(fields: [planVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  moduleGrants     TenantModuleGrant[]
-  events           TenantSubscriptionEvent[]
+  // --- SC3a billing lifecycle (null / defaults while COMPLIMENTARY) ------
+  billingMode                  TenantBillingMode     @default(COMPLIMENTARY)
+  // The price this business agreed to. Kept when the plan's list price
+  // changes (grandfathered) until its terms are explicitly changed.
+  planPriceId                  String?
+  // When the business authorized recurring charges (an automatic payment
+  // method on file). Nothing is ever charged without it.
+  recurringPaymentAuthorizedAt DateTime?
+  trialStartedAt               DateTime?
+  trialEndsAt                  DateTime?
+  trialRequiresPaymentMethod   Boolean?
+  currentPeriodStart           DateTime?
+  currentPeriodEnd             DateTime?
+  // The first failed payment of the current delinquency and the end of its
+  // grace period (fixed at that first failure; never extended).
+  pastDueAt                    DateTime?
+  graceEndsAt                  DateTime?
+  cancelAtPeriodEnd            Boolean               @default(false)
+  canceledAt                   DateTime?
+  // A plan change waiting to take effect: an upgrade waits for confirmed
+  // payment of pendingChangeReference; a downgrade for pendingEffectiveAt.
+  pendingChangeKind            TenantPlanChangeKind?
+  pendingPlanVersionId         String?
+  pendingPlanPriceId           String?
+  pendingChangeReference       String?
+  pendingEffectiveAt           DateTime?
+  // The newest billing-provider event applied (out-of-order protection) and
+  // a counter for compare-and-set writes.
+  lastBillingEventAt           DateTime?
+  billingStateVersion          Int                   @default(0)
 
+  subscriberTenant   Tenant                    @relation("TenantSubscriptionSubscriber", fields: [subscriberTenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  planVersion        SubscriptionPlanVersion   @relation(fields: [planVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  planPrice          SubscriptionPlanPrice?    @relation("TenantSubscriptionPlanPrice", fields: [planPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  pendingPlanVersion SubscriptionPlanVersion?  @relation("TenantSubscriptionPendingPlanVersion", fields: [pendingPlanVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  pendingPlanPrice   SubscriptionPlanPrice?    @relation("TenantSubscriptionPendingPlanPrice", fields: [pendingPlanPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  moduleGrants       TenantModuleGrant[]
+  events             TenantSubscriptionEvent[]
+  trialClaim         BillingTrialClaim?
+  billingEvents      BillingProviderEvent[]
+
+  @@unique([billingProvider, externalSubscriptionId])
+  @@unique([billingProvider, externalCustomerId])
   @@index([planVersionId])
+  @@index([planPriceId])
+  @@index([pendingPlanVersionId])
+  @@index([pendingPlanPriceId])
+}
+
+// SC3a — a plan's list price for one billing interval and currency, versioned
+// independently of the plan's features: a new price is a new row and the
+// previous one is ARCHIVED (database trigger: an amount never changes and a
+// price is never deleted). At most one ACTIVE price per plan, interval and
+// currency (partial unique index). An annual price is its own amount — any
+// annual discount is configured, never hard-coded.
+model SubscriptionPlanPrice {
+  id                      String                      @id @default(uuid(7))
+  planId                  String
+  interval                SubscriptionBillingInterval
+  currency                String
+  amountMinorUnits        Int
+  status                  SubscriptionPlanPriceStatus @default(ACTIVE)
+  // The billing provider's price id (set when the price is synced; SC3b).
+  externalPriceId         String?                     @unique
+  actorPlatformOperatorId String?
+  createdAt               DateTime                    @default(now())
+  archivedAt              DateTime?
+
+  plan                  SubscriptionPlan          @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actorPlatformOperator PlatformOperator?         @relation("SubscriptionPlanPriceActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subscriptions         TenantSubscription[]      @relation("TenantSubscriptionPlanPrice")
+  pendingSubscriptions  TenantSubscription[]      @relation("TenantSubscriptionPendingPlanPrice")
+  events                TenantSubscriptionEvent[]
+
+  @@index([planId, status])
+}
+
+// SC3a — the platform billing policy: ONE row (id "default"). Read when a
+// trial or a delinquency starts and copied onto the subscription
+// (trialEndsAt / graceEndsAt), so a later policy change never alters a trial
+// or grace period already running.
+model BillingPolicy {
+  id                         String   @id
+  trialDays                  Int
+  trialRequiresPaymentMethod Boolean
+  gracePeriodDays            Int
+  actorPlatformOperatorId    String?
+  updatedAt                  DateTime @updatedAt
+
+  actorPlatformOperator PlatformOperator? @relation("BillingPolicyActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+}
+
+// SC3a — repeated-trial protection, append-only (database trigger): one trial
+// per business (subscriptionId unique) and one per owner email across
+// businesses (claimKey: a SHA-256 digest of the normalized owner email, so
+// the address itself is not copied here).
+model BillingTrialClaim {
+  id             String   @id @default(uuid(7))
+  subscriptionId String   @unique
+  claimKey       String   @unique
+  createdAt      DateTime @default(now())
+
+  subscription TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+}
+
+// SC3a — the durable ledger of billing-provider events. Delivery is
+// at-least-once, possibly delayed and out of order: an event is recorded
+// FIRST (unique per provider event id, so a redelivery is a no-op) and its
+// effect is applied at most once. Identity columns never change and rows
+// are never deleted (database trigger); only the processing outcome moves.
+// No card data and no raw payload are kept (payloadDigest is a SHA-256).
+model BillingProviderEvent {
+  id                     String                     @id @default(uuid(7))
+  provider               String
+  externalEventId        String
+  type                   String
+  livemode               Boolean
+  occurredAt             DateTime
+  receivedAt             DateTime                   @default(now())
+  payloadDigest          String
+  externalSubscriptionId String?
+  externalCustomerId     String?
+  // The subscription this event matched through OUR stored provider ids
+  // (null when it matched none).
+  subscriptionId         String?
+  status                 BillingProviderEventStatus @default(RECEIVED)
+  outcome                String?
+  processedAt            DateTime?
+  attempts               Int                        @default(0)
+
+  subscription TenantSubscription?       @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  historyItems TenantSubscriptionEvent[]
+
+  @@unique([provider, externalEventId])
+  @@index([subscriptionId, occurredAt])
+  @@index([status, receivedAt])
 }
 
 // An add-on: one optional module granted to one business beyond its plan.
@@ -300,21 +504,31 @@ model TenantModuleGrant {
 // Append-only (database trigger): every assignment, plan change and add-on
 // grant or revocation, for the record and for future billing.
 model TenantSubscriptionEvent {
-  id                      String                      @id @default(uuid(7))
+  id                      String                        @id @default(uuid(7))
   subscriptionId          String
   type                    TenantSubscriptionEventType
   fromPlanVersionId       String?
   toPlanVersionId         String?
   moduleKey               String?
   actorPlatformOperatorId String?
-  createdAt               DateTime                    @default(now())
+  createdAt               DateTime                      @default(now())
+  // SC3a — billing lifecycle history.
+  source                  TenantSubscriptionEventSource @default(OPERATOR)
+  fromStatus              TenantSubscriptionStatus?
+  toStatus                TenantSubscriptionStatus?
+  planPriceId             String?
+  billingProviderEventId  String?
 
   subscription          TenantSubscription       @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   fromPlanVersion       SubscriptionPlanVersion? @relation("TenantSubscriptionEventFrom", fields: [fromPlanVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   toPlanVersion         SubscriptionPlanVersion? @relation("TenantSubscriptionEventTo", fields: [toPlanVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   actorPlatformOperator PlatformOperator?        @relation("TenantSubscriptionEventActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  planPrice             SubscriptionPlanPrice?   @relation(fields: [planPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  billingProviderEvent  BillingProviderEvent?    @relation(fields: [billingProviderEventId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([subscriptionId, createdAt])
+  @@index([planPriceId])
+  @@index([billingProviderEventId])
 }
 
 enum PlatformAuditOutcome {
@@ -849,18 +1063,18 @@ model PaymentAttempt {
   // (migration 20260910..._harden_gift_card_purchase_recovery) reject any
   // insert OR update whose paymentAttemptId is already claimed by the other
   // table — declarative cross-table enforcement, not programmer convention.
-  order            Order?
+  order              Order?
   reconciliationCase PaymentReconciliationCase?
   // R1 / S5a — at most one refund obligation, through its Order.
-  refundObligations OrderRefundObligation[]
+  refundObligations  OrderRefundObligation[]
   // Security 4C-3 — the checkout location, now a composite foreign key: a
   // payment attempt can only name a Location of its own business. Locations
   // are never deleted while a payment references them (Restrict, like
   // Order.location): payment history is audit data, so such a location is
   // deactivated (isActive = false), never hard-deleted. A gift-card purchase
   // still leaves it null.
-  location         Location?         @relation(fields: [tenantId, locationId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
-  giftCardPurchase GiftCardPurchase?
+  location           Location?                  @relation(fields: [tenantId, locationId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  giftCardPurchase   GiftCardPurchase?
 
   // Milestone S0D-1 / S0D-2C-1 — the owning tenant. REQUIRED since
   // S0D-2C-1: a checkout attempt takes the tenant of its server-validated
@@ -1072,9 +1286,9 @@ model Order {
 //     refund obligation exists exactly when refundDueMinorUnits > 0, with the
 //     same amount (so the summary can never disagree with the obligation).
 model OrderClosure {
-  id                         String   @id @default(uuid(7))
-  orderId                    String   @unique
-  order                      Order    @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  id                         String       @id @default(uuid(7))
+  orderId                    String       @unique
+  order                      Order        @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   // REJECTED | CANCELLED (CHECK). Equals Order.status of a closed order.
   kind                       String
   // The status the order held when it was closed: RECEIVED for a rejection,
@@ -1086,10 +1300,10 @@ model OrderClosure {
   note                       String?
   actorInternalUserId        String
   actor                      InternalUser @relation("OrderClosureActor", fields: [tenantId, actorInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
-  refundDueMinorUnits        Int      @default(0)
-  giftCardRestoredMinorUnits Int      @default(0)
-  loyaltyShortfallBeans      Int      @default(0)
-  createdAt                  DateTime @default(now())
+  refundDueMinorUnits        Int          @default(0)
+  giftCardRestoredMinorUnits Int          @default(0)
+  loyaltyShortfallBeans      Int          @default(0)
+  createdAt                  DateTime     @default(now())
 
   refundObligation OrderRefundObligation?
 
@@ -1271,10 +1485,10 @@ model OutboxEvent {
   // Event-specific staleness: NULL = never goes stale. S4b decides per
   // eventType whether to set it (and how long it lasts); there is no global
   // cut-off in the schema.
-  expiresAt     DateTime?
-  lastErrorCode String?
-  lastError     String?
-  failedAt      DateTime?
+  expiresAt      DateTime?
+  lastErrorCode  String?
+  lastError      String?
+  failedAt       DateTime?
 
   // Milestone 8H — the worker's notification dispatch is one more consumer
   // of this same row (see NotificationDelivery below); this relation is
@@ -1332,7 +1546,7 @@ model NotificationDelivery {
   // a retry of an ambiguous attempt sets possibleDuplicate. Unused until S4b.
   // CHECK (migration): possibleDuplicate requires sendStartedAt.
   sendStartedAt     DateTime?
-  possibleDuplicate Boolean                    @default(false)
+  possibleDuplicate Boolean   @default(false)
 
   // Milestone S0D-1 / S0D-2C-2 — the owning tenant. REQUIRED since
   // S0D-2C-2: copied from the triggering OutboxEvent's own tenantId (the

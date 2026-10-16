@@ -40,6 +40,11 @@ export const PLATFORM_AUDIT_ACTIONS = {
   tenantSubscriptionChanged: 'platform.tenant.subscription_changed',
   tenantAddonGranted: 'platform.tenant.addon_granted',
   tenantAddonRevoked: 'platform.tenant.addon_revoked',
+  // SC3a — list prices (target: the plan) and the platform-wide billing
+  // policy (no target: there is one).
+  planPriceCreated: 'platform.plan.price_created',
+  planPriceArchived: 'platform.plan.price_archived',
+  billingPolicyUpdated: 'platform.billing.policy_updated',
 } as const;
 
 @Injectable()

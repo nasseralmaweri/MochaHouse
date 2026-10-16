@@ -149,7 +149,13 @@ describe('SC2a subscription plans foundation migration (scratch database)', () =
       'sc2a_rollback',
     );
     try {
-      await applyMigrations(fresh.url, listMigrations(MIGRATIONS));
+      // Only through this migration: later ones (SC3a) build on these tables
+      // and are rolled back first.
+      const all = listMigrations(MIGRATIONS);
+      await applyMigrations(
+        fresh.url,
+        all.slice(0, all.findIndex((m) => m.name === THIS) + 1),
+      );
       await applyMigrationSql(fresh.url, readFileSync(ROLLBACK, 'utf8'));
       const table = await withScratchClient(
         fresh.url,

@@ -76,6 +76,8 @@ export const SUBSCRIPTION_MESSAGES = {
   notPublished: "Only a published plan version can be assigned or retired.",
   noSubscription: "This business has no subscription yet. Assign a plan first.",
   addonInPlan: "That module is already in the business's plan.",
+  // SC3a — a billed business changes plan only through billing.
+  billed: "This business is billed: its plan and add-ons change through billing. Nothing was changed.",
   tooMany: "Too many changes. Wait a few minutes, then try again.",
   unavailable: "The change could not be made right now. Nothing was changed. Try again in a moment.",
 } as const;
@@ -87,6 +89,7 @@ const CONFLICTS: Record<string, string> = {
   PLAN_VERSION_NOT_PUBLISHED: SUBSCRIPTION_MESSAGES.notPublished,
   NO_SUBSCRIPTION: SUBSCRIPTION_MESSAGES.noSubscription,
   ADDON_IN_PLAN: SUBSCRIPTION_MESSAGES.addonInPlan,
+  SUBSCRIPTION_BILLED: SUBSCRIPTION_MESSAGES.billed,
 };
 
 export type ChangeOutcome<T> =

@@ -55,9 +55,14 @@ function isUniqueViolation(error: unknown): boolean {
 
 type Tx = Prisma.TransactionClient;
 
-const PLAN_INCLUDE = {
+export const PLAN_INCLUDE = {
   versions: {
     orderBy: { version: 'desc' },
+    include: { _count: { select: { subscriptions: true } } },
+  },
+  // SC3a — list prices, newest first.
+  prices: {
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     include: { _count: { select: { subscriptions: true } } },
   },
 } as const satisfies Prisma.SubscriptionPlanInclude;
@@ -66,7 +71,7 @@ type PlanRow = Prisma.SubscriptionPlanGetPayload<{
   include: typeof PLAN_INCLUDE;
 }>;
 
-function toPlan(row: PlanRow): PlatformPlan {
+export function toPlan(row: PlanRow): PlatformPlan {
   return {
     id: row.id,
     key: row.key,
@@ -82,6 +87,16 @@ function toPlan(row: PlanRow): PlatformPlan {
       publishedAt: version.publishedAt?.toISOString() ?? null,
       retiredAt: version.retiredAt?.toISOString() ?? null,
       subscriberCount: version._count.subscriptions,
+    })),
+    prices: row.prices.map((price) => ({
+      id: price.id,
+      interval: price.interval,
+      currency: price.currency,
+      amountMinorUnits: price.amountMinorUnits,
+      status: price.status,
+      createdAt: price.createdAt.toISOString(),
+      archivedAt: price.archivedAt?.toISOString() ?? null,
+      subscriberCount: price._count.subscriptions,
     })),
   };
 }

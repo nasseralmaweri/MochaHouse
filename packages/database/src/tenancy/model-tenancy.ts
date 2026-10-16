@@ -34,6 +34,13 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     TenantSubscription: 'platform',
     TenantModuleGrant: 'platform',
     TenantSubscriptionEvent: 'platform',
+    // SC3a — SaaS billing: list prices, the billing policy, one-trial claims
+    // and the billing-provider event ledger. Reach a business only through
+    // TenantSubscription; nothing here touches restaurant payments.
+    SubscriptionPlanPrice: 'platform',
+    BillingPolicy: 'platform',
+    BillingTrialClaim: 'platform',
+    BillingProviderEvent: 'platform',
 
     // Catalog & locations
     Location: 'tenant',
