@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { InternalUserProfile } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
+import { findUnboundEmailMatches } from './unbound-email-match';
 import type {
   InternalIdentity,
   InternalUserRow,
@@ -35,7 +36,10 @@ export class InternalUsersService {
   //      externalSubject is still null — i.e. a user provisioned by email
   //      who has not authenticated before. The subject is bound only once
   //      the row is confirmed ACTIVE (below), so a non-ACTIVE user is never
-  //      mutated by an authentication attempt.
+  //      mutated by an authentication attempt. SC1d — the email comparison
+  //      ignores letter case, and two or more case-variant unbound rows in
+  //      this business are ambiguous: nothing binds (see
+  //      unbound-email-match.ts).
   //
   // Milestone S0D-2E / S0F — `tenantId` is the request's trusted active
   // business, chosen by InternalAuthGuard only after membership validation
@@ -103,13 +107,19 @@ export class InternalUsersService {
     if (!identity.email || identity.emailVerified !== true) {
       return null;
     }
+    const matches = await findUnboundEmailMatches(
+      this.prisma,
+      identity.provider,
+      identity.email,
+      tenantId,
+    );
+    // SC1d — exactly one case-insensitive match, or nothing (ambiguous rows
+    // are never chosen between).
+    if (matches.length !== 1) {
+      return null;
+    }
     return this.prisma.internalUser.findFirst({
-      where: {
-        externalProvider: identity.provider,
-        email: identity.email,
-        externalSubject: null,
-        tenantId,
-      },
+      where: { id: matches[0].id, tenantId, externalSubject: null },
     });
   }
 
@@ -127,9 +137,16 @@ export class InternalUsersService {
     // Security 4A — binding is compare-and-set: it only succeeds while the
     // row is still unbound, so two logins racing for the same invitation
     // can never overwrite one another's binding. The loser is "not-found".
+    // SC1d — the write re-checks the business and ACTIVE status too, so a
+    // row suspended (or moved) between the read and the bind never binds.
     if (shouldBindSubject) {
       const bound = await this.prisma.internalUser.updateMany({
-        where: { id: user.id, externalSubject: null },
+        where: {
+          id: user.id,
+          tenantId: user.tenantId,
+          status: 'ACTIVE',
+          externalSubject: null,
+        },
         data: {
           lastAuthenticatedAt: new Date(),
           externalSubject: identity.subject,

@@ -167,8 +167,31 @@ model PlatformOperator {
   updatedAt           DateTime               @updatedAt
 
   auditEventsActed PlatformAuditEvent[] @relation("PlatformAuditEventActor")
+  // SC1d — the businesses this operator provisioned.
+  tenantProvisioningOperations TenantProvisioningOperation[] @relation("TenantProvisioningOperationActor")
 
   @@unique([externalProvider, externalSubject])
+}
+
+// SC1d — one completed business provisioning, keyed by the operation's
+// idempotency key: a retry of the same operation (same key, same request)
+// returns the business it created; the same key with a different request is
+// a conflict. Written in the same transaction as the business, its roles,
+// its first owner and the audit event, so it exists exactly when they do.
+// Platform-plane (no tenantId): provisionedTenantId is a plain value, never
+// a foreign key to the business. Append-only (database trigger).
+model TenantProvisioningOperation {
+  id                      String   @id @default(uuid(7))
+  idempotencyKey          String   @unique
+  // SHA-256 (hex) of the normalised request; never the request itself.
+  requestHash             String
+  provisionedTenantId     String   @unique
+  actorPlatformOperatorId String
+  createdAt               DateTime @default(now())
+
+  actorPlatformOperator PlatformOperator @relation("TenantProvisioningOperationActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([actorPlatformOperatorId])
 }
 
 enum PlatformAuditOutcome {
@@ -195,6 +218,12 @@ model PlatformAuditEvent {
   identitySubject         String?
   // The server-assigned request id, when the event came from a request.
   requestReference        String?
+  // SC1d — what the event was about, when it was about one record (e.g.
+  // targetType "tenant", targetId the business's id). Both or neither. A
+  // plain value, never a foreign key: the platform trail holds no reference
+  // to a business record.
+  targetType              String?
+  targetId                String?
   createdAt               DateTime             @default(now())
 
   actorPlatformOperator PlatformOperator? @relation("PlatformAuditEventActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)

@@ -25,6 +25,8 @@ export const PLATFORM_AUDIT_ACTIONS = {
   // page view.
   sessionEstablished: 'platform.session.established',
   sessionEnded: 'platform.session.ended',
+  // SC1d — a business created by a platform operator (target: the tenant).
+  tenantProvisioned: 'platform.tenant.provisioned',
 } as const;
 
 @Injectable()

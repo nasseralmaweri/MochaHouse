@@ -847,6 +847,28 @@ export interface PlatformTenantLocationListResponse {
     pageSize: number;
     total: number;
 }
+export declare const PLATFORM_TENANT_SLUG_TAKEN = "SLUG_TAKEN";
+export declare const PLATFORM_IDEMPOTENCY_KEY_REUSED = "IDEMPOTENCY_KEY_REUSED";
+export interface PlatformTenantProvisionRequest {
+    name: string;
+    slug: string;
+    ownerEmail: string;
+    ownerDisplayName?: string | null;
+}
+export interface PlatformTenantProvisionResponse {
+    tenant: {
+        id: string;
+        slug: string;
+        name: string;
+        status: PlatformTenantStatus;
+        createdAt: string;
+    };
+    owner: {
+        email: string;
+        displayName: string | null;
+    };
+    replayed: boolean;
+}
 export type AdminUserLocationAccess = {
     kind: "all";
 } | {
@@ -984,6 +1006,15 @@ export interface AdminUpdateInternalUserStatusRequest {
 }
 export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "orders.cancel", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "notifications.routing.view", "notifications.routing.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide", "reports.view"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
+export interface BuiltInInternalRole {
+    key: string;
+    displayName: string;
+    description: string;
+    permissionKeys: readonly InternalPermissionKey[];
+}
+export declare const PLATFORM_ADMINISTRATOR_ROLE: BuiltInInternalRole;
+export declare const STORE_MANAGER_ROLE: BuiltInInternalRole;
+export declare const BUILT_IN_INTERNAL_ROLES: readonly BuiltInInternalRole[];
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
 export interface InternalPermissionMetadata {

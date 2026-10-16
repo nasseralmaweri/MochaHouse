@@ -57,7 +57,13 @@ describe('Tenant query audit (report-only)', () => {
       // SC1a — plus the CENTERIVO platform operators and their audit trail,
       // which belong to no tenant (pinned in tenant-relationship-inventory).
       expect(platform.sort()).toEqual(
-        ['PlatformAuditEvent', 'PlatformOperator', 'Tenant'].sort(),
+        [
+          'PlatformAuditEvent',
+          'PlatformOperator',
+          'Tenant',
+          // SC1d
+          'TenantProvisioningOperation',
+        ].sort(),
       );
     });
   });

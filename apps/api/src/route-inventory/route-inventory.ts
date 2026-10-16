@@ -295,6 +295,10 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   },
   // SC1c — the read-only tenant registry: business registry records and a
   // business's location summary; no customer, order or financial data.
+  'POST /api/v1/platform/tenants': {
+    scope: 'platform',
+    note: 'SC1d — provision a business: roles, first owner, audit; idempotent.',
+  },
   'GET /api/v1/platform/tenants': {
     scope: 'platform',
     note: 'SC1c — every business on the platform, searchable and paged.',

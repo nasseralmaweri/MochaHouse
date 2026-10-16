@@ -229,6 +229,9 @@ const GLOBAL_TABLES = [
   'Tenant',
   'PlatformOperator',
   'PlatformAuditEvent',
+  // SC1d — business provisioning records (platform-plane; no tenantId, and
+  // the business id they hold is a plain value, not a foreign key).
+  'TenantProvisioningOperation',
   '_prisma_migrations',
 ];
 

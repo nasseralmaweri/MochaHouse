@@ -1690,6 +1690,51 @@ export interface PlatformTenantLocationListResponse {
   total: number;
 }
 
+// --- CENTERIVO platform: business provisioning (SC1d) -------------------
+// POST /api/v1/platform/tenants, platform operators only, with an
+// `Idempotency-Key` header (a lowercase UUID, one per provisioning attempt).
+// Creates, in one transaction: the business (ACTIVE registry status — no
+// locations, ordering, payments, storefront or subscription), its built-in
+// staff roles, its first owner (an ACTIVE staff member bound to a login on
+// first sign-in with that VERIFIED email) and the platform audit event.
+//
+//   201  created
+//   200  replay: the same key and the same request by the same operator —
+//        the original result (`replayed: true`); nothing new is created
+//   400  invalid request or missing / malformed Idempotency-Key
+//   409  code SLUG_TAKEN — another business already uses the slug
+//   409  code IDEMPOTENCY_KEY_REUSED — the key was used for a different
+//        request (or by another operator)
+export const PLATFORM_TENANT_SLUG_TAKEN = "SLUG_TAKEN";
+export const PLATFORM_IDEMPOTENCY_KEY_REUSED = "IDEMPOTENCY_KEY_REUSED";
+
+export interface PlatformTenantProvisionRequest {
+  // 2–120 characters after trimming.
+  name: string;
+  // 3–50 characters: lowercase letters and digits in hyphen-separated words;
+  // a reserved slug (e.g. "admin", "api", "platform") is refused.
+  slug: string;
+  // Trimmed and lowercased before use.
+  ownerEmail: string;
+  ownerDisplayName?: string | null;
+}
+
+export interface PlatformTenantProvisionResponse {
+  tenant: {
+    id: string;
+    slug: string;
+    name: string;
+    status: PlatformTenantStatus;
+    createdAt: string;
+  };
+  owner: {
+    // The normalised (lowercase) address the owner must sign in with.
+    email: string;
+    displayName: string | null;
+  };
+  replayed: boolean;
+}
+
 // --- Admin: internal user access review (Milestone 5E-1) --------------
 // The business-facing read model for the Administration → Users screens.
 // Served only from `/api/v1/admin/internal-users*` (InternalAuthGuard +
@@ -2083,6 +2128,58 @@ export const INTERNAL_PERMISSION_KEYS = [
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
+
+// SC1d — the built-in staff roles every business starts with, defined ONCE
+// and used by both the seed (Tenant #1) and business provisioning, so the
+// two can never drift apart. Permission lists are copied into each business
+// when its role is created; later changes in the Administration area are
+// that business's own.
+export interface BuiltInInternalRole {
+  key: string;
+  displayName: string;
+  description: string;
+  permissionKeys: readonly InternalPermissionKey[];
+}
+
+// Every permission, at corporate scope: the business's full administrator
+// (and its first owner). Key kept for compatibility with Tenant #1.
+export const PLATFORM_ADMINISTRATOR_ROLE: BuiltInInternalRole = {
+  key: "platform-administrator",
+  displayName: "Platform Administrator",
+  description:
+    "Built-in role holding every internal permission. Granted at corporate scope for platform operators.",
+  permissionKeys: INTERNAL_PERMISSION_KEYS,
+};
+
+// Runs a location day to day: orders, online ordering, and location price /
+// availability for the locations it is assigned to. Deliberately no catalog
+// editing, menu composition, location editing, user / role administration
+// or gift-card administration (a CORPORATE-only HQ function).
+export const STORE_MANAGER_ROLE: BuiltInInternalRole = {
+  key: "store-manager",
+  displayName: "Store Manager",
+  description:
+    "Manages day-to-day orders, online ordering, prices and availability for assigned locations.",
+  permissionKeys: [
+    "locations.view",
+    "orders.view",
+    "orders.manage_status",
+    // R1 / S5b — reject or cancel an order at their locations. Inert while
+    // ORDER_CLOSURE_ENABLED is off.
+    "orders.cancel",
+    "catalog.overrides.manage",
+    "locations.manage_digital_ordering",
+    // Milestones 6A–6C — Store Operations for their locations.
+    "operations.view",
+    "operations.tasks.complete",
+    "operations.exceptions.manage",
+  ],
+};
+
+export const BUILT_IN_INTERNAL_ROLES: readonly BuiltInInternalRole[] = [
+  PLATFORM_ADMINISTRATOR_ROLE,
+  STORE_MANAGER_ROLE,
+];
 
 // Scope types the application currently supports operationally. The Prisma
 // enum mirrors exactly this set — additional organizational scope types

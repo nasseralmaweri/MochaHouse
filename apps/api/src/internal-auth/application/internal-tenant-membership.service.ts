@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import type { InternalBusinessSummary } from '@mocha-house/contracts';
+import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  findUnboundEmailMatches,
+  unambiguousByTenant,
+} from './unbound-email-match';
 import type { InternalIdentity } from '../infrastructure/internal-identity';
 
 // Milestone S0F — "which businesses may this authenticated human enter?"
@@ -17,7 +22,10 @@ import type { InternalIdentity } from '../infrastructure/internal-identity';
 // .resolveForAuthentication matches one inside a single tenant:
 //   1. (externalProvider, externalSubject) — the bound identity; or
 //   2. (externalProvider, email) with externalSubject still null — a row
-//      provisioned by email that has not authenticated yet.
+//      provisioned by email that has not authenticated yet. SC1d — matched
+//      ignoring letter case, by the same rule as sign-in; a business with
+//      two or more case-variant unbound rows is ambiguous and is NOT a
+//      membership (unless a subject-bound row there already wins).
 // Within one tenant the subject-bound row wins over an unbound email row,
 // again mirroring resolveForAuthentication, so the business list and the
 // per-request tenant decision can never disagree.
@@ -59,11 +67,7 @@ export class InternalTenantMembershipService {
   async findMemberships(
     identity: InternalIdentity,
   ): Promise<InternalTenantMembership[]> {
-    const matchers: Array<{
-      externalProvider: string;
-      externalSubject?: string | null;
-      email?: string;
-    }> = [];
+    const matchers: Prisma.InternalUserWhereInput[] = [];
     if (identity.subject) {
       matchers.push({
         externalProvider: identity.provider,
@@ -75,11 +79,17 @@ export class InternalTenantMembershipService {
     // merely claims someone's address could see (and then enter) a
     // business it was never invited to.
     if (identity.email && identity.emailVerified === true) {
-      matchers.push({
-        externalProvider: identity.provider,
-        email: identity.email,
-        externalSubject: null,
-      });
+      const unambiguous = unambiguousByTenant(
+        await findUnboundEmailMatches(
+          this.prisma,
+          identity.provider,
+          identity.email,
+          null,
+        ),
+      );
+      if (unambiguous.size > 0) {
+        matchers.push({ id: { in: [...unambiguous.values()] } });
+      }
     }
     if (matchers.length === 0) {
       return [];

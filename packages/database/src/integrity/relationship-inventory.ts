@@ -27,7 +27,10 @@ import type { Prisma } from '../generated/prisma/client';
 // which hold no tenantId and no reference to a business record.
 export type TenantOwnedModel = Exclude<
   Prisma.ModelName,
-  'Tenant' | 'PlatformOperator' | 'PlatformAuditEvent'
+  | 'Tenant'
+  | 'PlatformOperator'
+  | 'PlatformAuditEvent'
+  | 'TenantProvisioningOperation'
 >;
 
 export type ReferentialAction = 'Cascade' | 'Restrict' | 'SetNull' | 'NoAction';
