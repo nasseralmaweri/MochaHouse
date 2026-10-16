@@ -276,11 +276,22 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/auth/verification/resend': { scope: 'public-auth' },
   'POST /api/v1/auth/verify': { scope: 'public-auth' },
   'POST /api/v1/internal/auth/sign-in': { scope: 'public-auth' },
+  // SC1b — CENTERIVO platform-operator sign-in (dedicated platform pool,
+  // mandatory TOTP). Rate limited; never returns a token before MFA.
+  'POST /api/v1/platform/auth/sign-in': { scope: 'public-auth' },
+  'POST /api/v1/platform/auth/mfa': { scope: 'public-auth' },
+  'POST /api/v1/platform/auth/mfa-setup': { scope: 'public-auth' },
+  'POST /api/v1/platform/auth/mfa-setup/display': { scope: 'public-auth' },
+  'POST /api/v1/platform/auth/mfa-setup/verify': { scope: 'public-auth' },
   // --- Platform-only — CENTERIVO platform operators (SC1a). PlatformAuthGuard
   // only: no tenant, no tenant header, no tenant role.
   'GET /api/v1/platform/me': {
     scope: 'platform',
     note: 'The signed-in ACTIVE platform operator (dedicated platform pool).',
+  },
+  'POST /api/v1/platform/session/sign-out': {
+    scope: 'platform',
+    note: 'SC1b — records the end of the operator session.',
   },
   // --- Internal/system.
   'GET /': {

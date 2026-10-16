@@ -739,3 +739,27 @@ describe('platform-operator boundary (SC1a)', () => {
     },
   );
 });
+
+// SC1b — the dev platform sign-in's settings never reach production.
+describe('platform-operator sign-in (SC1b)', () => {
+  it.each([
+    'PLATFORM_AUTH_DEV_TOTP_SECRET',
+    'PLATFORM_AUTH_DEV_PASSWORD',
+    'PLATFORM_AUTH_DEV_MFA_ENROLLMENT',
+  ])('%s is refused in a production-like environment', (name) => {
+    expect(problems({ ...PRODUCTION, [name]: 'JBSWY3DPEHPK3PXP' })).toEqual([
+      `${name} must not be set in a production-like environment (NODE_ENV).`,
+    ]);
+  });
+
+  it('a local machine may set them', () => {
+    expect(
+      problems({
+        ...LOCAL,
+        PLATFORM_AUTH_DEV_TOTP_SECRET: 'JBSWY3DPEHPK3PXP',
+        PLATFORM_AUTH_DEV_PASSWORD: 'local-only-password',
+        PLATFORM_AUTH_DEV_MFA_ENROLLMENT: '1',
+      }),
+    ).toEqual([]);
+  });
+});

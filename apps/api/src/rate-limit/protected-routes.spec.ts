@@ -4,6 +4,7 @@ import { OptionalCustomerAuthGuard } from '../customer-auth/infrastructure/optio
 import { InternalAuthController } from '../internal-auth/api/internal-auth.controller';
 import { CheckoutRewardsController } from '../orders/api/checkout-rewards.controller';
 import { OrdersController } from '../orders/api/orders.controller';
+import { PlatformAuthController } from '../platform-auth/api/platform-auth.controller';
 import { RATE_LIMIT_POLICY_KEY } from './rate-limit.decorator';
 import { RateLimitGuard } from './rate-limit.guard';
 import type { PolicyName } from './rate-limit.config';
@@ -73,6 +74,28 @@ const PROTECTED: ReadonlyArray<{
     controller: InternalAuthController,
     method: 'signIn',
     policy: 'internal-sign-in',
+  },
+  // SC1b — CENTERIVO platform-operator sign-in and its MFA steps.
+  {
+    controller: PlatformAuthController,
+    method: 'start',
+    policy: 'platform-sign-in',
+  },
+  { controller: PlatformAuthController, method: 'mfa', policy: 'platform-mfa' },
+  {
+    controller: PlatformAuthController,
+    method: 'mfaSetup',
+    policy: 'platform-mfa',
+  },
+  {
+    controller: PlatformAuthController,
+    method: 'mfaSetupDisplay',
+    policy: 'platform-mfa',
+  },
+  {
+    controller: PlatformAuthController,
+    method: 'mfaSetupVerify',
+    policy: 'platform-mfa',
   },
 ];
 

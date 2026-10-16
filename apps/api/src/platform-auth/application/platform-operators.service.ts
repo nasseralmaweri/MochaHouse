@@ -21,7 +21,10 @@ export type PlatformOperatorResolution =
 
 export const PLATFORM_AUDIT_ACTIONS = {
   accessDenied: 'platform.access.denied',
-  sessionVerified: 'platform.session.verified',
+  // SC1b — audited once per sign-in (after MFA) and per sign-out, not per
+  // page view.
+  sessionEstablished: 'platform.session.established',
+  sessionEnded: 'platform.session.ended',
 } as const;
 
 @Injectable()
@@ -72,27 +75,26 @@ export class PlatformOperatorsService {
     });
   }
 
-  // GET /api/v1/platform/me — the operator's session check. Records the
-  // privileged access and the observational last-authenticated time in ONE
-  // transaction, then answers with the profile (no subject, no claims).
-  async verifySession(
+  // SC1b — the operator ended their session (sign-out).
+  async recordSessionEnded(
     operator: PlatformOperatorRow,
     requestReference: string | undefined,
-  ): Promise<PlatformMeResponse> {
-    await this.prisma.$transaction([
-      this.prisma.platformOperator.update({
-        where: { id: operator.id },
-        data: { lastAuthenticatedAt: new Date() },
-      }),
-      this.prisma.platformAuditEvent.create({
-        data: {
-          action: PLATFORM_AUDIT_ACTIONS.sessionVerified,
-          outcome: 'SUCCEEDED',
-          actorPlatformOperatorId: operator.id,
-          requestReference: requestReference ?? null,
-        },
-      }),
-    ]);
+  ): Promise<void> {
+    await this.prisma.platformAuditEvent.create({
+      data: {
+        action: PLATFORM_AUDIT_ACTIONS.sessionEnded,
+        outcome: 'SUCCEEDED',
+        actorPlatformOperatorId: operator.id,
+        requestReference: requestReference ?? null,
+      },
+    });
+  }
+
+  // GET /api/v1/platform/me — the operator's profile (no subject, no
+  // claims). SC1b: READ-ONLY. The portal calls it on every page, so it
+  // writes nothing; the privileged access is audited once per sign-in
+  // (platform.session.established) instead, when lastAuthenticatedAt is set.
+  profile(operator: PlatformOperatorRow): PlatformMeResponse {
     return {
       operator: {
         id: operator.id,
