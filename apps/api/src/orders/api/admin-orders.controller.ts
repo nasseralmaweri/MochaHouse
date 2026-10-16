@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Param,
   Post,
@@ -8,10 +9,11 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import type {
-  AdvanceOrderStatusRequest,
-  CancelOrderRequest,
-  RejectOrderRequest,
+import {
+  BUSINESS_BILLING_SUSPENDED,
+  type AdvanceOrderStatusRequest,
+  type CancelOrderRequest,
+  type RejectOrderRequest,
 } from '@mocha-house/contracts';
 import type { TenantContext } from '@mocha-house/database';
 import { AdminOrdersService } from '../application/admin-orders.service';
@@ -19,6 +21,7 @@ import { OrderClosureService } from '../application/order-closure.service';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
+import { AllowDuringBillingWindDown } from '../../internal-auth/infrastructure/billing-wind-down.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
 import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
 
@@ -40,6 +43,9 @@ export class AdminOrdersController {
   // ORDER_CLOSURE_ENABLED=1. `orders.cancel` is checked again for the
   // specific location in the service, and the order must belong to that
   // location and to the request's business.
+  // SC3c-1 — rejecting (refunding) an order the business already took is
+  // part of a billing wind-down; ORDER_CLOSURE_ENABLED still gates it.
+  @AllowDuringBillingWindDown()
   @RequirePermission('orders.cancel')
   @Post(':orderId/reject')
   reject(
@@ -63,6 +69,7 @@ export class AdminOrdersController {
   }
 
   // R1 / S5b — cancel an ACCEPTED / PREPARING / READY order (same gates).
+  @AllowDuringBillingWindDown()
   @RequirePermission('orders.cancel')
   @Post(':orderId/cancel')
   cancel(
@@ -86,6 +93,7 @@ export class AdminOrdersController {
     );
   }
 
+  @AllowDuringBillingWindDown()
   @RequirePermission('orders.view')
   @Get()
   listActive(
@@ -100,6 +108,7 @@ export class AdminOrdersController {
     );
   }
 
+  @AllowDuringBillingWindDown()
   @RequirePermission('orders.view')
   @Get(':orderId')
   getDetail(
@@ -116,6 +125,10 @@ export class AdminOrdersController {
     );
   }
 
+  // SC3c-1 — during a billing wind-down only orders the business already
+  // ACCEPTED may be moved on (to completion); a RECEIVED order is not
+  // accepted then (that would be a new sale).
+  @AllowDuringBillingWindDown()
   @RequirePermission('orders.manage_status')
   @Post(':orderId/advance')
   advance(
@@ -124,6 +137,18 @@ export class AdminOrdersController {
     @Req() request: InternalAuthenticatedRequest,
     @CurrentTenantContext() tenant: TenantContext,
   ) {
+    if (
+      request.internalBusinessAccess === 'BILLING_WIND_DOWN' &&
+      body?.expectedStatus === 'RECEIVED'
+    ) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: BUSINESS_BILLING_SUSPENDED,
+        message:
+          'This business is suspended for billing: new orders cannot be accepted. Orders already accepted can still be completed.',
+      });
+    }
     return this.adminOrdersService.advance(
       orderId,
       body.locationId,

@@ -58,6 +58,10 @@ const EVENT_LABELS: Record<PlatformSubscriptionEventType, string> = {
   PLAN_CHANGE_PENDING: "Plan change pending",
   PLAN_CHANGE_APPLIED: "Plan change applied",
   PLAN_CHANGE_ABANDONED: "Plan change not completed",
+  // SC3c-1 — billing enforcement.
+  RECOVERY_EXPIRED: "Trial recovery period ended",
+  BILLING_SUSPENDED: "Business suspended for billing",
+  BILLING_SUSPENSION_LIFTED: "Billing suspension lifted after payment",
 };
 
 function Chips({ modules }: { modules: readonly SubscriptionModuleKey[] }) {

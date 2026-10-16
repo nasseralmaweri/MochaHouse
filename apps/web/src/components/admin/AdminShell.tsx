@@ -2,7 +2,9 @@
 
 import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import { isWindDownPath, windDownMessage } from "@/lib/admin/billing";
+import { can } from "@/lib/admin/capabilities";
 import type {
   InternalBusinessSummary,
   InternalUserProfile,
@@ -82,6 +84,8 @@ export function AdminShell({
   locations,
   navItems,
   cookieLocationId,
+  windDown = false,
+  notice = null,
   children,
 }: {
   user: InternalUserProfile;
@@ -92,6 +96,10 @@ export function AdminShell({
   locations: LocationSummary[];
   navItems: AdminNavItem[];
   cookieLocationId: string | null;
+  // SC3c-1 — the business is suspended for billing (operational wind-down).
+  windDown?: boolean;
+  // SC3c-1 — a billing state that needs attention, in plain words.
+  notice?: string | null;
   children: React.ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -114,6 +122,15 @@ export function AdminShell({
     cookieLocationId,
   });
   const currentLocationValue = locationContextValue(locationContext);
+
+  const pathname = usePathname();
+  // The layout already redirects a blocked page on the server; this is
+  // the fallback if it could not tell the path.
+  const pageAvailable = !windDown || isWindDownPath(pathname);
+  const windDownAccess = {
+    orders: can(capabilities, "orders.view"),
+    billing: can(capabilities, "billing.view"),
+  };
 
   const sidebarProps = { user, business, businesses, navItems };
 
@@ -190,7 +207,54 @@ export function AdminShell({
             id="admin-content"
             className="min-w-0 flex-1 bg-surface-page pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0"
           >
-            {children}
+            {windDown ? (
+              <p
+                role="status"
+                className="border-b border-border-default bg-surface-subtle px-4 py-3 text-sm text-text-primary lg:px-8"
+              >
+                {windDownMessage(windDownAccess)}
+              </p>
+            ) : notice ? (
+              <p
+                role="status"
+                className="border-b border-border-default bg-surface-subtle px-4 py-3 text-sm text-text-primary lg:px-8"
+              >
+                {notice}{" "}
+                <Link
+                  href="/admin/billing"
+                  className="font-medium underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+                >
+                  Go to Billing
+                </Link>
+              </p>
+            ) : null}
+            {pageAvailable ? (
+              children
+            ) : (
+              <section className="mx-auto flex max-w-xl flex-col gap-3 px-4 py-10 lg:px-8">
+                <h1 className="text-xl font-semibold text-text-primary">
+                  This area is paused
+                </h1>
+                <div className="flex flex-wrap gap-2">
+                  {windDownAccess.orders ? (
+                    <Link
+                      href="/admin/orders"
+                      className="inline-flex min-h-11 items-center rounded-lg bg-accent px-4 text-sm font-semibold text-accent-contrast focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                    >
+                      Go to Orders
+                    </Link>
+                  ) : null}
+                  {windDownAccess.billing ? (
+                    <Link
+                      href="/admin/billing"
+                      className="inline-flex min-h-11 items-center rounded-lg border border-border-default px-4 text-sm font-semibold text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                    >
+                      Go to Billing
+                    </Link>
+                  ) : null}
+                </div>
+              </section>
+            )}
           </main>
         </div>
 

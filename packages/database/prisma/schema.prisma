@@ -258,6 +258,11 @@ enum TenantSubscriptionEventType {
   PLAN_CHANGE_PENDING
   PLAN_CHANGE_APPLIED
   PLAN_CHANGE_ABANDONED
+  // SC3c — an expired trial's recovery window ended; the business's
+  // billing suspension was applied / lifted (toStatus = the billing status).
+  RECOVERY_EXPIRED
+  BILLING_SUSPENDED
+  BILLING_SUSPENSION_LIFTED
 }
 
 // SC3a — who caused a subscription history entry.
@@ -371,6 +376,9 @@ model TenantSubscription {
   // grace period (fixed at that first failure; never extended).
   pastDueAt                    DateTime?
   graceEndsAt                  DateTime?
+  // SC3c — TRIAL_EXPIRED only: when the restricted recovery window ends (then
+  // the business is suspended for billing and this is cleared).
+  recoveryEndsAt               DateTime?
   cancelAtPeriodEnd            Boolean               @default(false)
   canceledAt                   DateTime?
   // A plan change waiting to take effect: an upgrade waits for confirmed
@@ -443,6 +451,9 @@ model BillingPolicy {
   trialDays                  Int
   trialRequiresPaymentMethod Boolean
   gracePeriodDays            Int
+  // SC3c — the restricted recovery window an expired trial gets (core
+  // access only) before its business is suspended for billing.
+  trialRecoveryDays          Int      @default(3)
   actorPlatformOperatorId    String?
   updatedAt                  DateTime @updatedAt
 

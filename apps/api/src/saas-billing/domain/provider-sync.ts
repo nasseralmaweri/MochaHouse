@@ -58,6 +58,8 @@ export function eventsFromSnapshot(
   snapshot: ProviderSubscriptionSnapshot,
   offered: OfferedTrial | null,
   at: Date,
+  // SC3c — the billing policy's recovery window for an expired trial.
+  trialRecoveryDays: number,
 ): SnapshotSync {
   const events: BillingEvent[] = [];
   let unexpectedTrial = false;
@@ -109,13 +111,13 @@ export function eventsFromSnapshot(
       snapshot.status === 'past_due' ||
       snapshot.status === 'unpaid')
   ) {
-    events.push({ type: 'TRIAL_ENDED', at });
+    events.push({ type: 'TRIAL_ENDED', at, trialRecoveryDays });
   }
 
   // 5. The subscription ended (a cardless trial that ran out is recorded as
   //    trial expiry by the lifecycle, not as a cancellation).
   if (ended) {
-    events.push({ type: 'SUBSCRIPTION_ENDED', at });
+    events.push({ type: 'SUBSCRIPTION_ENDED', at, trialRecoveryDays });
   }
 
   return { events, unexpectedTrial };

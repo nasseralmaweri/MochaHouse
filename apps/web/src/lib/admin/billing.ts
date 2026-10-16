@@ -17,6 +17,59 @@ export const BILLING_STATE_LABELS: Record<BusinessBillingState, string> = {
   CANCELED: "Ended",
 };
 
+// A deadline is an instant, not a calendar day: shown with its time, in
+// UTC (stated), so it never shifts with the server's time zone.
+export function formatDeadline(iso: string): string {
+  return `${new Date(iso).toLocaleString("en-US", {
+    dateStyle: "long",
+    timeStyle: "short",
+    timeZone: "UTC",
+  })} UTC`;
+}
+
+// SC3c-1 — during a billing wind-down (the business is suspended for
+// billing) only these admin areas work; everything else is refused by the
+// API (fail closed) and shown as unavailable here.
+export const WIND_DOWN_NAV_KEYS: readonly string[] = ["orders", "billing"];
+
+export function isWindDownPath(pathname: string): boolean {
+  return /^\/admin\/(orders|billing)(\/|$)/.test(pathname);
+}
+
+// SC3c-1 — the wind-down banner, from what THIS person can actually reach.
+export function windDownMessage(access: {
+  orders: boolean;
+  billing: boolean;
+}): string {
+  const lead = "This business is suspended for billing; everything else is paused.";
+  if (access.orders && access.billing) {
+    return `${lead} You can still complete orders you already accepted and view billing.`;
+  }
+  if (access.orders) {
+    return `${lead} You can still complete orders you already accepted.`;
+  }
+  if (access.billing) return `${lead} You can still view billing.`;
+  return `${lead} Ask a business owner or manager for help.`;
+}
+
+// SC3c-1 — the admin-wide notice for a billing state that needs attention
+// (null when nothing does). Plain facts only: what is off, until when.
+export function billingNotice(billing: BusinessBillingSummary): string | null {
+  switch (billing.state) {
+    case "TRIAL_EXPIRED":
+      // Only what enforcement really does now (server-derived flags).
+      return billing.premiumPaused && billing.recoveryEndsAt && !billing.suspendedForBilling
+        ? `Your free trial has ended and premium features are off. Your business stays open until ${formatDeadline(billing.recoveryEndsAt)}.`
+        : null;
+    case "PAST_DUE":
+      return billing.enforced && billing.graceEndsAt
+        ? `Your last CENTERIVO payment didn't go through. Everything keeps working until ${formatDeadline(billing.graceEndsAt)}.`
+        : null;
+    default:
+      return null;
+  }
+}
+
 // What the state means for the owner, in one sentence.
 export function billingStateDescription(billing: BusinessBillingSummary): string {
   switch (billing.state) {
@@ -37,7 +90,12 @@ export function billingStateDescription(billing: BusinessBillingSummary): string
     case "UNPAID":
       return "Your subscription is unpaid. Update your payment to continue.";
     case "TRIAL_EXPIRED":
-      return "Your free trial ended without a payment method. Nothing was charged.";
+      if (billing.suspendedForBilling) {
+        return "Your free trial ended without a payment method. Nothing was charged. Your business is paused until payment is set up; orders you already accepted can still be completed.";
+      }
+      return billing.premiumPaused && billing.recoveryEndsAt
+        ? `Your free trial ended without a payment method. Nothing was charged. Premium features are off, and your business stays open until ${formatDeadline(billing.recoveryEndsAt)}; after that it is paused until payment is set up.`
+        : "Your free trial ended without a payment method. Nothing was charged.";
     case "CANCELED":
       return "Your subscription has ended. Your data is kept.";
   }

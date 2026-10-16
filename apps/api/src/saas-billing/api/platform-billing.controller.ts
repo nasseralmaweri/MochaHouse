@@ -13,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type {
+  PlatformBillingEnforcementSweepResponse,
   PlatformBillingPolicy,
   PlatformPlan,
   PlatformReconciliationCaseListResponse,
@@ -32,6 +33,7 @@ import {
 import { BillingCatalogService } from '../application/billing-catalog.service';
 import { BillingAccountService } from '../application/billing-account.service';
 import { BillingReconciliationService } from '../application/billing-reconciliation.service';
+import { BillingEnforcementService } from '../application/billing-enforcement.service';
 
 // SC3a/SC3b — SaaS list prices, the billing policy, starting a business's
 // billing and review-only reconciliation (platform operators only). Every
@@ -68,6 +70,7 @@ export class PlatformBillingController {
     private readonly catalog: BillingCatalogService,
     private readonly accounts: BillingAccountService,
     private readonly reconciliation: BillingReconciliationService,
+    private readonly enforcement: BillingEnforcementService,
   ) {}
 
   // --- SC3b: a business's billing ------------------------------------------
@@ -109,6 +112,21 @@ export class PlatformBillingController {
   ): Promise<PlatformReconciliationRunResponse> {
     assertRecentSignIn(request.platformIdentity);
     return this.reconciliation.run(
+      request.platformOperator!,
+      request.requestId,
+    );
+  }
+
+  @UseGuards(RateLimitGuard)
+  @RateLimit('platform-lifecycle')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @Post('billing/enforcement/sweep')
+  sweepEnforcement(
+    @Req() request: PlatformAuthenticatedRequest,
+  ): Promise<PlatformBillingEnforcementSweepResponse> {
+    assertRecentSignIn(request.platformIdentity);
+    return this.enforcement.sweepNow(
       request.platformOperator!,
       request.requestId,
     );

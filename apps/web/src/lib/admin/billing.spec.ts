@@ -1,7 +1,11 @@
 import type { BusinessBillingSummary } from "@mocha-house/contracts";
 import {
   BILLING_MESSAGES,
+  billingNotice,
   billingStateDescription,
+  isWindDownPath,
+  WIND_DOWN_NAV_KEYS,
+  windDownMessage,
   checkoutRefusalMessage,
   checkoutReturn,
   isAllowedCheckoutUrl,
@@ -18,6 +22,10 @@ const summary = (over: Partial<BusinessBillingSummary> = {}): BusinessBillingSum
   trialEndsAt: null,
   currentPeriodEnd: null,
   graceEndsAt: null,
+  recoveryEndsAt: null,
+  enforced: false,
+  premiumPaused: false,
+  suspendedForBilling: false,
   cancelAtPeriodEnd: false,
   paymentMethodOnFile: false,
   ...over,
@@ -76,5 +84,60 @@ describe("admin billing", () => {
     const footer = groupAdminNavItems(withBilling).find((group) => group.tier === "footer");
     expect(footer?.items.map((item) => item.key)).toEqual(["billing"]);
     expect(adminNavItems({}).map((item) => item.key)).not.toContain("billing");
+  });
+});
+
+describe("SC3c-1 billing enforcement (web)", () => {
+  it("an expired trial says premium is off and until when the business stays open — and never that anything was charged", () => {
+    const inWindow = summary({
+      state: "TRIAL_EXPIRED",
+      recoveryEndsAt: "2026-11-03T12:00:00.000Z",
+      enforced: true,
+      premiumPaused: true,
+    });
+    expect(billingStateDescription(inWindow)).toMatch(/Nothing was charged/);
+    expect(billingStateDescription(inWindow)).toMatch(/Premium features are off/);
+    expect(billingStateDescription(inWindow)).toMatch(/November 3, 2026 at 12:00 PM UTC/);
+    expect(billingNotice(inWindow)).toMatch(/premium features are off/);
+    const after = summary({
+      state: "TRIAL_EXPIRED",
+      enforced: true,
+      premiumPaused: true,
+      suspendedForBilling: true,
+    });
+    expect(billingStateDescription(after)).toMatch(/paused until payment is set up/);
+    expect(billingNotice(after)).toBeNull();
+    // Enforcement off (or a trial that expired before it): no claim that
+    // anything is off or paused.
+    const off = summary({ state: "TRIAL_EXPIRED", recoveryEndsAt: "2026-11-03T12:00:00.000Z" });
+    expect(billingStateDescription(off)).toBe("Your free trial ended without a payment method. Nothing was charged.");
+    expect(billingNotice(off)).toBeNull();
+  });
+
+  it("a failed payment in grace gets a notice with its date; good standing gets none", () => {
+    expect(
+      billingNotice(summary({ state: "PAST_DUE", graceEndsAt: "2026-11-10T12:00:00.000Z", enforced: true })),
+    ).toMatch(/keeps working until November 10, 2026 at 12:00 PM UTC/);
+    expect(billingNotice(summary({ state: "PAST_DUE", graceEndsAt: "2026-11-10T12:00:00.000Z" }))).toBeNull();
+    for (const state of ["ACTIVE", "TRIALING", "COMPLIMENTARY", "AWAITING_SETUP"] as const) {
+      expect(billingNotice(summary({ state }))).toBeNull();
+    }
+  });
+
+  it("the wind-down message only offers what this person can reach", () => {
+    expect(windDownMessage({ orders: true, billing: true })).toMatch(/complete orders .* and view billing/);
+    expect(windDownMessage({ orders: true, billing: false })).not.toMatch(/view billing/);
+    expect(windDownMessage({ orders: false, billing: true })).not.toMatch(/orders/);
+    expect(windDownMessage({ orders: false, billing: false })).toMatch(/Ask a business owner or manager/);
+  });
+
+  it("the wind-down shows only orders and billing", () => {
+    expect([...WIND_DOWN_NAV_KEYS].sort()).toEqual(["billing", "orders"]);
+    for (const path of ["/admin/orders", "/admin/orders/abc", "/admin/billing", "/admin/billing/"]) {
+      expect(isWindDownPath(path)).toBe(true);
+    }
+    for (const path of ["/admin", "/admin/gift-cards", "/admin/ordersx", "/admin/billingx", "/admin/administration"]) {
+      expect(isWindDownPath(path)).toBe(false);
+    }
   });
 });

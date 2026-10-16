@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import type {
   AdminBillingCheckoutResponse,
   AdminBillingResponse,
@@ -26,7 +27,9 @@ export type AdminBillingResult =
   | { outcome: "not-found" }
   | { outcome: "error" };
 
-export async function getAdminBilling(): Promise<AdminBillingResult> {
+// Cached per request (React): the admin layout's billing notice and the
+// billing page share one read.
+export const getAdminBilling = cache(async function getAdminBilling(): Promise<AdminBillingResult> {
   const token = await getInternalSessionToken();
   if (!token) return { outcome: "unauthenticated" };
   let response: Response;
@@ -43,7 +46,7 @@ export async function getAdminBilling(): Promise<AdminBillingResult> {
   if (response.status === 404) return { outcome: "not-found" };
   if (!response.ok) return { outcome: "error" };
   return { outcome: "success", data: (await response.json()) as AdminBillingResponse };
-}
+});
 
 export type OpenCheckoutResult =
   | { outcome: "redirect"; url: string }

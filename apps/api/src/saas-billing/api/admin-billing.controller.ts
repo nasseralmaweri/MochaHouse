@@ -16,6 +16,7 @@ import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decor
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
 import { PermissionGuard } from '../../internal-auth/authorization/permission.guard';
 import { RequirePermission } from '../../internal-auth/authorization/require-permission.decorator';
+import { AllowDuringBillingWindDown } from '../../internal-auth/infrastructure/billing-wind-down.decorator';
 import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastructure/internal-identity';
 import { RateLimit } from '../../rate-limit/rate-limit.decorator';
 import { RateLimitGuard } from '../../rate-limit/rate-limit.guard';
@@ -29,6 +30,8 @@ import { BillingAccountService } from '../application/billing-account.service';
 export class AdminBillingController {
   constructor(private readonly accounts: BillingAccountService) {}
 
+  // SC3c-1 — the billing page stays readable during a billing wind-down.
+  @AllowDuringBillingWindDown()
   @RequirePermission('billing.view')
   @Header('Cache-Control', 'no-store')
   @Get()

@@ -148,6 +148,7 @@ const PROTECTED: ReadonlyArray<{
       'updatePolicy',
       'startBilling',
       'reconcile',
+      'sweepEnforcement',
       'resolveCase',
     ] as const
   ).map((method) => ({

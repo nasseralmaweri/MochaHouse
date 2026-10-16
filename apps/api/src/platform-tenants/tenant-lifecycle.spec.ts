@@ -6,6 +6,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import {
   PLATFORM_ADMINISTRATOR_ROLE,
+  type InternalMeResponse,
   type PlatformTenantLifecycleResponse,
   type PlatformTenantOwnerEmailResponse,
   type PlatformTenantStatusChangeResponse,
@@ -254,9 +255,35 @@ describe('SC1e tenant lifecycle (integration)', () => {
       suspensionReason: 'BILLING',
       changed: true,
     });
-    await staffMe().expect(403);
+    // SC3c-1 — a BILLING suspension keeps the narrow operational wind-down
+    // (the session, orders, billing) and nothing else.
+    expect(
+      ((await staffMe().expect(200)).body as InternalMeResponse).business
+        .access,
+    ).toBe('BILLING_WIND_DOWN');
+    const staffLocations = () =>
+      request(app.getHttpServer())
+        .get('/api/v1/admin/locations')
+        .set('Authorization', `Bearer ${staffToken}`)
+        .set('X-Tenant-Id', BRAVO);
+    expect((await staffLocations().expect(403)).body).toMatchObject({
+      code: 'BUSINESS_BILLING_SUSPENDED',
+    });
 
-    // Again (any reason): nothing changes, nothing is audited.
+    // The same reason again: nothing changes, nothing is audited.
+    expect(
+      (
+        await call('post', `/${BRAVO}/suspend`, fresh(), {
+          reason: 'BILLING',
+        }).expect(200)
+      ).body,
+    ).toEqual({
+      status: 'SUSPENDED',
+      suspensionReason: 'BILLING',
+      changed: false,
+    });
+    // SC3c-1 — a SECURITY suspension takes precedence over the BILLING one
+    // (so a payment can never lift it), and the wind-down access ends.
     expect(
       (
         await call('post', `/${BRAVO}/suspend`, fresh(), {
@@ -265,7 +292,20 @@ describe('SC1e tenant lifecycle (integration)', () => {
       ).body,
     ).toEqual({
       status: 'SUSPENDED',
-      suspensionReason: 'BILLING',
+      suspensionReason: 'SECURITY',
+      changed: true,
+    });
+    await staffMe().expect(403);
+    // Once SECURITY, nothing replaces it.
+    expect(
+      (
+        await call('post', `/${BRAVO}/suspend`, fresh(), {
+          reason: 'BILLING',
+        }).expect(200)
+      ).body,
+    ).toEqual({
+      status: 'SUSPENDED',
+      suspensionReason: 'SECURITY',
       changed: false,
     });
 
@@ -295,7 +335,8 @@ describe('SC1e tenant lifecycle (integration)', () => {
       ]),
     ).toEqual([
       ['platform.tenant.suspended', 'SUCCEEDED', 'BILLING', operator],
-      ['platform.tenant.reactivated', 'SUCCEEDED', 'BILLING', operator],
+      ['platform.tenant.suspended', 'SUCCEEDED', 'SECURITY', operator],
+      ['platform.tenant.reactivated', 'SUCCEEDED', 'SECURITY', operator],
     ]);
   });
 

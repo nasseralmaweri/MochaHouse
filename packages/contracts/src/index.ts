@@ -1556,10 +1556,19 @@ export interface InternalAuthorizationSummary {
 // Milestone S0F — a business (tenant) an internal user may operate in.
 // Safe display fields only: no status internals, no configuration, nothing
 // about any other tenant.
+// SC3c-1 — how this person may use the business right now. FULL: normal.
+// BILLING_WIND_DOWN: the business is suspended for billing; only the
+// operational wind-down (accepted orders, refunds/reversals through the
+// existing safeguards, billing) is available — everything else answers 403
+// BUSINESS_BILLING_SUSPENDED.
+export type InternalBusinessAccess = "FULL" | "BILLING_WIND_DOWN";
+export const BUSINESS_BILLING_SUSPENDED = "BUSINESS_BILLING_SUSPENDED";
+
 export interface InternalBusinessSummary {
   id: string;
   name: string;
   slug: string;
+  access: InternalBusinessAccess;
 }
 
 // GET /api/v1/internal/businesses (Milestone S0F) — the businesses the
@@ -1763,6 +1772,10 @@ export const PLATFORM_LIFECYCLE_RECENT_SIGN_IN_SECONDS = 15 * 60;
 export const PLATFORM_REAUTHENTICATION_REQUIRED = "REAUTHENTICATION_REQUIRED";
 // Tenant #1 (Mocha House) cannot be suspended from the platform console.
 export const PLATFORM_TENANT_PROTECTED = "TENANT_PROTECTED";
+// SC3c-1 — with billing enforcement on, a business suspended for unpaid
+// billing is restored only by a confirmed payment (or, later, a time-limited
+// grace extension) — never by a plain reactivation.
+export const PLATFORM_BILLING_SUSPENSION_ACTIVE = "BILLING_SUSPENSION_ACTIVE";
 export const PLATFORM_OWNER_ALREADY_SIGNED_IN = "OWNER_ALREADY_SIGNED_IN";
 export const PLATFORM_OWNER_EMAIL_IN_USE = "OWNER_EMAIL_IN_USE";
 
@@ -1941,6 +1954,18 @@ export interface BusinessBillingSummary {
   trialEndsAt: string | null;
   currentPeriodEnd: string | null;
   graceEndsAt: string | null;
+  // SC3c-1 — an expired trial: when its restricted recovery window ends
+  // (the business is then suspended for billing). Null otherwise.
+  recoveryEndsAt: string | null;
+  // SC3c-1 — what billing enforcement actually does to the business NOW
+  // (server-derived; never inferred by the client). All false while
+  // enforcement is off.
+  //   enforced            — billing enforcement is on in this environment.
+  //   premiumPaused       — the plan's premium modules are off (core stays).
+  //   suspendedForBilling — the business is suspended for billing.
+  enforced: boolean;
+  premiumPaused: boolean;
+  suspendedForBilling: boolean;
   cancelAtPeriodEnd: boolean;
   paymentMethodOnFile: boolean;
 }
@@ -2021,6 +2046,15 @@ export interface PlatformReconciliationRunResponse {
   checkoutsExpired: number;
 }
 
+// POST /api/v1/platform/billing/enforcement/sweep (SC3c-1) — applies due
+// grace and trial-recovery expiries now. With BILLING_ENFORCEMENT_ENABLED
+// off it changes nothing ("enabled": false).
+export interface PlatformBillingEnforcementSweepResponse {
+  enabled: boolean;
+  applied: number;
+  failed: number;
+}
+
 // GET /api/v1/platform/plans
 export interface PlatformPlanListResponse {
   plans: PlatformPlan[];
@@ -2067,7 +2101,11 @@ export type PlatformSubscriptionEventType =
   | "CANCELED"
   | "PLAN_CHANGE_PENDING"
   | "PLAN_CHANGE_APPLIED"
-  | "PLAN_CHANGE_ABANDONED";
+  | "PLAN_CHANGE_ABANDONED"
+  // SC3c-1 — enforcement.
+  | "RECOVERY_EXPIRED"
+  | "BILLING_SUSPENDED"
+  | "BILLING_SUSPENSION_LIFTED";
 
 // SC3a — the subscription's billing state (separate from a business's
 // administrative/security suspension). A COMPLIMENTARY subscription is never
