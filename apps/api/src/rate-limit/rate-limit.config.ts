@@ -64,6 +64,7 @@ export type PolicyName =
   | 'platform-sign-in'
   | 'platform-mfa'
   | 'platform-provisioning'
+  | 'platform-lifecycle'
   | 'account-recovery'
   | 'account-verification';
 
@@ -270,6 +271,18 @@ const DEFAULTS: Record<PolicyName, PolicyDefault> = {
         name: 'ip',
         key: ['tenant', 'ip'],
         limit: 20,
+        windowSeconds: HOUR,
+      },
+    ],
+  },
+  // SC1e — suspend / reactivate / owner email correction (after
+  // PlatformAuthGuard and the recent-sign-in check).
+  'platform-lifecycle': {
+    scopes: [
+      {
+        name: 'ip',
+        key: ['tenant', 'ip'],
+        limit: 30,
         windowSeconds: HOUR,
       },
     ],

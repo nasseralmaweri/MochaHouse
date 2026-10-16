@@ -299,6 +299,23 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     scope: 'platform',
     note: 'SC1d — provision a business: roles, first owner, audit; idempotent.',
   },
+  // SC1e — business lifecycle (recent sign-in required for changes).
+  'GET /api/v1/platform/tenants/:tenantId/lifecycle': {
+    scope: 'platform',
+    note: 'SC1e — status, first owner and suspension impact counts.',
+  },
+  'POST /api/v1/platform/tenants/:tenantId/suspend': {
+    scope: 'platform',
+    note: 'SC1e — suspend with a reason; never Tenant #1; audited.',
+  },
+  'POST /api/v1/platform/tenants/:tenantId/reactivate': {
+    scope: 'platform',
+    note: 'SC1e — reactivate; audited.',
+  },
+  'POST /api/v1/platform/tenants/:tenantId/owner-email': {
+    scope: 'platform',
+    note: "SC1e — correct a never-signed-in first owner's email; audited.",
+  },
   'GET /api/v1/platform/tenants': {
     scope: 'platform',
     note: 'SC1c — every business on the platform, searchable and paged.',

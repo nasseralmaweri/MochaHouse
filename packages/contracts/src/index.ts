@@ -1735,6 +1735,71 @@ export interface PlatformTenantProvisionResponse {
   replayed: boolean;
 }
 
+// --- CENTERIVO platform: business lifecycle (SC1e) ----------------------
+// Platform operators only. Every change needs a sign-in (with MFA) within
+// the last PLATFORM_LIFECYCLE_RECENT_SIGN_IN_SECONDS; otherwise 401
+// REAUTHENTICATION_REQUIRED. A request for the state a business is already
+// in changes nothing (`changed: false`) and writes no audit event.
+
+export const PLATFORM_LIFECYCLE_RECENT_SIGN_IN_SECONDS = 15 * 60;
+export const PLATFORM_REAUTHENTICATION_REQUIRED = "REAUTHENTICATION_REQUIRED";
+// Tenant #1 (Mocha House) cannot be suspended from the platform console.
+export const PLATFORM_TENANT_PROTECTED = "TENANT_PROTECTED";
+export const PLATFORM_OWNER_ALREADY_SIGNED_IN = "OWNER_ALREADY_SIGNED_IN";
+export const PLATFORM_OWNER_EMAIL_IN_USE = "OWNER_EMAIL_IN_USE";
+
+export interface PlatformTenantOwner {
+  id: string;
+  email: string;
+  displayName: string | null;
+  // Whether the owner has ever signed in (a login is bound to the record).
+  signedIn: boolean;
+}
+
+// GET /api/v1/platform/tenants/:tenantId/lifecycle
+export interface PlatformTenantLifecycleResponse {
+  tenantId: string;
+  status: PlatformTenantStatus;
+  suspensionReason: PlatformTenantSuspensionReason | null;
+  // true for Tenant #1: never suspended from the console.
+  protected: boolean;
+  // The business's first owner: the earliest staff member holding the
+  // built-in administrator role at corporate scope (null if none).
+  owner: PlatformTenantOwner | null;
+  // Counts only (no customer data): what a suspension holds.
+  impact: { openOrders: number; pendingNotifications: number };
+}
+
+// POST /api/v1/platform/tenants/:tenantId/suspend
+//   409 TENANT_PROTECTED for Tenant #1.
+export interface PlatformTenantSuspendRequest {
+  reason: PlatformTenantSuspensionReason;
+}
+
+// POST /api/v1/platform/tenants/:tenantId/reactivate  (no body)
+export interface PlatformTenantStatusChangeResponse {
+  status: PlatformTenantStatus;
+  suspensionReason: PlatformTenantSuspensionReason | null;
+  changed: boolean;
+}
+
+// POST /api/v1/platform/tenants/:tenantId/owner-email
+// Corrects the first owner's email while they have never signed in.
+//   404 unknown business or not its first owner
+//   409 OWNER_ALREADY_SIGNED_IN — a login is bound; nothing changes
+//   409 OWNER_EMAIL_IN_USE — another staff member of this business already
+//       uses that address (in any letter case)
+export interface PlatformTenantOwnerEmailRequest {
+  ownerId: string;
+  // Trimmed and lowercased before use.
+  email: string;
+}
+
+export interface PlatformTenantOwnerEmailResponse {
+  owner: PlatformTenantOwner;
+  changed: boolean;
+}
+
 // --- Admin: internal user access review (Milestone 5E-1) --------------
 // The business-facing read model for the Administration → Users screens.
 // Served only from `/api/v1/admin/internal-users*` (InternalAuthGuard +

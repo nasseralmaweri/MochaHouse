@@ -869,6 +869,44 @@ export interface PlatformTenantProvisionResponse {
     };
     replayed: boolean;
 }
+export declare const PLATFORM_LIFECYCLE_RECENT_SIGN_IN_SECONDS: number;
+export declare const PLATFORM_REAUTHENTICATION_REQUIRED = "REAUTHENTICATION_REQUIRED";
+export declare const PLATFORM_TENANT_PROTECTED = "TENANT_PROTECTED";
+export declare const PLATFORM_OWNER_ALREADY_SIGNED_IN = "OWNER_ALREADY_SIGNED_IN";
+export declare const PLATFORM_OWNER_EMAIL_IN_USE = "OWNER_EMAIL_IN_USE";
+export interface PlatformTenantOwner {
+    id: string;
+    email: string;
+    displayName: string | null;
+    signedIn: boolean;
+}
+export interface PlatformTenantLifecycleResponse {
+    tenantId: string;
+    status: PlatformTenantStatus;
+    suspensionReason: PlatformTenantSuspensionReason | null;
+    protected: boolean;
+    owner: PlatformTenantOwner | null;
+    impact: {
+        openOrders: number;
+        pendingNotifications: number;
+    };
+}
+export interface PlatformTenantSuspendRequest {
+    reason: PlatformTenantSuspensionReason;
+}
+export interface PlatformTenantStatusChangeResponse {
+    status: PlatformTenantStatus;
+    suspensionReason: PlatformTenantSuspensionReason | null;
+    changed: boolean;
+}
+export interface PlatformTenantOwnerEmailRequest {
+    ownerId: string;
+    email: string;
+}
+export interface PlatformTenantOwnerEmailResponse {
+    owner: PlatformTenantOwner;
+    changed: boolean;
+}
 export type AdminUserLocationAccess = {
     kind: "all";
 } | {
