@@ -40,6 +40,8 @@ export type TenantOwnedModel = Exclude<
   | 'BillingPolicy'
   | 'BillingTrialClaim'
   | 'BillingProviderEvent'
+  | 'BillingCheckoutSession'
+  | 'BillingReconciliationCase'
 >;
 
 export type ReferentialAction = 'Cascade' | 'Restrict' | 'SetNull' | 'NoAction';

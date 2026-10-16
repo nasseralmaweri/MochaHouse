@@ -969,6 +969,63 @@ export interface PlatformBillingPolicyUpdateRequest {
     trialRequiresPaymentMethod: boolean;
     gracePeriodDays: number;
 }
+export type BusinessBillingState = "COMPLIMENTARY" | "AWAITING_SETUP" | "TRIALING" | "ACTIVE" | "PAST_DUE" | "UNPAID" | "TRIAL_EXPIRED" | "CANCELED";
+export interface BusinessBillingSummary {
+    state: BusinessBillingState;
+    planName: string;
+    price: {
+        amountMinorUnits: number;
+        currency: string;
+        interval: PlatformBillingInterval;
+    } | null;
+    trialEndsAt: string | null;
+    currentPeriodEnd: string | null;
+    graceEndsAt: string | null;
+    cancelAtPeriodEnd: boolean;
+    paymentMethodOnFile: boolean;
+}
+export declare const BILLING_UNAVAILABLE = "BILLING_UNAVAILABLE";
+export declare const BILLING_NOT_BILLED = "BILLING_NOT_BILLED";
+export declare const BILLING_ALREADY_SET_UP = "BILLING_ALREADY_SET_UP";
+export declare const BILLING_CHECKOUT_IN_PROGRESS = "BILLING_CHECKOUT_IN_PROGRESS";
+export declare const BILLING_CHECKOUT_PROCESSING = "BILLING_CHECKOUT_PROCESSING";
+export interface AdminBillingResponse {
+    billing: BusinessBillingSummary;
+    canSetUpPayment: boolean;
+}
+export interface AdminBillingCheckoutResponse {
+    url: string;
+}
+export declare const PLATFORM_ALREADY_BILLED = "ALREADY_BILLED";
+export declare const PLATFORM_FOUNDING_COMPLIMENTARY = "FOUNDING_COMPLIMENTARY";
+export declare const PLATFORM_PRICE_NOT_FOR_PLAN = "PRICE_NOT_FOR_PLAN";
+export declare const PLATFORM_NO_OWNER = "NO_OWNER";
+export interface PlatformStartBillingRequest {
+    planPriceId: string;
+}
+export interface PlatformTenantBillingResponse {
+    tenantId: string;
+    billing: BusinessBillingSummary | null;
+}
+export type PlatformReconciliationCaseStatus = "OPEN" | "RESOLVED";
+export interface PlatformReconciliationCase {
+    id: string;
+    kind: string;
+    tenantId: string | null;
+    businessName: string | null;
+    detail: string | null;
+    status: PlatformReconciliationCaseStatus;
+    createdAt: string;
+    resolvedAt: string | null;
+}
+export interface PlatformReconciliationCaseListResponse {
+    cases: PlatformReconciliationCase[];
+}
+export interface PlatformReconciliationRunResponse {
+    subscriptionsChecked: number;
+    casesOpened: number;
+    checkoutsExpired: number;
+}
 export interface PlatformPlanListResponse {
     plans: PlatformPlan[];
     subscriptions: {
@@ -1165,7 +1222,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "orders.cancel", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "notifications.routing.view", "notifications.routing.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide", "reports.view"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "orders.cancel", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "notifications.routing.view", "notifications.routing.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide", "reports.view", "billing.view", "billing.manage"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export interface BuiltInInternalRole {
     key: string;

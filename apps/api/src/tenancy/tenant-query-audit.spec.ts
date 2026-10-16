@@ -74,6 +74,9 @@ describe('Tenant query audit (report-only)', () => {
           'BillingPolicy',
           'BillingTrialClaim',
           'BillingProviderEvent',
+          // SC3b
+          'BillingCheckoutSession',
+          'BillingReconciliationCase',
         ].sort(),
       );
     });

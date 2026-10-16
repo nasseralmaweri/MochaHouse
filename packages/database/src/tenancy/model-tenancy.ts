@@ -41,6 +41,10 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     BillingPolicy: 'platform',
     BillingTrialClaim: 'platform',
     BillingProviderEvent: 'platform',
+    // SC3b — Checkout sessions we created and review-only reconciliation
+    // cases.
+    BillingCheckoutSession: 'platform',
+    BillingReconciliationCase: 'platform',
 
     // Catalog & locations
     Location: 'tenant',

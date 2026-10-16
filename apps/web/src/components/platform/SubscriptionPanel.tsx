@@ -33,11 +33,11 @@ import { PlatformCard } from "./PlatformCards";
 
 type Change = { kind: "plan" | "grant" | "revoke"; value: string; label: string };
 
-const SECONDARY =
+export const SECONDARY =
   "inline-flex min-h-10 items-center rounded-lg border border-border-default px-3 text-sm font-medium text-text-primary hover:bg-surface-subtle focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
-const PRIMARY =
+export const PRIMARY =
   "inline-flex min-h-10 items-center rounded-lg bg-accent px-4 text-sm font-semibold text-accent-contrast hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus aria-disabled:cursor-wait aria-disabled:opacity-70";
-const SELECT =
+export const SELECT =
   "min-h-10 rounded-lg border border-border-default bg-surface-card px-3 text-sm text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
 
 const EVENT_LABELS: Record<PlatformSubscriptionEventType, string> = {
@@ -74,7 +74,7 @@ function Chips({ modules }: { modules: readonly SubscriptionModuleKey[] }) {
 
 // `standalone`: rendered outside any form, so the sign-out button brings its
 // own form (inside a form it uses formAction instead — forms cannot nest).
-function Refusal<T>({
+export function Refusal<T>({
   outcome,
   standalone = false,
 }: {

@@ -40,6 +40,14 @@ export const PLATFORM_ROUTES = [
   { path: 'api/v1/platform/{*path}', method: RequestMethod.ALL },
 ];
 
+// SC3b — billing-provider webhooks belong to NO tenant either: the provider's
+// signature is their only credential, the business is found from OUR stored
+// provider ids, and a SUSPENDED business's payment events must still arrive
+// (the suspension gate would otherwise answer 503 and lose them).
+export const BILLING_WEBHOOK_ROUTES = [
+  { path: 'api/v1/billing/webhooks/{*path}', method: RequestMethod.POST },
+];
+
 // Milestone S0C — the API's tenant foundation. Importing this module:
 //   - validates SINGLE_TENANT_ID against the Tenant table at startup
 //     (startup fails otherwise);
@@ -78,7 +86,11 @@ export class TenancyModule implements NestModule {
       .forRoutes({ path: '{*path}', method: RequestMethod.ALL });
     consumer
       .apply(TenantContextMiddleware)
-      .exclude(...MEMBER_TENANT_ROUTES, ...PLATFORM_ROUTES)
+      .exclude(
+        ...MEMBER_TENANT_ROUTES,
+        ...PLATFORM_ROUTES,
+        ...BILLING_WEBHOOK_ROUTES,
+      )
       .forRoutes({ path: '{*path}', method: RequestMethod.ALL });
   }
 }

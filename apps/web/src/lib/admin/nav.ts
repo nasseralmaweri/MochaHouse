@@ -232,6 +232,12 @@ export function adminNavItems(
     });
   }
 
+  // SC3b — the business's own CENTERIVO subscription (billing.view,
+  // CORPORATE-only). The page re-checks.
+  if (can(capabilities, "billing.view")) {
+    items.push({ key: "billing", label: "Billing", href: "/admin/billing" });
+  }
+
   return items;
 }
 
@@ -300,7 +306,12 @@ const NAV_GROUPS: ReadonlyArray<{
     tier: "collapsible",
     itemKeys: ["approvals", "careers", "franchising", "notifications"],
   },
-  { key: "admin", label: null, tier: "footer", itemKeys: ["administration"] },
+  {
+    key: "admin",
+    label: null,
+    tier: "footer",
+    itemKeys: ["billing", "administration"],
+  },
 ];
 
 export function groupAdminNavItems(items: AdminNavItem[]): AdminNavGroup[] {

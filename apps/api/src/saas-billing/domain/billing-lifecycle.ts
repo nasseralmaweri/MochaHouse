@@ -63,6 +63,10 @@ export type BillingEvent =
       at: Date;
       trialDays: number;
       requiresPaymentMethod: boolean;
+      // SC3b — the provider's own trial end (a hosted Checkout trial). When
+      // given it is used as-is, still bounded by trialDays (+1 day of slack
+      // for the provider's rounding).
+      endsAt?: Date;
     }
   // Provider: the business authorized recurring automatic payment.
   | { type: 'PAYMENT_AUTHORIZED'; at: Date }
@@ -268,11 +272,20 @@ export function transition(
       ) {
         return refuse('NOT_AUTHORIZED');
       }
+      const trialEndsAt =
+        event.endsAt ?? new Date(event.at.getTime() + event.trialDays * DAY_MS);
+      if (
+        trialEndsAt <= event.at ||
+        trialEndsAt.getTime() - event.at.getTime() >
+          (event.trialDays + 1) * DAY_MS
+      ) {
+        return refuse('INVALID_TRIAL');
+      }
       const next: BillingState = {
         ...state,
         status: 'TRIALING',
         trialStartedAt: event.at,
-        trialEndsAt: new Date(event.at.getTime() + event.trialDays * DAY_MS),
+        trialEndsAt,
         trialRequiresPaymentMethod: event.requiresPaymentMethod,
       };
       return changed(state, next, [entry('TRIAL_STARTED', state, next)]);
@@ -458,6 +471,23 @@ export function transition(
     }
 
     case 'SUBSCRIPTION_ENDED': {
+      // SC3b — a trial ended by the provider because no payment method was
+      // ever added (cardless trial): that is TRIAL EXPIRY, recorded
+      // distinctly from a voluntary cancellation, and nothing was charged.
+      if (
+        state.status === 'TRIALING' &&
+        state.recurringPaymentAuthorizedAt === null
+      ) {
+        const expired: BillingState = { ...state, status: 'TRIAL_EXPIRED' };
+        return changed(
+          state,
+          expired,
+          [entry('TRIAL_EXPIRED', state, expired)],
+          'SUSPEND_FOR_BILLING',
+        );
+      }
+      // Already expired as a trial: the provider ending it changes nothing.
+      if (state.status === 'TRIAL_EXPIRED') return unchanged(state);
       // The billing ends. The business is NOT suspended by this (E7): its
       // identity, owner access, history and data stay; access is decided by
       // billingAccess (SC3c).

@@ -36,6 +36,9 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'BillingPolicy',
   'BillingTrialClaim',
   'BillingProviderEvent',
+  // SC3b — Stripe billing (20261026090000).
+  'BillingCheckoutSession',
+  'BillingReconciliationCase',
 ]);
 
 // Columns added after the 4C-era migrations to tables that already existed.

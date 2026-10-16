@@ -178,6 +178,8 @@ model PlatformOperator {
   // SC3a — prices and billing-policy changes this operator made.
   subscriptionPlanPrices       SubscriptionPlanPrice[]       @relation("SubscriptionPlanPriceActor")
   billingPolicies              BillingPolicy[]               @relation("BillingPolicyActor")
+  // SC3b — reconciliation cases this operator resolved.
+  billingReconciliationCases   BillingReconciliationCase[]   @relation("BillingReconciliationCaseResolver")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -299,13 +301,16 @@ enum BillingProviderEventStatus {
 }
 
 model SubscriptionPlan {
-  id          String   @id @default(uuid(7))
+  id                String   @id @default(uuid(7))
   // Stable identifier, e.g. "founding" (lowercase words, single hyphens).
-  key         String   @unique
-  name        String
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  key               String   @unique
+  name              String
+  description       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  // SC3b — the billing provider's product for this plan (set once, when the
+  // plan's first price is synced).
+  externalProductId String?  @unique
 
   versions SubscriptionPlanVersion[]
   prices   SubscriptionPlanPrice[]
@@ -380,15 +385,17 @@ model TenantSubscription {
   lastBillingEventAt           DateTime?
   billingStateVersion          Int                   @default(0)
 
-  subscriberTenant   Tenant                    @relation("TenantSubscriptionSubscriber", fields: [subscriberTenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  planVersion        SubscriptionPlanVersion   @relation(fields: [planVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  planPrice          SubscriptionPlanPrice?    @relation("TenantSubscriptionPlanPrice", fields: [planPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  pendingPlanVersion SubscriptionPlanVersion?  @relation("TenantSubscriptionPendingPlanVersion", fields: [pendingPlanVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  pendingPlanPrice   SubscriptionPlanPrice?    @relation("TenantSubscriptionPendingPlanPrice", fields: [pendingPlanPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  moduleGrants       TenantModuleGrant[]
-  events             TenantSubscriptionEvent[]
-  trialClaim         BillingTrialClaim?
-  billingEvents      BillingProviderEvent[]
+  subscriberTenant    Tenant                      @relation("TenantSubscriptionSubscriber", fields: [subscriberTenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  planVersion         SubscriptionPlanVersion     @relation(fields: [planVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  planPrice           SubscriptionPlanPrice?      @relation("TenantSubscriptionPlanPrice", fields: [planPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  pendingPlanVersion  SubscriptionPlanVersion?    @relation("TenantSubscriptionPendingPlanVersion", fields: [pendingPlanVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  pendingPlanPrice    SubscriptionPlanPrice?      @relation("TenantSubscriptionPendingPlanPrice", fields: [pendingPlanPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  moduleGrants        TenantModuleGrant[]
+  events              TenantSubscriptionEvent[]
+  trialClaim          BillingTrialClaim?
+  billingEvents       BillingProviderEvent[]
+  checkoutSessions    BillingCheckoutSession[]
+  reconciliationCases BillingReconciliationCase[]
 
   @@unique([billingProvider, externalSubscriptionId])
   @@unique([billingProvider, externalCustomerId])
@@ -422,6 +429,7 @@ model SubscriptionPlanPrice {
   subscriptions         TenantSubscription[]      @relation("TenantSubscriptionPlanPrice")
   pendingSubscriptions  TenantSubscription[]      @relation("TenantSubscriptionPendingPlanPrice")
   events                TenantSubscriptionEvent[]
+  checkoutSessions      BillingCheckoutSession[]
 
   @@index([planId, status])
 }
@@ -479,12 +487,76 @@ model BillingProviderEvent {
   processedAt            DateTime?
   attempts               Int                        @default(0)
 
-  subscription TenantSubscription?       @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  historyItems TenantSubscriptionEvent[]
+  subscription        TenantSubscription?         @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  historyItems        TenantSubscriptionEvent[]
+  reconciliationCases BillingReconciliationCase[]
 
   @@unique([provider, externalEventId])
   @@index([subscriptionId, occurredAt])
   @@index([status, receivedAt])
+}
+
+enum BillingCheckoutSessionStatus {
+  OPEN
+  COMPLETED
+  EXPIRED
+}
+
+// SC3b — a hosted Checkout session WE created for a business's subscription
+// (the only way a provider subscription is linked to a business: the
+// completed session must be one of these). At most one OPEN per subscription
+// (partial unique index). The trial offered is fixed when the session is
+// created. Rows are never deleted; the provider session id is set once
+// (database trigger).
+model BillingCheckoutSession {
+  id                    String                       @id @default(uuid(7))
+  subscriptionId        String
+  planPriceId           String
+  externalSessionId     String?                      @unique
+  status                BillingCheckoutSessionStatus @default(OPEN)
+  // 0 = no trial.
+  trialDays             Int
+  requiresPaymentMethod Boolean
+  expiresAt             DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime                     @default(now())
+
+  subscription TenantSubscription    @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  planPrice    SubscriptionPlanPrice @relation(fields: [planPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([subscriptionId, createdAt])
+  @@index([planPriceId])
+}
+
+enum BillingReconciliationCaseStatus {
+  OPEN
+  RESOLVED
+}
+
+// SC3b — something a platform operator must review: a provider/ours state
+// mismatch, an event that could not be applied, a payment we could not
+// match. Review only: creating or resolving a case never moves money or
+// changes a subscription. At most one OPEN case per subscription and kind
+// (partial unique index). Rows are never deleted.
+model BillingReconciliationCase {
+  id                           String                          @id @default(uuid(7))
+  kind                         String
+  subscriptionId               String?
+  billingProviderEventId       String?
+  detail                       String?
+  status                       BillingReconciliationCaseStatus @default(OPEN)
+  createdAt                    DateTime                        @default(now())
+  resolvedAt                   DateTime?
+  resolvedByPlatformOperatorId String?
+
+  subscription         TenantSubscription?   @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  billingProviderEvent BillingProviderEvent? @relation(fields: [billingProviderEventId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  resolvedBy           PlatformOperator?     @relation("BillingReconciliationCaseResolver", fields: [resolvedByPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([status, createdAt])
+  @@index([subscriptionId])
+  @@index([billingProviderEventId])
+  @@index([resolvedByPlatformOperatorId])
 }
 
 // An add-on: one optional module granted to one business beyond its plan.

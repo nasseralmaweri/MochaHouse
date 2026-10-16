@@ -12,6 +12,9 @@ import { PlatformTenantLifecycleController } from '../platform-tenants/api/platf
 import { PlatformPlansController } from '../platform-subscriptions/api/platform-plans.controller';
 import { PlatformTenantSubscriptionController } from '../platform-subscriptions/api/platform-tenant-subscription.controller';
 import type { PolicyName } from './rate-limit.config';
+import { PlatformBillingController } from '../saas-billing/api/platform-billing.controller';
+import { AdminBillingController } from '../saas-billing/api/admin-billing.controller';
+import { BillingWebhookController } from '../saas-billing/api/billing-webhook.controller';
 
 // The list of public routes protected by S3a. If a route here loses its
 // decorator or its guard — or someone adds a new unauthenticated ordering or
@@ -136,6 +139,32 @@ const PROTECTED: ReadonlyArray<{
     method,
     policy: 'platform-lifecycle' as const,
   })),
+  // SC3a/SC3b — SaaS billing changes (operators), Checkout (owners) and
+  // provider webhooks.
+  ...(
+    [
+      'createPrice',
+      'archivePrice',
+      'updatePolicy',
+      'startBilling',
+      'reconcile',
+      'resolveCase',
+    ] as const
+  ).map((method) => ({
+    controller: PlatformBillingController,
+    method,
+    policy: 'platform-lifecycle' as const,
+  })),
+  {
+    controller: AdminBillingController,
+    method: 'checkout',
+    policy: 'billing-checkout',
+  },
+  {
+    controller: BillingWebhookController,
+    method: 'receive',
+    policy: 'billing-webhook',
+  },
 ];
 
 function guardsFor(controller: Constructor, method: string): unknown[] {

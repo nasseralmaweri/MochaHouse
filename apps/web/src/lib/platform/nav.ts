@@ -46,8 +46,8 @@ export const PLATFORM_NAV_ITEMS: readonly PlatformNavItem[] = [
   {
     key: "billing",
     label: "Billing",
-    href: null,
-    description: "Invoices and SaaS revenue.",
+    href: "/platform/billing",
+    description: "Billing reconciliation (Stripe test mode).",
   },
   {
     key: "support",

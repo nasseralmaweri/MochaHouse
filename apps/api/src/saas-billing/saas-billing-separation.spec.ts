@@ -72,4 +72,19 @@ describe('SaaS billing is separate from restaurant payments (SC3a)', () => {
     }
     expect(offenders).toEqual([]);
   });
+
+  // SC3b — the Stripe SDK is the SaaS billing account's client only: no other
+  // module (in particular no restaurant payment code) imports it, so a
+  // future restaurant processor can never share this client or its keys.
+  it('only saas-billing imports the Stripe SDK', () => {
+    const offenders = files(SRC)
+      .filter((file) => !file.startsWith(BILLING + sep))
+      .filter((file) =>
+        /(?:from|require\(|import\()\s*['"]stripe(?:\/[^'"]*)?['"]/.test(
+          readFileSync(file, 'utf8'),
+        ),
+      )
+      .map((file) => relative(SRC, file).split(sep).join('/'));
+    expect(offenders).toEqual([]);
+  });
 });

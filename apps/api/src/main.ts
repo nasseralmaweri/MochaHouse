@@ -21,7 +21,11 @@ async function bootstrap() {
   // docs/security/public-api-rate-limiting.md).
   assertRateLimitConfigSafe();
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // SC3b — rawBody: billing-provider webhooks are verified against the
+  // ORIGINAL request bytes (request.rawBody); JSON parsing is unchanged.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    rawBody: true,
+  });
 
   // Trusted reverse-proxy hop count for client-IP derivation (used by
   // GiftCardPublicThrottleGuard). Express `trust proxy`:

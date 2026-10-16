@@ -65,6 +65,10 @@ export type PolicyName =
   | 'platform-mfa'
   | 'platform-provisioning'
   | 'platform-lifecycle'
+  // SC3b — opening a billing Checkout (a business owner) and receiving
+  // billing-provider webhooks.
+  | 'billing-checkout'
+  | 'billing-webhook'
   | 'account-recovery'
   | 'account-verification';
 
@@ -284,6 +288,38 @@ const DEFAULTS: Record<PolicyName, PolicyDefault> = {
         key: ['tenant', 'ip'],
         limit: 30,
         windowSeconds: HOUR,
+      },
+    ],
+  },
+  // SC3b — each request can create a provider Checkout session: a small
+  // per-business allowance (an open session is reused anyway).
+  'billing-checkout': {
+    scopes: [
+      {
+        name: 'ip',
+        key: ['tenant', 'ip'],
+        limit: 20,
+        windowSeconds: HOUR,
+      },
+      {
+        name: 'tenant',
+        key: ['tenant'],
+        limit: 30,
+        windowSeconds: HOUR,
+      },
+    ],
+  },
+  // SC3b — signed provider webhooks: generous (the provider retries and
+  // bursts), only a ceiling against floods of unsigned requests.
+  'billing-webhook': {
+    scopes: [
+      {
+        name: 'ip',
+        // No business context on this route: the tenant part is the shared
+        // placeholder, as on the platform routes.
+        key: ['tenant', 'ip'],
+        limit: 600,
+        windowSeconds: 10 * 60,
       },
     ],
   },
