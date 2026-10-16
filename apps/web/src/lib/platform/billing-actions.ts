@@ -20,12 +20,16 @@ export interface BillingActionState<T> {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-async function call<T>(path: string, body?: object): Promise<ChangeOutcome<T>> {
+async function call<T>(
+  path: string,
+  body?: object,
+  method: "POST" | "PUT" = "POST",
+): Promise<ChangeOutcome<T>> {
   const token = await getPlatformSessionToken();
   if (!token) return { kind: "error", message: SUBSCRIPTION_MESSAGES.sessionEnded };
   try {
     const response = await fetch(`${platformApiUrl()}/platform${path}`, {
-      method: "POST",
+      method,
       headers: {
         Authorization: `Bearer ${token}`,
         ...(body ? { "Content-Type": "application/json" } : {}),
@@ -61,6 +65,55 @@ export async function startBillingAction(
   const outcome = await call<PlatformTenantBillingResponse>(
     `/tenants/${encodeURIComponent(tenantId)}/billing/start`,
     { planPriceId },
+  );
+  if (outcome.kind === "ok") revalidatePath(`/platform/tenants/${tenantId}`);
+  return { outcome };
+}
+
+// SC3c-3 — designate the business's billing contact (one of its staff).
+export async function assignBillingContactAction(
+  _previous: BillingActionState<PlatformTenantBillingResponse>,
+  form: FormData,
+): Promise<BillingActionState<PlatformTenantBillingResponse>> {
+  const tenantId = form.get("tenantId");
+  const internalUserId = form.get("internalUserId");
+  if (typeof tenantId !== "string" || !isTenantId(tenantId)) {
+    return { outcome: { kind: "error", message: SUBSCRIPTION_MESSAGES.notFound } };
+  }
+  if (typeof internalUserId !== "string" || !UUID.test(internalUserId)) {
+    return { outcome: { kind: "error", message: "Choose a staff member." } };
+  }
+  const outcome = await call<PlatformTenantBillingResponse>(
+    `/tenants/${encodeURIComponent(tenantId)}/billing/contact`,
+    { internalUserId },
+    "PUT",
+  );
+  if (outcome.kind === "ok") revalidatePath(`/platform/tenants/${tenantId}`);
+  return { outcome };
+}
+
+// SC3c-3 — more time for an unpaid business (audited; the debt stays).
+export async function extendGraceAction(
+  _previous: BillingActionState<PlatformTenantBillingResponse>,
+  form: FormData,
+): Promise<BillingActionState<PlatformTenantBillingResponse>> {
+  const tenantId = form.get("tenantId");
+  const days = Number(form.get("days"));
+  const reason = form.get("reason");
+  if (typeof tenantId !== "string" || !isTenantId(tenantId)) {
+    return { outcome: { kind: "error", message: SUBSCRIPTION_MESSAGES.notFound } };
+  }
+  if (!Number.isInteger(days) || days < 1 || days > 14) {
+    return { outcome: { kind: "error", message: "Choose from 1 to 14 days." } };
+  }
+  if (typeof reason !== "string" || reason.trim().length < 10 || reason.trim().length > 500) {
+    return {
+      outcome: { kind: "error", message: "Give a reason of 10 to 500 characters." },
+    };
+  }
+  const outcome = await call<PlatformTenantBillingResponse>(
+    `/tenants/${encodeURIComponent(tenantId)}/billing/grace-extension`,
+    { days, reason: reason.trim() },
   );
   if (outcome.kind === "ok") revalidatePath(`/platform/tenants/${tenantId}`);
   return { outcome };

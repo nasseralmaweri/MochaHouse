@@ -42,6 +42,8 @@ export type TenantOwnedModel = Exclude<
   | 'BillingProviderEvent'
   | 'BillingCheckoutSession'
   | 'BillingReconciliationCase'
+  | 'BillingGraceExtension'
+  | 'BillingNotification'
 >;
 
 export type ReferentialAction = 'Cascade' | 'Restrict' | 'SetNull' | 'NoAction';
@@ -171,6 +173,7 @@ export const TENANT_MODEL_KEYS: Readonly<
   ModifierOption: ['id'],
   NotificationDelivery: ['id'],
   NotificationRecipient: ['id'],
+  TenantBillingContact: ['id'],
   PaymentReconciliationCase: ['id'],
   PaymentReconciliationEvent: ['id'],
   OperationsTask: ['id'],
@@ -570,6 +573,19 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Cascade',
+    tenantEnforced: true,
+  },
+  // SC3c-3 — the designated billing contact is a staff member of the SAME
+  // business (composite foreign key).
+  {
+    id: 'TenantBillingContact.internalUserId',
+    kind: 'composite-fk-candidate',
+    model: 'TenantBillingContact',
+    column: 'internalUserId',
+    target: 'InternalUser',
+    nullable: false,
+    hasForeignKey: true,
+    onDelete: 'Restrict',
     tenantEnforced: true,
   },
   {

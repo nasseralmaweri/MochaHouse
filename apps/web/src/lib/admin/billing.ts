@@ -65,6 +65,11 @@ export function billingNotice(billing: BusinessBillingSummary): string | null {
       return billing.enforced && billing.graceEndsAt
         ? `Your last CENTERIVO payment didn't go through. Everything keeps working until ${formatDeadline(billing.graceEndsAt)}.`
         : null;
+    // SC3c-3 — temporary access an operator gave while still unpaid.
+    case "UNPAID":
+      return billing.enforced && billing.graceExceptionEndsAt && !billing.suspendedForBilling
+        ? `Your CENTERIVO invoice is still unpaid. You have temporary access until ${formatDeadline(billing.graceExceptionEndsAt)}; pay before then to keep it.`
+        : null;
     default:
       return null;
   }
@@ -88,7 +93,9 @@ export function billingStateDescription(billing: BusinessBillingSummary): string
     case "PAST_DUE":
       return "Your last payment didn't go through. Everything keeps working while it is retried.";
     case "UNPAID":
-      return "Your subscription is unpaid and your outstanding invoices need paying to continue.";
+      return billing.graceExceptionEndsAt && !billing.suspendedForBilling
+        ? `Your subscription is unpaid. You have temporary access until ${formatDeadline(billing.graceExceptionEndsAt)}; pay your outstanding invoices before then to keep it.`
+        : "Your subscription is unpaid and your outstanding invoices need paying to continue.";
     case "TRIAL_EXPIRED":
       if (billing.suspendedForBilling) {
         return "Your free trial ended without a payment method. Nothing was charged. Your business is paused until payment is set up; orders you already accepted can still be completed.";

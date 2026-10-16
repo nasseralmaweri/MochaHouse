@@ -13,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type {
+  PlatformBillingOverview,
   PlatformBillingEnforcementSweepResponse,
   PlatformBillingPolicy,
   PlatformPlan,
@@ -34,6 +35,11 @@ import { BillingCatalogService } from '../application/billing-catalog.service';
 import { BillingAccountService } from '../application/billing-account.service';
 import { BillingReconciliationService } from '../application/billing-reconciliation.service';
 import { BillingEnforcementService } from '../application/billing-enforcement.service';
+import {
+  BillingOperationsService,
+  parseContactAssignment,
+  parseGraceExtension,
+} from '../application/billing-operations.service';
 
 // SC3a/SC3b — SaaS list prices, the billing policy, starting a business's
 // billing and review-only reconciliation (platform operators only). Every
@@ -71,7 +77,55 @@ export class PlatformBillingController {
     private readonly accounts: BillingAccountService,
     private readonly reconciliation: BillingReconciliationService,
     private readonly enforcement: BillingEnforcementService,
+    private readonly operations: BillingOperationsService,
   ) {}
+
+  // --- SC3c-3: billing contact, grace extensions, overview ---------------------
+
+  @UseGuards(RateLimitGuard)
+  @RateLimit('platform-lifecycle')
+  @Header('Cache-Control', 'no-store')
+  @Put('tenants/:tenantId/billing/contact')
+  async assignBillingContact(
+    @Param('tenantId') tenantId: string,
+    @Body() body: unknown,
+    @Req() request: PlatformAuthenticatedRequest,
+  ): Promise<PlatformTenantBillingResponse> {
+    assertRecentSignIn(request.platformIdentity);
+    await this.operations.assignContact(
+      tenantId,
+      parseContactAssignment(body),
+      request.platformOperator!,
+      request.requestId,
+    );
+    return this.accounts.platformView(tenantId);
+  }
+
+  @UseGuards(RateLimitGuard)
+  @RateLimit('platform-lifecycle')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @Post('tenants/:tenantId/billing/grace-extension')
+  async extendGrace(
+    @Param('tenantId') tenantId: string,
+    @Body() body: unknown,
+    @Req() request: PlatformAuthenticatedRequest,
+  ): Promise<PlatformTenantBillingResponse> {
+    assertRecentSignIn(request.platformIdentity);
+    await this.operations.extendGrace(
+      tenantId,
+      parseGraceExtension(body),
+      request.platformOperator!,
+      request.requestId,
+    );
+    return this.accounts.platformView(tenantId);
+  }
+
+  @Header('Cache-Control', 'no-store')
+  @Get('billing/overview')
+  billingOverview(): Promise<PlatformBillingOverview> {
+    return this.operations.overview();
+  }
 
   // --- SC3b: a business's billing ------------------------------------------
 

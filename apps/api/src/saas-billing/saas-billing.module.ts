@@ -12,6 +12,7 @@ import { BillingCatalogService } from './application/billing-catalog.service';
 import { BillingLifecycleService } from './application/billing-lifecycle.service';
 import { BillingReconciliationService } from './application/billing-reconciliation.service';
 import { BillingEnforcementService } from './application/billing-enforcement.service';
+import { BillingOperationsService } from './application/billing-operations.service';
 import { createSaasBillingProvider } from './provider/saas-billing-provider-mode';
 import { SAAS_BILLING_PROVIDER } from './provider/saas-billing-provider';
 
@@ -40,6 +41,7 @@ import { SAAS_BILLING_PROVIDER } from './provider/saas-billing-provider';
     BillingAccountService,
     BillingReconciliationService,
     BillingEnforcementService,
+    BillingOperationsService,
     {
       provide: SAAS_BILLING_PROVIDER,
       useFactory: () => createSaasBillingProvider(),

@@ -39,6 +39,11 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   // SC3b — Stripe billing (20261026090000).
   'BillingCheckoutSession',
   'BillingReconciliationCase',
+  // SC3c-3 — billing contacts, grace extensions, billing notices
+  // (20261029090000).
+  'TenantBillingContact',
+  'BillingGraceExtension',
+  'BillingNotification',
 ]);
 
 // Columns added after the 4C-era migrations to tables that already existed.
@@ -46,6 +51,8 @@ export const COLUMNS_ADDED_AFTER_4C: Readonly<
   Record<string, readonly string[]>
 > = {
   PaymentAttempt: ['paymentState', 'fulfilmentStatus'],
+  // SC3c-3 — verified-email stamps (20261029090000).
+  InternalUser: ['verifiedEmail', 'emailVerifiedAt'],
 };
 
 // A checksum of every row of every table that existed at the 4C-era migrations,

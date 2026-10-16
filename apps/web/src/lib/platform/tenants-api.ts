@@ -3,6 +3,7 @@ import type {
   PlatformPlanListResponse,
   PlatformReconciliationCaseListResponse,
   PlatformTenantBillingResponse,
+  PlatformBillingOverview,
   PlatformTenantSubscriptionResponse,
   PlatformTenantDetailResponse,
   PlatformTenantLifecycleResponse,
@@ -93,6 +94,13 @@ export function getPlatformTenantBilling(
   tenantId: string,
 ): Promise<RegistryResult<PlatformTenantBillingResponse>> {
   return readRegistry(`/tenants/${encodeURIComponent(tenantId)}/billing`);
+}
+
+// SC3c-3 — the console's billing attention counts.
+export function getPlatformBillingOverview(): Promise<
+  RegistryResult<PlatformBillingOverview>
+> {
+  return readRegistry("/billing/overview");
 }
 
 export function listPlatformReconciliationCases(

@@ -58,6 +58,10 @@ export interface BillingState {
   // SC3c — TRIAL_EXPIRED only: when the restricted recovery window ends
   // (then the business is suspended for billing and this is cleared).
   recoveryEndsAt: Date | null;
+  // SC3c-3 — UNPAID only: an operator's explicit, time-limited grace
+  // EXCEPTION (temporary access while still UNPAID). Cleared whenever the
+  // subscription leaves UNPAID.
+  graceExceptionEndsAt: Date | null;
   cancelAtPeriodEnd: boolean;
   canceledAt: Date | null;
   pending: PendingPlanChange | null;
@@ -116,6 +120,14 @@ export type BillingEvent =
   // nothing outstanding (the caller verified both live): the recovery is
   // complete even if no single payment event could confirm it.
   | { type: 'RECOVERY_CONFIRMED'; at: Date }
+  // SC3c-3 — operator: a PAST_DUE grace period is extended to `endsAt`
+  // (the caller enforces the per-episode limit).
+  | { type: 'GRACE_EXTENDED'; at: Date; endsAt: Date }
+  // SC3c-3 — operator: an UNPAID subscription gets (or extends) an explicit
+  // grace exception until `endsAt`. It stays UNPAID; the debt is untouched.
+  | { type: 'GRACE_EXCEPTION_GRANTED'; at: Date; endsAt: Date }
+  // SC3c-3 — system: the grace exception is over.
+  | { type: 'GRACE_EXCEPTION_EXPIRED'; at: Date }
   | { type: 'CANCEL_SCHEDULED'; at: Date }
   | { type: 'CANCEL_UNDONE'; at: Date }
   // Provider: the subscription ended (after a scheduled cancellation, or a
@@ -151,6 +163,9 @@ export interface BillingHistoryEntry {
     | 'TRIAL_EXPIRED'
     | 'RECOVERY_EXPIRED'
     | 'SUBSCRIPTION_REPLACED'
+    | 'GRACE_EXTENDED'
+    | 'GRACE_EXCEPTION_GRANTED'
+    | 'GRACE_EXCEPTION_EXPIRED'
     | 'CANCEL_SCHEDULED'
     | 'CANCEL_UNDONE'
     | 'CANCELED'
@@ -179,6 +194,10 @@ export type RefusalReason =
   | 'GRACE_NOT_OVER'
   | 'NOT_IN_RECOVERY'
   | 'RECOVERY_NOT_OVER'
+  | 'NOT_UNPAID'
+  | 'NO_GRACE_EXCEPTION'
+  | 'GRACE_EXCEPTION_NOT_OVER'
+  | 'INVALID_EXTENSION'
   | 'NOT_AUTHORIZED'
   | 'NOTHING_TO_CANCEL'
   | 'CHANGE_PENDING'
@@ -236,7 +255,13 @@ function changed(
   history: BillingHistoryEntry[],
   suspension: SuspensionEffect = 'NONE',
 ): TransitionResult {
-  return { ok: true, changed: true, next, history, suspension };
+  // SC3c-3 — a grace exception exists only while UNPAID: leaving UNPAID (a
+  // payment, a confirmed recovery, the provider ending it) ends it.
+  const normalized =
+    next.status !== 'UNPAID' && next.graceExceptionEndsAt !== null
+      ? { ...next, graceExceptionEndsAt: null }
+      : next;
+  return { ok: true, changed: true, next: normalized, history, suspension };
 }
 
 // Nothing is ever charged automatically without recurring-payment
@@ -273,10 +298,21 @@ export function billingAccess(state: BillingState): BillingAccess {
 // period, keeps them. An expired trial (including its recovery window), an
 // unpaid or an ended subscription does not: the recovery window never
 // extends premium access.
+//
+// SC3c-3 — an UNPAID subscription keeps them while an operator's grace
+// exception is in force (`now` before its end).
 export function entitledToPlanModules(
-  state: Pick<BillingState, 'billingMode' | 'status'>,
+  state: Pick<BillingState, 'billingMode' | 'status'> & {
+    graceExceptionEndsAt?: Date | null;
+  },
+  now: Date = new Date(),
 ): boolean {
   if (state.billingMode === 'COMPLIMENTARY') return true;
+  if (state.status === 'UNPAID') {
+    return (
+      state.graceExceptionEndsAt != null && now < state.graceExceptionEndsAt
+    );
+  }
   return (
     state.status === 'ACTIVE' ||
     state.status === 'TRIALING' ||
@@ -577,6 +613,63 @@ export function transition(
       );
     }
 
+    case 'GRACE_EXTENDED': {
+      if (state.status !== 'PAST_DUE' || state.graceEndsAt === null) {
+        return refuse('NOT_PAST_DUE');
+      }
+      const from = Math.max(state.graceEndsAt.getTime(), event.at.getTime());
+      if (
+        event.endsAt.getTime() <= from ||
+        event.endsAt.getTime() - from > 14 * DAY_MS
+      ) {
+        return refuse('INVALID_EXTENSION');
+      }
+      const next: BillingState = { ...state, graceEndsAt: event.endsAt };
+      return changed(state, next, [entry('GRACE_EXTENDED', state, next)]);
+    }
+
+    case 'GRACE_EXCEPTION_GRANTED': {
+      if (state.status !== 'UNPAID') return refuse('NOT_UNPAID');
+      const from = Math.max(
+        state.graceExceptionEndsAt?.getTime() ?? 0,
+        event.at.getTime(),
+      );
+      if (
+        event.endsAt.getTime() <= from ||
+        event.endsAt.getTime() - from > 14 * DAY_MS
+      ) {
+        return refuse('INVALID_EXTENSION');
+      }
+      const next: BillingState = {
+        ...state,
+        graceExceptionEndsAt: event.endsAt,
+      };
+      // Temporary access: a BILLING suspension (only that) is lifted; the
+      // subscription stays UNPAID and is never recorded as paid.
+      return changed(
+        state,
+        next,
+        [entry('GRACE_EXCEPTION_GRANTED', state, next)],
+        'LIFT_BILLING_SUSPENSION',
+      );
+    }
+
+    case 'GRACE_EXCEPTION_EXPIRED': {
+      if (state.status !== 'UNPAID' || state.graceExceptionEndsAt === null) {
+        return refuse('NO_GRACE_EXCEPTION');
+      }
+      if (event.at < state.graceExceptionEndsAt) {
+        return refuse('GRACE_EXCEPTION_NOT_OVER');
+      }
+      const next: BillingState = { ...state, graceExceptionEndsAt: null };
+      return changed(
+        state,
+        next,
+        [entry('GRACE_EXCEPTION_EXPIRED', state, next)],
+        'SUSPEND_FOR_BILLING',
+      );
+    }
+
     case 'CANCEL_SCHEDULED': {
       if (state.cancelAtPeriodEnd) return unchanged(state);
       const next = { ...state, cancelAtPeriodEnd: true };
@@ -611,7 +704,17 @@ export function transition(
         cancelAtPeriodEnd: false,
         pending: null,
       };
-      return changed(state, next, [entry('CANCELED', state, next)]);
+      // SC3c-3 — the provider ended an UNPAID subscription during a grace
+      // exception: the exception ends with it and the BILLING suspension it
+      // had lifted returns (no stale access). Otherwise unchanged (E7).
+      return changed(
+        state,
+        next,
+        [entry('CANCELED', state, next)],
+        state.status === 'UNPAID' && state.graceExceptionEndsAt !== null
+          ? 'SUSPEND_FOR_BILLING'
+          : 'NONE',
+      );
     }
 
     case 'UPGRADE_REQUESTED': {

@@ -385,6 +385,19 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     scope: 'platform',
     note: 'SC3c-1 — apply due grace / trial-recovery expiries now (no-op while enforcement is off); audited.',
   },
+  // SC3c-3 — billing contact, grace extensions, console overview.
+  'PUT /api/v1/platform/tenants/:tenantId/billing/contact': {
+    scope: 'platform',
+    note: "SC3c-3 — designate the business's billing contact (its own staff only); audited.",
+  },
+  'POST /api/v1/platform/tenants/:tenantId/billing/grace-extension': {
+    scope: 'platform',
+    note: 'SC3c-3 — extend a PAST_DUE grace period / grant an UNPAID grace exception (14 days each, 60 per episode; never marks paid); audited.',
+  },
+  'GET /api/v1/platform/billing/overview': {
+    scope: 'platform',
+    note: 'SC3c-3 — billing attention counts for the console.',
+  },
   'GET /api/v1/platform/billing/reconciliation-cases': {
     scope: 'platform',
     note: 'SC3b — billing cases to review.',

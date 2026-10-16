@@ -28,6 +28,8 @@ const ALREADY_SETTLED = new Set([
   'RECOVERY_NOT_OVER',
   'CANCELED',
   'COMPLIMENTARY',
+  'NO_GRACE_EXCEPTION',
+  'GRACE_EXCEPTION_NOT_OVER',
 ]);
 
 // SC3c-1 — the expiry sweep: when a grace period or an expired trial's
@@ -83,6 +85,16 @@ export class BillingEnforcementService
     let applied = 0;
     let failed = 0;
     try {
+      // SC3c-3 — reminders first (only while enforcement is on: a deadline
+      // that changes nothing is never announced). Queued only while billing
+      // notifications are enabled too.
+      try {
+        await this.lifecycle.queueReminders(now, SWEEP_BATCH);
+      } catch (error) {
+        this.logger.error(
+          `Billing reminders failed: ${error instanceof Error ? error.name : 'unknown'}`,
+        );
+      }
       const due = await this.lifecycle.dueForEnforcement(now, SWEEP_BATCH);
       for (const item of due) {
         try {

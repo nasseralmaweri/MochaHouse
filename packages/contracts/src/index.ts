@@ -1776,6 +1776,17 @@ export const PLATFORM_TENANT_PROTECTED = "TENANT_PROTECTED";
 // billing is restored only by a confirmed payment (or, later, a time-limited
 // grace extension) — never by a plain reactivation.
 export const PLATFORM_BILLING_SUSPENSION_ACTIVE = "BILLING_SUSPENSION_ACTIVE";
+// SC3c-3 — refusals of a grace extension / billing contact assignment.
+//   NOT_EXTENDABLE  — only a PAST_DUE or UNPAID billed subscription.
+//   EXTENSION_LIMIT — more than 14 days, or more than 60 in the episode.
+//   NOT_RECOVERABLE — the provider's subscription has ended (or is not
+//                     ours / not readable as recoverable).
+//   CONTACT_NOT_ELIGIBLE — not an ACTIVE staff member of THIS business
+//                          holding billing.manage business-wide.
+export const PLATFORM_BILLING_NOT_EXTENDABLE = "BILLING_NOT_EXTENDABLE";
+export const PLATFORM_BILLING_EXTENSION_LIMIT = "BILLING_EXTENSION_LIMIT";
+export const PLATFORM_BILLING_NOT_RECOVERABLE = "BILLING_NOT_RECOVERABLE";
+export const PLATFORM_BILLING_CONTACT_NOT_ELIGIBLE = "BILLING_CONTACT_NOT_ELIGIBLE";
 export const PLATFORM_OWNER_ALREADY_SIGNED_IN = "OWNER_ALREADY_SIGNED_IN";
 export const PLATFORM_OWNER_EMAIL_IN_USE = "OWNER_EMAIL_IN_USE";
 
@@ -1957,6 +1968,8 @@ export interface BusinessBillingSummary {
   // SC3c-1 — an expired trial: when its restricted recovery window ends
   // (the business is then suspended for billing). Null otherwise.
   recoveryEndsAt: string | null;
+  // SC3c-3 — UNPAID only: an operator's temporary grace exception, until.
+  graceExceptionEndsAt: string | null;
   // SC3c-1 — what billing enforcement actually does to the business NOW
   // (server-derived; never inferred by the client). All false while
   // enforcement is off.
@@ -2048,6 +2061,82 @@ export interface PlatformStartBillingRequest {
 export interface PlatformTenantBillingResponse {
   tenantId: string;
   billing: BusinessBillingSummary | null;
+  // SC3c-3 — who billing email goes to, and the grace extensions so far.
+  contact: PlatformBillingContactView;
+  extensions: PlatformGraceExtension[];
+  // Days still available in the current unpaid episode (null: none open).
+  extensionDaysRemaining: number | null;
+}
+
+// SC3c-3 — the designated billing contact and the recipient billing email
+// would go to right now (re-checked again at delivery time).
+export type BillingRecipientSource = "CONTACT" | "FALLBACK_ADMINISTRATOR";
+export type BillingRecipientIneligibility =
+  | "NOT_ACTIVE"
+  | "NO_BILLING_MANAGE"
+  | "EMAIL_NOT_VERIFIED"
+  | "EMAIL_VERIFICATION_STALE";
+
+export interface PlatformBillingStaffMember {
+  internalUserId: string;
+  email: string;
+  displayName: string | null;
+  // null when eligible to receive billing email now.
+  ineligibleReason: BillingRecipientIneligibility | null;
+}
+
+export interface PlatformBillingContactView {
+  designated: PlatformBillingStaffMember | null;
+  // Where billing email would go now (null: nobody eligible — nothing is
+  // sent and a BILLING_CONTACT_MISSING case is opened).
+  recipient: (PlatformBillingStaffMember & { source: BillingRecipientSource }) | null;
+  // Staff of THIS business who may be designated (ACTIVE, billing.manage
+  // business-wide).
+  candidates: PlatformBillingStaffMember[];
+}
+
+// PUT /api/v1/platform/tenants/:tenantId/billing/contact — body exactly
+// { internalUserId } (recent sign-in; audited).
+//   409 BILLING_CONTACT_NOT_ELIGIBLE
+export interface PlatformAssignBillingContactRequest {
+  internalUserId: string;
+}
+
+export type PlatformGraceExtensionKind = "GRACE_EXTENDED" | "GRACE_EXCEPTION";
+
+export interface PlatformGraceExtension {
+  id: string;
+  kind: PlatformGraceExtensionKind;
+  days: number;
+  previousEndsAt: string;
+  newEndsAt: string;
+  reason: string;
+  createdAt: string;
+}
+
+// POST /api/v1/platform/tenants/:tenantId/billing/grace-extension — body
+// exactly { days, reason } (recent sign-in; audited). PAST_DUE: the grace
+// period is extended. UNPAID: an explicit, time-limited grace EXCEPTION
+// (temporary access; the subscription stays UNPAID). At most 14 days each,
+// 60 per unpaid episode; the debt is never touched.
+//   409 BILLING_NOT_EXTENDABLE / BILLING_EXTENSION_LIMIT /
+//       BILLING_NOT_RECOVERABLE
+export interface PlatformGraceExtensionRequest {
+  days: number;
+  reason: string;
+}
+
+// GET /api/v1/platform/billing/overview — counts for the operator console
+// (no external paging).
+export interface PlatformBillingOverview {
+  inGrace: number;
+  unpaid: number;
+  billingSuspended: number;
+  graceExceptions: number;
+  trialRecoveryWindows: number;
+  missingContacts: number;
+  failedNotifications: number;
+  openCases: { kind: string; count: number }[];
 }
 
 // Review-only billing reconciliation (operators). Running it or resolving a
@@ -2139,7 +2228,11 @@ export type PlatformSubscriptionEventType =
   | "BILLING_SUSPENDED"
   | "BILLING_SUSPENSION_LIFTED"
   // SC3c-2 — an ended subscription replaced by a new, paid one.
-  | "SUBSCRIPTION_REPLACED";
+  | "SUBSCRIPTION_REPLACED"
+  // SC3c-3 — operator grace extensions / exceptions.
+  | "GRACE_EXTENDED"
+  | "GRACE_EXCEPTION_GRANTED"
+  | "GRACE_EXCEPTION_EXPIRED";
 
 // SC3a — the subscription's billing state (separate from a business's
 // administrative/security suspension). A COMPLIMENTARY subscription is never

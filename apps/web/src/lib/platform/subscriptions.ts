@@ -104,6 +104,15 @@ const CONFLICTS: Record<string, string> = {
   PRICE_NOT_ACTIVE: SUBSCRIPTION_MESSAGES.priceNotActive,
   NO_OWNER: SUBSCRIPTION_MESSAGES.noOwner,
   CASE_ALREADY_RESOLVED: SUBSCRIPTION_MESSAGES.caseResolved,
+  // SC3c-3 — grace extensions and the billing contact.
+  BILLING_NOT_EXTENDABLE:
+    "Only a business with an unpaid invoice can be given more time. Reload to see its current billing.",
+  BILLING_EXTENSION_LIMIT:
+    "That's more than allowed: at most 14 days at a time and 60 days in total until the business pays.",
+  BILLING_NOT_RECOVERABLE:
+    "The payment provider has ended this subscription, so it can't be given more time. Nothing was changed.",
+  BILLING_CONTACT_NOT_ELIGIBLE:
+    "Choose an active staff member of this business who can manage billing.",
 };
 
 export type ChangeOutcome<T> =

@@ -6,7 +6,11 @@ import {
   ResolveCase,
   RunReconciliation,
 } from "@/components/platform/ReconciliationControls";
-import { listPlatformReconciliationCases } from "@/lib/platform/tenants-api";
+import {
+  getPlatformBillingOverview,
+  listPlatformReconciliationCases,
+} from "@/lib/platform/tenants-api";
+import { BillingOverviewCards } from "@/components/platform/BillingOverviewCards";
 
 export const metadata: Metadata = {
   title: "Billing · CENTERIVO Platform Console",
@@ -32,6 +36,14 @@ const CASE_LABELS: Record<string, string> = {
   UNLINKED_REPLACEMENT: "A restart was created at the payment provider but not linked (see the recovery runbook)",
   CHECKOUT_NOT_RECORDED: "A payment page was created but could not be recorded",
   PROVIDER_UNREADABLE: "The payment provider could not be read",
+  SUSPENSION_EXEMPT: "Billing would have suspended a business that is exempt",
+  // SC3c-3
+  BILLING_CONTACT_MISSING: "No one eligible to receive billing email",
+  BILLING_CONTACT_UNVERIFIED:
+    "The designated billing contact's email isn't verified (or the verification expired); they need to sign in again",
+  BILLING_NOTIFICATION_FAILED: "A billing email could not be sent",
+  EXTENSION_ENDED_BY_PROVIDER:
+    "The payment provider ended a subscription during extra time an operator gave",
 };
 
 // SC3b — review-only billing reconciliation (Stripe test mode). Running it,
@@ -42,13 +54,21 @@ export default async function PlatformBillingPage({
   searchParams: Promise<{ status?: string }>;
 }) {
   const status = (await searchParams).status === "RESOLVED" ? "RESOLVED" : "OPEN";
-  const cases = await listPlatformReconciliationCases(status);
+  const [cases, overview] = await Promise.all([
+    listPlatformReconciliationCases(status),
+    getPlatformBillingOverview(),
+  ]);
   return (
     <div className="flex flex-col gap-6">
       <PlatformPageHeader
         title="Billing"
         description="Review where our billing records and the payment provider disagree. Nothing here charges, refunds or changes a subscription."
       />
+      {overview.state === "ok" ? (
+        <BillingOverviewCards overview={overview.data} caseLabels={CASE_LABELS} />
+      ) : (
+        <RegistryStatePanel state={overview.state} retryHref="/platform/billing" />
+      )}
       <RunReconciliation />
       <nav aria-label="Case status" className="flex gap-4 text-sm">
         <Link

@@ -26,6 +26,7 @@ function billed(over: Partial<BillingState> = {}): BillingState {
     pastDueAt: null,
     graceEndsAt: null,
     recoveryEndsAt: null,
+    graceExceptionEndsAt: null,
     cancelAtPeriodEnd: false,
     canceledAt: null,
     pending: null,

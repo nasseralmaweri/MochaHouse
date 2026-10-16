@@ -25,6 +25,7 @@ const summary = (over: Partial<BusinessBillingSummary> = {}): BusinessBillingSum
   currentPeriodEnd: null,
   graceEndsAt: null,
   recoveryEndsAt: null,
+  graceExceptionEndsAt: null,
   enforced: false,
   premiumPaused: false,
   suspendedForBilling: false,
@@ -172,5 +173,25 @@ describe("SC3c-2 billing recovery (web)", () => {
     );
     expect(portalReturn("returned")).toBe(true);
     expect(portalReturn("x")).toBe(false);
+  });
+});
+
+// SC3c-3 — an operator's temporary grace exception, told plainly: still
+// unpaid, temporary, until when.
+describe("SC3c-3 grace exception wording", () => {
+  it("states temporary access while unpaid, never that it is paid", () => {
+    const exception = summary({
+      state: "UNPAID",
+      enforced: true,
+      graceExceptionEndsAt: "2026-11-05T12:00:00Z",
+    });
+    expect(billingStateDescription(exception)).toMatch(/unpaid\. You have temporary access until/);
+    expect(billingNotice(exception)).toMatch(/still unpaid.*temporary access until/);
+    expect(billingStateDescription(summary({ state: "UNPAID" }))).toMatch(/outstanding invoices need paying/);
+    expect(billingNotice(summary({ state: "UNPAID", enforced: true }))).toBeNull();
+    // Already paused for billing: no temporary-access claim.
+    expect(
+      billingNotice({ ...exception, suspendedForBilling: true }),
+    ).toBeNull();
   });
 });

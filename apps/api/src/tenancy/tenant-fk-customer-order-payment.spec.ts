@@ -252,6 +252,8 @@ async function tenantEnforcement(client: Client): Promise<string[]> {
 async function loadBusiness(prisma: PrismaClient, tag: Tag) {
   const tenantId = TENANTS[tag];
   await prisma.internalUser.create({
+    // Only the id back: an older-migration database lacks later columns.
+    select: { id: true },
     data: {
       id: id(tag, 'staff'),
       tenantId,
