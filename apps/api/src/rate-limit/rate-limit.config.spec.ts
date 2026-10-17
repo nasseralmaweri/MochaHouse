@@ -24,6 +24,8 @@ describe('loadRateLimitConfig', () => {
       'platform-lifecycle',
       'account-recovery',
       'account-verification',
+      'owner-registration',
+      'owner-registration-verification',
     ];
     for (const name of names) {
       const policy = config.policies[name];
@@ -51,6 +53,8 @@ describe('loadRateLimitConfig', () => {
       'platform-sign-in',
       'account-recovery',
       'account-verification',
+      'owner-registration',
+      'owner-registration-verification',
     ] as const) {
       expect(scope(policy, 'identifier-ip').key).toEqual([
         'tenant',
@@ -176,6 +180,10 @@ describe('policy invariants', () => {
     expect(policies['platform-mfa'].identifierField).toBeNull();
     expect(policies['account-recovery'].identifierField).toBe('email');
     expect(policies['account-verification'].identifierField).toBe('email');
+    expect(policies['owner-registration'].identifierField).toBe('email');
+    expect(policies['owner-registration-verification'].identifierField).toBe(
+      'email',
+    );
     for (const name of [
       'checkout',
       'checkout-quote',
@@ -199,6 +207,8 @@ describe('policy invariants', () => {
       'platform-sign-in',
       'account-recovery',
       'account-verification',
+      'owner-registration',
+      'owner-registration-verification',
     ] as const) {
       const pair = policies[name].scopes.find(
         (s) => s.name === 'identifier-ip',

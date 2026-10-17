@@ -301,6 +301,12 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/auth/verification/resend': { scope: 'public-auth' },
   'POST /api/v1/auth/verify': { scope: 'public-auth' },
   'POST /api/v1/internal/auth/sign-in': { scope: 'public-auth' },
+  // SC4a — business owner self-service registration: 404 unless enabled
+  // server-side; creates a staff-pool login and a platform record only (no
+  // business, staff member or role). Rate limited; enumeration-safe.
+  'GET /api/v1/internal/registration': { scope: 'public-auth' },
+  'POST /api/v1/internal/registration/start': { scope: 'public-auth' },
+  'POST /api/v1/internal/registration/complete': { scope: 'public-auth' },
   // SC1b — CENTERIVO platform-operator sign-in (dedicated platform pool,
   // mandatory TOTP). Rate limited; never returns a token before MFA.
   'POST /api/v1/platform/auth/sign-in': { scope: 'public-auth' },

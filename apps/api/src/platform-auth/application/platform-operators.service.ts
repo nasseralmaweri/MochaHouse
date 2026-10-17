@@ -85,6 +85,9 @@ export const PLATFORM_AUDIT_ACTIONS = {
   billingComplimentaryEnded: 'platform.billing.complimentary_ended',
   billingCaseRechecked: 'platform.billing.case_rechecked',
   billingScheduleReleased: 'platform.billing.schedule_released',
+  // SC4a — a business owner completed self-service registration (no
+  // operator; the identity fields name the login, target: the registration).
+  ownerRegistrationVerified: 'platform.owner_registration.verified',
 } as const;
 
 @Injectable()

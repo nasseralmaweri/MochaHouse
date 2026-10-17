@@ -87,7 +87,7 @@ export class InternalTenantMembershipService {
       const unambiguous = unambiguousByTenant(
         await findUnboundEmailMatches(
           this.prisma,
-          identity.provider,
+          identity,
           identity.email,
           null,
         ),

@@ -14,6 +14,10 @@ import type { PrismaService } from '../../prisma/prisma.service';
 //   - Same identity provider only, unbound rows only. Rows already bound to
 //     a login are matched by subject elsewhere and never by email.
 //   - The caller has already required a VERIFIED email (Security 4A).
+//   - SC4a — never for a SELF-REGISTERED login (one an OwnerRegistration
+//     records): a login created by public registration can only ever be
+//     bound to a staff row by its subject, so registering with a staff
+//     member's address can never claim their business or membership.
 //   - Per business: exactly one match binds. Two or more rows in the same
 //     business that differ only by letter case are AMBIGUOUS: nothing is
 //     bound and that business is not entered (fail closed). Rows are never
@@ -35,10 +39,11 @@ const MATCH_LIMIT = 500;
 
 export async function findUnboundEmailMatches(
   prisma: PrismaService,
-  provider: string,
+  identity: { provider: string; subject: string },
   email: string,
   tenantId: string | null,
 ): Promise<UnboundEmailMatch[]> {
+  const { provider, subject } = identity;
   const address = email.trim();
   if (address.length === 0) return [];
   const rows = await prisma.$queryRaw<UnboundEmailMatch[]>(Prisma.sql`
@@ -47,6 +52,11 @@ export async function findUnboundEmailMatches(
     WHERE "externalProvider" = ${provider}
       AND "externalSubject" IS NULL
       AND LOWER("email") = LOWER(${address})
+      AND NOT EXISTS (
+        SELECT 1 FROM "OwnerRegistration"
+        WHERE "identityProvider" = ${provider}
+          AND "identitySubject" = ${subject}
+      )
       ${tenantId === null ? Prisma.empty : Prisma.sql`AND "tenantId" = ${tenantId}`}
     ORDER BY "tenantId", "id"
     LIMIT ${MATCH_LIMIT}

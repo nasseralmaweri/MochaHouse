@@ -263,6 +263,8 @@ const GLOBAL_TABLES = [
   'BillingAdjustmentEvent',
   // SC3e-4 — when billing enforcement ran.
   'BillingEnforcementActivation',
+  // SC4a — business owner self-service registrations.
+  'OwnerRegistration',
   '_prisma_migrations',
 ];
 

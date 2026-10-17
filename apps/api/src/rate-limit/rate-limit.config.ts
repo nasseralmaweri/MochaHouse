@@ -70,7 +70,11 @@ export type PolicyName =
   | 'billing-checkout'
   | 'billing-webhook'
   | 'account-recovery'
-  | 'account-verification';
+  | 'account-verification'
+  // SC4a — business owner self-service registration (no tenant: the tenant
+  // part of the key is the fixed "none").
+  | 'owner-registration'
+  | 'owner-registration-verification';
 
 interface ScopeDefault {
   name: string;
@@ -368,6 +372,64 @@ const DEFAULTS: Record<PolicyName, PolicyDefault> = {
         name: 'identifier',
         key: ['tenant', 'identifier'],
         limit: 60,
+        windowSeconds: HOUR,
+      },
+    ],
+  },
+  // SC4a — starting (or resending) an owner registration emails a code to
+  // the address given, so it is capped like 'account-recovery': per
+  // identifier+IP, per IP, and an IP-independent ceiling per address (what a
+  // victim can be sent per hour however many addresses an attacker uses).
+  // The service adds its own per-email (5 per 24 h) and global daily quotas.
+  'owner-registration': {
+    identifierField: 'email',
+    scopes: [
+      // one source: 3 per hour, under the ceiling of 6
+      {
+        name: 'identifier-ip',
+        key: ['tenant', 'identifier', 'ip'],
+        limit: 3,
+        windowSeconds: HOUR,
+      },
+      { name: 'ip', key: ['tenant', 'ip'], limit: 10, windowSeconds: HOUR },
+      // A daily cap per address, so one source cannot use up the service's
+      // global daily quota of new registrations on its own.
+      {
+        name: 'ip-daily',
+        key: ['tenant', 'ip'],
+        limit: 20,
+        windowSeconds: 24 * HOUR,
+      },
+      {
+        name: 'identifier',
+        key: ['tenant', 'identifier'],
+        limit: 6,
+        windowSeconds: HOUR,
+      },
+    ],
+  },
+  // SC4a — completing a registration with a code. Code guessing is also
+  // bounded by the service (5 attempts per code); this caps how fast.
+  'owner-registration-verification': {
+    identifierField: 'email',
+    scopes: [
+      // one source: 5 per 15 min = at most 20/hour, under the ceiling of 30
+      {
+        name: 'identifier-ip',
+        key: ['tenant', 'identifier', 'ip'],
+        limit: 5,
+        windowSeconds: QUARTER_HOUR,
+      },
+      {
+        name: 'ip',
+        key: ['tenant', 'ip'],
+        limit: 20,
+        windowSeconds: QUARTER_HOUR,
+      },
+      {
+        name: 'identifier',
+        key: ['tenant', 'identifier'],
+        limit: 30,
         windowSeconds: HOUR,
       },
     ],

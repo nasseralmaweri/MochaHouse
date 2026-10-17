@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { getInternalSession } from "@/lib/internal-auth/session";
+import { getOwnerRegistrationAvailability } from "@/lib/internal-auth/registration";
 import { CenterivoWordmark } from "@/components/centerivo/Wordmark";
 import { centerivoSans } from "@/components/centerivo/fonts";
 import { InternalSignInForm } from "./InternalSignInForm";
@@ -9,13 +11,14 @@ export const metadata: Metadata = { title: "Sign in · CENTERIVO" };
 
 // The platform front door. Deliberately tenant-neutral: the person signing
 // in may belong to one business or several, so nothing here names a business.
-// There is no "create an account" link: internal users are provisioned
-// administratively.
+// Staff are provisioned administratively; SC4a — a business owner may
+// create an account only while the API offers self-service registration.
 export default async function InternalSignInPage() {
   const session = await getInternalSession();
   if (session) {
     redirect("/admin/orders");
   }
+  const registration = await getOwnerRegistrationAvailability();
 
   return (
     <div
@@ -37,6 +40,14 @@ export default async function InternalSignInPage() {
         >
           <InternalSignInForm />
         </div>
+        {registration.enabled ? (
+          <p className="text-sm text-text-secondary">
+            New business owner?{" "}
+            <Link href="/internal/register" className="underline underline-offset-4">
+              Create an account
+            </Link>
+          </p>
+        ) : null}
       </main>
     </div>
   );

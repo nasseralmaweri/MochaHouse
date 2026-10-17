@@ -1494,6 +1494,55 @@ export interface InternalSignInResponse {
   expiresInSeconds: number;
 }
 
+// SC4a — business owner self-service registration
+// (/api/v1/internal/registration/*). Off unless the deployment enables it;
+// the server is the only authority on that.
+export type OwnerRegistrationAvailability =
+  | { enabled: false }
+  | {
+      enabled: true;
+      termsVersion: string;
+      privacyVersion: string;
+      termsUrl: string | null;
+      privacyUrl: string | null;
+    };
+
+// Step 1: send a code to the email. The answer is the same whether or not
+// the email is known, registered or eligible (no account enumeration).
+export interface OwnerRegistrationStartRequest {
+  email: string;
+}
+
+export interface OwnerRegistrationStartResponse {
+  status: "CODE_SENT_IF_ELIGIBLE";
+}
+
+// Step 2: prove the mailbox with the code, choose the password, accept the
+// Terms and Privacy Policy versions shown.
+export interface OwnerRegistrationCompleteRequest {
+  email: string;
+  code: string;
+  password: string;
+  displayName: string;
+  termsVersion: string;
+  privacyVersion: string;
+  acceptLegal: boolean;
+}
+
+export interface OwnerRegistrationCompleteResponse {
+  status: "VERIFIED";
+}
+
+// Refusal codes (400 unless noted). One code for every code problem, so an
+// answer never says whether the email has a registration.
+export const OWNER_REGISTRATION_CODE_INVALID = "REGISTRATION_CODE_INVALID";
+export const OWNER_REGISTRATION_INVALID_INPUT = "REGISTRATION_INVALID_INPUT";
+export const OWNER_REGISTRATION_WEAK_PASSWORD = "REGISTRATION_WEAK_PASSWORD";
+// 409 — the Terms or Privacy Policy changed since the page was loaded.
+export const OWNER_REGISTRATION_LEGAL_OUTDATED = "REGISTRATION_LEGAL_OUTDATED";
+// 503 — the registration quota is used up for now.
+export const OWNER_REGISTRATION_UNAVAILABLE = "REGISTRATION_UNAVAILABLE";
+
 // The mapped InternalUser for the authenticated internal identity. Only
 // ever returned for an ACTIVE user (the guard rejects every other state
 // before the controller runs), so `status` is always "ACTIVE" here; it is

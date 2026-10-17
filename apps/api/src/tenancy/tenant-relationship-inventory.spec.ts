@@ -208,6 +208,8 @@ const APPROVED_GLOBAL_MODELS = [
   'BillingAdjustmentEvent',
   // SC3e-4 — when billing enforcement ran.
   'BillingEnforcementActivation',
+  // SC4a — business owner self-service registrations.
+  'OwnerRegistration',
 ];
 // SC2a review — identifiers issued by an OUTSIDE system (not a record of
 // ours): the SaaS billing provider's ids (SC3a).
@@ -285,6 +287,8 @@ const PLATFORM_AUDIT_TARGET_TYPES = [
   'plan',
   'billing_case',
   'platform_operator',
+  // SC4a — a business owner's self-service registration.
+  'owner_registration',
 ];
 const PLATFORM_OPERATOR_MODELS = [
   'PlatformOperator',
@@ -320,6 +324,8 @@ const PLATFORM_OPERATOR_MODELS = [
   'BillingAdjustmentEvent',
   // SC3e-4 — when billing enforcement ran.
   'BillingEnforcementActivation',
+  // SC4a — business owner self-service registrations.
+  'OwnerRegistration',
 ];
 
 describe('Tenant relationship inventory (Security 4C-1)', () => {

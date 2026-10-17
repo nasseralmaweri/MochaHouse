@@ -94,6 +94,8 @@ describe('Tenant query audit (report-only)', () => {
           'BillingAdjustmentEvent',
           // SC3e-4 — when billing enforcement ran.
           'BillingEnforcementActivation',
+          // SC4a — business owner self-service registrations.
+          'OwnerRegistration',
         ].sort(),
       );
     });

@@ -18,6 +18,7 @@ import { PlatformRevenueController } from '../saas-billing/api/platform-revenue.
 import { PlatformPermissionsController } from '../platform-auth/api/platform-permissions.controller';
 import { AdminBillingController } from '../saas-billing/api/admin-billing.controller';
 import { BillingWebhookController } from '../saas-billing/api/billing-webhook.controller';
+import { OwnerRegistrationController } from '../owner-registration/api/owner-registration.controller';
 
 // The list of public routes protected by S3a. If a route here loses its
 // decorator or its guard — or someone adds a new unauthenticated ordering or
@@ -217,6 +218,17 @@ const PROTECTED: ReadonlyArray<{
     controller: BillingWebhookController,
     method: 'receive',
     policy: 'billing-webhook',
+  },
+  // SC4a — business owner self-service registration.
+  {
+    controller: OwnerRegistrationController,
+    method: 'start',
+    policy: 'owner-registration',
+  },
+  {
+    controller: OwnerRegistrationController,
+    method: 'complete',
+    policy: 'owner-registration-verification',
   },
 ];
 
