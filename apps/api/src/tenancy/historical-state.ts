@@ -53,6 +53,10 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'PlatformOperatorPermission',
   'BillingComplimentaryGrant',
   'BillingReconciliationCaseAction',
+  // SC3e-3 — refunds and credits, their decisions and history.
+  'BillingAdjustment',
+  'BillingAdjustmentDecision',
+  'BillingAdjustmentEvent',
 ]);
 
 // Columns added after the 4C-era migrations to tables that already existed.

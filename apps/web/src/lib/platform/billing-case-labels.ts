@@ -38,6 +38,13 @@ export const CASE_LABELS: Record<string, string> = {
   EXTENSION_ENDED_BY_PROVIDER:
     "The payment provider ended a subscription during extra time an operator gave",
   // SC3e-2
+  // SC3e-3
+  EXTERNAL_BILLING_ADJUSTMENT:
+    "A refund or credit was made directly at the payment provider, not through CENTERIVO (recorded; never repeated or reversed)",
+  BILLING_ADJUSTMENT_UNCERTAIN:
+    "A refund or credit wasn't confirmed by the payment provider and wasn't re-sent; check the provider, then resolve it",
+  BILLING_ADJUSTMENT_REFUND_FAILED: "An approved refund failed at the payment provider",
+  BILLING_ADJUSTMENT_MISMATCH: "A refund or credit at the payment provider differs from what was approved",
   COMPLIMENTARY_CANCELLATION_UNDONE:
     "A scheduled complimentary arrangement was withdrawn: its cancellation was undone at the payment provider (not re-issued)",
 };

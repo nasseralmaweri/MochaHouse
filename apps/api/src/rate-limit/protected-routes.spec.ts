@@ -13,6 +13,8 @@ import { PlatformPlansController } from '../platform-subscriptions/api/platform-
 import { PlatformTenantSubscriptionController } from '../platform-subscriptions/api/platform-tenant-subscription.controller';
 import type { PolicyName } from './rate-limit.config';
 import { PlatformBillingController } from '../saas-billing/api/platform-billing.controller';
+import { PlatformAdjustmentsController } from '../saas-billing/api/platform-adjustments.controller';
+import { PlatformPermissionsController } from '../platform-auth/api/platform-permissions.controller';
 import { AdminBillingController } from '../saas-billing/api/admin-billing.controller';
 import { BillingWebhookController } from '../saas-billing/api/billing-webhook.controller';
 
@@ -162,6 +164,27 @@ const PROTECTED: ReadonlyArray<{
     ] as const
   ).map((method) => ({
     controller: PlatformBillingController,
+    method,
+    policy: 'platform-lifecycle' as const,
+  })),
+  // SC3e-3 — refunds and credits, and operator permissions.
+  ...(
+    [
+      'adjustable',
+      'preview',
+      'request',
+      'approve',
+      'reject',
+      'cancel',
+      'resolveNotIssued',
+    ] as const
+  ).map((method) => ({
+    controller: PlatformAdjustmentsController,
+    method,
+    policy: 'platform-lifecycle' as const,
+  })),
+  ...(['grantPermission', 'revokePermission'] as const).map((method) => ({
+    controller: PlatformPermissionsController,
     method,
     policy: 'platform-lifecycle' as const,
   })),

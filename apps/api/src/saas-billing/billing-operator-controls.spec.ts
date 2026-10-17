@@ -21,6 +21,7 @@ import {
   type ScratchDatabase,
 } from '@mocha-house/testing';
 import {
+  FINANCIAL_PERMISSIONS,
   grantPlatformPermission,
   revokePlatformPermission,
 } from '@mocha-house/database/dist/platform/operator-provisioning';
@@ -369,7 +370,12 @@ describe('SC3e-2 operator billing controls (integration, scratch database)', () 
       'billing.cases.manage',
       'billing.schedules.release',
     ]);
-    await operator('all', PLATFORM_PERMISSIONS);
+    // SC3e-3 — every permission the CLI may grant (the financial ones are
+    // granted only by the bootstrap or in the console).
+    await operator(
+      'all',
+      PLATFORM_PERMISSIONS.filter((p) => !FINANCIAL_PERMISSIONS.includes(p)),
+    );
 
     for (const [key, modules] of [
       ['pro', ['crm', 'marketing']],
@@ -613,13 +619,14 @@ describe('SC3e-2 operator billing controls (integration, scratch database)', () 
     await expect(
       prisma.platformOperatorPermission.delete({ where: { id: row.id } }),
     ).rejects.toThrow();
-    // No platform route grants a permission.
+    // SC3e-3 — the console grants permissions only with
+    // platform.permissions.manage.
     await asOperator(
       'all',
       'post',
       `/operators/${operators.none.id}/permissions`,
-      { permission: 'billing.cases.manage' },
-    ).expect(404);
+      { permission: 'billing.cases.manage', reason: 'Reviewing cases.' },
+    ).expect(403);
   });
 
   // --- D2: paid -> complimentary at period end --------------------------------------

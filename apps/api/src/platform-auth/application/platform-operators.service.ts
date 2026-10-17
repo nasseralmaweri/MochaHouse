@@ -67,6 +67,17 @@ export const PLATFORM_AUDIT_ACTIONS = {
   billingComplimentaryGranted: 'platform.billing.complimentary_granted',
   billingComplimentaryWithdrawn: 'platform.billing.complimentary_withdrawn',
   billingComplimentaryStarted: 'platform.billing.complimentary_started',
+  // SC3e-3 — console permission grants (target: the operator) and refunds
+  // / credits (target: the tenant).
+  operatorPermissionGranted: 'platform.operator.permission_granted',
+  operatorPermissionRevoked: 'platform.operator.permission_revoked',
+  billingAdjustmentRequested: 'platform.billing.adjustment_requested',
+  billingAdjustmentDecided: 'platform.billing.adjustment_decided',
+  billingAdjustmentCanceled: 'platform.billing.adjustment_canceled',
+  billingAdjustmentExecuted: 'platform.billing.adjustment_executed',
+  billingAdjustmentSettled: 'platform.billing.adjustment_settled',
+  billingAdjustmentExternalRecorded:
+    'platform.billing.adjustment_external_recorded',
   billingComplimentaryEnded: 'platform.billing.complimentary_ended',
   billingCaseRechecked: 'platform.billing.case_rechecked',
   billingScheduleReleased: 'platform.billing.schedule_released',

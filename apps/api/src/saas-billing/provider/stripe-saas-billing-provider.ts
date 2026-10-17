@@ -14,6 +14,10 @@ import {
   type ProviderRecurringPreview,
   type ProviderSchedule,
   type ProviderInvoiceRecord,
+  type ProviderAdjustableInvoice,
+  type ProviderCreditNote,
+  type ProviderCreditNoteInput,
+  type ProviderRefund,
   type ProviderPaymentMethodSummary,
   type ProviderInvoice,
   type ProviderInvoiceStatus,
@@ -774,6 +778,193 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
 
   // RELEASE (never cancel — cancelling a schedule cancels its subscription):
   // the schedule stops, the subscription stays exactly as it is.
+  // --- SC3e-3: refunds and credits ------------------------------------------------
+
+  async retrieveAdjustableInvoice(
+    externalInvoiceId: string,
+  ): Promise<ProviderAdjustableInvoice | null> {
+    try {
+      const invoice = await this.stripe.invoices.retrieve(externalInvoiceId);
+      this.assertTestMode(invoice.livemode);
+      const status = INVOICE_STATUSES.includes(
+        invoice.status as ProviderInvoiceStatus,
+      )
+        ? (invoice.status as ProviderInvoiceStatus)
+        : 'open';
+      const lines = await this.stripe.invoices
+        .listLineItems(externalInvoiceId, { limit: 100 })
+        .autoPagingToArray({ limit: 200 });
+      const payments = await this.stripe.invoicePayments
+        .list({ invoice: externalInvoiceId, limit: 100 })
+        .autoPagingToArray({ limit: 100 });
+      const paymentIntentIds = [
+        ...new Set(
+          payments
+            .filter((payment) => payment.status === 'paid')
+            .map((payment) => id(payment.payment.payment_intent))
+            .filter((value): value is string => value !== null),
+        ),
+      ];
+      let captured = 0;
+      let refunded = 0;
+      for (const paymentIntentId of paymentIntentIds) {
+        const charges = await this.stripe.charges
+          .list({ payment_intent: paymentIntentId, limit: 100 })
+          .autoPagingToArray({ limit: 100 });
+        for (const charge of charges) {
+          this.assertTestMode(charge.livemode);
+          if (charge.status !== 'succeeded') continue;
+          captured += amount(charge.amount_captured);
+          refunded += amount(charge.amount_refunded);
+        }
+      }
+      return {
+        externalInvoiceId: invoice.id ?? externalInvoiceId,
+        externalCustomerId: id(invoice.customer),
+        externalSubscriptionId: invoiceSubscription(invoice),
+        livemode: invoice.livemode,
+        status,
+        currency: (text(invoice.currency, 3) ?? '').toLowerCase(),
+        amountPaidMinorUnits: amount(invoice.amount_paid),
+        postPaymentCreditMinorUnits: amount(
+          invoice.post_payment_credit_notes_amount,
+        ),
+        lines: lines.map((line) => ({
+          externalLineId: line.id,
+          description: text(line.description, 500),
+          amountMinorUnits: signedAmount(line.amount),
+          periodStart: date(line.period?.start),
+          periodEnd: date(line.period?.end),
+        })),
+        paymentIntentIds,
+        chargeCapturedMinorUnits: captured,
+        chargeRefundedMinorUnits: refunded,
+      };
+    } catch (error) {
+      if ((error as { code?: unknown })?.code === 'resource_missing') {
+        return null;
+      }
+      throw providerError(error);
+    }
+  }
+
+  // Stripe computes the total and the tax (the lines credit pre-tax
+  // amounts; Stripe applies the invoice's tax to them).
+  async previewCreditNote(input: ProviderCreditNoteInput): Promise<{
+    currency: string;
+    totalMinorUnits: number;
+    taxMinorUnits: number;
+  }> {
+    try {
+      const preview = await this.stripe.creditNotes.preview({
+        invoice: input.externalInvoiceId,
+        lines: creditNoteLines(input),
+      });
+      this.assertTestMode(preview.livemode);
+      return {
+        currency: (text(preview.currency, 3) ?? '').toLowerCase(),
+        totalMinorUnits: signedAmount(preview.total),
+        taxMinorUnits: sum(
+          (preview.total_taxes ?? []).map((tax) => tax.amount),
+        ),
+      };
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  async createCreditNote(input: {
+    idempotencyKey: string;
+    adjustmentId: string;
+    note: ProviderCreditNoteInput;
+    totalMinorUnits: number;
+  }): Promise<ProviderCreditNote> {
+    try {
+      const created = await this.stripe.creditNotes.create(
+        {
+          invoice: input.note.externalInvoiceId,
+          lines: creditNoteLines(input.note),
+          // The whole (previewed) total goes back to the payment method, or
+          // to the customer's balance — never split, never out of band.
+          ...(input.note.kind === 'REFUND'
+            ? { refund_amount: input.totalMinorUnits }
+            : { credit_amount: input.totalMinorUnits }),
+          metadata: { centerivo_adjustment_id: input.adjustmentId },
+        },
+        { idempotencyKey: input.idempotencyKey },
+      );
+      this.assertTestMode(created.livemode);
+      return creditNoteView(created);
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  async listCreditNotes(
+    externalInvoiceId: string,
+  ): Promise<ProviderCreditNote[]> {
+    try {
+      const notes = await this.stripe.creditNotes
+        .list({ invoice: externalInvoiceId, limit: 100 })
+        .autoPagingToArray({ limit: 200 });
+      return notes.map((note) => {
+        this.assertTestMode(note.livemode);
+        return creditNoteView(note);
+      });
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  async listInvoiceRefunds(
+    externalInvoiceId: string,
+  ): Promise<ProviderRefund[]> {
+    try {
+      const payments = await this.stripe.invoicePayments
+        .list({ invoice: externalInvoiceId, limit: 100 })
+        .autoPagingToArray({ limit: 100 });
+      const refunds: ProviderRefund[] = [];
+      for (const paymentIntentId of new Set(
+        payments
+          .map((payment) => id(payment.payment.payment_intent))
+          .filter((value): value is string => value !== null),
+      )) {
+        const page = await this.stripe.refunds
+          .list({ payment_intent: paymentIntentId, limit: 100 })
+          .autoPagingToArray({ limit: 200 });
+        for (const refund of page) {
+          refunds.push({
+            externalRefundId: refund.id,
+            livemode: (refund as { livemode?: boolean }).livemode ?? false,
+            status: text(refund.status, 40) ?? 'unknown',
+            amountMinorUnits: amount(refund.amount),
+            currency: (text(refund.currency, 3) ?? '').toLowerCase(),
+            paymentIntentId: id(refund.payment_intent),
+          });
+        }
+      }
+      return refunds;
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  async findInvoiceForPayment(paymentIntentId: string): Promise<string | null> {
+    try {
+      const page = await this.stripe.invoicePayments.list({
+        payment: { type: 'payment_intent', payment_intent: paymentIntentId },
+        limit: 10,
+      });
+      const invoices = [
+        ...new Set(page.data.map((payment) => id(payment.invoice))),
+      ].filter((value): value is string => value !== null);
+      // Exactly one invoice, or none we act on.
+      return invoices.length === 1 ? invoices[0] : null;
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
   // SC3e-2 — cancel_at_period_end only (never an immediate cancellation,
   // never proration or a refund).
   async setCancelAtPeriodEnd(input: {
@@ -1104,6 +1295,36 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
 
 const INVOICE_HISTORY_CAP = 200;
 
+// SC3e-3 — credit-note lines: invoice lines and the pre-tax amount on each.
+function creditNoteLines(input: ProviderCreditNoteInput) {
+  return input.lines.map((line) => ({
+    type: 'invoice_line_item' as const,
+    invoice_line_item: line.externalLineId,
+    amount: line.amountMinorUnits,
+  }));
+}
+
+function creditNoteView(note: Stripe.CreditNote): ProviderCreditNote {
+  const metadata = note.metadata as Record<string, unknown> | null;
+  return {
+    externalCreditNoteId: note.id,
+    externalInvoiceId: id(note.invoice),
+    livemode: note.livemode,
+    status: text(note.status, 40) ?? 'unknown',
+    currency: (text(note.currency, 3) ?? '').toLowerCase(),
+    totalMinorUnits: signedAmount(note.total),
+    taxMinorUnits: sum((note.total_taxes ?? []).map((tax) => tax.amount)),
+    outOfBandMinorUnits: amount(note.out_of_band_amount),
+    refunds: (note.refunds ?? [])
+      .map((refund) => ({
+        externalRefundId: id(refund.refund) ?? '',
+        amountMinorUnits: amount(refund.amount_refunded),
+      }))
+      .filter((refund) => refund.externalRefundId !== ''),
+    centerivoAdjustmentId: text(metadata?.centerivo_adjustment_id, 64),
+  };
+}
+
 // SC3e-1 — an invoice's record for the billing history (null when it cannot
 // be read faithfully: refused, never guessed).
 function invoiceRecord(invoice: Stripe.Invoice): ProviderInvoiceRecord | null {
@@ -1301,6 +1522,27 @@ function normalize(
         ? {
             event: { kind: 'INVOICE_CHANGED', reference },
             externalSubscriptionId: invoiceSubscription(object),
+          }
+        : { event: { kind: 'UNSUPPORTED' }, externalSubscriptionId: null };
+    }
+    // SC3e-3 — a refund on a payment (made here or directly in Stripe).
+    case 'charge.refunded': {
+      const paymentIntentId = id(object.payment_intent);
+      return paymentIntentId
+        ? {
+            event: { kind: 'REFUND_CHANGED', paymentIntentId },
+            externalSubscriptionId: null,
+          }
+        : { event: { kind: 'UNSUPPORTED' }, externalSubscriptionId: null };
+    }
+    case 'refund.created':
+    case 'refund.updated':
+    case 'refund.failed': {
+      const paymentIntentId = id(object.payment_intent);
+      return paymentIntentId
+        ? {
+            event: { kind: 'REFUND_CHANGED', paymentIntentId },
+            externalSubscriptionId: null,
           }
         : { event: { kind: 'UNSUPPORTED' }, externalSubscriptionId: null };
     }

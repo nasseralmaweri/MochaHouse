@@ -15,6 +15,10 @@ import {
   type ProviderRecurringPreview,
   type ProviderSchedule,
   type ProviderInvoiceRecord,
+  type ProviderAdjustableInvoice,
+  type ProviderCreditNote,
+  type ProviderCreditNoteInput,
+  type ProviderRefund,
   type ProviderPaymentMethodSummary,
   type ProviderInvoiceStatus,
   type ProviderPayableInvoice,
@@ -50,7 +54,9 @@ export type FakeEventType =
   | 'checkout.completed'
   | 'subscription.changed'
   // SC3e-1 — an invoice changed (or a credit note was issued on it).
-  | 'invoice.changed';
+  | 'invoice.changed'
+  // SC3e-3 — a refund on a payment (data.reference = the payment intent).
+  | 'refund.changed';
 
 export interface FakeEventBody {
   id: string;
@@ -738,6 +744,311 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
   }
 
   // Releases the schedule: the subscription itself is left exactly as it is.
+  // --- SC3e-3: credit notes and refunds (a Stripe-like model) -----------------
+  // Tax: `taxBasisPoints` per invoice (default 0), applied to the credited
+  // pre-tax amounts, as Stripe applies the invoice's tax. A paid invoice is
+  // paid by one payment intent (`pi_<invoice>`).
+  readonly taxBasisPoints = new Map<string, number>();
+  readonly creditNotes = new Map<
+    string,
+    ProviderCreditNote & { key: string | null }
+  >();
+  readonly refunds = new Map<string, ProviderRefund & { invoiceId: string }>();
+  // Tests: the status a new refund gets (default succeeded).
+  nextRefundStatus = 'succeeded';
+  // Tests: the credit note is created, then the call fails (a timeout after
+  // the provider applied it).
+  failAfterCreditNote = false;
+
+  private paymentIntentOf(invoiceId: string): string {
+    return `pi_${invoiceId}`;
+  }
+
+  private adjustable(invoiceId: string): ProviderAdjustableInvoice | null {
+    const invoice = this.invoices.get(invoiceId);
+    if (!invoice) return null;
+    const record = this.invoiceRecord(invoice);
+    const credited = [...this.creditNotes.values()]
+      .filter(
+        (note) =>
+          note.externalInvoiceId === invoiceId && note.status === 'issued',
+      )
+      .reduce((total, note) => total + note.totalMinorUnits, 0);
+    const refunded = [...this.refunds.values()]
+      .filter(
+        (refund) =>
+          refund.invoiceId === invoiceId &&
+          refund.status !== 'failed' &&
+          refund.status !== 'canceled',
+      )
+      .reduce((total, refund) => total + refund.amountMinorUnits, 0);
+    const paid = invoice.status === 'paid' && invoice.amountPaidMinorUnits > 0;
+    return {
+      externalInvoiceId: invoiceId,
+      externalCustomerId: record.externalCustomerId,
+      externalSubscriptionId: record.externalSubscriptionId,
+      livemode: false,
+      status: record.status,
+      currency: record.currency,
+      amountPaidMinorUnits: record.amountPaidMinorUnits,
+      postPaymentCreditMinorUnits: credited,
+      lines: [
+        {
+          externalLineId: `il_${invoiceId}`,
+          description: 'Subscription',
+          amountMinorUnits: record.totalMinorUnits,
+          periodStart: record.periodStart,
+          periodEnd: record.periodEnd,
+        },
+      ],
+      paymentIntentIds: paid ? [this.paymentIntentOf(invoiceId)] : [],
+      chargeCapturedMinorUnits: paid ? invoice.amountPaidMinorUnits : 0,
+      chargeRefundedMinorUnits: refunded,
+    };
+  }
+
+  private priced(input: ProviderCreditNoteInput): {
+    currency: string;
+    totalMinorUnits: number;
+    taxMinorUnits: number;
+  } {
+    const invoice = this.adjustable(input.externalInvoiceId);
+    if (!invoice || invoice.status !== 'paid') {
+      throw new SaasBillingProviderError('invoice_not_paid');
+    }
+    let pretax = 0;
+    for (const line of input.lines) {
+      const own = invoice.lines.find(
+        (l) => l.externalLineId === line.externalLineId,
+      );
+      if (
+        !own ||
+        line.amountMinorUnits <= 0 ||
+        line.amountMinorUnits > own.amountMinorUnits
+      ) {
+        throw new SaasBillingProviderError('credit_note_invalid_line');
+      }
+      pretax += line.amountMinorUnits;
+    }
+    const tax = Math.round(
+      (pretax * (this.taxBasisPoints.get(input.externalInvoiceId) ?? 0)) /
+        10_000,
+    );
+    const total = pretax + tax;
+    const externalRefunds = Math.max(
+      0,
+      invoice.chargeRefundedMinorUnits -
+        [...this.creditNotes.values()]
+          .filter((n) => n.externalInvoiceId === input.externalInvoiceId)
+          .reduce(
+            (t, n) => t + n.refunds.reduce((u, r) => u + r.amountMinorUnits, 0),
+            0,
+          ),
+    );
+    if (
+      total >
+      invoice.amountPaidMinorUnits -
+        invoice.postPaymentCreditMinorUnits -
+        externalRefunds
+    ) {
+      throw new SaasBillingProviderError('credit_note_exceeds_invoice');
+    }
+    return {
+      currency: invoice.currency,
+      totalMinorUnits: total,
+      taxMinorUnits: tax,
+    };
+  }
+
+  retrieveAdjustableInvoice(
+    externalInvoiceId: string,
+  ): Promise<ProviderAdjustableInvoice | null> {
+    this.call('retrieveAdjustableInvoice', externalInvoiceId);
+    return Promise.resolve(this.adjustable(externalInvoiceId));
+  }
+
+  previewCreditNote(input: ProviderCreditNoteInput): Promise<{
+    currency: string;
+    totalMinorUnits: number;
+    taxMinorUnits: number;
+  }> {
+    this.call('previewCreditNote', input.externalInvoiceId);
+    try {
+      return Promise.resolve(this.priced(input));
+    } catch (error) {
+      return Promise.reject(error as Error);
+    }
+  }
+
+  // Credit notes are issued once per idempotency key (a replay returns the
+  // same one).
+  createCreditNote(input: {
+    idempotencyKey: string;
+    adjustmentId: string;
+    note: ProviderCreditNoteInput;
+    totalMinorUnits: number;
+  }): Promise<ProviderCreditNote> {
+    this.call('createCreditNote', input.idempotencyKey);
+    const replay = [...this.creditNotes.values()].find(
+      (note) => note.key === input.idempotencyKey,
+    );
+    if (replay) return Promise.resolve(view(replay));
+    let priced: {
+      currency: string;
+      totalMinorUnits: number;
+      taxMinorUnits: number;
+    };
+    try {
+      priced = this.priced(input.note);
+    } catch (error) {
+      return Promise.reject(error as Error);
+    }
+    if (priced.totalMinorUnits !== input.totalMinorUnits) {
+      return Promise.reject(
+        new SaasBillingProviderError('credit_note_amount_mismatch'),
+      );
+    }
+    const noteId = `cn_${hex()}`;
+    const refunds: { externalRefundId: string; amountMinorUnits: number }[] =
+      [];
+    if (input.note.kind === 'REFUND') {
+      const refundId = `re_${hex()}`;
+      this.refunds.set(refundId, {
+        externalRefundId: refundId,
+        livemode: false,
+        status: this.nextRefundStatus,
+        amountMinorUnits: priced.totalMinorUnits,
+        currency: priced.currency,
+        paymentIntentId: this.paymentIntentOf(input.note.externalInvoiceId),
+        invoiceId: input.note.externalInvoiceId,
+      });
+      refunds.push({
+        externalRefundId: refundId,
+        amountMinorUnits: priced.totalMinorUnits,
+      });
+    }
+    const note = {
+      externalCreditNoteId: noteId,
+      externalInvoiceId: input.note.externalInvoiceId,
+      livemode: false,
+      status: 'issued',
+      currency: priced.currency,
+      totalMinorUnits: priced.totalMinorUnits,
+      taxMinorUnits: priced.taxMinorUnits,
+      outOfBandMinorUnits: 0,
+      refunds,
+      centerivoAdjustmentId: input.adjustmentId,
+      key: input.idempotencyKey,
+    };
+    this.creditNotes.set(noteId, note);
+    this.syncCredited(input.note.externalInvoiceId);
+    if (this.failAfterCreditNote) {
+      this.failAfterCreditNote = false;
+      return Promise.reject(
+        new SaasBillingProviderError('api_connection_error'),
+      );
+    }
+    return Promise.resolve(view(note));
+  }
+
+  listCreditNotes(externalInvoiceId: string): Promise<ProviderCreditNote[]> {
+    this.call('listCreditNotes', externalInvoiceId);
+    return Promise.resolve(
+      [...this.creditNotes.values()]
+        .filter((note) => note.externalInvoiceId === externalInvoiceId)
+        .map(view),
+    );
+  }
+
+  listInvoiceRefunds(externalInvoiceId: string): Promise<ProviderRefund[]> {
+    this.call('listInvoiceRefunds', externalInvoiceId);
+    return Promise.resolve(
+      [...this.refunds.values()]
+        .filter((refund) => refund.invoiceId === externalInvoiceId)
+        .map(({ invoiceId: _invoice, ...refund }) => {
+          void _invoice;
+          return refund;
+        }),
+    );
+  }
+
+  findInvoiceForPayment(paymentIntentId: string): Promise<string | null> {
+    this.call('findInvoiceForPayment', paymentIntentId);
+    return Promise.resolve(
+      paymentIntentId.startsWith('pi_') ? paymentIntentId.slice(3) : null,
+    );
+  }
+
+  // Tests: the invoice history's credited amount follows the credit notes.
+  private syncCredited(invoiceId: string): void {
+    const credited = [...this.creditNotes.values()]
+      .filter(
+        (note) =>
+          note.externalInvoiceId === invoiceId && note.status === 'issued',
+      )
+      .reduce((total, note) => total + note.totalMinorUnits, 0);
+    this.invoiceDetails.set(invoiceId, {
+      ...this.invoiceDetails.get(invoiceId),
+      postPaymentCreditMinorUnits: credited,
+    });
+  }
+
+  // Tests: actions taken directly in Stripe (outside CENTERIVO).
+  externalCreditNote(
+    invoiceId: string,
+    kind: 'REFUND' | 'CREDIT',
+    totalMinorUnits: number,
+  ): string {
+    const noteId = `cn_ext_${hex()}`;
+    const refunds: { externalRefundId: string; amountMinorUnits: number }[] =
+      [];
+    if (kind === 'REFUND') {
+      const refundId = `re_ext_${hex()}`;
+      this.refunds.set(refundId, {
+        externalRefundId: refundId,
+        livemode: false,
+        status: 'succeeded',
+        amountMinorUnits: totalMinorUnits,
+        currency: 'usd',
+        paymentIntentId: this.paymentIntentOf(invoiceId),
+        invoiceId,
+      });
+      refunds.push({
+        externalRefundId: refundId,
+        amountMinorUnits: totalMinorUnits,
+      });
+    }
+    this.creditNotes.set(noteId, {
+      externalCreditNoteId: noteId,
+      externalInvoiceId: invoiceId,
+      livemode: false,
+      status: 'issued',
+      currency: 'usd',
+      totalMinorUnits,
+      taxMinorUnits: 0,
+      outOfBandMinorUnits: 0,
+      refunds,
+      centerivoAdjustmentId: null,
+      key: null,
+    });
+    this.syncCredited(invoiceId);
+    return noteId;
+  }
+
+  externalRefund(invoiceId: string, amountMinorUnits: number): string {
+    const refundId = `re_ext_${hex()}`;
+    this.refunds.set(refundId, {
+      externalRefundId: refundId,
+      livemode: false,
+      status: 'succeeded',
+      amountMinorUnits,
+      currency: 'usd',
+      paymentIntentId: this.paymentIntentOf(invoiceId),
+      invoiceId,
+    });
+    return refundId;
+  }
+
   // SC3e-2 — cancel at period end (or undo it). The subscription keeps
   // running until a test ends it (endSubscription).
   setCancelAtPeriodEnd(input: {
@@ -1141,8 +1452,21 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
         return reference
           ? { kind: 'INVOICE_CHANGED', reference }
           : { kind: 'UNSUPPORTED' };
+      case 'refund.changed':
+        return reference
+          ? { kind: 'REFUND_CHANGED', paymentIntentId: reference }
+          : { kind: 'UNSUPPORTED' };
       default:
         return { kind: 'UNSUPPORTED' };
     }
   }
+}
+
+// SC3e-3 — a credit note as the provider returns it (no idempotency key).
+function view(
+  note: ProviderCreditNote & { key: string | null },
+): ProviderCreditNote {
+  const { key: _key, ...rest } = note;
+  void _key;
+  return { ...rest, refunds: rest.refunds.map((refund) => ({ ...refund })) };
 }

@@ -2,6 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import {
+  PLATFORM_PERMISSIONS,
+  type PlatformAdjustmentPreview,
+  type PlatformAdjustmentView,
+  type PlatformOperatorDirectoryResponse,
+  type PlatformPermission,
   PLATFORM_CASE_OUTCOMES,
   type PlatformCaseDetailResponse,
   type PlatformCaseOutcome,
@@ -11,6 +16,7 @@ import {
   type PlatformTenantBillingResponse,
 } from "@mocha-house/contracts";
 import { parseEndDate, validReason } from "./complimentary";
+import { parseAmount, validNote } from "./adjustments";
 import { getPlatformSessionToken, platformApiUrl } from "@/lib/platform-auth/session";
 import { isTenantId } from "./tenant-registry";
 import { SUBSCRIPTION_MESSAGES, interpretChange, type ChangeOutcome } from "./subscriptions";
@@ -256,5 +262,138 @@ export async function endComplimentaryAction(
     { reason },
   );
   if (outcome.kind === "ok") revalidatePath(`/platform/tenants/${tenantId}`);
+  return { outcome };
+}
+
+// --- SC3e-3: refunds and credits -----------------------------------------------------
+
+const NOTE_MESSAGE = "Write a note of 10 to 500 characters (one line).";
+const LINE = /^[A-Za-z0-9_]{1,255}$/;
+
+// The request body from the form: kind, scope and (partial) one line and a
+// pre-tax amount typed in major units.
+function adjustmentInput(
+  form: FormData,
+): { ok: true; body: Record<string, unknown> } | { ok: false; message: string } {
+  const kind = form.get("kind");
+  const scope = form.get("scope");
+  if (kind !== "REFUND" && kind !== "CREDIT") return { ok: false, message: "Choose a refund or a credit." };
+  if (scope === "FULL") return { ok: true, body: { kind, scope } };
+  if (scope !== "PARTIAL") return { ok: false, message: "Choose the whole invoice or part of it." };
+  const lineId = form.get("lineId");
+  const amount = parseAmount(form.get("amount"));
+  if (typeof lineId !== "string" || !LINE.test(lineId)) {
+    return { ok: false, message: "Choose the invoice line." };
+  }
+  if (amount === null) {
+    return { ok: false, message: "Enter an amount before tax, like 25 or 25.50." };
+  }
+  return { ok: true, body: { kind, scope, lineId, amountMinorUnits: amount } };
+}
+
+function invoicePath(form: FormData): string | null {
+  const tenantId = form.get("tenantId");
+  const invoiceId = form.get("invoiceId");
+  if (typeof tenantId !== "string" || !isTenantId(tenantId)) return null;
+  if (typeof invoiceId !== "string" || !UUID.test(invoiceId)) return null;
+  return `/tenants/${encodeURIComponent(tenantId)}/billing/invoices/${invoiceId}`;
+}
+
+// The payment provider's preview (nothing recorded).
+export async function previewAdjustmentAction(
+  _previous: BillingActionState<PlatformAdjustmentPreview>,
+  form: FormData,
+): Promise<BillingActionState<PlatformAdjustmentPreview>> {
+  const path = invoicePath(form);
+  if (!path) return { outcome: { kind: "error", message: SUBSCRIPTION_MESSAGES.notFound } };
+  const input = adjustmentInput(form);
+  if (!input.ok) return { outcome: { kind: "error", message: input.message } };
+  return { outcome: await call<PlatformAdjustmentPreview>(`${path}/adjustments/preview`, input.body) };
+}
+
+// Records the request (billing.adjustments.request, a recent sign-in, a
+// reason). Nothing is refunded or credited until it is approved.
+export async function requestAdjustmentAction(
+  _previous: BillingActionState<PlatformAdjustmentView>,
+  form: FormData,
+): Promise<BillingActionState<PlatformAdjustmentView>> {
+  const path = invoicePath(form);
+  if (!path) return { outcome: { kind: "error", message: SUBSCRIPTION_MESSAGES.notFound } };
+  const input = adjustmentInput(form);
+  if (!input.ok) return { outcome: { kind: "error", message: input.message } };
+  const reason = validNote(form.get("reason"));
+  if (!reason) return { outcome: { kind: "error", message: REASON_MESSAGE } };
+  if (form.get("understood") !== "yes") {
+    return {
+      outcome: {
+        kind: "error",
+        message: "Confirm that you understand a refund or credit doesn't cancel or change the subscription.",
+      },
+    };
+  }
+  const outcome = await call<PlatformAdjustmentView>(`${path}/adjustments`, { ...input.body, reason });
+  if (outcome.kind === "ok") {
+    revalidatePath("/platform/billing/adjustments");
+    revalidatePath(`/platform/tenants/${String(form.get("tenantId"))}`);
+  }
+  return { outcome };
+}
+
+// Approve, reject, withdraw (the requester) or resolve as not issued — with
+// a note; the API checks who may.
+export async function decideAdjustmentAction(
+  _previous: BillingActionState<PlatformAdjustmentView>,
+  form: FormData,
+): Promise<BillingActionState<PlatformAdjustmentView>> {
+  const adjustmentId = form.get("adjustmentId");
+  const step = form.get("step");
+  const note = validNote(form.get("note"));
+  if (
+    typeof adjustmentId !== "string" ||
+    !UUID.test(adjustmentId) ||
+    (step !== "approve" && step !== "reject" && step !== "cancel" && step !== "resolve-not-issued")
+  ) {
+    return { outcome: { kind: "error", message: SUBSCRIPTION_MESSAGES.notFound } };
+  }
+  if (!note) return { outcome: { kind: "error", message: NOTE_MESSAGE } };
+  if (step === "approve" && form.get("understood") !== "yes") {
+    return {
+      outcome: {
+        kind: "error",
+        message: "Confirm that you checked the amount and that the subscription keeps renewing.",
+      },
+    };
+  }
+  const outcome = await call<PlatformAdjustmentView>(`/billing/adjustments/${adjustmentId}/${step}`, { note });
+  if (outcome.kind === "ok") {
+    revalidatePath("/platform/billing/adjustments");
+    revalidatePath(`/platform/billing/adjustments/${adjustmentId}`);
+    revalidatePath(`/platform/tenants/${outcome.data.tenantId}`);
+  }
+  return { outcome };
+}
+
+// --- SC3e-3: operator permissions (platform.permissions.manage) ----------------------
+
+export async function changePermissionAction(
+  _previous: BillingActionState<PlatformOperatorDirectoryResponse>,
+  form: FormData,
+): Promise<BillingActionState<PlatformOperatorDirectoryResponse>> {
+  const operatorId = form.get("operatorId");
+  const permission = form.get("permission");
+  const step = form.get("step");
+  const reason = validNote(form.get("reason"));
+  if (typeof operatorId !== "string" || !UUID.test(operatorId) || (step !== "grant" && step !== "revoke")) {
+    return { outcome: { kind: "error", message: "That operator could not be found." } };
+  }
+  if (!PLATFORM_PERMISSIONS.includes(permission as PlatformPermission)) {
+    return { outcome: { kind: "error", message: "Choose a permission." } };
+  }
+  if (!reason) return { outcome: { kind: "error", message: REASON_MESSAGE } };
+  const outcome = await call<PlatformOperatorDirectoryResponse>(
+    `/operators/${operatorId}/permissions${step === "revoke" ? "/revoke" : ""}`,
+    { permission, reason },
+  );
+  if (outcome.kind === "ok") revalidatePath("/platform/operators");
   return { outcome };
 }

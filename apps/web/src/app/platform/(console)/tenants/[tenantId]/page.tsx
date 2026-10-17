@@ -16,6 +16,7 @@ import { BillingPanel } from "@/components/platform/BillingPanel";
 import { BillingOperationsPanel } from "@/components/platform/BillingOperationsPanel";
 import { InvoiceList } from "@/components/billing/InvoiceList";
 import { ComplimentaryPanel } from "@/components/platform/ComplimentaryPanel";
+import { AdjustmentSummary } from "@/components/platform/AdjustmentSummary";
 import { getPlatformSession } from "@/lib/platform-auth/session";
 import { holds } from "@/lib/platform/complimentary";
 import { pageCursor } from "@/lib/admin/billing-history";
@@ -27,6 +28,7 @@ import {
   getPlatformTenantInvoices,
   getPlatformTenantComplimentary,
   getPlatformTenantSubscription,
+  listPlatformTenantAdjustments,
   listPlatformPlans,
   listPlatformTenantLocations,
 } from "@/lib/platform/tenants-api";
@@ -83,7 +85,7 @@ export default async function PlatformTenantPage({
     );
   }
 
-  const [detail, locations, lifecycle, subscription, plans, billing, invoices, complimentary, session] = await Promise.all([
+  const [detail, locations, lifecycle, subscription, plans, billing, invoices, complimentary, session, adjustments] = await Promise.all([
     getPlatformTenant(tenantId),
     listPlatformTenantLocations(tenantId, locationPage),
     getPlatformTenantLifecycle(tenantId),
@@ -93,6 +95,7 @@ export default async function PlatformTenantPage({
     getPlatformTenantInvoices(tenantId, invoicesCursor),
     getPlatformTenantComplimentary(tenantId),
     getPlatformSession(),
+    listPlatformTenantAdjustments(tenantId),
   ]);
   const permissions = session.state === "signed-in" ? session.permissions : [];
   if (detail.state !== "ok") {
@@ -247,7 +250,23 @@ export default async function PlatformTenantPage({
                         <p className="text-sm text-text-secondary">No invoices recorded yet.</p>
                       ) : (
                         <>
-                          <InvoiceList invoices={invoices.data.invoices} />
+                          <InvoiceList
+                            invoices={invoices.data.invoices}
+                            actions={
+                              holds(permissions, "billing.adjustments.request")
+                                ? (invoice, label) =>
+                                    invoice.status === "paid" && invoice.amountPaidMinorUnits > 0 ? (
+                                      <Link
+                                        href={`/platform/tenants/${tenant.id}/invoices/${invoice.id}/adjust`}
+                                        aria-label={`Refund or credit ${label}`}
+                                        className="inline-flex min-h-11 items-center self-start font-medium underline underline-offset-2"
+                                      >
+                                        Refund or credit…
+                                      </Link>
+                                    ) : null
+                                : undefined
+                            }
+                          />
                           <nav aria-label="Invoice pages" className="flex flex-wrap gap-4 text-sm">
                             {invoicesCursor ? (
                               <Link
@@ -271,6 +290,20 @@ export default async function PlatformTenantPage({
                     ) : (
                       <RegistryStatePanel state={invoices.state} retryHref={`/platform/tenants/${tenant.id}`} />
                     )}
+                  </section>
+                ) : null}
+                {adjustments.state === "ok" && adjustments.data.adjustments.length > 0 ? (
+                  <section aria-labelledby="tenant-adjustments" className="flex flex-col gap-3">
+                    <h3 id="tenant-adjustments" className="text-base font-semibold text-text-primary">
+                      Refunds and credits
+                    </h3>
+                    <ul className="flex flex-col gap-3">
+                      {adjustments.data.adjustments.map((view) => (
+                        <li key={view.id} className="rounded-lg border border-border-default px-3 py-3">
+                          <AdjustmentSummary view={view} linkTitle />
+                        </li>
+                      ))}
+                    </ul>
                   </section>
                 ) : null}
               </>

@@ -233,8 +233,21 @@ export const PLATFORM_PERMISSIONS = [
   "billing.cases.manage",
   "billing.schedules.release",
   "billing.complimentary.manage",
+  // SC3e-3 — refunds and credits, and console permission grants.
+  "billing.adjustments.request",
+  "billing.adjustments.approve",
+  "platform.permissions.manage",
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
+
+// SC3e-3 (owner decision D7) — the permissions that move money or decide
+// who may: never granted by the plain CLI. After the bootstrap they are
+// granted only through the authenticated, audited console flow.
+export const FINANCIAL_PERMISSIONS: readonly PlatformPermission[] = [
+  "billing.adjustments.request",
+  "billing.adjustments.approve",
+  "platform.permissions.manage",
+];
 
 // The audit reason code of a permission (e.g. BILLING_COMPLIMENTARY_MANAGE).
 export function permissionCode(permission: PlatformPermission): string {
@@ -273,6 +286,11 @@ export async function grantPlatformPermission(
   const email = normalizeOperatorEmail(input.email);
   const permission = parsePermission(input.permission);
   const reason = parseReason(input.reason);
+  if (FINANCIAL_PERMISSIONS.includes(permission)) {
+    throw new OperatorProvisioningError(
+      `${permission} is never granted by the plain CLI: an operator holding platform.permissions.manage grants it in the Platform Console (or, before anyone does, use the documented bootstrap).`,
+    );
+  }
   try {
     return await prisma.$transaction(async (tx) => {
       const operator = await tx.platformOperator.findUnique({
@@ -314,6 +332,94 @@ export async function grantPlatformPermission(
     }
     throw error;
   }
+}
+
+// SC3e-3 (owner decision D7) — the documented, restricted first grants of
+// the financial permissions. Allowed ONLY while no ACTIVE operator holds
+// platform.permissions.manage (once one does, every further grant goes
+// through the authenticated console). Records who ran it (the OS account
+// and host, accountable execution) and the reference of the independently
+// recorded approval (e.g. the change ticket) — a reference, not a typed
+// witness name. Audited.
+export async function bootstrapFinancialPermission(
+  prisma: PrismaClient,
+  input: {
+    email: string;
+    permission: string;
+    reason: string | undefined;
+    approvalReference: string | undefined;
+    executedBy: string;
+  },
+): Promise<{ operatorId: string; permission: PlatformPermission; changed: boolean }> {
+  const email = normalizeOperatorEmail(input.email);
+  const permission = parsePermission(input.permission);
+  const reason = parseReason(input.reason);
+  if (!FINANCIAL_PERMISSIONS.includes(permission)) {
+    throw new OperatorProvisioningError(
+      "The bootstrap is only for the financial permissions; use grant.",
+    );
+  }
+  const approvalReference = (input.approvalReference ?? "").trim();
+  if (approvalReference.length < 3 || approvalReference.length > 200) {
+    throw new OperatorProvisioningError(
+      "--approval-reference is required: the id of the independently recorded approval (3 to 200 characters).",
+    );
+  }
+  const executedBy = input.executedBy.trim().slice(0, 200);
+  if (!executedBy) {
+    throw new OperatorProvisioningError("The executing account could not be determined.");
+  }
+  return prisma.$transaction(async (tx) => {
+    // One time only: closed for good once platform.permissions.manage was
+    // ever granted (even if later revoked, or its holder disabled), so it
+    // can't be reopened by revoking or disabling the managers.
+    const managers = await tx.platformOperatorPermission.count({
+      where: { permission: "platform.permissions.manage" },
+    });
+    if (managers > 0) {
+      throw new OperatorProvisioningError(
+        "The bootstrap is closed: platform.permissions.manage has already been granted. Grant financial permissions in the Platform Console.",
+      );
+    }
+    const operator = await tx.platformOperator.findUnique({
+      where: { email },
+      select: { id: true, status: true },
+    });
+    if (!operator) {
+      throw new OperatorProvisioningError("No operator has that email.");
+    }
+    if (operator.status !== "ACTIVE") {
+      throw new OperatorProvisioningError(
+        "Only an ACTIVE operator can be granted a permission.",
+      );
+    }
+    const live = await tx.platformOperatorPermission.findFirst({
+      where: { operatorId: operator.id, permission, revokedAt: null },
+      select: { id: true },
+    });
+    if (live) return { operatorId: operator.id, permission, changed: false };
+    await tx.platformOperatorPermission.create({
+      data: {
+        operatorId: operator.id,
+        permission,
+        grantReason: reason,
+        grantedVia: "CLI_BOOTSTRAP",
+        approvalReference,
+        executedBy,
+      },
+    });
+    await tx.platformAuditEvent.create({
+      data: {
+        action: "platform.operator.permission_bootstrapped",
+        outcome: "SUCCEEDED",
+        reasonCode: permissionCode(permission),
+        targetType: "platform_operator",
+        targetId: operator.id,
+      },
+    });
+    return { operatorId: operator.id, permission, changed: true };
+    // Serializable: two concurrent bootstraps never both pass the check.
+  }, { isolationLevel: "Serializable" });
 }
 
 // Idempotent: a permission the operator does not hold changes nothing.

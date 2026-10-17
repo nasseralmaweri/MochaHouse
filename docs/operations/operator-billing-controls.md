@@ -2,7 +2,7 @@
 
 This covers Stripe **test mode only**. Billing enforcement and notifications
 stay disabled. Nothing described here refunds, credits or charges anyone.
-Refunds and credits come in SC3e-3.
+Refunds and credits are covered in [billing-adjustments.md](billing-adjustments.md) (SC3e-3).
 
 ## Operator permissions
 
@@ -22,8 +22,10 @@ request, so a revocation takes effect at once.
 
 ### Bootstrap: granting and revoking
 
-Permissions are granted **only** by the human-run provisioning CLI. No API
-route grants one, so an operator can never grant itself anything.
+Permissions are granted by the human-run provisioning CLI, or (SC3e-3) in the
+console by an operator holding `platform.permissions.manage` — never for
+itself. The financial permissions are never granted by the plain CLI; see
+[billing-adjustments.md](billing-adjustments.md).
 
 Rules:
 

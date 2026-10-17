@@ -12,6 +12,13 @@
 //   ... platform:operator revoke      --confirm-database <db> --email <e> \
 //             --permission <billing.…> --reason "<why>"
 //   ... platform:operator permissions --confirm-database <db> [--email <e>]
+//   SC3e-3 — the financial permissions (billing.adjustments.request /
+//   .approve, platform.permissions.manage) are never granted by grant. Their
+//   FIRST grants only, while no active operator holds
+//   platform.permissions.manage (docs/operations/billing-adjustments.md):
+//   ... platform:operator bootstrap   --confirm-database <db> --email <e> \
+//             --permission <financial> --reason "<why>" \
+//             --approval-reference <independently recorded approval id>
 //
 // The operator's user must already exist in the DEDICATED platform Cognito
 // pool (created by an administrator, MFA required); --subject is that user's
@@ -21,12 +28,14 @@
 // Exit codes: 0 = done, 1 = refused (bad input / not found / duplicate),
 // 2 = could not run.
 import "dotenv/config";
+import { hostname, userInfo } from "node:os";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../../src/generated/prisma/client";
 import {
   OperatorProvisioningError,
   assertConfirmedDatabase,
   createPlatformOperator,
+  bootstrapFinancialPermission,
   grantPlatformPermission,
   listPlatformOperators,
   listPlatformPermissions,
@@ -41,7 +50,16 @@ function argValue(name: string): string | undefined {
 
 async function main(): Promise<number> {
   const command = process.argv[2];
-  const commands = ["create", "disable", "enable", "list", "grant", "revoke", "permissions"];
+  const commands = [
+    "create",
+    "disable",
+    "enable",
+    "list",
+    "grant",
+    "revoke",
+    "permissions",
+    "bootstrap",
+  ];
   if (!commands.includes(command ?? "")) {
     console.error(`Usage: platform:operator <${commands.join("|")}> ...`);
     return 1;
@@ -85,6 +103,22 @@ async function main(): Promise<number> {
           ].join("\t"),
         );
       }
+      return 0;
+    }
+    if (command === "bootstrap") {
+      const result = await bootstrapFinancialPermission(prisma, {
+        email: argValue("--email") ?? "",
+        permission: argValue("--permission") ?? "",
+        reason: argValue("--reason"),
+        approvalReference: argValue("--approval-reference"),
+        // Accountable execution: the OS account and host that ran it.
+        executedBy: `${userInfo().username}@${hostname()}`,
+      });
+      console.log(
+        result.changed
+          ? `Bootstrapped ${result.permission} for operator ${result.operatorId}.`
+          : `Operator ${result.operatorId} already holds ${result.permission}; nothing changed.`,
+      );
       return 0;
     }
     if (command === "grant" || command === "revoke") {

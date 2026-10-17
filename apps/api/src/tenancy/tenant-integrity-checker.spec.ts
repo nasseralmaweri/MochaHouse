@@ -379,7 +379,8 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
                                      'BillingProviderEvent', 'BillingCheckoutSession',
                                      'BillingReconciliationCase',
                                      'BillingGraceExtension', 'BillingNotification',
-                                     'BillingPlanChange', 'BillingInvoice', 'PlatformOperatorPermission', 'BillingComplimentaryGrant', 'BillingReconciliationCaseAction')
+                                     'BillingPlanChange', 'BillingInvoice', 'PlatformOperatorPermission', 'BillingComplimentaryGrant', 'BillingReconciliationCaseAction',
+                                     'BillingAdjustment', 'BillingAdjustmentDecision', 'BillingAdjustmentEvent')
               AND cl.relnamespace = 'public'::regnamespace`,
           )
         ).rows,

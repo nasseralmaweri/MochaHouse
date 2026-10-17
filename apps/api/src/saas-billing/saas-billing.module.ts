@@ -7,6 +7,7 @@ import { AuditModule } from '../audit/audit.module';
 import { AdminBillingController } from './api/admin-billing.controller';
 import { BillingWebhookController } from './api/billing-webhook.controller';
 import { PlatformBillingController } from './api/platform-billing.controller';
+import { PlatformAdjustmentsController } from './api/platform-adjustments.controller';
 import { BillingAccountService } from './application/billing-account.service';
 import { BillingCatalogService } from './application/billing-catalog.service';
 import { BillingLifecycleService } from './application/billing-lifecycle.service';
@@ -17,6 +18,7 @@ import { BillingPlanChangeService } from './application/billing-plan-change.serv
 import { BillingHistoryService } from './application/billing-history.service';
 import { BillingComplimentaryService } from './application/billing-complimentary.service';
 import { BillingCaseActionsService } from './application/billing-case-actions.service';
+import { BillingAdjustmentsService } from './application/billing-adjustments.service';
 import { PlanChangeMaintenanceService } from './application/plan-change-maintenance.service';
 import { createSaasBillingProvider } from './provider/saas-billing-provider-mode';
 import { SAAS_BILLING_PROVIDER } from './provider/saas-billing-provider';
@@ -37,6 +39,7 @@ import { SAAS_BILLING_PROVIDER } from './provider/saas-billing-provider';
   ],
   controllers: [
     PlatformBillingController,
+    PlatformAdjustmentsController,
     AdminBillingController,
     BillingWebhookController,
   ],
@@ -51,6 +54,7 @@ import { SAAS_BILLING_PROVIDER } from './provider/saas-billing-provider';
     BillingHistoryService,
     BillingComplimentaryService,
     BillingCaseActionsService,
+    BillingAdjustmentsService,
     PlanChangeMaintenanceService,
     {
       provide: SAAS_BILLING_PROVIDER,

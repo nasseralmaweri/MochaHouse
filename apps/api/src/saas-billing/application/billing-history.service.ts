@@ -10,6 +10,7 @@ import {
   BILLING_DOCUMENT_UNAVAILABLE,
   BILLING_UNAVAILABLE,
   type AdminBillingPaymentMethodResponse,
+  type BillingInvoiceAdjustmentView,
   type BillingInvoiceDocumentKind,
   type BillingInvoiceListResponse,
   type BillingInvoiceReason,
@@ -40,6 +41,31 @@ import { isProviderPage } from './billing-account.service';
 // Nothing here charges, refunds or changes anything.
 
 type BillingInvoice = Prisma.BillingInvoiceGetPayload<object>;
+type InvoiceAdjustment = {
+  invoiceId: string;
+  kind: string;
+  status: string;
+  currency: string;
+  totalMinorUnits: number;
+  createdAt: Date;
+  finishedAt: Date | null;
+};
+
+// SC3e-3 (D6) — what the business sees of a refund or credit on its invoice:
+// pending once it is being carried out (not while operators decide on it),
+// completed once confirmed or recorded. Never who asked or approved.
+const PENDING_ADJUSTMENT = ['EXECUTING', 'SUBMITTED', 'REVIEW'];
+const COMPLETED_ADJUSTMENT = ['SUCCEEDED', 'RECORDED'];
+
+function adjustmentOf(row: InvoiceAdjustment): BillingInvoiceAdjustmentView {
+  return {
+    kind: row.kind === 'CREDIT' ? 'CREDIT' : 'REFUND',
+    status: COMPLETED_ADJUSTMENT.includes(row.status) ? 'COMPLETED' : 'PENDING',
+    currency: row.currency.toUpperCase(),
+    totalMinorUnits: row.totalMinorUnits,
+    at: (row.finishedAt ?? row.createdAt).toISOString(),
+  };
+}
 
 const PAGE_SIZE = 20;
 // Drafts are not invoices to the business yet.
@@ -81,7 +107,10 @@ function reasonOf(billingReason: string | null): BillingInvoiceReason {
   }
 }
 
-export function invoiceView(row: BillingInvoice): BillingInvoiceView {
+export function invoiceView(
+  row: BillingInvoice,
+  adjustments: InvoiceAdjustment[] = [],
+): BillingInvoiceView {
   return {
     id: row.id,
     number: row.number,
@@ -98,6 +127,9 @@ export function invoiceView(row: BillingInvoice): BillingInvoiceView {
     periodEnd: row.periodEnd?.toISOString() ?? null,
     issuedAt: row.issuedAt.toISOString(),
     paidAt: row.paidAt?.toISOString() ?? null,
+    adjustments: adjustments
+      .filter((adjustment) => adjustment.invoiceId === row.id)
+      .map(adjustmentOf),
   };
 }
 
@@ -194,8 +226,24 @@ export class BillingHistoryService {
       take: PAGE_SIZE + 1,
     });
     const page = rows.slice(0, PAGE_SIZE);
+    const adjustments = await this.prisma.billingAdjustment.findMany({
+      where: {
+        invoiceId: { in: page.map((row) => row.id) },
+        status: { in: [...PENDING_ADJUSTMENT, ...COMPLETED_ADJUSTMENT] },
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        invoiceId: true,
+        kind: true,
+        status: true,
+        currency: true,
+        totalMinorUnits: true,
+        createdAt: true,
+        finishedAt: true,
+      },
+    });
     return {
-      invoices: page.map(invoiceView),
+      invoices: page.map((row) => invoiceView(row, adjustments)),
       nextCursor:
         rows.length > PAGE_SIZE ? encodeCursor(page[page.length - 1]) : null,
     };

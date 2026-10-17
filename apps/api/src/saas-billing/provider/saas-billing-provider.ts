@@ -45,6 +45,9 @@ export type ProviderLifecycleEvent =
   // SC3e-1 — an invoice (or a credit note on it) changed: its live record
   // is re-read for the business's billing history (nothing else changes).
   | { kind: 'INVOICE_CHANGED'; reference: string }
+  // SC3e-3 — a refund was created or changed on a payment (the payment
+  // intent): the invoice it paid is reconciled (refunds and credits).
+  | { kind: 'REFUND_CHANGED'; paymentIntentId: string }
   // A type the lifecycle does not act on: recorded and ignored.
   | { kind: 'UNSUPPORTED' };
 
@@ -219,6 +222,69 @@ export interface ProviderSchedule {
   }[];
 }
 
+// --- SC3e-3: refunds and credits as credit notes ---------------------------------
+
+// A paid invoice as an adjustment needs it: its lines (before tax), what was
+// paid and what was already refunded or credited (credit notes, and refunds
+// made on its payments outside them).
+export interface ProviderAdjustableInvoice {
+  externalInvoiceId: string;
+  externalCustomerId: string | null;
+  externalSubscriptionId: string | null;
+  livemode: boolean;
+  status: ProviderInvoiceStatus;
+  currency: string;
+  amountPaidMinorUnits: number;
+  // Credit notes issued after payment (refunds and credits).
+  postPaymentCreditMinorUnits: number;
+  lines: {
+    externalLineId: string;
+    description: string | null;
+    amountMinorUnits: number;
+    periodStart: Date | null;
+    periodEnd: Date | null;
+  }[];
+  // The payment intents that paid it (charges a refund can go back to).
+  paymentIntentIds: string[];
+  // On those charges: captured, and refunded so far.
+  chargeCapturedMinorUnits: number;
+  chargeRefundedMinorUnits: number;
+}
+
+export interface ProviderCreditNoteInput {
+  externalInvoiceId: string;
+  // REFUND: to the original payment method; CREDIT: the customer's balance,
+  // toward future invoices.
+  kind: 'REFUND' | 'CREDIT';
+  // Invoice lines and the pre-tax amount credited on each (the provider adds
+  // the tax).
+  lines: { externalLineId: string; amountMinorUnits: number }[];
+}
+
+export interface ProviderCreditNote {
+  externalCreditNoteId: string;
+  externalInvoiceId: string | null;
+  livemode: boolean;
+  status: string;
+  currency: string;
+  totalMinorUnits: number;
+  taxMinorUnits: number;
+  outOfBandMinorUnits: number;
+  refunds: { externalRefundId: string; amountMinorUnits: number }[];
+  // Ours: the adjustment it was issued for (credit-note metadata).
+  centerivoAdjustmentId: string | null;
+}
+
+export interface ProviderRefund {
+  externalRefundId: string;
+  livemode: boolean;
+  // succeeded | pending | requires_action | failed | canceled
+  status: string;
+  amountMinorUnits: number;
+  currency: string;
+  paymentIntentId: string | null;
+}
+
 // A provider call that failed (network, provider outage, rate limit):
 // retryable. Never carries provider error text beyond a short code.
 export class SaasBillingProviderError extends Error {
@@ -356,6 +422,31 @@ export interface SaasBillingProvider {
     toInterval: 'MONTH' | 'YEAR';
   }): Promise<{ externalScheduleId: string }>;
 
+  // SC3e-3 — refunds and credits as credit notes (test mode only). The
+  // provider computes every amount and tax; nothing is calculated here.
+  retrieveAdjustableInvoice(
+    externalInvoiceId: string,
+  ): Promise<ProviderAdjustableInvoice | null>;
+  // Nothing is created.
+  previewCreditNote(input: ProviderCreditNoteInput): Promise<{
+    currency: string;
+    totalMinorUnits: number;
+    taxMinorUnits: number;
+  }>;
+  // `totalMinorUnits` is the previewed total, allocated to the refund or
+  // the credit; `adjustmentId` is recorded on the credit note.
+  createCreditNote(input: {
+    idempotencyKey: string;
+    adjustmentId: string;
+    note: ProviderCreditNoteInput;
+    totalMinorUnits: number;
+  }): Promise<ProviderCreditNote>;
+  listCreditNotes(externalInvoiceId: string): Promise<ProviderCreditNote[]>;
+  // Every refund on the invoice's payments (with or without a credit note).
+  listInvoiceRefunds(externalInvoiceId: string): Promise<ProviderRefund[]>;
+  // The invoice a payment (intent) paid (null: none).
+  findInvoiceForPayment(paymentIntentId: string): Promise<string | null>;
+
   // SC3e-2 — schedules (true) or undoes (false) the subscription's
   // cancellation at the end of the current period (owner decision D2).
   // Never cancels anything immediately and never refunds; the caller
@@ -422,6 +513,12 @@ export class DisabledSaasBillingProvider implements SaasBillingProvider {
   schedulePriceChangeAtPeriodEnd = unavailable;
   releaseSchedule = unavailable;
   setCancelAtPeriodEnd = unavailable;
+  retrieveAdjustableInvoice = unavailable;
+  previewCreditNote = unavailable;
+  createCreditNote = unavailable;
+  listCreditNotes = unavailable;
+  listInvoiceRefunds = unavailable;
+  findInvoiceForPayment = unavailable;
   listUnpaidCustomerInvoices = unavailable;
   retrieveSchedule = unavailable;
   verifyEvent(): VerifiedBillingProviderEvent {

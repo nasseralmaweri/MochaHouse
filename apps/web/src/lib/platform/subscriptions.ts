@@ -91,6 +91,21 @@ export const SUBSCRIPTION_MESSAGES = {
 } as const;
 
 const CONFLICTS: Record<string, string> = {
+  // SC3e-3 — refunds and credits.
+  BILLING_ADJUSTMENT_NOT_ELIGIBLE:
+    "This invoice can't be adjusted that way (it must be a paid invoice of this business, matching the payment provider). Nothing was changed.",
+  BILLING_ADJUSTMENT_EXCEEDS_REMAINING:
+    "That is more than remains to refund or credit on this invoice. Nothing was changed.",
+  BILLING_ADJUSTMENT_IN_PROGRESS:
+    "A refund or credit is already open for this invoice. Finish or withdraw it first.",
+  BILLING_ADJUSTMENT_OWN_REQUEST: "You requested this, so another operator must decide.",
+  BILLING_ADJUSTMENT_NOT_PENDING: "This request is no longer awaiting a decision. Refresh the page.",
+  BILLING_ADJUSTMENT_ALREADY_DECIDED: "You already decided on this request; another operator must.",
+  BILLING_ADJUSTMENT_EXPIRED: "This request expired (72 hours). Request it again.",
+  BILLING_ADJUSTMENT_PREVIEW_CHANGED:
+    "The payment provider's amount changed. Preview it again. Nothing was changed.",
+  PLATFORM_PERMISSION_SELF: "You can't change your own permissions; another operator must.",
+  PLATFORM_OPERATOR_NOT_ACTIVE: "Only an active operator can be granted a permission.",
   PLAN_KEY_TAKEN: SUBSCRIPTION_MESSAGES.keyTaken,
   PLAN_DRAFT_EXISTS: SUBSCRIPTION_MESSAGES.draftExists,
   PLAN_VERSION_NOT_DRAFT: SUBSCRIPTION_MESSAGES.notDraft,

@@ -48,6 +48,9 @@ export type TenantOwnedModel = Exclude<
   | 'PlatformOperatorPermission'
   | 'BillingComplimentaryGrant'
   | 'BillingReconciliationCaseAction'
+  | 'BillingAdjustment'
+  | 'BillingAdjustmentDecision'
+  | 'BillingAdjustmentEvent'
   | 'BillingNotification'
 >;
 

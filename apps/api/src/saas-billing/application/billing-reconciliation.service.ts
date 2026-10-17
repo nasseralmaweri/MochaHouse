@@ -20,6 +20,7 @@ import {
   type SaasBillingProvider,
 } from '../provider/saas-billing-provider';
 import { BillingLifecycleService } from './billing-lifecycle.service';
+import { BillingAdjustmentsService } from './billing-adjustments.service';
 import { ownedExternalSubscriptionIds } from './billing-invoice-history';
 
 // SC3b (F6) — operator-run, REVIEW-ONLY billing reconciliation. It compares
@@ -75,12 +76,16 @@ const EXPECTED: Readonly<
 const FAILED_EVENT_AGE_MS = 60 * 60 * 1000;
 const UNLINKED_CHECKOUT_AGE_MS = 60 * 60 * 1000;
 const SWEEP_LIMIT = 500;
+// SC3e-3 — paid invoices this recent are checked for refunds and credits
+// made directly at the provider.
+const ADJUSTMENT_LOOKBACK_MS = 400 * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class BillingReconciliationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly lifecycle: BillingLifecycleService,
+    private readonly adjustments: BillingAdjustmentsService,
     @Inject(SAAS_BILLING_PROVIDER)
     private readonly provider: SaasBillingProvider,
   ) {}
@@ -94,6 +99,7 @@ export class BillingReconciliationService {
     let subscriptionsChecked = 0;
     let checkoutsExpired = 0;
     let invoicesRecorded = 0;
+    let externalAdjustmentsRecorded = 0;
 
     if (this.provider.available) {
       // 1. Our state against the provider's live subscription.
@@ -110,6 +116,36 @@ export class BillingReconciliationService {
         subscriptionsChecked++;
         invoicesRecorded += (await this.checkSubscription(subscription))
           .invoicesRecorded;
+      }
+
+      // 1b. SC3e-3 — refunds and credits on recent paid invoices (the
+      //     backstop for missed events): ours confirmed, any made directly
+      //     at the provider recorded as external and reviewed.
+      const paid = await this.prisma.billingInvoice.findMany({
+        where: {
+          provider: this.provider.name,
+          status: 'paid',
+          amountPaidMinorUnits: { gt: 0 },
+          issuedAt: { gte: new Date(now.getTime() - ADJUSTMENT_LOOKBACK_MS) },
+        },
+        orderBy: { issuedAt: 'desc' },
+        take: SWEEP_LIMIT,
+        select: { id: true, subscriptionId: true },
+      });
+      for (const invoice of paid) {
+        try {
+          externalAdjustmentsRecorded += (
+            await this.adjustments.reconcileInvoice(invoice.id)
+          ).recorded;
+        } catch (error) {
+          if (!(error instanceof SaasBillingProviderError)) throw error;
+          await this.open(
+            'PROVIDER_UNREADABLE',
+            invoice.subscriptionId,
+            null,
+            "An invoice's refunds and credits could not be read.",
+          );
+        }
       }
 
       // 2. Checkouts: expired ones are closed; completed ones never linked
@@ -185,6 +221,7 @@ export class BillingReconciliationService {
       casesOpened: after - before,
       checkoutsExpired,
       invoicesRecorded,
+      externalAdjustmentsRecorded,
     };
   }
 

@@ -784,8 +784,34 @@ export interface PlatformMeResponse {
     operator: PlatformOperatorProfile;
     permissions: PlatformPermission[];
 }
-export declare const PLATFORM_PERMISSIONS: readonly ["billing.prices.manage", "billing.policy.manage", "billing.accounts.manage", "billing.reconciliation.run", "billing.cases.manage", "billing.schedules.release", "billing.complimentary.manage"];
+export declare const PLATFORM_PERMISSIONS: readonly ["billing.prices.manage", "billing.policy.manage", "billing.accounts.manage", "billing.reconciliation.run", "billing.cases.manage", "billing.schedules.release", "billing.complimentary.manage", "billing.adjustments.request", "billing.adjustments.approve", "platform.permissions.manage"];
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
+export interface PlatformOperatorPermissionView {
+    permission: PlatformPermission;
+    grantedAt: string;
+    grantedVia: "CLI" | "CLI_BOOTSTRAP" | "CONSOLE";
+    grantedBy: {
+        id: string;
+        email: string;
+    } | null;
+    reason: string;
+}
+export interface PlatformOperatorDirectoryEntry {
+    id: string;
+    email: string;
+    displayName: string | null;
+    status: "ACTIVE" | "DISABLED";
+    permissions: PlatformOperatorPermissionView[];
+}
+export interface PlatformOperatorDirectoryResponse {
+    operators: PlatformOperatorDirectoryEntry[];
+}
+export interface PlatformPermissionChangeRequest {
+    permission: PlatformPermission;
+    reason: string;
+}
+export declare const PLATFORM_PERMISSION_SELF = "PLATFORM_PERMISSION_SELF";
+export declare const PLATFORM_OPERATOR_NOT_ACTIVE = "PLATFORM_OPERATOR_NOT_ACTIVE";
 export declare const PLATFORM_PERMISSION_REQUIRED = "PLATFORM_PERMISSION_REQUIRED";
 export interface PlatformSignInRequest {
     email: string;
@@ -1042,6 +1068,7 @@ export interface BillingInvoiceView {
     periodEnd: string | null;
     issuedAt: string;
     paidAt: string | null;
+    adjustments: BillingInvoiceAdjustmentView[];
 }
 export interface BillingInvoiceListResponse {
     invoices: BillingInvoiceView[];
@@ -1350,6 +1377,7 @@ export interface PlatformReconciliationRunResponse {
     casesOpened: number;
     checkoutsExpired: number;
     invoicesRecorded: number;
+    externalAdjustmentsRecorded: number;
 }
 export interface PlatformBillingEnforcementSweepResponse {
     enabled: boolean;
@@ -2533,5 +2561,104 @@ export interface NotificationHealthResponse {
     attention: NotificationHealthAttention[];
     items: NotificationHealthItem[];
     itemsTruncated: boolean;
+}
+export type BillingAdjustmentKind = "REFUND" | "CREDIT" | "OUT_OF_BAND";
+export type BillingAdjustmentScope = "FULL" | "PARTIAL";
+export type BillingAdjustmentStatus = "PENDING_APPROVAL" | "EXECUTING" | "SUBMITTED" | "SUCCEEDED" | "REJECTED" | "CANCELED" | "EXPIRED" | "FAILED" | "REVIEW" | "RECORDED";
+export interface PlatformAdjustableInvoice {
+    invoiceId: string;
+    number: string | null;
+    currency: string;
+    amountPaidMinorUnits: number;
+    adjustedMinorUnits: number;
+    remainingMinorUnits: number;
+    refundable: boolean;
+    annual: boolean;
+    lines: {
+        lineId: string;
+        description: string | null;
+        amountMinorUnits: number;
+    }[];
+}
+export interface PlatformAdjustmentPreviewRequest {
+    kind: "REFUND" | "CREDIT";
+    scope: BillingAdjustmentScope;
+    lineId?: string;
+    amountMinorUnits?: number;
+}
+export interface PlatformAdjustmentPreview {
+    kind: "REFUND" | "CREDIT";
+    scope: BillingAdjustmentScope;
+    currency: string;
+    totalMinorUnits: number;
+    taxMinorUnits: number;
+    remainingAfterMinorUnits: number;
+    requiredApprovals: 1 | 2;
+    annualFullRefund: boolean;
+}
+export interface PlatformAdjustmentRequest extends PlatformAdjustmentPreviewRequest {
+    reason: string;
+}
+export interface PlatformAdjustmentView {
+    id: string;
+    tenantId: string;
+    businessName: string;
+    invoiceId: string;
+    invoiceNumber: string | null;
+    origin: "CENTERIVO" | "EXTERNAL";
+    kind: BillingAdjustmentKind;
+    scope: BillingAdjustmentScope | null;
+    status: BillingAdjustmentStatus;
+    currency: string;
+    totalMinorUnits: number;
+    taxMinorUnits: number;
+    annualFullRefund: boolean;
+    requiredApprovals: number;
+    reason: string | null;
+    requestedBy: {
+        id: string;
+        email: string;
+    } | null;
+    createdAt: string;
+    expiresAt: string | null;
+    finishedAt: string | null;
+    failureCode: string | null;
+    decisions: {
+        decision: "APPROVED" | "REJECTED";
+        note: string;
+        operator: {
+            id: string;
+            email: string;
+        };
+        at: string;
+    }[];
+    events: {
+        type: string;
+        code: string | null;
+        at: string;
+        actorEmail: string | null;
+        note: string | null;
+    }[];
+}
+export interface PlatformAdjustmentListResponse {
+    adjustments: PlatformAdjustmentView[];
+}
+export interface PlatformAdjustmentDecisionRequest {
+    note: string;
+}
+export declare const BILLING_ADJUSTMENT_NOT_ELIGIBLE = "BILLING_ADJUSTMENT_NOT_ELIGIBLE";
+export declare const BILLING_ADJUSTMENT_EXCEEDS_REMAINING = "BILLING_ADJUSTMENT_EXCEEDS_REMAINING";
+export declare const BILLING_ADJUSTMENT_IN_PROGRESS = "BILLING_ADJUSTMENT_IN_PROGRESS";
+export declare const BILLING_ADJUSTMENT_OWN_REQUEST = "BILLING_ADJUSTMENT_OWN_REQUEST";
+export declare const BILLING_ADJUSTMENT_NOT_PENDING = "BILLING_ADJUSTMENT_NOT_PENDING";
+export declare const BILLING_ADJUSTMENT_ALREADY_DECIDED = "BILLING_ADJUSTMENT_ALREADY_DECIDED";
+export declare const BILLING_ADJUSTMENT_EXPIRED = "BILLING_ADJUSTMENT_EXPIRED";
+export declare const BILLING_ADJUSTMENT_PREVIEW_CHANGED = "BILLING_ADJUSTMENT_PREVIEW_CHANGED";
+export interface BillingInvoiceAdjustmentView {
+    kind: "REFUND" | "CREDIT";
+    status: "PENDING" | "COMPLETED";
+    currency: string;
+    totalMinorUnits: number;
+    at: string;
 }
 //# sourceMappingURL=index.d.ts.map

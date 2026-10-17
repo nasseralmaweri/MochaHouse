@@ -3,6 +3,7 @@ import type { BillingInvoiceView } from "@mocha-house/contracts";
 import {
   INVOICE_REASON_LABELS,
   INVOICE_STATUS_LABELS,
+  invoiceAdjustmentLine,
   invoiceAmountLines,
   invoiceDate,
   invoicePeriod,
@@ -70,6 +71,15 @@ export function InvoiceList({
                 </div>
               ) : null}
             </dl>
+            {invoice.adjustments.length > 0 ? (
+              <ul aria-label={`Refunds and credits on ${label}`} className="flex flex-col gap-1">
+                {invoice.adjustments.map((adjustment, index) => (
+                  <li key={index} className="break-words rounded-lg bg-surface-subtle px-3 py-2 text-text-primary">
+                    {invoiceAdjustmentLine(adjustment)}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             {actions ? actions(invoice, label) : null}
           </li>
         );
