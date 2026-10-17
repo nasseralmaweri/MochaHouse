@@ -29,6 +29,10 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   // SC3d-2 — plan options, the business's confirmation (the only charge
   // path) and the waiting change's invoice page.
   'GET /api/v1/admin/billing/plan-options': { scope: 'tenant' },
+  // SC4c — a self-service business's first payment setup: the plans it may
+  // choose and changing its choice before paying.
+  'GET /api/v1/admin/billing/initial-plan-options': { scope: 'tenant' },
+  'POST /api/v1/admin/billing/initial-plan': { scope: 'tenant' },
   'POST /api/v1/admin/billing/plan-change/confirm': { scope: 'tenant' },
   'POST /api/v1/admin/billing/plan-change/pay': { scope: 'tenant' },
   // SC3d-3 — cancelling a scheduled change.

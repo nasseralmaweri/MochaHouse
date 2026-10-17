@@ -352,6 +352,20 @@ export interface SaasBillingProvider {
     externalSessionId: string,
   ): Promise<ProviderCheckoutSession>;
 
+  // SC4c — the customer an earlier, interrupted attempt may already have
+  // created for this business (found by the business id it was created with;
+  // the OLDEST if several), so a retry never creates a second one. Used only
+  // to avoid duplicates before creating a customer — never to match a
+  // webhook to a business. null when there is none.
+  findCustomerForTenant(tenantId: string): Promise<string | null>;
+
+  // SC4c — ends an OPEN Checkout so it can no longer be completed (before
+  // an owner changes their plan). Returns the session as it now is: a
+  // session already completed stays 'complete'.
+  expireCheckoutSession(
+    externalSessionId: string,
+  ): Promise<ProviderCheckoutSession>;
+
   retrieveSubscription(
     externalSubscriptionId: string,
   ): Promise<ProviderSubscriptionSnapshot>;
@@ -508,6 +522,8 @@ export class DisabledSaasBillingProvider implements SaasBillingProvider {
   createCustomer = unavailable;
   createCheckoutSession = unavailable;
   retrieveCheckoutSession = unavailable;
+  findCustomerForTenant = unavailable;
+  expireCheckoutSession = unavailable;
   retrieveSubscription = unavailable;
   retrieveInvoice = unavailable;
   listInvoices = unavailable;

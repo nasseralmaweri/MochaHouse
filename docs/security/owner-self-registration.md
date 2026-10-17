@@ -157,6 +157,36 @@ existing rules. Payment setup itself opens with SC4c.
 Operators offer or withdraw a plan for self-service in the Platform Console
 (Plans), audited as `platform.plan.self_service_changed`.
 
+## SC4c — the first payment setup
+
+After creating the business the owner lands on Billing ("Set up payment
+now"), which also stays there to resume later. It uses the existing owner
+Checkout (`POST /api/v1/admin/billing/checkout`): one open Checkout per
+business, deterministic idempotency keys, the existing one-trial-per-owner
+rules, activation only from verified provider events.
+
+- **Provider customer (C1)** — created only when payment setup starts. An
+  interrupted earlier attempt is reconciled first (the provider is asked for
+  a customer already made for this business), then a customer is created with
+  the subscription's deterministic idempotency key, and recorded with a
+  compare-and-set: retries, concurrent clicks and timeouts converge on one.
+- **Exact price** — Checkout is for the subscription's chosen price. If that
+  price was retired or the plan withdrawn (C4), setup is refused
+  (`BILLING_SELECTION_UNAVAILABLE`) and the owner chooses again — never
+  substituted, never charged at an unapproved amount.
+- **Changing the plan before paying (C3)** — `POST /api/v1/admin/billing/initial-plan`
+  (billing.manage): only offered plans and prices, exactly as shown; an open
+  Checkout is ended at the provider first; one that already completed refuses
+  the change; compare-and-set; recorded as `PLAN_CHANGED` (source `OWNER`).
+- **Activation** — plan modules, add-ons and customer sales unlock only when
+  the provider has verifiably started the trial (a card-required trial only
+  starts after the card is authorized) or recorded a paid period. A browser
+  redirect, an opened Checkout, a saved card alone or an unpaid first invoice
+  unlock nothing.
+- **C2** — no separate deadline: with enforcement off a pending business keeps
+  core only, no add-ons and no sales indefinitely; the existing payment setup
+  deadline applies only when enforcement is on.
+
 ## Rollback
 
 `packages/database/prisma/rollbacks/20261106090000_owner_registration.down.sql`

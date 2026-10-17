@@ -2157,9 +2157,10 @@ export interface BusinessBillingSummary {
   suspendedForBilling: boolean;
   cancelAtPeriodEnd: boolean;
   paymentMethodOnFile: boolean;
-  // SC4b — billed at the price its owner chose, but billing has not been
-  // started with the payment provider yet: payment setup opens with SC4c.
-  paymentSetupOpensSoon: boolean;
+  // SC4b/SC4c — a business its owner created that has not completed its
+  // first payment setup (no verified payment or trial yet): core only, no
+  // customer sales; the plan can still be changed (SC4c).
+  initialSetupPending: boolean;
   // SC3e-4 — payment setup (a billed business without a verified, paid
   // provider subscription):
   //   required — payment setup is needed now;
@@ -2214,7 +2215,48 @@ export interface AdminBillingResponse {
   // plan change (null: none worth showing).
   canChangePlan: boolean;
   planChange: AdminPlanChangeView | null;
+  // SC4c — only while a self-service business has not completed its first
+  // payment setup (null otherwise).
+  initialSetup: AdminInitialSetupView | null;
 }
+
+// SC4c — a self-service business's first payment setup.
+//   selectionAvailable — the chosen plan and price are still offered; when
+//     false (a retired price, a withdrawn plan), the owner must choose again
+//     before payment setup (never substituted).
+//   trial — the free trial payment setup would start (null: none), decided
+//     by the existing trial rules; it starts only when the provider confirms.
+//   canChangeSelection — billing.manage holders, before payment setup is done.
+export interface AdminInitialSetupView {
+  selectionAvailable: boolean;
+  trial: { days: number; requiresPaymentMethod: boolean } | null;
+  canChangeSelection: boolean;
+}
+
+// GET /api/v1/admin/billing/initial-plan-options (billing.view) — the plans
+// the owner may choose (the self-service offer) and the current choice.
+export interface AdminInitialPlanOptionsResponse {
+  plans: OwnerOnboardingPlanOption[];
+  current: { planVersionId: string; planPriceId: string };
+}
+
+// POST /api/v1/admin/billing/initial-plan (billing.manage) — change the
+// plan and price before the first payment setup, with the price as shown.
+// An open Checkout is ended first; one that already completed refuses.
+export interface AdminInitialPlanChangeRequest {
+  planVersionId: string;
+  planPriceId: string;
+  expectedPrice: {
+    interval: PlatformBillingInterval;
+    currency: string;
+    amountMinorUnits: number;
+  };
+}
+
+// 409 — the chosen plan or price is no longer offered: choose again.
+export const BILLING_SELECTION_UNAVAILABLE = "BILLING_SELECTION_UNAVAILABLE";
+// 409 — the plan can be changed here only before the first payment setup.
+export const BILLING_SELECTION_LOCKED = "BILLING_SELECTION_LOCKED";
 
 // POST /api/v1/admin/billing/checkout (billing.manage) — no body: the
 // business, price and trial come ONLY from the server's records. Returns

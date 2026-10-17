@@ -464,18 +464,22 @@ export class PlatformBillingController {
   @HttpCode(200)
   @RequirePlatformPermission('billing.prices.manage')
   @Post('plans/:planId/prices/:priceId/archive')
-  archivePrice(
+  async archivePrice(
     @Param('planId') planId: string,
     @Param('priceId') priceId: string,
     @Req() request: PlatformAuthenticatedRequest,
   ): Promise<PlatformPlan> {
     assertRecentSignIn(request.platformIdentity);
-    return this.catalog.archivePrice(
+    const plan = await this.catalog.archivePrice(
       planId,
       priceId,
       request.platformOperator!,
       request.requestId,
     );
+    // SC4c (owner decision C4) — a self-service business still in its first
+    // payment setup must choose again: its open Checkout at this price ends.
+    await this.accounts.endSelfServiceCheckoutsAtPrice(priceId);
+    return plan;
   }
 
   @Header('Cache-Control', 'no-store')

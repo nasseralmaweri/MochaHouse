@@ -1,6 +1,8 @@
 import "server-only";
 import { cache } from "react";
 import type {
+  AdminInitialPlanChangeRequest,
+  AdminInitialPlanOptionsResponse,
   AdminPlanOption,
   AdminPlanOptionsResponse,
   BillingPlanChangeConfirmResponse,
@@ -293,4 +295,44 @@ export async function openAdminPlanChangePayment(): Promise<OpenCheckoutResult> 
     return { outcome: "refused", message: planChangeRefusalMessage(null, null) };
   }
   return { outcome: "redirect", url: result.data.url };
+}
+
+// SC4c — the plans an owner may choose before the first payment setup.
+export async function getAdminInitialPlanOptions(): Promise<AdminInitialPlanOptionsResponse | null> {
+  const token = await getInternalSessionToken();
+  if (!token) return null;
+  try {
+    const response = await fetch(`${getApiUrl()}/admin/billing/initial-plan-options`, {
+      headers: await internalAuthHeaders(token),
+      cache: "no-store",
+    });
+    return response.ok ? ((await response.json()) as AdminInitialPlanOptionsResponse) : null;
+  } catch {
+    return null;
+  }
+}
+
+// SC4c — change the plan and price (as shown) before the first payment
+// setup. The API refuses anything not offered or not exactly as shown.
+export async function changeAdminInitialPlan(
+  request: AdminInitialPlanChangeRequest,
+): Promise<{ outcome: "changed" } | { outcome: "refused"; message: string }> {
+  const token = await getInternalSessionToken();
+  if (!token) return { outcome: "refused", message: checkoutRefusalMessage(401, null) };
+  let response: Response;
+  try {
+    response = await fetch(`${getApiUrl()}/admin/billing/initial-plan`, {
+      method: "POST",
+      headers: { ...(await internalAuthHeaders(token)), "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      cache: "no-store",
+    });
+  } catch {
+    return { outcome: "refused", message: BILLING_MESSAGES.unavailable };
+  }
+  if (response.ok) return { outcome: "changed" };
+  return {
+    outcome: "refused",
+    message: checkoutRefusalMessage(response.status, await response.json().catch(() => null)),
+  };
 }

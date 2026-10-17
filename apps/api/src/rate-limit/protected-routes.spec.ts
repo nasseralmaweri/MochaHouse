@@ -217,6 +217,8 @@ const PROTECTED: ReadonlyArray<{
       'payPlanChange',
       'cancelPlanChange',
       'invoiceDocument',
+      // SC4c
+      'changeInitialPlan',
     ] as const
   ).map((method) => ({
     controller: AdminBillingController,
