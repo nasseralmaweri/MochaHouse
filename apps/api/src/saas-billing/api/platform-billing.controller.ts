@@ -26,6 +26,7 @@ import type {
   PlatformReconciliationCaseListResponse,
   PlatformReconciliationRunResponse,
   PlatformTenantBillingResponse,
+  PlatformPaymentSetupListResponse,
 } from '@mocha-house/contracts';
 import { PlatformAuthGuard } from '../../platform-auth/infrastructure/platform-auth.guard';
 import { RequirePlatformPermission } from '../../platform-auth/authorization/platform-permission.guard';
@@ -273,6 +274,36 @@ export class PlatformBillingController {
     await this.operations.assignContact(
       tenantId,
       parseContactAssignment(body),
+      request.platformOperator!,
+      request.requestId,
+    );
+    return this.accounts.platformView(tenantId);
+  }
+
+  // SC3e-4 — businesses that still need payment setup (read-only).
+  @Header('Cache-Control', 'no-store')
+  @Get('billing/payment-setup')
+  paymentSetupList(): Promise<PlatformPaymentSetupListResponse> {
+    return this.operations.paymentSetupList();
+  }
+
+  // SC3e-4 — extend a payment setup deadline (billing.accounts.manage,
+  // recent sign-in, a reason; never past 30 days from the window's start).
+  @UseGuards(RateLimitGuard)
+  @RateLimit('platform-lifecycle')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @RequirePlatformPermission('billing.accounts.manage')
+  @Post('tenants/:tenantId/billing/payment-setup/extension')
+  async extendPaymentSetup(
+    @Param('tenantId') tenantId: string,
+    @Body() body: unknown,
+    @Req() request: PlatformAuthenticatedRequest,
+  ): Promise<PlatformTenantBillingResponse> {
+    assertRecentSignIn(request.platformIdentity);
+    await this.operations.extendPaymentSetup(
+      tenantId,
+      parseGraceExtension(body),
       request.platformOperator!,
       request.requestId,
     );

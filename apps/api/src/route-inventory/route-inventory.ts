@@ -388,6 +388,15 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     scope: 'platform',
     note: "SC3b — a business's billing state.",
   },
+  // SC3e-4 — payment setup deadlines.
+  'GET /api/v1/platform/billing/payment-setup': {
+    scope: 'platform',
+    note: 'SC3e-4 — businesses awaiting payment setup and their deadlines (read-only).',
+  },
+  'POST /api/v1/platform/tenants/:tenantId/billing/payment-setup/extension': {
+    scope: 'platform',
+    note: 'SC3e-4 — extend a payment setup deadline (billing.accounts.manage, recent sign-in; max 30 days).',
+  },
   // SC3e-2 — complimentary arrangements and review-case actions.
   'GET /api/v1/platform/billing/complimentary': {
     scope: 'platform',

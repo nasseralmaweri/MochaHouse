@@ -157,6 +157,8 @@ const PROTECTED: ReadonlyArray<{
       'previewPlanChange',
       'resolveCase',
       // SC3e-2
+      // SC3e-4
+      'extendPaymentSetup',
       'grantComplimentary',
       'withdrawComplimentary',
       'revokeComplimentary',

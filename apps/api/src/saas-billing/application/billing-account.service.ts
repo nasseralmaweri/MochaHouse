@@ -35,6 +35,7 @@ import { entitledToPlanModules } from '../domain/billing-lifecycle';
 import { syncProviderPrice } from './price-sync';
 import { billingOperationsView } from './billing-operations.service';
 import { billingEnforcementEnabled } from './billing-enforcement.config';
+import { paymentSetupSummary, paymentSetupView } from './payment-setup-view';
 import { runSerializable } from '../../prisma/serializable-transaction';
 import { PLATFORM_AUDIT_ACTIONS } from '../../platform-auth/application/platform-operators.service';
 import type { PlatformOperatorRow } from '../../platform-auth/infrastructure/platform-identity';
@@ -173,6 +174,12 @@ export function billingSummary(row: SubscriptionView): BusinessBillingSummary {
       row.subscriberTenant.suspensionReason === 'BILLING',
     cancelAtPeriodEnd: row.cancelAtPeriodEnd,
     paymentMethodOnFile: row.recurringPaymentAuthorizedAt !== null,
+    paymentSetup: paymentSetupSummary(
+      row,
+      row.planVersion.plan.key,
+      row.subscriberTenant.status === 'SUSPENDED' &&
+        row.subscriberTenant.suspensionReason === 'BILLING',
+    ),
   };
 }
 
@@ -374,10 +381,17 @@ export class BillingAccountService {
       select: { id: true },
     });
     if (!tenant) throw new NotFoundException('Business not found.');
+    const row = await this.prisma.tenantSubscription.findUnique({
+      where: { subscriberTenantId: tenantId },
+      include: SUBSCRIPTION_INCLUDE,
+    });
     return {
       tenantId,
-      billing: await this.summaryForTenant(tenantId),
+      billing: row ? billingSummary(row) : null,
       ...(await billingOperationsView(this.prisma, tenantId)),
+      paymentSetup: row
+        ? await paymentSetupView(this.prisma, row, row.planVersion.plan.key)
+        : null,
     };
   }
 
@@ -431,6 +445,9 @@ export class BillingAccountService {
           // The SC2a informational status is reset: billing state starts here.
           status: 'ACTIVE',
           billingStateVersion: { increment: 1 },
+          // SC3e-4 — payment setup is needed from now (the deadline comes
+          // only with billing enforcement on).
+          paymentSetupRequiredSince: new Date(),
         },
       });
       if (count !== 1) {
@@ -439,6 +456,16 @@ export class BillingAccountService {
           'This business is already billed.',
         );
       }
+      await tx.tenantSubscriptionEvent.create({
+        data: {
+          subscriptionId: subscription.id,
+          type: 'PAYMENT_SETUP_REQUIRED',
+          fromStatus: 'ACTIVE',
+          toStatus: 'ACTIVE',
+          source: 'OPERATOR',
+          actorPlatformOperatorId: operator.id,
+        },
+      });
       // SC3c-3 — the business's billing contact starts as its first owner
       // (when ACTIVE); an operator may reassign it. Never replaces one.
       if (owner.status === 'ACTIVE') {
@@ -893,6 +920,8 @@ export class BillingAccountService {
       })) > 0;
     if (
       hadComplimentary ||
+      // SC3e-4 — after an expired payment setup window, payment first.
+      subscription.paymentSetupExpiredAt !== null ||
       policy.trialDays === 0 ||
       subscription.trialStartedAt !== null ||
       typeof secret !== 'string' ||

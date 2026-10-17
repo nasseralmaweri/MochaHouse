@@ -448,4 +448,26 @@ describe('SC3c-3 billing sender and templates', () => {
       }).subject,
     ).not.toMatch(/[\r\n]/);
   });
+
+  it('SC3e-4 — payment setup notices: a reminder with its deadline, never a link or a threat enforcement would not apply', () => {
+    const off = renderBillingNotice('PAYMENT_SETUP_ENDING', 'Cafe', {
+      deadline: '2026-11-01T00:00:00Z',
+      enforced: false,
+    });
+    expect(off.text).toMatch(/November 1, 2026/);
+    expect(off.text).not.toMatch(/limited/);
+    const on = renderBillingNotice('PAYMENT_SETUP_ENDING', 'Cafe', {
+      deadline: '2026-11-01T00:00:00Z',
+      enforced: true,
+    });
+    expect(on.text).toMatch(/limited to billing/);
+    const expired = renderBillingNotice('PAYMENT_SETUP_EXPIRED', 'Cafe', {
+      deadline: null,
+      enforced: true,
+    });
+    expect(expired.subject).toMatch(/paused until payment is set up/);
+    for (const notice of [off, on, expired]) {
+      expect(notice.text).not.toMatch(/https?:/);
+    }
+  });
 });

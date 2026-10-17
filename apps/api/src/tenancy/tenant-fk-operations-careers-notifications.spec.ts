@@ -261,6 +261,8 @@ const GLOBAL_TABLES = [
   'BillingAdjustment',
   'BillingAdjustmentDecision',
   'BillingAdjustmentEvent',
+  // SC3e-4 — when billing enforcement ran.
+  'BillingEnforcementActivation',
   '_prisma_migrations',
 ];
 

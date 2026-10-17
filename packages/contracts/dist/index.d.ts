@@ -1026,6 +1026,12 @@ export interface BusinessBillingSummary {
     suspendedForBilling: boolean;
     cancelAtPeriodEnd: boolean;
     paymentMethodOnFile: boolean;
+    paymentSetup: {
+        required: boolean;
+        since: string | null;
+        deadline: string | null;
+        expired: boolean;
+    };
 }
 export declare const BILLING_UNAVAILABLE = "BILLING_UNAVAILABLE";
 export declare const BILLING_NOT_BILLED = "BILLING_NOT_BILLED";
@@ -1199,6 +1205,26 @@ export interface PlatformTenantBillingResponse {
     contact: PlatformBillingContactView;
     extensions: PlatformGraceExtension[];
     extensionDaysRemaining: number | null;
+    paymentSetup: PlatformPaymentSetupView | null;
+}
+export interface PlatformPaymentSetupView {
+    enforced: boolean;
+    since: string;
+    windowStartedAt: string | null;
+    deadline: string | null;
+    latestDeadline: string | null;
+    expired: boolean;
+    extensions: (PlatformGraceExtension & {
+        operatorEmail: string;
+    })[];
+}
+export interface PlatformPaymentSetupListResponse {
+    enforced: boolean;
+    items: (PlatformPaymentSetupView & {
+        tenantId: string;
+        businessName: string;
+        planName: string;
+    })[];
 }
 export type BillingRecipientSource = "CONTACT" | "FALLBACK_ADMINISTRATOR";
 export type BillingRecipientIneligibility = "NOT_ACTIVE" | "NO_BILLING_MANAGE" | "EMAIL_NOT_VERIFIED" | "EMAIL_VERIFICATION_STALE";
@@ -1218,7 +1244,7 @@ export interface PlatformBillingContactView {
 export interface PlatformAssignBillingContactRequest {
     internalUserId: string;
 }
-export type PlatformGraceExtensionKind = "GRACE_EXTENDED" | "GRACE_EXCEPTION";
+export type PlatformGraceExtensionKind = "GRACE_EXTENDED" | "GRACE_EXCEPTION" | "PAYMENT_SETUP";
 export interface PlatformGraceExtension {
     id: string;
     kind: PlatformGraceExtensionKind;
@@ -1399,7 +1425,7 @@ export interface PlatformPlanCreateRequest {
 export interface PlatformPlanVersionModulesRequest {
     moduleKeys: OptionalModuleKey[];
 }
-export type PlatformSubscriptionEventType = "PLAN_ASSIGNED" | "PLAN_CHANGED" | "ADDON_GRANTED" | "ADDON_REVOKED" | "TRIAL_STARTED" | "PAYMENT_AUTHORIZED" | "PAYMENT_SUCCEEDED" | "PAYMENT_FAILED" | "GRACE_EXPIRED" | "TRIAL_EXPIRED" | "CANCEL_SCHEDULED" | "CANCEL_UNDONE" | "CANCELED" | "PLAN_CHANGE_PENDING" | "PLAN_CHANGE_APPLIED" | "PLAN_CHANGE_ABANDONED" | "RECOVERY_EXPIRED" | "BILLING_SUSPENDED" | "BILLING_SUSPENSION_LIFTED" | "SUBSCRIPTION_REPLACED" | "GRACE_EXTENDED" | "GRACE_EXCEPTION_GRANTED" | "GRACE_EXCEPTION_EXPIRED" | "COMPLIMENTARY_SCHEDULED" | "COMPLIMENTARY_STARTED" | "COMPLIMENTARY_WITHDRAWN" | "COMPLIMENTARY_ENDED";
+export type PlatformSubscriptionEventType = "PLAN_ASSIGNED" | "PLAN_CHANGED" | "ADDON_GRANTED" | "ADDON_REVOKED" | "TRIAL_STARTED" | "PAYMENT_AUTHORIZED" | "PAYMENT_SUCCEEDED" | "PAYMENT_FAILED" | "GRACE_EXPIRED" | "TRIAL_EXPIRED" | "CANCEL_SCHEDULED" | "CANCEL_UNDONE" | "CANCELED" | "PLAN_CHANGE_PENDING" | "PLAN_CHANGE_APPLIED" | "PLAN_CHANGE_ABANDONED" | "RECOVERY_EXPIRED" | "BILLING_SUSPENDED" | "BILLING_SUSPENSION_LIFTED" | "SUBSCRIPTION_REPLACED" | "GRACE_EXTENDED" | "GRACE_EXCEPTION_GRANTED" | "GRACE_EXCEPTION_EXPIRED" | "COMPLIMENTARY_SCHEDULED" | "COMPLIMENTARY_STARTED" | "COMPLIMENTARY_WITHDRAWN" | "COMPLIMENTARY_ENDED" | "PAYMENT_SETUP_REQUIRED" | "PAYMENT_SETUP_WINDOW_STARTED" | "PAYMENT_SETUP_EXTENDED" | "PAYMENT_SETUP_EXPIRED" | "PAYMENT_SETUP_COMPLETED";
 export type PlatformSubscriptionStatus = "ACTIVE" | "TRIALING" | "PAST_DUE" | "UNPAID" | "TRIAL_EXPIRED" | "CANCELED";
 export type PlatformBillingMode = "COMPLIMENTARY" | "BILLED";
 export interface PlatformTenantSubscription {

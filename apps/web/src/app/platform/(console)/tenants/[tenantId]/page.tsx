@@ -14,6 +14,7 @@ import { TenantLifecyclePanel } from "@/components/platform/TenantLifecyclePanel
 import { SubscriptionPanel } from "@/components/platform/SubscriptionPanel";
 import { BillingPanel } from "@/components/platform/BillingPanel";
 import { BillingOperationsPanel } from "@/components/platform/BillingOperationsPanel";
+import { PaymentSetupPanel } from "@/components/platform/PaymentSetupPanel";
 import { InvoiceList } from "@/components/billing/InvoiceList";
 import { ComplimentaryPanel } from "@/components/platform/ComplimentaryPanel";
 import { AdjustmentSummary } from "@/components/platform/AdjustmentSummary";
@@ -225,6 +226,13 @@ export default async function PlatformTenantPage({
                 />
                 {billing.data.billing && billing.data.billing.state !== "COMPLIMENTARY" ? (
                   <BillingOperationsPanel tenantId={tenant.id} view={billing.data} />
+                ) : null}
+                {billing.data.paymentSetup ? (
+                  <PaymentSetupPanel
+                    tenantId={tenant.id}
+                    setup={billing.data.paymentSetup}
+                    canExtend={holds(permissions, "billing.accounts.manage")}
+                  />
                 ) : null}
                 {complimentary.state === "ok" ? (
                   <ComplimentaryPanel

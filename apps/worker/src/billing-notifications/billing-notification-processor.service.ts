@@ -141,6 +141,8 @@ export class BillingNotificationProcessor
         graceEndsAt: true,
         graceExceptionEndsAt: true,
         recoveryEndsAt: true,
+        paymentSetupDueAt: true,
+        paymentSetupExpiredAt: true,
         subscriberTenant: {
           select: { name: true, status: true, suspensionReason: true },
         },
@@ -240,6 +242,8 @@ export class BillingNotificationProcessor
       graceEndsAt: Date | null;
       graceExceptionEndsAt: Date | null;
       recoveryEndsAt: Date | null;
+      paymentSetupDueAt: Date | null;
+      paymentSetupExpiredAt: Date | null;
       subscriberTenant: { status: string; suspensionReason: string | null };
     },
     now: Date,
@@ -280,6 +284,14 @@ export class BillingNotificationProcessor
         );
       case 'RESTART_CONFIRMED':
         return subscription.status === 'ACTIVE';
+      // SC3e-4 — still the same open deadline; still paused for it.
+      case 'PAYMENT_SETUP_ENDING':
+        return (
+          subscription.paymentSetupExpiredAt === null &&
+          same(subscription.paymentSetupDueAt)
+        );
+      case 'PAYMENT_SETUP_EXPIRED':
+        return billingSuspended && subscription.paymentSetupExpiredAt !== null;
       case 'RESTART_UNDER_REVIEW': {
         if (!payload.caseId) return false;
         const open = await this.prisma.billingReconciliationCase.findFirst({

@@ -17,6 +17,7 @@ import {
   type PlatformGraceExtension,
   type PlatformGraceExtensionKind,
   type PlatformGraceExtensionRequest,
+  type PlatformPaymentSetupListResponse,
 } from '@mocha-house/contracts';
 import {
   BILLING_MANAGE_PERMISSION,
@@ -40,6 +41,7 @@ import {
   GRACE_EXTENSION_EPISODE_MAX_DAYS,
   GRACE_EXTENSION_MAX_DAYS,
 } from './billing-lifecycle.service';
+import { paymentSetupList } from './payment-setup-view';
 
 // SC3c-3 — platform-operator billing operations: the business's designated
 // billing contact (who CENTERIVO billing email goes to), grace extensions
@@ -170,7 +172,11 @@ export async function billingOperationsView(
   });
   const rows = subscription
     ? await prisma.billingGraceExtension.findMany({
-        where: { subscriptionId: subscription.id },
+        // SC3e-4 — payment setup extensions are shown with the setup window.
+        where: {
+          subscriptionId: subscription.id,
+          kind: { not: 'PAYMENT_SETUP' },
+        },
         orderBy: { createdAt: 'desc' },
         take: 50,
       })
@@ -184,6 +190,7 @@ export async function billingOperationsView(
     const used = rows
       .filter(
         (row) =>
+          row.kind !== 'PAYMENT_SETUP' &&
           row.episodeStartedAt.getTime() === subscription.pastDueAt!.getTime(),
       )
       .reduce((sum, row) => sum + row.days, 0);
@@ -284,6 +291,54 @@ export class BillingOperationsService {
   }
 
   // --- grace extensions -----------------------------------------------------------
+
+  // SC3e-4 — an operator extends a business's payment setup deadline
+  // (1–14 days, never past 30 days from the window's start).
+  async extendPaymentSetup(
+    tenantId: string,
+    input: PlatformGraceExtensionRequest,
+    operator: PlatformOperatorRow,
+    requestReference: string | undefined,
+  ): Promise<void> {
+    if (!isUuid(tenantId)) throw new NotFoundException('Business not found.');
+    const subscription = await this.prisma.tenantSubscription.findUnique({
+      where: { subscriberTenantId: tenantId },
+      select: { id: true },
+    });
+    if (!subscription) throw new NotFoundException('Business not found.');
+    try {
+      await this.lifecycle.extendPaymentSetup(
+        subscription.id,
+        input,
+        operator.id,
+        requestReference ?? null,
+      );
+    } catch (error) {
+      if (error instanceof BillingLifecycleError) {
+        if (error.reason === 'EXTENSION_LIMIT') {
+          throw conflict(
+            PLATFORM_BILLING_EXTENSION_LIMIT,
+            'That is past the latest allowed deadline: at most 30 days from the start of the payment setup window.',
+          );
+        }
+        if (
+          error.reason === 'NOT_EXTENDABLE' ||
+          error.reason === 'NOT_FOUND' ||
+          error.reason === 'CONCURRENT_CHANGE'
+        ) {
+          throw conflict(
+            PLATFORM_BILLING_NOT_EXTENDABLE,
+            'This business has no payment setup deadline to extend (setup done, deadline passed, or billing enforcement off).',
+          );
+        }
+      }
+      throw error;
+    }
+  }
+
+  paymentSetupList(): Promise<PlatformPaymentSetupListResponse> {
+    return paymentSetupList(this.prisma);
+  }
 
   async extendGrace(
     tenantId: string,

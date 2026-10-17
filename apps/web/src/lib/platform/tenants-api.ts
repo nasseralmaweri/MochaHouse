@@ -7,6 +7,7 @@ import type {
   PlatformCaseDetailResponse,
   PlatformComplimentaryListResponse,
   PlatformComplimentaryView,
+  PlatformPaymentSetupListResponse,
   PlatformRevenueReport,
   PlatformAdjustableInvoice,
   PlatformAdjustmentListResponse,
@@ -176,6 +177,11 @@ export function getPlatformRevenueReport(period: {
 }): Promise<RegistryResult<PlatformRevenueReport>> {
   const query = new URLSearchParams(period as Record<string, string>).toString();
   return readRegistry(`/billing/reports/revenue${query ? `?${query}` : ""}`);
+}
+
+// SC3e-4 — businesses that still need payment setup.
+export function listPlatformPaymentSetup(): Promise<RegistryResult<PlatformPaymentSetupListResponse>> {
+  return readRegistry("/billing/payment-setup");
 }
 
 // SC3c-3 — the console's billing attention counts.

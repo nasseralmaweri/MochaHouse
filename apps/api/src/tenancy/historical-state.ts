@@ -57,6 +57,8 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'BillingAdjustment',
   'BillingAdjustmentDecision',
   'BillingAdjustmentEvent',
+  // SC3e-4 — when billing enforcement ran.
+  'BillingEnforcementActivation',
 ]);
 
 // Columns added after the 4C-era migrations to tables that already existed.

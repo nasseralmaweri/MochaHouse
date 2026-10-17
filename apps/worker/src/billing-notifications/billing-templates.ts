@@ -13,7 +13,10 @@ export type BillingNoticeKind =
   | 'TRIAL_EXPIRED'
   | 'TRIAL_RECOVERY_ENDING'
   | 'RESTART_CONFIRMED'
-  | 'RESTART_UNDER_REVIEW';
+  | 'RESTART_UNDER_REVIEW'
+  // SC3e-4 — payment setup deadline near / passed.
+  | 'PAYMENT_SETUP_ENDING'
+  | 'PAYMENT_SETUP_EXPIRED';
 
 export const BILLING_NOTICE_KINDS: readonly BillingNoticeKind[] = [
   'PAYMENT_FAILED',
@@ -24,6 +27,8 @@ export const BILLING_NOTICE_KINDS: readonly BillingNoticeKind[] = [
   'TRIAL_RECOVERY_ENDING',
   'RESTART_CONFIRMED',
   'RESTART_UNDER_REVIEW',
+  'PAYMENT_SETUP_ENDING',
+  'PAYMENT_SETUP_EXPIRED',
 ];
 
 export interface BillingNoticePayload {
@@ -149,6 +154,24 @@ export function renderBillingNotice(
       lines = [
         `We received a new CENTERIVO subscription for ${name}, but couldn't confirm it automatically.`,
         "Our team is reviewing it. You don't need to pay again; we'll be in touch.",
+      ];
+      break;
+    case 'PAYMENT_SETUP_ENDING':
+      subject = `Set up payment for ${name}`;
+      lines = [
+        deadline
+          ? `Payment for ${name}'s CENTERIVO subscription isn't set up yet. Please set it up by ${deadline}.`
+          : `Payment for ${name}'s CENTERIVO subscription isn't set up yet.`,
+        payload.enforced
+          ? "If it isn't set up by then, access will be limited to billing until it is."
+          : 'Open Billing and choose Set up payment.',
+      ];
+      break;
+    case 'PAYMENT_SETUP_EXPIRED':
+      subject = `${name} is paused until payment is set up`;
+      lines = [
+        `Payment for ${name}'s CENTERIVO subscription wasn't set up in time, so access is now limited to billing.`,
+        'Your data is kept. Setting up payment restores access once your payment is confirmed.',
       ];
       break;
   }

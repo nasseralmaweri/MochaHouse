@@ -92,6 +92,8 @@ describe('Tenant query audit (report-only)', () => {
           'BillingAdjustment',
           'BillingAdjustmentDecision',
           'BillingAdjustmentEvent',
+          // SC3e-4 — when billing enforcement ran.
+          'BillingEnforcementActivation',
         ].sort(),
       );
     });
