@@ -3,6 +3,8 @@ import {
   BILLING_MESSAGES,
   billingNotice,
   billingStateDescription,
+  PAYMENT_SETUP_EXPIRED_MESSAGE,
+  paymentSetupNotice,
   isWindDownPath,
   WIND_DOWN_NAV_KEYS,
   windDownMessage,
@@ -31,6 +33,7 @@ const summary = (over: Partial<BusinessBillingSummary> = {}): BusinessBillingSum
   suspendedForBilling: false,
   cancelAtPeriodEnd: false,
   paymentMethodOnFile: false,
+  paymentSetup: { required: true, since: "2026-10-01T00:00:00.000Z", deadline: null, expired: false },
   ...over,
 });
 
@@ -193,5 +196,28 @@ describe("SC3c-3 grace exception wording", () => {
     expect(
       billingNotice({ ...exception, suspendedForBilling: true }),
     ).toBeNull();
+  });
+});
+
+// SC3e-4 — payment setup: a deadline only when enforcement applies one; after
+// it, plain recovery guidance.
+describe("payment setup notices", () => {
+  it("shows no deadline while none applies, the deadline when set, and recovery guidance after it", () => {
+    expect(paymentSetupNotice(summary())).toBeNull();
+    expect(billingNotice(summary())).toBeNull();
+    // Never a deadline while enforcement doesn't apply it.
+    expect(
+      paymentSetupNotice(summary({ paymentSetup: { required: true, since: null, deadline: "2026-11-01T12:00:00.000Z", expired: false } })),
+    ).toBeNull();
+    const due = summary({ enforced: true, paymentSetup: { required: true, since: null, deadline: "2026-11-01T12:00:00.000Z", expired: false } });
+    expect(paymentSetupNotice(due)).toMatch(/^Set up payment by November 1, 2026 at 12:00 PM UTC./);
+    expect(billingNotice(due)).toBe(paymentSetupNotice(due));
+    const expired = summary({
+      state: "PAST_DUE",
+      suspendedForBilling: true,
+      paymentSetup: { required: false, since: null, deadline: null, expired: true },
+    });
+    expect(billingNotice(expired)).toBe(PAYMENT_SETUP_EXPIRED_MESSAGE);
+    expect(PAYMENT_SETUP_EXPIRED_MESSAGE).toMatch(/restored as soon as your payment is confirmed/);
   });
 });

@@ -69,6 +69,12 @@ const EVENT_LABELS: Record<PlatformSubscriptionEventType, string> = {
   COMPLIMENTARY_STARTED: "Complimentary started",
   COMPLIMENTARY_WITHDRAWN: "Scheduled complimentary withdrawn",
   COMPLIMENTARY_ENDED: "Complimentary ended",
+  // SC3e-4
+  PAYMENT_SETUP_REQUIRED: "Payment setup needed",
+  PAYMENT_SETUP_WINDOW_STARTED: "Payment setup deadline set (14 days)",
+  PAYMENT_SETUP_EXTENDED: "Payment setup deadline extended",
+  PAYMENT_SETUP_EXPIRED: "Payment setup deadline passed",
+  PAYMENT_SETUP_COMPLETED: "Payment set up",
   SUBSCRIPTION_REPLACED: "Subscription restarted (paid)",
 };
 

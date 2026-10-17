@@ -58,6 +58,8 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     BillingAdjustment: 'platform',
     BillingAdjustmentDecision: 'platform',
     BillingAdjustmentEvent: 'platform',
+    // SC3e-4 — when billing enforcement ran.
+    BillingEnforcementActivation: 'platform',
     BillingNotification: 'platform',
 
     // Catalog & locations

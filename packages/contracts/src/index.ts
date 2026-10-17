@@ -2039,6 +2039,19 @@ export interface BusinessBillingSummary {
   suspendedForBilling: boolean;
   cancelAtPeriodEnd: boolean;
   paymentMethodOnFile: boolean;
+  // SC3e-4 — payment setup (a billed business without a verified, paid
+  // provider subscription):
+  //   required — payment setup is needed now;
+  //   since    — since when (informational, also while enforcement is off);
+  //   deadline — the setup window's deadline: ONLY while billing
+  //              enforcement is on (never a deadline that wouldn't apply);
+  //   expired  — the deadline passed (access is limited to billing).
+  paymentSetup: {
+    required: boolean;
+    since: string | null;
+    deadline: string | null;
+    expired: boolean;
+  };
 }
 
 export const BILLING_UNAVAILABLE = "BILLING_UNAVAILABLE";
@@ -2390,7 +2403,42 @@ export interface PlatformTenantBillingResponse {
   extensions: PlatformGraceExtension[];
   // Days still available in the current unpaid episode (null: none open).
   extensionDaysRemaining: number | null;
+  // SC3e-4 — the payment setup window (null: payment setup isn't needed).
+  paymentSetup: PlatformPaymentSetupView | null;
 }
+
+// SC3e-4 — a billed business that still needs payment setup.
+//   windowStartedAt / deadline — only while billing enforcement is on;
+//   latestDeadline — the furthest an operator may extend it (30 days from
+//                    the window's start);
+//   extensions — this window's extensions (reason, operator).
+export interface PlatformPaymentSetupView {
+  enforced: boolean;
+  since: string;
+  windowStartedAt: string | null;
+  deadline: string | null;
+  latestDeadline: string | null;
+  expired: boolean;
+  extensions: (PlatformGraceExtension & { operatorEmail: string })[];
+}
+
+// GET /api/v1/platform/billing/payment-setup — every billed business that
+// still needs payment setup, soonest deadline first (any operator).
+export interface PlatformPaymentSetupListResponse {
+  enforced: boolean;
+  items: (PlatformPaymentSetupView & {
+    tenantId: string;
+    businessName: string;
+    planName: string;
+  })[];
+}
+
+// POST /api/v1/platform/tenants/:tenantId/billing/payment-setup/extension —
+// body exactly { days, reason } (billing.accounts.manage, recent sign-in;
+// audited). Extends the setup deadline by 1–14 days, never past 30 days
+// from the window's start. Returns PlatformTenantBillingResponse.
+//   409 BILLING_NOT_EXTENDABLE (no setup window: enforcement off, or setup
+//       not needed) / BILLING_EXTENSION_LIMIT (past 30 days)
 
 // SC3c-3 — the designated billing contact and the recipient billing email
 // would go to right now (re-checked again at delivery time).
@@ -2426,7 +2474,8 @@ export interface PlatformAssignBillingContactRequest {
   internalUserId: string;
 }
 
-export type PlatformGraceExtensionKind = "GRACE_EXTENDED" | "GRACE_EXCEPTION";
+// SC3e-4 — PAYMENT_SETUP: an operator extended a payment setup deadline.
+export type PlatformGraceExtensionKind = "GRACE_EXTENDED" | "GRACE_EXCEPTION" | "PAYMENT_SETUP";
 
 export interface PlatformGraceExtension {
   id: string;
@@ -2712,7 +2761,13 @@ export type PlatformSubscriptionEventType =
   | "COMPLIMENTARY_SCHEDULED"
   | "COMPLIMENTARY_STARTED"
   | "COMPLIMENTARY_WITHDRAWN"
-  | "COMPLIMENTARY_ENDED";
+  | "COMPLIMENTARY_ENDED"
+  // SC3e-4 — payment setup.
+  | "PAYMENT_SETUP_REQUIRED"
+  | "PAYMENT_SETUP_WINDOW_STARTED"
+  | "PAYMENT_SETUP_EXTENDED"
+  | "PAYMENT_SETUP_EXPIRED"
+  | "PAYMENT_SETUP_COMPLETED";
 
 // SC3a — the subscription's billing state (separate from a business's
 // administrative/security suspension). A COMPLIMENTARY subscription is never

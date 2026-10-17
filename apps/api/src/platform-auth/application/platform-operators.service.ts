@@ -58,6 +58,8 @@ export const PLATFORM_AUDIT_ACTIONS = {
   // SC3c-3 — a grace extension / exception and a billing contact assignment
   // (target: the tenant).
   billingGraceExtended: 'platform.billing.grace_extended',
+  // SC3e-4 — a payment setup deadline extended.
+  billingPaymentSetupExtended: 'platform.billing.payment_setup_extended',
   billingContactAssigned: 'platform.billing.contact_assigned',
   // SC3d-1 — an operator previewed a plan change for a business (target:
   // the tenant; nothing charged or changed).

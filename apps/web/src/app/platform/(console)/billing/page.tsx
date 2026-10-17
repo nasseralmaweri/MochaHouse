@@ -54,6 +54,12 @@ export default async function PlatformBillingPage({
           Revenue reporting
         </Link>
         <Link
+          href="/platform/billing/payment-setup"
+          className="inline-flex min-h-11 items-center font-medium text-text-primary underline underline-offset-2"
+        >
+          Awaiting payment setup
+        </Link>
+        <Link
           href="/platform/billing/adjustments"
           className="inline-flex min-h-11 items-center font-medium text-text-primary underline underline-offset-2"
         >

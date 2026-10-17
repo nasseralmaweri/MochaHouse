@@ -12,6 +12,7 @@ import { canCancelScheduled, planChangeStatusMessage } from "@/lib/admin/plan-ch
 import { formatDeadline } from "@/lib/admin/billing";
 import {
   BILLING_MESSAGES,
+  PAYMENT_SETUP_EXPIRED_MESSAGE,
   BILLING_STATE_LABELS,
   billingStateDescription,
   checkoutReturn,
@@ -158,6 +159,12 @@ export default async function AdminBillingPage({
               <dd className="font-medium text-text-primary">{date(billing.currentPeriodEnd)}</dd>
             </div>
           ) : null}
+          {billing.enforced && billing.paymentSetup.required && billing.paymentSetup.deadline ? (
+            <div>
+              <dt className="text-text-secondary">Set up payment by</dt>
+              <dd className="font-medium text-text-primary">{formatDeadline(billing.paymentSetup.deadline)}</dd>
+            </div>
+          ) : null}
           {billing.graceEndsAt && billing.state === "PAST_DUE" ? (
             <div>
               <dt className="text-text-secondary">Payment needed by</dt>
@@ -166,6 +173,11 @@ export default async function AdminBillingPage({
           ) : null}
         </dl>
         <p className="text-sm text-text-primary">{billingStateDescription(billing)}</p>
+        {billing.paymentSetup.expired ? (
+          <p role="status" className="rounded-lg bg-status-warning/10 px-3 py-2 text-sm text-text-primary">
+            {PAYMENT_SETUP_EXPIRED_MESSAGE}
+          </p>
+        ) : null}
         {canSetUpPayment && !confirming ? (
           <SetUpPaymentForm />
         ) : billing.state === "AWAITING_SETUP" && !confirming ? (

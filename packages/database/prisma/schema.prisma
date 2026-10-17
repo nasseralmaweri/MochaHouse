@@ -293,6 +293,13 @@ enum TenantSubscriptionEventType {
   COMPLIMENTARY_STARTED
   COMPLIMENTARY_WITHDRAWN
   COMPLIMENTARY_ENDED
+  // SC3e-4 — a billed business needs payment setup; its setup window started
+  // (enforcement on), was extended, expired, or setup was completed.
+  PAYMENT_SETUP_REQUIRED
+  PAYMENT_SETUP_WINDOW_STARTED
+  PAYMENT_SETUP_EXTENDED
+  PAYMENT_SETUP_EXPIRED
+  PAYMENT_SETUP_COMPLETED
 }
 
 // SC3a — who caused a subscription history entry.
@@ -431,6 +438,12 @@ model TenantSubscription {
   // a counter for compare-and-set writes.
   lastBillingEventAt           DateTime?
   billingStateVersion          Int                   @default(0)
+  // SC3e-4 — payment setup: since when it is needed (informational), and
+  // the 14-day window (only while billing enforcement is on).
+  paymentSetupRequiredSince    DateTime?
+  paymentSetupWindowStartedAt  DateTime?
+  paymentSetupDueAt            DateTime?
+  paymentSetupExpiredAt        DateTime?
 
   subscriberTenant     Tenant                      @relation("TenantSubscriptionSubscriber", fields: [subscriberTenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   planVersion          SubscriptionPlanVersion     @relation(fields: [planVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -459,6 +472,8 @@ model TenantSubscription {
   @@index([planPriceId])
   @@index([pendingPlanVersionId])
   @@index([pendingPlanPriceId])
+  @@index([paymentSetupDueAt])
+  @@index([paymentSetupRequiredSince])
 }
 
 // SC3a — a plan's list price for one billing interval and currency, versioned
@@ -3876,6 +3891,16 @@ model TenantBillingContact {
 // (UNPAID): append-only (database trigger). At most 14 days each, at most 60
 // in total per unpaid episode (episodeStartedAt = the episode's first failed
 // payment). The debt is never touched.
+// SC3e-4 — each period billing enforcement has been running (persistent:
+// a (re)activation gives already-eligible businesses a fresh setup window).
+model BillingEnforcementActivation {
+  id          String   @id @default(uuid(7))
+  startedAt   DateTime @default(now())
+  lastSweepAt DateTime @default(now())
+
+  @@index([startedAt])
+}
+
 model BillingGraceExtension {
   id                      String   @id @default(uuid(7))
   subscriptionId          String

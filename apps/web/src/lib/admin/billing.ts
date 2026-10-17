@@ -55,6 +55,9 @@ export function windDownMessage(access: {
 // SC3c-1 — the admin-wide notice for a billing state that needs attention
 // (null when nothing does). Plain facts only: what is off, until when.
 export function billingNotice(billing: BusinessBillingSummary): string | null {
+  // SC3e-4 — payment setup: the deadline passed (paused), or is set.
+  const setup = paymentSetupNotice(billing);
+  if (setup) return setup;
   switch (billing.state) {
     case "TRIAL_EXPIRED":
       // Only what enforcement really does now (server-derived flags).
@@ -73,6 +76,19 @@ export function billingNotice(billing: BusinessBillingSummary): string | null {
     default:
       return null;
   }
+}
+
+// SC3e-4 — payment setup, in plain words: what happens and when. A
+// deadline is shown only when billing enforcement applies it.
+export const PAYMENT_SETUP_EXPIRED_MESSAGE =
+  "Payment wasn't set up by the deadline, so your business is paused: only billing and orders you already accepted are available. Set up payment to restore access — it's restored as soon as your payment is confirmed. Your data is kept.";
+
+export function paymentSetupNotice(billing: BusinessBillingSummary): string | null {
+  if (billing.paymentSetup.expired) return PAYMENT_SETUP_EXPIRED_MESSAGE;
+  if (billing.enforced && billing.paymentSetup.required && billing.paymentSetup.deadline) {
+    return `Set up payment by ${formatDeadline(billing.paymentSetup.deadline)}. If it isn't set up by then, your business will be paused until it is.`;
+  }
+  return null;
 }
 
 // What the state means for the owner, in one sentence.

@@ -95,6 +95,16 @@ export class BillingEnforcementService
           `Billing reminders failed: ${error instanceof Error ? error.name : 'unknown'}`,
         );
       }
+      // SC3e-4 — payment setup windows, expiries, recoveries, reminders.
+      try {
+        applied += (await this.lifecycle.paymentSetupSweep(now, SWEEP_BATCH))
+          .expired;
+      } catch (error) {
+        failed++;
+        this.logger.error(
+          `Payment setup sweep failed: ${error instanceof Error ? error.name : 'unknown'}`,
+        );
+      }
       const due = await this.lifecycle.dueForEnforcement(now, SWEEP_BATCH);
       for (const item of due) {
         try {

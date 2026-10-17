@@ -206,6 +206,8 @@ const APPROVED_GLOBAL_MODELS = [
   'BillingAdjustment',
   'BillingAdjustmentDecision',
   'BillingAdjustmentEvent',
+  // SC3e-4 — when billing enforcement ran.
+  'BillingEnforcementActivation',
 ];
 // SC2a review — identifiers issued by an OUTSIDE system (not a record of
 // ours): the SaaS billing provider's ids (SC3a).
@@ -316,6 +318,8 @@ const PLATFORM_OPERATOR_MODELS = [
   'BillingAdjustment',
   'BillingAdjustmentDecision',
   'BillingAdjustmentEvent',
+  // SC3e-4 — when billing enforcement ran.
+  'BillingEnforcementActivation',
 ];
 
 describe('Tenant relationship inventory (Security 4C-1)', () => {

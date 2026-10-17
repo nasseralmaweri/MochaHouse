@@ -29,7 +29,10 @@ export type BillingNoticeKind =
   | 'TRIAL_EXPIRED'
   | 'TRIAL_RECOVERY_ENDING'
   | 'RESTART_CONFIRMED'
-  | 'RESTART_UNDER_REVIEW';
+  | 'RESTART_UNDER_REVIEW'
+  // SC3e-4 — a payment setup deadline is near; it passed.
+  | 'PAYMENT_SETUP_ENDING'
+  | 'PAYMENT_SETUP_EXPIRED';
 
 export interface BillingNoticePayload {
   // The deadline the notice is about (grace / exception / recovery end).

@@ -131,6 +131,35 @@ export async function extendGraceAction(
   return { outcome };
 }
 
+// SC3e-4 — more time to set up payment (billing.accounts.manage; never past
+// 30 days from the window's start; audited).
+export async function extendPaymentSetupAction(
+  _previous: BillingActionState<PlatformTenantBillingResponse>,
+  form: FormData,
+): Promise<BillingActionState<PlatformTenantBillingResponse>> {
+  const tenantId = form.get("tenantId");
+  const days = Number(form.get("days"));
+  const reason = form.get("reason");
+  if (typeof tenantId !== "string" || !isTenantId(tenantId)) {
+    return { outcome: { kind: "error", message: SUBSCRIPTION_MESSAGES.notFound } };
+  }
+  if (!Number.isInteger(days) || days < 1 || days > 14) {
+    return { outcome: { kind: "error", message: "Choose from 1 to 14 days." } };
+  }
+  if (typeof reason !== "string" || reason.trim().length < 10 || reason.trim().length > 500) {
+    return { outcome: { kind: "error", message: "Give a reason of 10 to 500 characters." } };
+  }
+  const outcome = await call<PlatformTenantBillingResponse>(
+    `/tenants/${encodeURIComponent(tenantId)}/billing/payment-setup/extension`,
+    { days, reason: reason.trim() },
+  );
+  if (outcome.kind === "ok") {
+    revalidatePath(`/platform/tenants/${tenantId}`);
+    revalidatePath("/platform/billing/payment-setup");
+  }
+  return { outcome };
+}
+
 // Used with useActionState; the previous state is not needed.
 export async function runReconciliationAction(): Promise<
   BillingActionState<PlatformReconciliationRunResponse>

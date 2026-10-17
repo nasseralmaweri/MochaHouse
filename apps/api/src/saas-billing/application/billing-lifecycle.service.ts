@@ -34,7 +34,18 @@ import {
   type VerifiedBillingProviderEvent,
 } from '../provider/saas-billing-provider';
 import { billingEnforcementEnabled } from './billing-enforcement.config';
-import { enqueueBillingNotice } from './billing-notifications';
+import {
+  enqueueBillingNotice,
+  type BillingNoticeKind,
+} from './billing-notifications';
+import {
+  ACTIVATION_GAP_MS,
+  extendedDeadline,
+  needsPaymentSetup,
+  paymentSetupCompleted,
+  reminderDue,
+  windowDeadline,
+} from '../domain/payment-setup';
 import { verifyBilledPrice } from '../domain/plan-change';
 import { PLATFORM_AUDIT_ACTIONS } from '../../platform-auth/application/platform-operators.service';
 
@@ -170,6 +181,13 @@ export class BillingLifecycleError extends Error {
 }
 
 type Tx = Prisma.TransactionClient;
+
+// SC3e-4 — changes the system makes on its own (no event, no operator).
+const SYSTEM_ORIGIN = {
+  source: 'SYSTEM' as const,
+  billingProviderEventId: null,
+  actorPlatformOperatorId: null,
+};
 
 class ConcurrentBillingChange extends Error {}
 
@@ -1947,6 +1965,11 @@ export class BillingLifecycleService {
       readAt,
       this.provider.livemode,
     );
+    // SC3e-4 — an invoice now recorded paid may complete a recovery that
+    // was waiting for it.
+    if (outcome === 'RECORDED') {
+      await this.syncPaymentSetup(tx, subscription.id, readAt);
+    }
     if (outcome === 'CONFLICT') {
       await this.openCase(
         tx,
@@ -2057,6 +2080,11 @@ export class BillingLifecycleService {
         billingProvider: null,
         externalCustomerId: null,
         externalSubscriptionId: null,
+        // SC3e-4 — a complimentary business needs no payment setup.
+        paymentSetupRequiredSince: null,
+        paymentSetupWindowStartedAt: null,
+        paymentSetupDueAt: null,
+        paymentSetupExpiredAt: null,
         status: 'ACTIVE',
         planVersionId: grant.planVersionId,
         planPriceId: null,
@@ -2170,6 +2198,8 @@ export class BillingLifecycleService {
         actorPlatformOperatorId: origin.actorPlatformOperatorId,
       },
     });
+    // SC3e-4 — back to billing without a subscription: payment setup.
+    await this.syncPaymentSetup(tx, subscription.id, now, origin);
   }
 
   // A complimentary grant was scheduled (the provider cancels the paid
@@ -2963,6 +2993,8 @@ export class BillingLifecycleService {
       billingProviderEventId: string | null;
       actorPlatformOperatorId: string | null;
     },
+    // SC3e-4 — the notice for a suspension, when not the unpaid-invoice one.
+    suspendNotice: BillingNoticeKind = 'BILLING_SUSPENDED',
   ): Promise<void> {
     if (effect === 'NONE' || !billingEnforcementEnabled()) return;
     const tenant = await tx.tenant.findUniqueOrThrow({
@@ -3034,8 +3066,7 @@ export class BillingLifecycleService {
     // SC3c-3 — the business is told (deduplicated by this history entry).
     await enqueueBillingNotice(tx, {
       subscriptionId: subscription.id,
-      kind:
-        action === 'SUSPEND_BILLING' ? 'BILLING_SUSPENDED' : 'ACCESS_RESTORED',
+      kind: action === 'SUSPEND_BILLING' ? suspendNotice : 'ACCESS_RESTORED',
       subject: recorded.id,
       deadline: action === 'LIFT_BILLING' ? next.graceExceptionEndsAt : null,
       temporary: action === 'LIFT_BILLING' && next.status === 'UNPAID',
@@ -3100,6 +3131,422 @@ export class BillingLifecycleService {
         event: 'GRACE_EXCEPTION_EXPIRED' as const,
       })),
     ];
+  }
+
+  // --- SC3e-4: payment setup deadlines -------------------------------------------
+
+  // Brings a subscription's payment setup record in line with its billing
+  // state, in the caller's transaction (idempotent, compare-and-set):
+  //   needs setup  -> since when is recorded once (PAYMENT_SETUP_REQUIRED);
+  //   set up       -> the record is cleared (PAYMENT_SETUP_COMPLETED). After
+  //                   an EXPIRED window, the BILLING suspension is lifted only
+  //                   once setup is verified (a linked subscription, payment
+  //                   authorized, a paid period or a carded trial) and no
+  //                   invoice of the subscription is still owed; until then
+  //                   the record stays and the sweep retries. Never a
+  //                   SECURITY or administrative suspension.
+  //   otherwise    -> (canceled, trial, unpaid…) the record is cleared;
+  //                   their own rules apply.
+  async syncPaymentSetup(
+    tx: Tx,
+    subscriptionId: string,
+    now: Date,
+    origin: {
+      source: 'OPERATOR' | 'BILLING_PROVIDER' | 'SYSTEM';
+      billingProviderEventId: string | null;
+      actorPlatformOperatorId: string | null;
+    } = SYSTEM_ORIGIN,
+  ): Promise<void> {
+    const row = await tx.tenantSubscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        planVersion: { select: { plan: { select: { key: true } } } },
+      },
+    });
+    if (!row) return;
+    const historyEntry = (
+      type: 'PAYMENT_SETUP_REQUIRED' | 'PAYMENT_SETUP_COMPLETED',
+    ) =>
+      tx.tenantSubscriptionEvent.create({
+        data: {
+          subscriptionId: row.id,
+          type,
+          fromStatus: row.status,
+          toStatus: row.status,
+          source: origin.source,
+          billingProviderEventId: origin.billingProviderEventId,
+          actorPlatformOperatorId: origin.actorPlatformOperatorId,
+        },
+      });
+    if (needsPaymentSetup(row, row.planVersion.plan.key)) {
+      if (row.paymentSetupRequiredSince !== null) return;
+      const { count } = await tx.tenantSubscription.updateMany({
+        where: { id: row.id, paymentSetupRequiredSince: null },
+        data: { paymentSetupRequiredSince: now },
+      });
+      if (count === 1) await historyEntry('PAYMENT_SETUP_REQUIRED');
+      return;
+    }
+    if (
+      row.paymentSetupRequiredSince === null &&
+      row.paymentSetupExpiredAt === null
+    ) {
+      return;
+    }
+    const completed = paymentSetupCompleted(row);
+    // An expired window keeps its record (and the suspension it caused)
+    // until setup is verified — a first invoice still being retried (past
+    // due) or unpaid is not setup. Only an ended subscription (a restart
+    // lifts its own) lets go of it.
+    if (
+      row.paymentSetupExpiredAt !== null &&
+      !completed &&
+      row.billingMode === 'BILLED' &&
+      row.status !== 'CANCELED'
+    ) {
+      return;
+    }
+    if (row.paymentSetupExpiredAt !== null && completed) {
+      const tenant = await tx.tenant.findUniqueOrThrow({
+        where: { id: row.subscriberTenantId },
+        select: { status: true, suspensionReason: true },
+      });
+      if (
+        tenant.status === 'SUSPENDED' &&
+        tenant.suspensionReason === 'BILLING'
+      ) {
+        // Lifted only with enforcement on (it is the one that suspended),
+        // and never while an invoice is still owed (no debt waived).
+        if (!billingEnforcementEnabled()) return;
+        const owed = await tx.billingInvoice.count({
+          where: {
+            subscriptionId: row.id,
+            status: { in: ['open', 'uncollectible'] },
+            amountRemainingMinorUnits: { gt: 0 },
+          },
+        });
+        if (owed > 0) return;
+        await this.enforce(
+          tx,
+          row,
+          toBillingState(row),
+          'LIFT_BILLING_SUSPENSION',
+          origin,
+        );
+      }
+    }
+    const { count } = await tx.tenantSubscription.updateMany({
+      where: {
+        id: row.id,
+        paymentSetupRequiredSince: row.paymentSetupRequiredSince,
+        paymentSetupExpiredAt: row.paymentSetupExpiredAt,
+      },
+      data: {
+        paymentSetupRequiredSince: null,
+        paymentSetupWindowStartedAt: null,
+        paymentSetupDueAt: null,
+        paymentSetupExpiredAt: null,
+      },
+    });
+    if (count === 1 && completed) await historyEntry('PAYMENT_SETUP_COMPLETED');
+  }
+
+  // The current enforcement activation (persistent): continued while sweeps
+  // keep running; a NEW one after enforcement was off (no sweep for
+  // ACTIVATION_GAP_MS) — every eligible business then gets a fresh window.
+  private async activation(
+    now: Date,
+  ): Promise<{ id: string; startedAt: Date }> {
+    return runSerializable(this.prisma, async (tx) => {
+      const latest = await tx.billingEnforcementActivation.findFirst({
+        orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+      });
+      if (
+        latest &&
+        now.getTime() - latest.lastSweepAt.getTime() <= ACTIVATION_GAP_MS
+      ) {
+        if (now > latest.lastSweepAt) {
+          await tx.billingEnforcementActivation.update({
+            where: { id: latest.id },
+            data: { lastSweepAt: now },
+          });
+        }
+        return latest;
+      }
+      if (latest) {
+        // Enforcement was off (or no sweep ran) for longer than the gap:
+        // every open window starts afresh — never a deadline that ran
+        // while nothing was enforced. Logged so an outage is noticed.
+        this.logger.warn(
+          'Billing enforcement activation restarted after a gap: open payment setup windows start afresh.',
+        );
+      }
+      return tx.billingEnforcementActivation.create({
+        data: { startedAt: now, lastSweepAt: now },
+        select: { id: true, startedAt: true },
+      });
+    });
+  }
+
+  // The enforcement sweep's payment setup step (only with enforcement ON):
+  // record who needs setup, give each a 14-day window in this activation,
+  // expire passed deadlines (suspension for billing), retry recoveries that
+  // waited for an invoice, and queue the 7 / 3 / 1-day reminders (sent only
+  // with billing notifications on too). Idempotent and bounded.
+  async paymentSetupSweep(
+    now: Date,
+    limit: number,
+  ): Promise<{ windows: number; expired: number; reminders: number }> {
+    const result = { windows: 0, expired: 0, reminders: 0 };
+    if (!billingEnforcementEnabled()) return result;
+    const activation = await this.activation(now);
+    const setUp = (id: string) =>
+      runSerializable(this.prisma, (tx) => this.syncPaymentSetup(tx, id, now));
+
+    // 1. Who needs payment setup (also those billed before SC3e-4).
+    const unrecorded = await this.prisma.tenantSubscription.findMany({
+      where: {
+        billingMode: 'BILLED',
+        status: 'ACTIVE',
+        paymentSetupRequiredSince: null,
+        // Founding never needs setup (never starves the batch).
+        planVersion: { plan: { key: { not: 'founding' } } },
+        OR: [
+          { externalSubscriptionId: null },
+          { recurringPaymentAuthorizedAt: null },
+          { currentPeriodStart: null },
+        ],
+      },
+      orderBy: { id: 'asc' },
+      take: limit,
+      select: { id: true },
+    });
+    for (const row of unrecorded) await setUp(row.id);
+
+    // 2. A fresh 14-day window in this activation.
+    const unwindowed = await this.prisma.tenantSubscription.findMany({
+      where: {
+        paymentSetupRequiredSince: { not: null },
+        paymentSetupExpiredAt: null,
+        OR: [
+          { paymentSetupWindowStartedAt: null },
+          { paymentSetupWindowStartedAt: { lt: activation.startedAt } },
+        ],
+      },
+      take: limit,
+      select: { id: true },
+    });
+    for (const row of unwindowed) {
+      const started = await runSerializable(this.prisma, async (tx) => {
+        const current = await tx.tenantSubscription.findUniqueOrThrow({
+          where: { id: row.id },
+          include: {
+            planVersion: { select: { plan: { select: { key: true } } } },
+          },
+        });
+        if (!needsPaymentSetup(current, current.planVersion.plan.key)) {
+          await this.syncPaymentSetup(tx, current.id, now);
+          return false;
+        }
+        const { count } = await tx.tenantSubscription.updateMany({
+          where: {
+            id: current.id,
+            paymentSetupExpiredAt: null,
+            paymentSetupWindowStartedAt: current.paymentSetupWindowStartedAt,
+          },
+          data: {
+            paymentSetupWindowStartedAt: now,
+            paymentSetupDueAt: windowDeadline(now),
+          },
+        });
+        if (count !== 1) return false;
+        await tx.tenantSubscriptionEvent.create({
+          data: {
+            subscriptionId: current.id,
+            type: 'PAYMENT_SETUP_WINDOW_STARTED',
+            fromStatus: current.status,
+            toStatus: current.status,
+            source: 'SYSTEM',
+          },
+        });
+        return true;
+      });
+      if (started) result.windows++;
+    }
+
+    // 3. Deadlines that passed in this activation: suspended for billing.
+    const passed = await this.prisma.tenantSubscription.findMany({
+      where: {
+        paymentSetupDueAt: { lte: now },
+        paymentSetupExpiredAt: null,
+        paymentSetupWindowStartedAt: { gte: activation.startedAt },
+      },
+      orderBy: { paymentSetupDueAt: 'asc' },
+      take: limit,
+      select: { id: true },
+    });
+    for (const row of passed) {
+      const expired = await runSerializable(this.prisma, async (tx) => {
+        const current = await tx.tenantSubscription.findUniqueOrThrow({
+          where: { id: row.id },
+          include: {
+            planVersion: { select: { plan: { select: { key: true } } } },
+          },
+        });
+        if (!needsPaymentSetup(current, current.planVersion.plan.key)) {
+          await this.syncPaymentSetup(tx, current.id, now);
+          return false;
+        }
+        const { count } = await tx.tenantSubscription.updateMany({
+          where: {
+            id: current.id,
+            paymentSetupExpiredAt: null,
+            paymentSetupDueAt: { lte: now },
+          },
+          data: { paymentSetupExpiredAt: now },
+        });
+        if (count !== 1) return false;
+        await tx.tenantSubscriptionEvent.create({
+          data: {
+            subscriptionId: current.id,
+            type: 'PAYMENT_SETUP_EXPIRED',
+            fromStatus: current.status,
+            toStatus: current.status,
+            source: 'SYSTEM',
+          },
+        });
+        await this.enforce(
+          tx,
+          current,
+          toBillingState(current),
+          'SUSPEND_FOR_BILLING',
+          SYSTEM_ORIGIN,
+          'PAYMENT_SETUP_EXPIRED',
+        );
+        return true;
+      });
+      if (expired) result.expired++;
+    }
+
+    // 4. Recoveries waiting (setup done; an invoice still being confirmed).
+    const waiting = await this.prisma.tenantSubscription.findMany({
+      where: { paymentSetupExpiredAt: { not: null } },
+      orderBy: [{ paymentSetupExpiredAt: 'asc' }, { id: 'asc' }],
+      take: limit,
+      select: { id: true },
+    });
+    for (const row of waiting) await setUp(row.id);
+
+    // 5. Reminders 7, 3 and 1 days before the deadline (deduplicated).
+    const soon = await this.prisma.tenantSubscription.findMany({
+      where: {
+        paymentSetupDueAt: {
+          gt: now,
+          lte: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
+        },
+        paymentSetupExpiredAt: null,
+        paymentSetupWindowStartedAt: { gte: activation.startedAt },
+      },
+      take: limit,
+      select: { id: true, paymentSetupDueAt: true },
+    });
+    for (const row of soon) {
+      const days = reminderDue(row.paymentSetupDueAt!, now);
+      if (days === null) continue;
+      await this.prisma.$transaction((tx) =>
+        enqueueBillingNotice(tx, {
+          subscriptionId: row.id,
+          kind: 'PAYMENT_SETUP_ENDING',
+          subject: `${row.paymentSetupDueAt!.toISOString()}:${days}`,
+          deadline: row.paymentSetupDueAt,
+          now,
+        }),
+      );
+      result.reminders++;
+    }
+    return result;
+  }
+
+  // An operator extends a payment setup deadline by 1–14 days, never past
+  // 30 days from the window's start (also refused by the database). Only a
+  // business that needs setup and has an open (unexpired) window — so only
+  // with enforcement on. History, the append-only extension record and the
+  // platform audit, in one serializable transaction.
+  async extendPaymentSetup(
+    subscriptionId: string,
+    input: { days: number; reason: string },
+    actorPlatformOperatorId: string,
+    requestReference: string | null,
+    now: Date = new Date(),
+  ): Promise<void> {
+    await runSerializable(this.prisma, async (tx) => {
+      const row = await tx.tenantSubscription.findUniqueOrThrow({
+        where: { id: subscriptionId },
+        include: {
+          planVersion: { select: { plan: { select: { key: true } } } },
+        },
+      });
+      if (
+        !billingEnforcementEnabled() ||
+        !needsPaymentSetup(row, row.planVersion.plan.key) ||
+        row.paymentSetupWindowStartedAt === null ||
+        row.paymentSetupDueAt === null ||
+        row.paymentSetupExpiredAt !== null
+      ) {
+        throw new BillingLifecycleError('NOT_EXTENDABLE');
+      }
+      const next = extendedDeadline(
+        {
+          startedAt: row.paymentSetupWindowStartedAt,
+          dueAt: row.paymentSetupDueAt,
+        },
+        input.days,
+        now,
+      );
+      if (!next.ok) throw new BillingLifecycleError('EXTENSION_LIMIT');
+      const { count } = await tx.tenantSubscription.updateMany({
+        where: {
+          id: row.id,
+          paymentSetupDueAt: row.paymentSetupDueAt,
+          paymentSetupExpiredAt: null,
+        },
+        data: { paymentSetupDueAt: next.next },
+      });
+      if (count !== 1) throw new BillingLifecycleError('CONCURRENT_CHANGE');
+      await tx.billingGraceExtension.create({
+        data: {
+          subscriptionId: row.id,
+          kind: 'PAYMENT_SETUP',
+          episodeStartedAt: row.paymentSetupWindowStartedAt,
+          days: input.days,
+          previousEndsAt: next.previous,
+          newEndsAt: next.next,
+          reason: input.reason,
+          actorPlatformOperatorId,
+        },
+      });
+      await tx.tenantSubscriptionEvent.create({
+        data: {
+          subscriptionId: row.id,
+          type: 'PAYMENT_SETUP_EXTENDED',
+          fromStatus: row.status,
+          toStatus: row.status,
+          source: 'OPERATOR',
+          actorPlatformOperatorId,
+        },
+      });
+      await tx.platformAuditEvent.create({
+        data: {
+          action: PLATFORM_AUDIT_ACTIONS.billingPaymentSetupExtended,
+          outcome: 'SUCCEEDED',
+          reasonCode: 'PAYMENT_SETUP',
+          actorPlatformOperatorId,
+          targetType: 'tenant',
+          targetId: row.subscriberTenantId,
+          requestReference,
+        },
+      });
+    });
   }
 
   // SC3c-3 — reminders before a deadline (the enforcement sweep queues
@@ -3385,6 +3832,8 @@ export class BillingLifecycleService {
     });
     if (count !== 1) throw new ConcurrentBillingChange('CONCURRENT_CHANGE');
     await this.afterChange(tx, current, next, link.externalSubscriptionId);
+    // SC3e-4 — payment setup follows every billing state change.
+    await this.syncPaymentSetup(tx, current.id, new Date());
   }
 
   private async history(
