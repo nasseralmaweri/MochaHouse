@@ -14,7 +14,9 @@ import {
   BILLING_MESSAGES,
   PAYMENT_SETUP_EXPIRED_MESSAGE,
   BILLING_STATE_LABELS,
+  SELECTION_UNAVAILABLE_MESSAGE,
   billingStateDescription,
+  initialSetupDisclosure,
   checkoutReturn,
   portalReturn,
 } from "@/lib/admin/billing";
@@ -37,7 +39,7 @@ import { PlanChangeStatus } from "./PlanChangeStatus";
 export default async function AdminBillingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ checkout?: string; portal?: string }>;
+  searchParams: Promise<{ checkout?: string; portal?: string; plan?: string }>;
 }) {
   const session = await getInternalSession();
   if (!session) redirect("/internal/sign-in");
@@ -81,6 +83,7 @@ export default async function AdminBillingPage({
     canManagePaymentMethod,
     canChangePlan,
     planChange,
+    initialSetup,
   } = result.data;
   // SC3d-2 — the plans the business may move to (only when it may).
   const planOptions = canChangePlan ? await getAdminPlanOptions() : null;
@@ -104,6 +107,11 @@ export default async function AdminBillingPage({
     <AdminPage>
       {header}
       {(returned && !confirming) || fromPortal ? <ForgetCheckoutReturn /> : null}
+      {params.plan === "saved" && initialSetup ? (
+        <p role="status" className="rounded-lg bg-surface-subtle px-3 py-2 text-sm text-text-primary">
+          Your plan is saved. Nothing was charged. Set up payment below when you&apos;re ready.
+        </p>
+      ) : null}
       {fromPortal ? (
         <p role="status" className="rounded-lg bg-surface-subtle px-3 py-2 text-sm text-text-primary">
           You&apos;re back from our payment provider. Any payment method changes are saved there.
@@ -139,7 +147,11 @@ export default async function AdminBillingPage({
           {billing.price ? (
             <div>
               <dt className="text-text-secondary">
-                {billing.state === "AWAITING_SETUP" ? "Price after payment setup" : "Price"}
+                {initialSetup && !initialSetup.selectionAvailable
+                  ? "Your previous choice (no longer offered)"
+                  : billing.state === "AWAITING_SETUP"
+                    ? "Price after payment setup"
+                    : "Price"}
               </dt>
               <dd className="font-medium text-text-primary">
                 {formatMinorUnits(billing.price.amountMinorUnits, billing.price.currency)}
@@ -180,10 +192,30 @@ export default async function AdminBillingPage({
             {PAYMENT_SETUP_EXPIRED_MESSAGE}
           </p>
         ) : null}
+        {/* SC4c — a self-service business's first payment setup. */}
+        {initialSetup && !confirming ? (
+          initialSetup.selectionAvailable ? (
+            <p className="text-sm text-text-primary">
+              {initialSetupDisclosure(initialSetup.trial, billing.price)}
+            </p>
+          ) : (
+            <p role="status" className="rounded-lg bg-status-warning/10 px-3 py-2 text-sm text-text-primary">
+              {SELECTION_UNAVAILABLE_MESSAGE}
+            </p>
+          )
+        ) : null}
         {canSetUpPayment && !confirming ? (
-          <SetUpPaymentForm />
-        ) : billing.paymentSetupOpensSoon ? null : billing.state === "AWAITING_SETUP" && !confirming ? (
+          <SetUpPaymentForm label={initialSetup ? "Set up payment now" : undefined} />
+        ) : initialSetup && (initialSetup.canChangeSelection || !initialSetup.selectionAvailable) ? null : billing.state === "AWAITING_SETUP" && !confirming ? (
           <p className="text-sm text-text-secondary">{BILLING_MESSAGES.forbidden}</p>
+        ) : null}
+        {initialSetup?.canChangeSelection && !confirming ? (
+          <Link
+            href="/admin/billing/choose-plan"
+            className="inline-flex min-h-11 items-center text-sm font-medium text-text-primary underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+          >
+            {initialSetup.selectionAvailable ? "Change plan or price" : "Choose a plan"}
+          </Link>
         ) : null}
         {canRestartSubscription && !confirming ? <BillingActionForm kind="restart" /> : null}
         {canPayInvoice ? <BillingActionForm kind="invoice" /> : null}

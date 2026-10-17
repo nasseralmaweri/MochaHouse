@@ -10,6 +10,9 @@ import {
   windDownMessage,
   checkoutRefusalMessage,
   checkoutReturn,
+  initialSetupDisclosure,
+  INITIAL_SETUP_PENDING_MESSAGE,
+  SELECTION_UNAVAILABLE_MESSAGE,
   isAllowedCheckoutUrl,
   isAllowedRecoveryUrl,
   portalReturn,
@@ -33,7 +36,7 @@ const summary = (over: Partial<BusinessBillingSummary> = {}): BusinessBillingSum
   suspendedForBilling: false,
   cancelAtPeriodEnd: false,
   paymentMethodOnFile: false,
-  paymentSetupOpensSoon: false,
+  initialSetupPending: false,
   paymentSetup: { required: true, since: "2026-10-01T00:00:00.000Z", deadline: null, expired: false },
   ...over,
 });
@@ -220,5 +223,33 @@ describe("payment setup notices", () => {
     });
     expect(billingNotice(expired)).toBe(PAYMENT_SETUP_EXPIRED_MESSAGE);
     expect(PAYMENT_SETUP_EXPIRED_MESSAGE).toMatch(/restored as soon as your payment is confirmed/);
+  });
+});
+
+// SC4c — the first payment setup: what is charged, and when.
+describe("first payment setup disclosure", () => {
+  const monthly = { amountMinorUnits: 4900, currency: "USD", interval: "MONTH" as const };
+
+  it("states the trial length, that a card is required, and when the price is charged", () => {
+    const text = initialSetupDisclosure({ days: 14, requiresPaymentMethod: true }, monthly);
+    expect(text).toMatch(/14-day free trial starts when you finish payment setup/);
+    expect(text).toMatch(/A card is required/);
+    expect(text).toMatch(/\$49\.00 per month is charged automatically until you cancel/);
+  });
+
+  it("states a no-card trial and an immediate charge without a trial", () => {
+    expect(initialSetupDisclosure({ days: 7, requiresPaymentMethod: false }, monthly)).toMatch(
+      /No card is needed to start/,
+    );
+    expect(
+      initialSetupDisclosure(null, { amountMinorUnits: 49000, currency: "USD", interval: "YEAR" }),
+    ).toMatch(/\$490\.00 per year is charged right away and then automatically each year/);
+  });
+
+  it("explains a selection that is no longer offered and the pending state", () => {
+    expect(checkoutRefusalMessage(409, { code: "BILLING_SELECTION_UNAVAILABLE" })).toBe(
+      SELECTION_UNAVAILABLE_MESSAGE,
+    );
+    expect(INITIAL_SETUP_PENDING_MESSAGE).toMatch(/nothing is charged/);
   });
 });

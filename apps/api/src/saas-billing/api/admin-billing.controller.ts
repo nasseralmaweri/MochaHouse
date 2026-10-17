@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -12,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type {
+  AdminInitialPlanOptionsResponse,
   AdminPlanOptionsResponse,
   BillingPlanChangeConfirmResponse,
   BillingPlanChangePreview,
@@ -31,6 +33,7 @@ import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastru
 import { RateLimit } from '../../rate-limit/rate-limit.decorator';
 import { RateLimitGuard } from '../../rate-limit/rate-limit.guard';
 import { BillingAccountService } from '../application/billing-account.service';
+import { parseSelfServiceSelection } from '../../platform-subscriptions/application/self-service-plans';
 import {
   BillingHistoryService,
   parseInvoiceDocumentRequest,
@@ -53,6 +56,43 @@ export class AdminBillingController {
     private readonly planChanges: BillingPlanChangeService,
     private readonly history: BillingHistoryService,
   ) {}
+
+  // SC4c — the plans an owner may choose before the first payment setup, and
+  // the current choice (409 when not in the first payment setup).
+  @RequirePermission('billing.view')
+  @Header('Cache-Control', 'no-store')
+  @Get('initial-plan-options')
+  initialPlanOptions(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ): Promise<AdminInitialPlanOptionsResponse> {
+    request.authorization!.assertCorporate('billing.view');
+    return this.accounts.initialPlanOptions(tenant.tenantId);
+  }
+
+  // SC4c (owner decision C3) — change the plan and price before the first
+  // payment setup, with the price as shown. billing.manage, business-wide.
+  @RequirePermission('billing.manage')
+  @UseGuards(RateLimitGuard)
+  @RateLimit('billing-checkout')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @Post('initial-plan')
+  async changeInitialPlan(
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ): Promise<AdminBillingResponse> {
+    request.authorization!.assertCorporate('billing.manage');
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw new BadRequestException('Choose a plan and a price.');
+    }
+    await this.accounts.changeInitialSelection(
+      tenant.tenantId,
+      parseSelfServiceSelection(body as Record<string, unknown>),
+    );
+    return this.get(request, tenant);
+  }
 
   // SC3d-2 — the prices the business may move to.
   @RequirePermission('billing.view')
@@ -217,12 +257,20 @@ export class AdminBillingController {
     if (!billing) throw new NotFoundException('No billing for this business.');
     const manage = request.authorization!.has('billing.manage');
     const actions = this.accounts.recoveryActions(billing);
+    // SC4c — a self-service business's first payment setup.
+    const initialSetup = billing.initialSetupPending
+      ? await this.accounts.initialSetupView(
+          tenant.tenantId,
+          request.internalUser!.email,
+          manage,
+        )
+      : null;
     return {
       billing,
-      // SC4b — not while billing has not been started with the provider.
+      // SC4c — never at a plan or price no longer offered (choose again).
       canSetUpPayment:
         billing.state === 'AWAITING_SETUP' &&
-        !billing.paymentSetupOpensSoon &&
+        (initialSetup?.selectionAvailable ?? true) &&
         manage,
       canRestartSubscription: actions.restart && manage,
       canPayInvoice: actions.payInvoice && manage,
@@ -233,6 +281,7 @@ export class AdminBillingController {
         billing.state === 'ACTIVE' &&
         (await this.planChanges.canChange(tenant.tenantId)),
       planChange: await this.planChanges.latest(tenant.tenantId),
+      initialSetup,
     };
   }
 

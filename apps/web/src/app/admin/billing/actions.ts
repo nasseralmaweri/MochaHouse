@@ -2,9 +2,11 @@
 
 import { redirect } from "next/navigation";
 import {
+  changeAdminInitialPlan,
   openAdminBillingCheckout,
   openAdminBillingRecovery,
 } from "@/lib/internal-auth/admin-billing";
+import { parsePriceChoice } from "@/lib/internal-auth/onboarding-state";
 
 // SC3b/SC3c-2 — each sends the owner to the payment provider's secure hosted
 // page. The request carries nothing: the API decides the business, price,
@@ -33,4 +35,16 @@ export async function openPortalAction(): Promise<SetUpPaymentState> {
   const result = await openAdminBillingRecovery("portal");
   if (result.outcome === "refused") return { message: result.message };
   redirect(result.url);
+}
+
+// SC4c — change the plan and price (as shown) before the first payment setup.
+export async function changeInitialPlanAction(
+  _previous: SetUpPaymentState,
+  formData: FormData,
+): Promise<SetUpPaymentState> {
+  const choice = parsePriceChoice(String(formData.get("priceChoice") ?? ""));
+  if (!choice) return { message: "Choose a plan and a price." };
+  const result = await changeAdminInitialPlan(choice);
+  if (result.outcome === "refused") return { message: result.message };
+  redirect("/admin/billing?plan=saved");
 }

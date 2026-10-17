@@ -25,6 +25,10 @@ import {
   type BusinessBillingSummary,
   type PlatformTenantBillingResponse,
   BILLING_COMPLIMENTARY_IN_PROGRESS,
+  BILLING_SELECTION_LOCKED,
+  BILLING_SELECTION_UNAVAILABLE,
+  type AdminInitialPlanOptionsResponse,
+  type AdminInitialSetupView,
 } from '@mocha-house/contracts';
 import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -33,6 +37,13 @@ import { UNLINKED_REPLACEMENT_CASE } from './billing-lifecycle.service';
 import { portalConfigurationRefusal } from '../provider/portal-configuration';
 import { entitledToPlanModules } from '../domain/billing-lifecycle';
 import { syncProviderPrice } from './price-sync';
+import { isSelfServiceSetupPending } from './self-service-setup';
+import {
+  resolveSelfServiceChoice,
+  selfServicePlanOptions,
+  selfServiceSelectionOffered,
+  type ExpectedPrice,
+} from '../../platform-subscriptions/application/self-service-plans';
 import { billingOperationsView } from './billing-operations.service';
 import { billingEnforcementEnabled } from './billing-enforcement.config';
 import { paymentSetupSummary, paymentSetupView } from './payment-setup-view';
@@ -76,6 +87,22 @@ type SubscriptionView = Prisma.TenantSubscriptionGetPayload<{
 // An OPEN Checkout row with no provider session yet older than this is an
 // abandoned creation (a crash between our row and the provider call).
 const ABANDONED_CREATION_MS = 2 * 60 * 1000;
+
+// SC4c — the plan or price changed while this request was being handled.
+function selectionChanged(): ConflictException {
+  return conflict(
+    BILLING_SELECTION_LOCKED,
+    'Your plan changed meanwhile. Reload the page and try again.',
+  );
+}
+
+// SC4c (owner decision C4) — the chosen plan or price is no longer offered.
+function selectionUnavailable(): ConflictException {
+  return conflict(
+    BILLING_SELECTION_UNAVAILABLE,
+    'The plan or price you chose is no longer offered. Choose a plan again to set up payment.',
+  );
+}
 
 function conflict(code: string, message: string): ConflictException {
   return new ConflictException({
@@ -143,7 +170,10 @@ function unavailable(): ServiceUnavailableException {
   });
 }
 
-export function billingSummary(row: SubscriptionView): BusinessBillingSummary {
+export function billingSummary(
+  row: SubscriptionView,
+  initialSetupPending = false,
+): BusinessBillingSummary {
   const enforced = billingEnforcementEnabled();
   const state: BusinessBillingSummary['state'] =
     row.billingMode === 'COMPLIMENTARY'
@@ -174,8 +204,7 @@ export function billingSummary(row: SubscriptionView): BusinessBillingSummary {
       row.subscriberTenant.suspensionReason === 'BILLING',
     cancelAtPeriodEnd: row.cancelAtPeriodEnd,
     paymentMethodOnFile: row.recurringPaymentAuthorizedAt !== null,
-    paymentSetupOpensSoon:
-      row.billingMode === 'BILLED' && row.billingProvider === null,
+    initialSetupPending,
     paymentSetup: paymentSetupSummary(
       row,
       row.planVersion.plan.key,
@@ -373,7 +402,12 @@ export class BillingAccountService {
       where: { subscriberTenantId: tenantId },
       include: SUBSCRIPTION_INCLUDE,
     });
-    return row ? billingSummary(row) : null;
+    return row
+      ? billingSummary(
+          row,
+          await isSelfServiceSetupPending(this.prisma, tenantId, row),
+        )
+      : null;
   }
 
   async platformView(tenantId: string): Promise<PlatformTenantBillingResponse> {
@@ -389,7 +423,12 @@ export class BillingAccountService {
     });
     return {
       tenantId,
-      billing: row ? billingSummary(row) : null,
+      billing: row
+        ? billingSummary(
+            row,
+            await isSelfServiceSetupPending(this.prisma, tenantId, row),
+          )
+        : null,
       ...(await billingOperationsView(this.prisma, tenantId)),
       paymentSetup: row
         ? await paymentSetupView(this.prisma, row, row.planVersion.plan.key)
@@ -578,7 +617,7 @@ export class BillingAccountService {
     const returnUrl = checkoutReturnUrl();
     if (!returnUrl) throw unavailable();
 
-    const subscription = await this.prisma.tenantSubscription.findUnique({
+    let subscription = await this.prisma.tenantSubscription.findUnique({
       where: { subscriberTenantId: tenantId },
       include: SUBSCRIPTION_INCLUDE,
     });
@@ -587,6 +626,49 @@ export class BillingAccountService {
         BILLING_NOT_BILLED,
         'This business has no billing to set up.',
       );
+    }
+    // SC4c — a business its owner created, setting up payment for the first
+    // time: the chosen plan and price must still be offered (owner decision
+    // C4: a retired price or withdrawn plan is never charged or substituted;
+    // the owner chooses again), and the provider customer is created now
+    // (C1) — never twice.
+    // The selection checked here is the one Checkout is opened for: it is
+    // re-checked inside the transaction that records the Checkout, so a plan
+    // change racing this request can never leave a Checkout at another price.
+    let checkedSelection: {
+      planVersionId: string;
+      planPriceId: string;
+    } | null = null;
+    if (await isSelfServiceSetupPending(this.prisma, tenantId, subscription)) {
+      if (subscription.planPriceId === null) throw unavailable();
+      checkedSelection = {
+        planVersionId: subscription.planVersionId,
+        planPriceId: subscription.planPriceId,
+      };
+      if (
+        !(await selfServiceSelectionOffered(
+          this.prisma,
+          checkedSelection.planVersionId,
+          checkedSelection.planPriceId,
+        ))
+      ) {
+        // A Checkout opened earlier at that selection ends too (best effort;
+        // one already completed is confirmed through its own path).
+        await this.endOpenCheckout(subscription.id).catch(() => undefined);
+        throw selectionUnavailable();
+      }
+      if (subscription.billingProvider === null) {
+        subscription = await this.ensureProviderCustomer(
+          subscription,
+          ownerEmail,
+        );
+      }
+      if (
+        subscription.planVersionId !== checkedSelection.planVersionId ||
+        subscription.planPriceId !== checkedSelection.planPriceId
+      ) {
+        throw selectionChanged();
+      }
     }
     // SC3c-2 — a business whose subscription ENDED (expired trial or
     // canceled) restarts it with a new Checkout; anything else that is
@@ -652,6 +734,20 @@ export class BillingAccountService {
     let checkoutId: string;
     try {
       checkoutId = await runSerializable(this.prisma, async (tx) => {
+        // SC4c — still exactly the selection checked above (a concurrent plan
+        // change wins, and this Checkout is not created).
+        if (checkedSelection !== null) {
+          const current = await tx.tenantSubscription.findUniqueOrThrow({
+            where: { id: subscription.id },
+            select: { planVersionId: true, planPriceId: true },
+          });
+          if (
+            current.planVersionId !== checkedSelection.planVersionId ||
+            current.planPriceId !== checkedSelection.planPriceId
+          ) {
+            throw selectionChanged();
+          }
+        }
         // SC3c-2 — a restart only while the business still holds the ended
         // subscription it replaces (a concurrent replacement wins).
         if (replaces !== null) {
@@ -757,10 +853,368 @@ export class BillingAccountService {
           },
         })
         .catch(() => undefined); // already open for this business, or the database is down
+      // SC4c — the unrecorded session is also ended at the provider, so it
+      // cannot be paid (the case above stays for review either way).
+      await this.provider
+        .expireCheckoutSession(session.externalSessionId)
+        .catch(() => undefined);
       throw unavailable();
+    }
+    // SC4c — now that the hosted Checkout exists: still exactly the
+    // selection it was opened for, and still offered (an operator may have
+    // archived the price meanwhile). Otherwise it is ended before anything
+    // is returned — or, if that is uncertain, a review case is opened.
+    if (checkedSelection !== null) {
+      const current = await this.prisma.tenantSubscription.findUnique({
+        where: { id: subscription.id },
+        select: { planVersionId: true, planPriceId: true },
+      });
+      const unchanged =
+        current?.planVersionId === checkedSelection.planVersionId &&
+        current.planPriceId === checkedSelection.planPriceId;
+      if (
+        !unchanged ||
+        !(await selfServiceSelectionOffered(
+          this.prisma,
+          checkedSelection.planVersionId,
+          checkedSelection.planPriceId,
+        ))
+      ) {
+        await this.expireRecordedCheckout(
+          checkoutId,
+          session.externalSessionId,
+          subscription.id,
+        );
+        throw unchanged ? selectionUnavailable() : selectionChanged();
+      }
     }
     if (session.status !== 'open' || !session.url) throw unavailable();
     return { url: session.url };
+  }
+
+  // --- SC4c: a self-service business's first payment setup --------------------
+
+  // The provider customer, created once (owner decision C1). An interrupted
+  // earlier attempt is reconciled first: a customer the provider already
+  // holds for this business is reused, and a new one is created with the
+  // subscription's deterministic idempotency key (the same one operator
+  // billing uses), so retries and concurrent requests converge on ONE
+  // customer. Recorded with a compare-and-set; nothing is charged.
+  private async ensureProviderCustomer(
+    subscription: SubscriptionView,
+    ownerEmail: string,
+  ): Promise<SubscriptionView> {
+    const tenantId = subscription.subscriberTenantId;
+    let externalCustomerId: string;
+    try {
+      externalCustomerId =
+        (await this.provider.findCustomerForTenant(tenantId)) ??
+        (
+          await this.provider.createCustomer({
+            idempotencyKey: `centerivo-customer-${subscription.id}`,
+            tenantId,
+            businessName: subscription.subscriberTenant.name,
+            billingEmail: ownerEmail,
+          })
+        ).externalCustomerId;
+    } catch (error) {
+      if (error instanceof SaasBillingProviderError) throw unavailable();
+      throw error;
+    }
+    try {
+      await this.prisma.tenantSubscription.updateMany({
+        where: {
+          id: subscription.id,
+          billingMode: 'BILLED',
+          billingProvider: null,
+          externalCustomerId: null,
+        },
+        data: {
+          billingProvider: this.provider.name,
+          externalCustomerId,
+          billingStateVersion: { increment: 1 },
+        },
+      });
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      // That customer is already another business's: never shared.
+      await this.prisma.billingReconciliationCase
+        .create({
+          data: {
+            kind: 'CUSTOMER_NOT_RECORDED',
+            subscriptionId: subscription.id,
+            detail: externalCustomerId.slice(0, 200),
+          },
+        })
+        .catch(() => undefined);
+      throw unavailable();
+    }
+    const current = await this.prisma.tenantSubscription.findUniqueOrThrow({
+      where: { id: subscription.id },
+      include: SUBSCRIPTION_INCLUDE,
+    });
+    if (current.externalCustomerId !== externalCustomerId) {
+      // A concurrent request recorded first; its customer is the one used.
+      this.logger.warn(
+        `Subscription ${subscription.id}: a concurrent payment setup recorded the provider customer first.`,
+      );
+    }
+    return current;
+  }
+
+  // What the owner's billing page shows for the first payment setup (null
+  // when the business is not in it). No trial is held or used (the trial
+  // rules may tidy up stale holds, as when Checkout is opened).
+  async initialSetupView(
+    tenantId: string,
+    ownerEmail: string,
+    manage: boolean,
+  ): Promise<AdminInitialSetupView | null> {
+    const subscription = await this.prisma.tenantSubscription.findUnique({
+      where: { subscriberTenantId: tenantId },
+      include: SUBSCRIPTION_INCLUDE,
+    });
+    if (
+      !subscription ||
+      subscription.planPriceId === null ||
+      !(await isSelfServiceSetupPending(this.prisma, tenantId, subscription))
+    ) {
+      return null;
+    }
+    let trial: AdminInitialSetupView['trial'] = null;
+    try {
+      const offered = await this.offeredTrial(subscription, ownerEmail);
+      trial =
+        offered.trialDays > 0
+          ? {
+              days: offered.trialDays,
+              requiresPaymentMethod: offered.requiresPaymentMethod,
+            }
+          : null;
+    } catch {
+      // Held by another business's open setup: no trial is promised here.
+      trial = null;
+    }
+    return {
+      selectionAvailable:
+        (await selfServiceSelectionOffered(
+          this.prisma,
+          subscription.planVersionId,
+          subscription.planPriceId,
+        )) !== null,
+      trial,
+      canChangeSelection: manage,
+    };
+  }
+
+  async initialPlanOptions(
+    tenantId: string,
+  ): Promise<AdminInitialPlanOptionsResponse> {
+    const subscription = await this.pendingSelfService(tenantId);
+    return {
+      plans: await selfServicePlanOptions(this.prisma),
+      current: {
+        planVersionId: subscription.planVersionId,
+        planPriceId: subscription.planPriceId!,
+      },
+    };
+  }
+
+  // Owner decision C3 — the owner changes their plan and price before the
+  // first payment setup. The exact offered version and the price as shown
+  // (never substituted); an OPEN Checkout is ended at the provider first,
+  // and one that already completed refuses the change (its activation is on
+  // its way). One serializable transaction with a compare-and-set; the
+  // change is recorded in the subscription's history (source OWNER).
+  async changeInitialSelection(
+    tenantId: string,
+    input: {
+      planVersionId: string;
+      planPriceId: string;
+      expectedPrice: ExpectedPrice;
+    },
+  ): Promise<void> {
+    const subscription = await this.pendingSelfService(tenantId);
+    const choice = await resolveSelfServiceChoice(this.prisma, input);
+    if (choice.kind === 'plan-unavailable') throw selectionUnavailable();
+    if (choice.kind === 'price-changed') {
+      throw conflict(
+        BILLING_SELECTION_UNAVAILABLE,
+        'That price has changed. Review the plans and choose again.',
+      );
+    }
+    if (
+      choice.planVersionId === subscription.planVersionId &&
+      choice.planPriceId === subscription.planPriceId
+    ) {
+      return;
+    }
+    await this.endOpenCheckout(subscription.id);
+
+    await runSerializable(this.prisma, async (tx) => {
+      const open = await tx.billingCheckoutSession.count({
+        where: { subscriptionId: subscription.id, status: 'OPEN' },
+      });
+      if (open > 0) {
+        throw conflict(
+          BILLING_CHECKOUT_IN_PROGRESS,
+          'Payment setup is already being prepared. Try again in a moment.',
+        );
+      }
+      const { count } = await tx.tenantSubscription.updateMany({
+        where: {
+          id: subscription.id,
+          billingStateVersion: subscription.billingStateVersion,
+          billingMode: 'BILLED',
+          trialStartedAt: null,
+          currentPeriodStart: null,
+          externalSubscriptionId: null,
+        },
+        data: {
+          planVersionId: choice.planVersionId,
+          planPriceId: choice.planPriceId,
+          billingStateVersion: { increment: 1 },
+        },
+      });
+      if (count !== 1) {
+        throw conflict(
+          BILLING_SELECTION_LOCKED,
+          'Your billing changed meanwhile. Reload the page and try again.',
+        );
+      }
+      await tx.tenantSubscriptionEvent.create({
+        data: {
+          subscriptionId: subscription.id,
+          type: 'PLAN_CHANGED',
+          fromPlanVersionId: subscription.planVersionId,
+          toPlanVersionId: choice.planVersionId,
+          planPriceId: choice.planPriceId,
+          source: 'OWNER',
+        },
+      });
+    });
+  }
+
+  // The subscription of a self-service business still in its first payment
+  // setup, or 409.
+  private async pendingSelfService(tenantId: string) {
+    const subscription = await this.prisma.tenantSubscription.findUnique({
+      where: { subscriberTenantId: tenantId },
+    });
+    if (
+      !subscription ||
+      subscription.planPriceId === null ||
+      !(await isSelfServiceSetupPending(this.prisma, tenantId, subscription))
+    ) {
+      throw conflict(
+        BILLING_SELECTION_LOCKED,
+        'Your plan can be changed here only before payment is set up.',
+      );
+    }
+    return subscription;
+  }
+
+  // Ends this subscription's OPEN Checkout so it can no longer be completed.
+  // A session the provider reports as completed refuses (its activation is
+  // on its way); one still being created refuses briefly.
+  private async endOpenCheckout(subscriptionId: string): Promise<void> {
+    const open = await this.prisma.billingCheckoutSession.findFirst({
+      where: { subscriptionId, status: 'OPEN' },
+    });
+    if (!open) return;
+    if (open.externalSessionId === null) {
+      if (Date.now() - open.createdAt.getTime() < ABANDONED_CREATION_MS) {
+        throw conflict(
+          BILLING_CHECKOUT_IN_PROGRESS,
+          'Payment setup is already being prepared. Try again in a moment.',
+        );
+      }
+      await this.expire(open.id);
+      return;
+    }
+    const outcome = await this.expireRecordedCheckout(
+      open.id,
+      open.externalSessionId,
+      subscriptionId,
+    );
+    if (outcome === 'complete') {
+      throw conflict(
+        BILLING_CHECKOUT_PROCESSING,
+        'Your payment setup was just completed and is being confirmed. Reload the page in a moment.',
+      );
+    }
+  }
+
+  // Ends ONE recorded hosted Checkout at the provider: 'expired' (our row
+  // follows) or 'complete' (it is confirmed through its own, verified path).
+  // When the outcome is uncertain — the provider failed, or did not report
+  // it ended — the Checkout is NOT treated as ended: a review case is opened
+  // (CHECKOUT_NOT_ENDED) and this throws (503).
+  private async expireRecordedCheckout(
+    rowId: string,
+    externalSessionId: string,
+    subscriptionId: string,
+  ): Promise<'expired' | 'complete'> {
+    let session: ProviderCheckoutSession | null = null;
+    try {
+      session = await this.provider.expireCheckoutSession(externalSessionId);
+    } catch (error) {
+      if (!(error instanceof SaasBillingProviderError)) throw error;
+    }
+    if (session?.status === 'complete') return 'complete';
+    if (session?.status === 'expired') {
+      await this.expire(rowId);
+      return 'expired';
+    }
+    await this.prisma.billingReconciliationCase
+      .create({
+        data: {
+          kind: 'CHECKOUT_NOT_ENDED',
+          subscriptionId,
+          detail: externalSessionId.slice(0, 200),
+        },
+      })
+      .catch(() => undefined); // already open for this business
+    throw unavailable();
+  }
+
+  // SC4c (owner decision C4) — after an operator archives a price, the
+  // OPEN Checkouts of self-service businesses still in their first payment
+  // setup at that price end, so the retired price cannot be paid and the
+  // owner chooses again. Per business: one that cannot be ended for certain
+  // opens a CHECKOUT_NOT_ENDED review case; one already completed is
+  // confirmed through its own path (a price mismatch never activates).
+  async endSelfServiceCheckoutsAtPrice(planPriceId: string): Promise<void> {
+    const open = await this.prisma.billingCheckoutSession.findMany({
+      where: {
+        planPriceId,
+        status: 'OPEN',
+        subscription: {
+          billingMode: 'BILLED',
+          trialStartedAt: null,
+          currentPeriodStart: null,
+        },
+      },
+      select: {
+        subscriptionId: true,
+        subscription: { select: { subscriberTenantId: true } },
+      },
+      take: 200,
+    });
+    for (const row of open) {
+      const selfService =
+        (await this.prisma.ownerRegistration.count({
+          where: { provisionedTenantId: row.subscription.subscriberTenantId },
+        })) > 0;
+      if (!selfService) continue;
+      try {
+        await this.endOpenCheckout(row.subscriptionId);
+      } catch {
+        this.logger.warn(
+          `Subscription ${row.subscriptionId}: its open Checkout at an archived price could not be ended now.`,
+        );
+      }
+    }
   }
 
   private async reuseOpenCheckout(

@@ -47,6 +47,7 @@ import {
   windowDeadline,
 } from '../domain/payment-setup';
 import { verifyBilledPrice } from '../domain/plan-change';
+import { isSelfServiceSetupPending } from './self-service-setup';
 import { PLATFORM_AUDIT_ACTIONS } from '../../platform-auth/application/platform-operators.service';
 
 // SC3b — what the provider says NOW about the thing an event concerns, read
@@ -1361,6 +1362,39 @@ export class BillingLifecycleService {
       );
       return outcome('REJECTED', 'LINKED_ELSEWHERE', subscription.id);
     }
+    // SC4c — a self-service business's FIRST payment setup is activated only
+    // by a provider subscription billing exactly the price it chose (one
+    // item, quantity 1). Anything else is refused and reviewed: no plan
+    // modules, add-ons or sales are unlocked by it.
+    if (
+      await isSelfServiceSetupPending(
+        tx,
+        subscription.subscriberTenantId,
+        subscription,
+      )
+    ) {
+      const chosen =
+        subscription.planPriceId === null
+          ? null
+          : await tx.subscriptionPlanPrice.findUnique({
+              where: { id: subscription.planPriceId },
+              select: { externalPriceId: true },
+            });
+      const billed = verifyBilledPrice(
+        { ...snapshot, scheduleId: null, hasPendingUpdate: false },
+        chosen?.externalPriceId ?? null,
+      );
+      if (!billed.ok) {
+        await this.openCase(
+          tx,
+          'PRICE_MISMATCH',
+          subscription.id,
+          ledgerId,
+          `The completed Checkout's subscription does not bill the chosen price (${billed.problem}).`,
+        );
+        return outcome('REJECTED', 'PRICE_MISMATCH', subscription.id);
+      }
+    }
 
     await tx.billingCheckoutSession.updateMany({
       where: { id: checkout.id, status: 'OPEN' },
@@ -1688,6 +1722,19 @@ export class BillingLifecycleService {
           ledgerId,
           `The provider subscription does not bill our recorded price (${billed.problem}).`,
         );
+        // SC4c — a self-service business still in its first payment setup
+        // is never activated (no plan modules, add-ons or sales) by a
+        // subscription at a price it did not choose: the event is refused
+        // and the case reviewed.
+        if (
+          await isSelfServiceSetupPending(
+            tx,
+            subscription.subscriberTenantId,
+            subscription,
+          )
+        ) {
+          return finish('REJECTED', 'PRICE_MISMATCH', subscription.id);
+        }
       }
     }
     const completed = await tx.billingCheckoutSession.findFirst({

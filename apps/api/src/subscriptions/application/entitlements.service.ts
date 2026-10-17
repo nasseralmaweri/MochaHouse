@@ -8,7 +8,7 @@ import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { entitledToPlanModules } from '../../saas-billing/domain/billing-lifecycle';
 import { billingEnforcementEnabled } from '../../saas-billing/application/billing-enforcement.config';
-import { awaitingFirstAuthorization } from '../../saas-billing/domain/payment-setup';
+import { isSelfServiceSetupPending } from '../../saas-billing/application/self-service-setup';
 
 // SC2a — what a business's subscription entitles it to, computed in ONE
 // place: core (always) + the modules of its subscribed plan version + its
@@ -89,7 +89,6 @@ export class EntitlementsService {
         billingMode: true,
         status: true,
         graceExceptionEndsAt: true,
-        recurringPaymentAuthorizedAt: true,
         trialStartedAt: true,
         currentPeriodStart: true,
         planVersion: {
@@ -103,11 +102,11 @@ export class EntitlementsService {
     });
     if (!subscription) return CORE_ONLY;
     // SC4b — read only for a never-authorized BILLED subscription (rare).
-    const paymentSetupPending =
-      awaitingFirstAuthorization(subscription) &&
-      (await db.ownerRegistration.count({
-        where: { provisionedTenantId: tenantId },
-      })) > 0;
+    const paymentSetupPending = await isSelfServiceSetupPending(
+      db,
+      tenantId,
+      subscription,
+    );
     // Founding businesses (Mocha House, Tenant #1, among them) are exempt
     // from billing enforcement, as from billing suspension.
     const exempt = subscription.planVersion.plan.key === 'founding';

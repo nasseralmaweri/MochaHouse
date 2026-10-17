@@ -8,11 +8,9 @@ import {
   ONBOARDING_NOT_ELIGIBLE,
   ONBOARDING_PLAN_UNAVAILABLE,
   ONBOARDING_PRICE_CHANGED,
-  isOptionalModuleKey,
   type OwnerBusinessCreateResponse,
   type OwnerOnboardingPlanOption,
   type OwnerOnboardingStatus,
-  type SubscriptionModuleKey,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { InternalIdentity } from '../../internal-auth/infrastructure/internal-identity';
@@ -21,6 +19,10 @@ import {
   parseBusinessName,
 } from '../../platform-tenants/application/tenant-provision-request';
 import { TenantProvisioningService } from '../../platform-tenants/application/tenant-provisioning.service';
+import {
+  parseSelfServiceSelection,
+  selfServicePlanOptions,
+} from '../../platform-subscriptions/application/self-service-plans';
 
 // SC4b — a verified, self-registered owner creates their ONE business
 // (owner decisions B1–B4). Only the owner's own verified login counts: the
@@ -30,10 +32,6 @@ import { TenantProvisioningService } from '../../platform-tenants/application/te
 // Nothing here grants access to a business: the business's own staff row,
 // created bound to this login, is what later admits the owner through
 // InternalAuthGuard, subject to the payment-setup-pending restrictions.
-
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const CURRENCY_PATTERN = /^[A-Z]{3}$/;
 
 function notEligible(): ForbiddenException {
   return new ForbiddenException({
@@ -78,33 +76,7 @@ export function parseBusinessCreate(raw: unknown): ParsedBusinessCreate {
     }
     throw error;
   }
-  const expected = input.expectedPrice as Record<string, unknown> | undefined;
-  if (
-    typeof input.planVersionId !== 'string' ||
-    !UUID_PATTERN.test(input.planVersionId) ||
-    typeof input.planPriceId !== 'string' ||
-    !UUID_PATTERN.test(input.planPriceId) ||
-    typeof expected !== 'object' ||
-    expected === null ||
-    (expected.interval !== 'MONTH' && expected.interval !== 'YEAR') ||
-    typeof expected.currency !== 'string' ||
-    !CURRENCY_PATTERN.test(expected.currency) ||
-    typeof expected.amountMinorUnits !== 'number' ||
-    !Number.isInteger(expected.amountMinorUnits) ||
-    expected.amountMinorUnits < 0
-  ) {
-    throw new BadRequestException('Choose a plan and a price.');
-  }
-  return {
-    businessName,
-    planVersionId: input.planVersionId,
-    planPriceId: input.planPriceId,
-    expectedPrice: {
-      interval: expected.interval,
-      currency: expected.currency,
-      amountMinorUnits: expected.amountMinorUnits,
-    },
-  };
+  return { businessName, ...parseSelfServiceSelection(input) };
 }
 
 @Injectable()
@@ -151,47 +123,9 @@ export class OwnerOnboardingService {
     };
   }
 
-  // Plans offered for self-service (never Founding): each one's newest
-  // PUBLISHED version and its ACTIVE prices. A plan with no price is not
-  // offered.
-  async planOptions(): Promise<OwnerOnboardingPlanOption[]> {
-    const plans = await this.prisma.subscriptionPlan.findMany({
-      where: { selfServiceAvailable: true, key: { not: 'founding' } },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      include: {
-        versions: {
-          where: { status: 'PUBLISHED' },
-          orderBy: { version: 'desc' },
-          take: 1,
-        },
-        prices: {
-          where: { status: 'ACTIVE' },
-          orderBy: [{ interval: 'asc' }, { createdAt: 'asc' }],
-        },
-      },
-    });
-    return plans
-      .filter((plan) => plan.versions.length === 1 && plan.prices.length > 0)
-      .map((plan) => {
-        const version = plan.versions[0];
-        const modules: SubscriptionModuleKey[] = [
-          'core',
-          ...version.moduleKeys.filter(isOptionalModuleKey),
-        ];
-        return {
-          planId: plan.id,
-          planVersionId: version.id,
-          name: plan.name,
-          description: plan.description,
-          modules,
-          prices: plan.prices.map((price) => ({
-            planPriceId: price.id,
-            interval: price.interval,
-            currency: price.currency,
-            amountMinorUnits: price.amountMinorUnits,
-          })),
-        };
-      });
+  // Plans offered for self-service (the shared rule).
+  planOptions(): Promise<OwnerOnboardingPlanOption[]> {
+    return selfServicePlanOptions(this.prisma);
   }
 
   async createBusiness(

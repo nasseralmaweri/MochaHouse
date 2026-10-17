@@ -489,6 +489,38 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
     }
   }
 
+  // SC4c — by the business id written into the customer's metadata when we
+  // created it (createCustomer). Test-mode customers only; the oldest wins.
+  async findCustomerForTenant(tenantId: string): Promise<string | null> {
+    if (!/^[0-9a-f-]{36}$/.test(tenantId)) return null;
+    try {
+      const found = await this.stripe.customers.search({
+        query: `metadata['centerivo_tenant_id']:'${tenantId}'`,
+        limit: 10,
+      });
+      const customers = found.data
+        .filter((customer) => !customer.livemode)
+        .sort((a, b) => a.created - b.created);
+      return customers[0]?.id ?? null;
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  // SC4c — Stripe refuses to expire a session that is no longer open; the
+  // session is then read as it is (complete or expired).
+  async expireCheckoutSession(
+    externalSessionId: string,
+  ): Promise<ProviderCheckoutSession> {
+    try {
+      return this.toCheckout(
+        await this.stripe.checkout.sessions.expire(externalSessionId),
+      );
+    } catch {
+      return this.retrieveCheckoutSession(externalSessionId);
+    }
+  }
+
   private toCheckout(
     session: Stripe.Checkout.Session,
   ): ProviderCheckoutSession {

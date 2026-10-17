@@ -133,6 +133,8 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
   readonly products = new Map<string, string>();
   readonly prices = new Map<string, string>();
   private readonly customers = new Map<string, string>();
+  // SC4c — customers by the business id they were created for (oldest first).
+  readonly customersByTenant = new Map<string, string[]>();
   readonly checkouts = new Map<string, FakeCheckout>();
   private readonly checkoutsByKey = new Map<string, string>();
   readonly subscriptions = new Map<string, ProviderSubscriptionSnapshot>();
@@ -265,12 +267,47 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
 
   createCustomer(input: {
     idempotencyKey: string;
+    tenantId?: string;
   }): Promise<{ externalCustomerId: string }> {
     this.call('createCustomer', input.idempotencyKey);
     const existing = this.customers.get(input.idempotencyKey);
     const customerId = existing ?? `fake_cus_${hex()}`;
     this.customers.set(input.idempotencyKey, customerId);
+    if (!existing && input.tenantId)
+      this.recordTenantCustomer(input.tenantId, customerId);
     return Promise.resolve({ externalCustomerId: customerId });
+  }
+
+  private recordTenantCustomer(tenantId: string, customerId: string): void {
+    this.customersByTenant.set(tenantId, [
+      ...(this.customersByTenant.get(tenantId) ?? []),
+      customerId,
+    ]);
+  }
+
+  findCustomerForTenant(tenantId: string): Promise<string | null> {
+    this.call('findCustomerForTenant', tenantId);
+    return Promise.resolve(this.customersByTenant.get(tenantId)?.[0] ?? null);
+  }
+
+  expireCheckoutSession(
+    externalSessionId: string,
+  ): Promise<ProviderCheckoutSession> {
+    this.call('expireCheckoutSession', externalSessionId);
+    const checkout = this.checkouts.get(externalSessionId);
+    if (!checkout) {
+      return Promise.reject(new SaasBillingProviderError('resource_missing'));
+    }
+    if (checkout.status === 'open') checkout.status = 'expired';
+    return Promise.resolve(this.view(externalSessionId));
+  }
+
+  // TEST HOOK — a customer an interrupted attempt created whose response
+  // was lost (and whose idempotency key has since expired).
+  createLostCustomer(tenantId: string): string {
+    const customerId = `fake_cus_${hex()}`;
+    this.recordTenantCustomer(tenantId, customerId);
+    return customerId;
   }
 
   createCheckoutSession(input: {

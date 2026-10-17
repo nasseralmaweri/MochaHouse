@@ -10,7 +10,7 @@ const INITIAL: SetUpPaymentState = { message: null };
 
 // SC3b — "Set up payment" sends the owner to the payment provider's secure
 // hosted page. Card details are entered there, never here.
-export function SetUpPaymentForm() {
+export function SetUpPaymentForm({ label }: { label?: string } = {}) {
   const [state, formAction, pending] = useActionState(setUpPaymentAction, INITIAL);
   const message = useRef<HTMLParagraphElement>(null);
 
@@ -27,7 +27,7 @@ export function SetUpPaymentForm() {
       className="flex flex-col items-start gap-3"
     >
       <button type="submit" aria-disabled={pending} aria-busy={pending} className={PRIMARY}>
-        {pending ? "Opening secure payment page…" : "Set up payment"}
+        {pending ? "Opening secure payment page…" : (label ?? "Set up payment")}
       </button>
       <p className="text-xs text-text-secondary">
         You&apos;ll enter your payment details on our payment provider&apos;s secure page, then

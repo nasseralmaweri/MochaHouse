@@ -22,6 +22,7 @@ import {
   slugCandidate,
   type NormalisedProvisionRequest,
 } from './tenant-provision-request';
+import { resolveSelfServiceChoice } from '../../platform-subscriptions/application/self-service-plans';
 
 // SC4b — what the owner's onboarding asks for. The registration and login
 // come from the owner's VERIFIED session (never the request body); the plan
@@ -356,44 +357,12 @@ export class TenantProvisioningService {
       return this.ownerOutcome(tx, registration.provisionedTenantId, true);
     }
 
-    // The exact version offered: the plan's newest PUBLISHED version, of a
-    // plan offered for self-service (never Founding).
-    const version = await tx.subscriptionPlanVersion.findUnique({
-      where: { id: request.planVersionId },
-      include: { plan: true },
-    });
-    if (
-      !version ||
-      version.status !== 'PUBLISHED' ||
-      !version.plan.selfServiceAvailable ||
-      version.plan.key === 'founding'
-    ) {
-      return { kind: 'plan-unavailable' };
-    }
-    const newest = await tx.subscriptionPlanVersion.findFirst({
-      where: { planId: version.planId, status: 'PUBLISHED' },
-      orderBy: { version: 'desc' },
-      select: { id: true },
-    });
-    if (newest?.id !== version.id) return { kind: 'plan-unavailable' };
-    const price = await tx.subscriptionPlanPrice.findUnique({
-      where: { id: request.planPriceId },
-    });
-    if (
-      !price ||
-      price.planId !== version.planId ||
-      price.status !== 'ACTIVE'
-    ) {
-      return { kind: 'plan-unavailable' };
-    }
-    // Never a different price than the one the owner saw.
-    if (
-      price.interval !== request.expectedPrice.interval ||
-      price.currency !== request.expectedPrice.currency ||
-      price.amountMinorUnits !== request.expectedPrice.amountMinorUnits
-    ) {
-      return { kind: 'price-changed' };
-    }
+    // The exact version and price offered for self-service, as the owner saw
+    // them (the shared rule; never Founding, never substituted).
+    const choice = await resolveSelfServiceChoice(tx, request);
+    if (choice.kind !== 'ok') return choice;
+    const version = { id: choice.planVersionId };
+    const price = { id: choice.planPriceId };
 
     const slug = await this.freeSlug(tx, request.businessName);
     const tenant = await tx.tenant.create({

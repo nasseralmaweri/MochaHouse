@@ -1,3 +1,4 @@
+import { formatMinorUnits } from "./crm";
 import type {
   BusinessBillingState,
   BusinessBillingSummary,
@@ -52,15 +53,34 @@ export function windDownMessage(access: {
   return `${lead} Ask a business owner or manager for help.`;
 }
 
-// SC4b — a business its owner created, billed at the chosen price but not
-// set up with the payment provider yet: what is (and is not) on meanwhile.
-export const PAYMENT_SETUP_OPENS_SOON_MESSAGE =
-  "Payment setup is the next step and will open here soon. Nothing is charged until then. Meanwhile your plan's extra modules and online ordering stay off — you can keep setting up your business.";
+// SC4b/SC4c — a business its owner created that has not completed its first
+// payment setup: what is (and is not) on meanwhile.
+export const INITIAL_SETUP_PENDING_MESSAGE =
+  "Set up payment to start your plan. Until then nothing is charged, and your plan's extra modules and online ordering stay off — you can keep setting up your business.";
+
+// SC4c — the trial and charge timing, in plain words, before payment setup.
+export function initialSetupDisclosure(
+  trial: { days: number; requiresPaymentMethod: boolean } | null,
+  price: { amountMinorUnits: number; currency: string; interval: "MONTH" | "YEAR" } | null,
+): string {
+  const amount = price
+    ? `${formatMinorUnits(price.amountMinorUnits, price.currency)} per ${price.interval === "YEAR" ? "year" : "month"}`
+    : "your plan's price";
+  if (trial) {
+    return trial.requiresPaymentMethod
+      ? `Your ${trial.days}-day free trial starts when you finish payment setup. A card is required. You won't be charged during the trial; after it ends, ${amount} is charged automatically until you cancel.`
+      : `Your ${trial.days}-day free trial starts when you finish payment setup. No card is needed to start; add one before the trial ends to keep your plan at ${amount}.`;
+  }
+  return `When you finish payment setup, ${amount} is charged right away and then automatically each ${price?.interval === "YEAR" ? "year" : "month"} until you cancel.`;
+}
+
+export const SELECTION_UNAVAILABLE_MESSAGE =
+  "The plan or price you chose is no longer offered. Choose a plan again to set up payment — you won't be charged a different amount without choosing it.";
 
 // SC3c-1 — the admin-wide notice for a billing state that needs attention
 // (null when nothing does). Plain facts only: what is off, until when.
 export function billingNotice(billing: BusinessBillingSummary): string | null {
-  if (billing.paymentSetupOpensSoon) return PAYMENT_SETUP_OPENS_SOON_MESSAGE;
+  if (billing.initialSetupPending) return INITIAL_SETUP_PENDING_MESSAGE;
   // SC3e-4 — payment setup: the deadline passed (paused), or is set.
   const setup = paymentSetupNotice(billing);
   if (setup) return setup;
@@ -103,9 +123,9 @@ export function billingStateDescription(billing: BusinessBillingSummary): string
     case "COMPLIMENTARY":
       return "Your CENTERIVO plan is complimentary. There is nothing to pay.";
     case "AWAITING_SETUP":
-      // SC4b — chosen by the owner; billing not started with the provider yet.
-      if (billing.paymentSetupOpensSoon) {
-        return "You chose this plan. No charge today: the price applies only once you set up payment, which opens here soon.";
+      // SC4b/SC4c — chosen by the owner; not set up yet.
+      if (billing.initialSetupPending) {
+        return "You chose this plan. Nothing is charged until you finish payment setup.";
       }
       return "Your CENTERIVO subscription is ready. Nothing is charged until you set up payment, and if a free trial is offered it starts first.";
     case "TRIALING":
@@ -164,6 +184,10 @@ const CONFLICTS: Record<string, string> = {
   BILLING_NOTHING_TO_PAY: BILLING_MESSAGES.nothingToPay,
   BILLING_SUBSCRIPTION_NOT_ENDED: BILLING_MESSAGES.subscriptionNotEnded,
   BILLING_RECOVERY_UNDER_REVIEW: BILLING_MESSAGES.recoveryUnderReview,
+  // SC4c
+  BILLING_SELECTION_UNAVAILABLE: SELECTION_UNAVAILABLE_MESSAGE,
+  BILLING_SELECTION_LOCKED:
+    "Your plan can be changed here only before payment is set up. This page shows the latest status.",
 };
 
 // The message for a refused "open Checkout" answer (never a server detail).

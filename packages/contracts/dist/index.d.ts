@@ -1110,7 +1110,7 @@ export interface BusinessBillingSummary {
     suspendedForBilling: boolean;
     cancelAtPeriodEnd: boolean;
     paymentMethodOnFile: boolean;
-    paymentSetupOpensSoon: boolean;
+    initialSetupPending: boolean;
     paymentSetup: {
         required: boolean;
         since: string | null;
@@ -1135,7 +1135,34 @@ export interface AdminBillingResponse {
     canManagePaymentMethod: boolean;
     canChangePlan: boolean;
     planChange: AdminPlanChangeView | null;
+    initialSetup: AdminInitialSetupView | null;
 }
+export interface AdminInitialSetupView {
+    selectionAvailable: boolean;
+    trial: {
+        days: number;
+        requiresPaymentMethod: boolean;
+    } | null;
+    canChangeSelection: boolean;
+}
+export interface AdminInitialPlanOptionsResponse {
+    plans: OwnerOnboardingPlanOption[];
+    current: {
+        planVersionId: string;
+        planPriceId: string;
+    };
+}
+export interface AdminInitialPlanChangeRequest {
+    planVersionId: string;
+    planPriceId: string;
+    expectedPrice: {
+        interval: PlatformBillingInterval;
+        currency: string;
+        amountMinorUnits: number;
+    };
+}
+export declare const BILLING_SELECTION_UNAVAILABLE = "BILLING_SELECTION_UNAVAILABLE";
+export declare const BILLING_SELECTION_LOCKED = "BILLING_SELECTION_LOCKED";
 export interface AdminBillingCheckoutResponse {
     url: string;
 }

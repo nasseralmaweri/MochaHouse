@@ -144,6 +144,8 @@ describe('SC4b owner self-service provisioning (integration, scratch database)',
       SELF_SERVICE_REGISTRATION_SECRET: REGISTRATION_SECRET,
     });
     delete process.env.BILLING_ENFORCEMENT_ENABLED;
+    // No billing provider in this suite (payment setup is refused).
+    delete process.env.SAAS_BILLING_PROVIDER;
 
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
@@ -581,10 +583,12 @@ describe('SC4b owner self-service provisioning (integration, scratch database)',
     expect(billing.body).toMatchObject({
       billing: {
         state: 'AWAITING_SETUP',
-        paymentSetupOpensSoon: true,
+        initialSetupPending: true,
         price: { amountMinorUnits: 4900 },
       },
-      canSetUpPayment: false,
+      // SC4c — payment setup is offered (no billing provider is configured
+      // in this suite, so starting it is refused below and nothing is made).
+      canSetUpPayment: true,
     });
     await http()
       .post('/api/v1/admin/billing/checkout')

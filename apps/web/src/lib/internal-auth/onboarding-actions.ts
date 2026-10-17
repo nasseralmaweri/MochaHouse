@@ -132,7 +132,8 @@ async function enterBusiness(token: string): Promise<CreateBusinessState> {
   clearLegacySessionCookie(cookieStore, ADMIN_BUSINESS_COOKIE_BASE);
   cookieStore.set(ADMIN_BUSINESS_COOKIE, businessId, sessionCookieOptions(ONE_YEAR_SECONDS));
   clearSessionCookie(cookieStore, ONBOARDING_SESSION_COOKIE_BASE);
-  redirect("/admin");
+  // SC4c (owner decision C5) — straight to "Set up payment now".
+  redirect("/admin/billing");
 }
 
 export async function onboardingSignOutAction(): Promise<void> {
