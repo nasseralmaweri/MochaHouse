@@ -47,9 +47,15 @@ export function OwnerRegistrationForm(props: {
           Your owner account is ready
         </h2>
         <p className="text-[0.9375rem] text-text-secondary">
-          Your email is verified and your password is set. Setting up your
-          business is the next step — we&apos;ll open it to you shortly.
+          Your email is verified and your password is set. Next, sign in to
+          set up your business.
         </p>
+        <Link
+          href="/internal/sign-in"
+          className="flex min-h-11 items-center justify-center rounded-lg bg-accent px-4 py-2.5 text-base font-semibold text-accent-contrast transition-opacity hover:opacity-90"
+        >
+          Sign in
+        </Link>
       </div>
     );
   }
@@ -192,8 +198,11 @@ export function OwnerRegistrationForm(props: {
         </button>
       </div>
       <p className="text-xs text-text-muted">
-        Already finished this step? Your account is ready — business setup
-        opens next.
+        Already finished this step? Your account is ready —{" "}
+        <Link href="/internal/sign-in" className="underline underline-offset-4">
+          sign in
+        </Link>{" "}
+        to set up your business.
       </p>
     </form>
   );

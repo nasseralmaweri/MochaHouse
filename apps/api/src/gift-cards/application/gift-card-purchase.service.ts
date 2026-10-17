@@ -150,7 +150,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
     // SC2b — selling a NEW gift card needs the gift-card module in the
     // business's plan: refused before any intent or payment attempt exists.
     // (An intent that already exists is returned above as persisted.)
-    await this.features.assertAvailable(tenant.tenantId, 'giftcards');
+    await this.features.assertAvailableForSale(tenant.tenantId, 'giftcards');
 
     // Payment safety — a gift card is only ever issued against a real
     // payment: with no provider able to take one, no intent is recorded.
@@ -391,7 +391,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
     // may have changed since the intent was created. Nothing has been
     // charged yet, so refusing here strands no payment. Once the claim below
     // is made the purchase completes (or replays) whatever the plan says.
-    await this.features.assertAvailable(tenant.tenantId, 'giftcards');
+    await this.features.assertAvailableForSale(tenant.tenantId, 'giftcards');
 
     // Payment safety — checked again at the charging step, before the claim:
     // configuration may have changed since the intent was created.

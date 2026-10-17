@@ -1543,6 +1543,65 @@ export const OWNER_REGISTRATION_LEGAL_OUTDATED = "REGISTRATION_LEGAL_OUTDATED";
 // 503 — the registration quota is used up for now.
 export const OWNER_REGISTRATION_UNAVAILABLE = "REGISTRATION_UNAVAILABLE";
 
+// SC4b — a verified, self-registered owner creates their business
+// (/api/v1/internal/onboarding*). Only with the restricted onboarding
+// session (the owner's own login, no business yet); never tenant admin or
+// platform access. Off unless self-service registration is enabled.
+export interface OwnerOnboardingPlanPrice {
+  planPriceId: string;
+  interval: PlatformBillingInterval;
+  currency: string;
+  amountMinorUnits: number;
+}
+
+export interface OwnerOnboardingPlanOption {
+  planId: string;
+  // The exact published version offered (and stored when chosen).
+  planVersionId: string;
+  name: string;
+  description: string | null;
+  modules: SubscriptionModuleKey[];
+  prices: OwnerOnboardingPlanPrice[];
+}
+
+export type OwnerOnboardingStatus =
+  | {
+      status: "BUSINESS_REQUIRED";
+      ownerName: string;
+      email: string;
+      plans: OwnerOnboardingPlanOption[];
+    }
+  | {
+      status: "BUSINESS_CREATED";
+      business: { id: string; name: string };
+    };
+
+// The price the owner saw is sent back; the server refuses (409) rather than
+// store a different plan version, price, amount, currency or interval.
+export interface OwnerBusinessCreateRequest {
+  businessName: string;
+  planVersionId: string;
+  planPriceId: string;
+  expectedPrice: {
+    interval: PlatformBillingInterval;
+    currency: string;
+    amountMinorUnits: number;
+  };
+}
+
+export interface OwnerBusinessCreateResponse {
+  business: { id: string; name: string; slug: string };
+  // True when this owner's business already existed (a retry): nothing new.
+  replayed: boolean;
+}
+
+// 403 — not a verified self-registered owner (or registration is off: 404).
+export const ONBOARDING_NOT_ELIGIBLE = "ONBOARDING_NOT_ELIGIBLE";
+// 409 — the plan or price is not offered (any more), or differs from what
+// the owner saw.
+export const ONBOARDING_PLAN_UNAVAILABLE = "ONBOARDING_PLAN_UNAVAILABLE";
+export const ONBOARDING_PRICE_CHANGED = "ONBOARDING_PRICE_CHANGED";
+
 // The mapped InternalUser for the authenticated internal identity. Only
 // ever returned for an ACTIVE user (the guard rejects every other state
 // before the controller runs), so `status` is always "ACTIVE" here; it is
@@ -2001,10 +2060,20 @@ export interface PlatformPlan {
   key: string;
   name: string;
   description: string | null;
+  // SC4b — offered to business owners creating a business themselves.
+  selfServiceAvailable: boolean;
   versions: PlatformPlanVersion[];
   // SC3a — newest first, ACTIVE and ARCHIVED.
   prices: PlatformPlanPrice[];
 }
+
+// SC4b — PUT /api/v1/platform/plans/:planId/self-service: offer (or stop
+// offering) a plan to owners creating a business themselves. 409
+// PLAN_NOT_SELF_SERVICE for the Founding plan.
+export interface PlatformPlanSelfServiceRequest {
+  available: boolean;
+}
+export const PLATFORM_PLAN_NOT_SELF_SERVICE = "PLAN_NOT_SELF_SERVICE";
 
 export const PLATFORM_PRICE_NOT_ACTIVE = "PRICE_NOT_ACTIVE";
 export const PLATFORM_NO_MONTHLY_PRICE = "NO_MONTHLY_PRICE";
@@ -2088,6 +2157,9 @@ export interface BusinessBillingSummary {
   suspendedForBilling: boolean;
   cancelAtPeriodEnd: boolean;
   paymentMethodOnFile: boolean;
+  // SC4b — billed at the price its owner chose, but billing has not been
+  // started with the payment provider yet: payment setup opens with SC4c.
+  paymentSetupOpensSoon: boolean;
   // SC3e-4 — payment setup (a billed business without a verified, paid
   // provider subscription):
   //   required — payment setup is needed now;
@@ -3524,7 +3596,14 @@ export interface InternalEntitlementsSummary {
   // Always includes "core".
   modules: SubscriptionModuleKey[];
   planName: string | null;
+  // SC4b — a business its owner created that has not completed payment
+  // setup: core only and no customer sales until billing (or a trial) is
+  // verified by the billing provider.
+  paymentSetupPending: boolean;
 }
+
+// SC4b — checkout refused (403) while the business may not take orders yet.
+export const SALES_NOT_AVAILABLE = "SALES_NOT_AVAILABLE";
 
 // Scope types the application currently supports operationally. The Prisma
 // enum mirrors exactly this set — additional organizational scope types

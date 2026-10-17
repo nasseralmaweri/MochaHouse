@@ -26,6 +26,7 @@ describe('loadRateLimitConfig', () => {
       'account-verification',
       'owner-registration',
       'owner-registration-verification',
+      'owner-onboarding',
     ];
     for (const name of names) {
       const policy = config.policies[name];

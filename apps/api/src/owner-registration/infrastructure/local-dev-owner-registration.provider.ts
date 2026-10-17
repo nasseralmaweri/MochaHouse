@@ -188,6 +188,29 @@ export class LocalDevOwnerRegistrationProvider implements OwnerRegistrationProvi
     });
   }
 
+  probeInitialLogin(
+    email: string,
+    initialPassword: string,
+  ): Promise<'ours-unconfirmed' | 'ours-confirmed' | 'not-ours'> {
+    const login = this.logins.get(email);
+    if (
+      !login ||
+      !devPasswordMatches(initialPassword, login.passwordHash, this.secret())
+    ) {
+      return Promise.resolve('not-ours');
+    }
+    return Promise.resolve(
+      login.confirmed ? 'ours-confirmed' : 'ours-unconfirmed',
+    );
+  }
+
+  loginWithInitialPassword(
+    email: string,
+    initialPassword: string,
+  ): Promise<VerifiedLogin | null> {
+    return this.signIn(email, initialPassword);
+  }
+
   // TEST SEAM — simulates a confirmation that happened outside this API's
   // completion request (e.g. an interrupted completion).
   confirmOutOfBand(email: string): void {

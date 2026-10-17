@@ -219,7 +219,11 @@ export class AdminBillingController {
     const actions = this.accounts.recoveryActions(billing);
     return {
       billing,
-      canSetUpPayment: billing.state === 'AWAITING_SETUP' && manage,
+      // SC4b — not while billing has not been started with the provider.
+      canSetUpPayment:
+        billing.state === 'AWAITING_SETUP' &&
+        !billing.paymentSetupOpensSoon &&
+        manage,
       canRestartSubscription: actions.restart && manage,
       canPayInvoice: actions.payInvoice && manage,
       canManagePaymentMethod: actions.portal && manage,

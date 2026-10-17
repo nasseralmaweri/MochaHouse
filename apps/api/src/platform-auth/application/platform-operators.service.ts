@@ -88,6 +88,11 @@ export const PLATFORM_AUDIT_ACTIONS = {
   // SC4a — a business owner completed self-service registration (no
   // operator; the identity fields name the login, target: the registration).
   ownerRegistrationVerified: 'platform.owner_registration.verified',
+  // SC4b — a plan offered / withdrawn for self-service (target: the plan),
+  // and a business created by its owner (no operator; the identity fields
+  // name the owner's login; target: the tenant).
+  planSelfServiceChanged: 'platform.plan.self_service_changed',
+  tenantSelfProvisioned: 'platform.tenant.self_provisioned',
 } as const;
 
 @Injectable()

@@ -19,6 +19,7 @@ import { PlatformPermissionsController } from '../platform-auth/api/platform-per
 import { AdminBillingController } from '../saas-billing/api/admin-billing.controller';
 import { BillingWebhookController } from '../saas-billing/api/billing-webhook.controller';
 import { OwnerRegistrationController } from '../owner-registration/api/owner-registration.controller';
+import { OwnerOnboardingController } from '../owner-registration/api/owner-onboarding.controller';
 
 // The list of public routes protected by S3a. If a route here loses its
 // decorator or its guard — or someone adds a new unauthenticated ordering or
@@ -132,7 +133,15 @@ const PROTECTED: ReadonlyArray<{
   },
   // SC2a — plan and subscription changes.
   ...(
-    ['create', 'createVersion', 'updateDraft', 'publish', 'retire'] as const
+    [
+      'create',
+      'createVersion',
+      'updateDraft',
+      'publish',
+      'retire',
+      // SC4b
+      'setSelfService',
+    ] as const
   ).map((method) => ({
     controller: PlatformPlansController,
     method,
@@ -229,6 +238,12 @@ const PROTECTED: ReadonlyArray<{
     controller: OwnerRegistrationController,
     method: 'complete',
     policy: 'owner-registration-verification',
+  },
+  // SC4b — a verified owner creating their business.
+  {
+    controller: OwnerOnboardingController,
+    method: 'createBusiness',
+    policy: 'owner-onboarding',
   },
 ];
 

@@ -8,6 +8,7 @@ import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { entitledToPlanModules } from '../../saas-billing/domain/billing-lifecycle';
 import { billingEnforcementEnabled } from '../../saas-billing/application/billing-enforcement.config';
+import { awaitingFirstAuthorization } from '../../saas-billing/domain/payment-setup';
 
 // SC2a — what a business's subscription entitles it to, computed in ONE
 // place: core (always) + the modules of its subscribed plan version + its
@@ -21,11 +22,21 @@ import { billingEnforcementEnabled } from '../../saas-billing/application/billin
 //
 // Customer-facing surfaces (checkout, public forms, workers) are SC2b; this
 // slice enforces entitlements on the business admin (staff) API.
+//
+// SC4b — a business its OWNER created (self-service) whose billing the
+// provider has never authorized (payment setup pending, owner decision B1)
+// has core only — plus explicit operator add-on grants — and may not take
+// customer sales, whether billing enforcement is on or off. It never looks
+// complimentary: it is BILLED at the price the owner chose. Businesses
+// created or billed by an operator keep the existing rules unchanged.
 
 export interface TenantEntitlements {
   modules: ReadonlySet<SubscriptionModuleKey>;
   planName: string | null;
   subscribed: boolean;
+  // SC4b — false only while a self-service business awaits payment setup.
+  salesEnabled: boolean;
+  paymentSetupPending: boolean;
 }
 
 // Core plus every known optional key from the plan and the grants (unknown
@@ -49,6 +60,7 @@ export function entitlementsSummary(
       a === 'core' ? -1 : b === 'core' ? 1 : a.localeCompare(b),
     ),
     planName: entitlements.planName,
+    paymentSetupPending: entitlements.paymentSetupPending,
   };
 }
 
@@ -56,6 +68,8 @@ export const CORE_ONLY: TenantEntitlements = {
   modules: new Set<SubscriptionModuleKey>(['core']),
   planName: null,
   subscribed: false,
+  salesEnabled: true,
+  paymentSetupPending: false,
 };
 
 @Injectable()
@@ -72,6 +86,9 @@ export class EntitlementsService {
         billingMode: true,
         status: true,
         graceExceptionEndsAt: true,
+        recurringPaymentAuthorizedAt: true,
+        trialStartedAt: true,
+        currentPeriodStart: true,
         planVersion: {
           select: {
             moduleKeys: true,
@@ -82,13 +99,20 @@ export class EntitlementsService {
       },
     });
     if (!subscription) return CORE_ONLY;
+    // SC4b — read only for a never-authorized BILLED subscription (rare).
+    const paymentSetupPending =
+      awaitingFirstAuthorization(subscription) &&
+      (await db.ownerRegistration.count({
+        where: { provisionedTenantId: tenantId },
+      })) > 0;
     // Founding businesses (Mocha House, Tenant #1, among them) are exempt
     // from billing enforcement, as from billing suspension.
     const exempt = subscription.planVersion.plan.key === 'founding';
     const planModules =
-      billingEnforcementEnabled() &&
-      !exempt &&
-      !entitledToPlanModules(subscription)
+      paymentSetupPending ||
+      (billingEnforcementEnabled() &&
+        !exempt &&
+        !entitledToPlanModules(subscription))
         ? []
         : subscription.planVersion.moduleKeys;
     return {
@@ -98,6 +122,8 @@ export class EntitlementsService {
       ),
       planName: subscription.planVersion.plan.name,
       subscribed: true,
+      salesEnabled: !paymentSetupPending,
+      paymentSetupPending,
     };
   }
 }

@@ -19,6 +19,11 @@ import {
   ACTIVE_TENANT_HEADER,
   ADMIN_BUSINESS_COOKIE_BASE,
 } from "./active-business";
+import {
+  ONBOARDING_SESSION_COOKIE,
+  ONBOARDING_SESSION_COOKIE_BASE,
+  fetchOnboardingStatus,
+} from "./onboarding";
 
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;
@@ -128,6 +133,22 @@ export async function internalSignInAction(
   }
 
   if (!permitted) {
+    // SC4b — a verified, self-registered owner with no business yet gets
+    // ONLY the restricted onboarding session (its own cookie; no /admin
+    // page reads it, and the API admits it only to /internal/onboarding).
+    if (businessesResponse.status === 403) {
+      const onboarding = await fetchOnboardingStatus(result.idToken);
+      if (onboarding.outcome === "ok") {
+        const cookieStore = await cookies();
+        clearLegacySessionCookie(cookieStore, ONBOARDING_SESSION_COOKIE_BASE);
+        cookieStore.set(
+          ONBOARDING_SESSION_COOKIE,
+          result.idToken,
+          sessionCookieOptions(result.expiresInSeconds),
+        );
+        redirect("/internal/onboarding");
+      }
+    }
     // Authenticated, but not an ACTIVE internal user — no session is
     // established.
     return {
@@ -138,6 +159,7 @@ export async function internalSignInAction(
   const cookieStore = await cookies();
   clearLegacySessionCookie(cookieStore, INTERNAL_SESSION_COOKIE_BASE);
   cookieStore.set(INTERNAL_SESSION_COOKIE, result.idToken, sessionCookieOptions(result.expiresInSeconds));
+  clearSessionCookie(cookieStore, ONBOARDING_SESSION_COOKIE_BASE);
 
   redirect("/admin/orders");
 }
@@ -152,5 +174,6 @@ export async function internalSignOutAction(): Promise<void> {
   clearSessionCookie(cookieStore, INTERNAL_SESSION_COOKIE_BASE);
   clearSessionCookie(cookieStore, ADMIN_BUSINESS_COOKIE_BASE);
   clearSessionCookie(cookieStore, ADMIN_LOCATION_COOKIE_BASE);
+  clearSessionCookie(cookieStore, ONBOARDING_SESSION_COOKIE_BASE);
   redirect("/internal/sign-in");
 }

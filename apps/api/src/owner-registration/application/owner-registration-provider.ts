@@ -87,4 +87,19 @@ export interface OwnerRegistrationProvider {
   ): Promise<ConfirmPasswordSetupOutcome>;
   // Signs in with the chosen password; null when refused.
   signIn(email: string, password: string): Promise<VerifiedLogin | null>;
+  // SC4b — recovery when a login was created but its subject never got
+  // recorded (an interruption between the two). Only this API knows the
+  // initial password, so a login it can open with it is ours:
+  //   whether the login with this email still has our initial password,
+  //   confirmed or not ('not-ours' for anything else) — a hint only;
+  probeInitialLogin(
+    email: string,
+    initialPassword: string,
+  ): Promise<'ours-unconfirmed' | 'ours-confirmed' | 'not-ours'>;
+  //   the login's own subject, from a real sign-in with the initial password
+  //   (possible once it is confirmed); null when refused.
+  loginWithInitialPassword(
+    email: string,
+    initialPassword: string,
+  ): Promise<VerifiedLogin | null>;
 }

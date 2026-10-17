@@ -258,4 +258,48 @@ export class CognitoOwnerRegistrationProvider implements OwnerRegistrationProvid
       emailVerified: identity.emailVerified === true,
     };
   }
+
+  // SC4b — Cognito answers an unconfirmed login's sign-in with
+  // UserNotConfirmedException only for its correct password, and a wrong
+  // password with NotAuthorizedException. Either way nothing is decided
+  // from this alone: a subject is recorded only after a real sign-in
+  // (loginWithInitialPassword) returns it.
+  async probeInitialLogin(
+    email: string,
+    initialPassword: string,
+  ): Promise<'ours-unconfirmed' | 'ours-confirmed' | 'not-ours'> {
+    const { clientId, clientSecret } = registrationClient();
+    const auth = await callInternalCognito<InitiateAuthResponse>(
+      'InitiateAuth',
+      {
+        AuthFlow: 'USER_PASSWORD_AUTH',
+        ClientId: clientId,
+        AuthParameters: {
+          USERNAME: email,
+          PASSWORD: initialPassword,
+          SECRET_HASH: cognitoSecretHash(email, clientId, clientSecret),
+        },
+      },
+    );
+    if (auth.ok && auth.body.AuthenticationResult?.AccessToken) {
+      return 'ours-confirmed';
+    }
+    const type = !auth.ok ? auth.body?.__type : undefined;
+    if (type === 'UserNotConfirmedException') return 'ours-unconfirmed';
+    if (
+      type === 'NotAuthorizedException' ||
+      type === 'UserNotFoundException' ||
+      type === 'PasswordResetRequiredException'
+    ) {
+      return 'not-ours';
+    }
+    throw unexpected();
+  }
+
+  loginWithInitialPassword(
+    email: string,
+    initialPassword: string,
+  ): Promise<VerifiedLogin | null> {
+    return this.signIn(email, initialPassword);
+  }
 }

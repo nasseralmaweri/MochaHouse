@@ -40,6 +40,7 @@ import {
 } from '../../promotions/application/promotion-checkout.service';
 import {
   featureNotAvailable,
+  salesNotAvailable,
   StorefrontFeaturesService,
   type StorefrontFeatures,
 } from '../../subscriptions/application/storefront-features.service';
@@ -184,7 +185,10 @@ export class CheckoutService {
     // checkout is being paid can neither fail a paid order nor change what
     // was charged. A retry with the same idempotency key replays the stored
     // outcome and never re-runs any of this.
-    const features = await this.storefrontFeatures.forTenant(tenantId);
+    // SC4b — a business still awaiting payment setup takes no orders.
+    const { features, salesOpen } =
+      await this.storefrontFeatures.forCheckout(tenantId);
+    if (!salesOpen) throw salesNotAvailable();
 
     // Milestone 7E — resolve the ONE regular Promotion/Coupon FIRST. A
     // supplied coupon that fails any rule is rejected here, before any

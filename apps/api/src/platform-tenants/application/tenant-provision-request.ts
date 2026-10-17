@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 // SC1d — the provisioning request, validated and normalised. Anything
 // outside these rules is refused (400), never coerced into something else.
@@ -176,4 +176,41 @@ export function provisionRequestHash(
       ]),
     )
     .digest('hex');
+}
+
+// SC4b — a business name as the owner typed it: the provisioning rule
+// (2–120 characters after collapsing whitespace, no control characters).
+export function parseBusinessName(raw: unknown): string {
+  const name = text(raw, 'Business name').trim().replace(/\s+/g, ' ');
+  if (
+    name.length < NAME_MIN ||
+    name.length > NAME_MAX ||
+    hasControlCharacters(name)
+  ) {
+    throw new TenantProvisionRequestError(
+      `Business name must be ${NAME_MIN}–${NAME_MAX} characters.`,
+    );
+  }
+  return name;
+}
+
+// SC4b — an automatic slug for a self-service business (owner decision
+// D7): the name's letters and digits (accents removed), at most 40
+// characters, then a random 6-character suffix — always the database's
+// slug shape, never a reserved slug (the suffix makes it one never is).
+export function slugCandidate(businessName: string): string {
+  const base = businessName
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/g, '');
+  const suffix = randomBytes(6)
+    .toString('base64url')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '0')
+    .slice(0, 6);
+  return `${base.length > 0 ? base : 'business'}-${suffix}`;
 }

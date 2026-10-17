@@ -307,6 +307,11 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'GET /api/v1/internal/registration': { scope: 'public-auth' },
   'POST /api/v1/internal/registration/start': { scope: 'public-auth' },
   'POST /api/v1/internal/registration/complete': { scope: 'public-auth' },
+  // SC4b — a verified self-registered owner's restricted onboarding: their
+  // own login only (InternalIdentityGuard), no business context; creating
+  // their ONE business goes through TenantProvisioningService.
+  'GET /api/v1/internal/onboarding': { scope: 'public-auth' },
+  'POST /api/v1/internal/onboarding/business': { scope: 'public-auth' },
   // SC1b — CENTERIVO platform-operator sign-in (dedicated platform pool,
   // mandatory TOTP). Rate limited; never returns a token before MFA.
   'POST /api/v1/platform/auth/sign-in': { scope: 'public-auth' },
@@ -348,6 +353,7 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     note: "SC1e — correct a never-signed-in first owner's email; audited.",
   },
   // SC2a — SaaS plans and subscriptions (recent sign-in for changes).
+  'PUT /api/v1/platform/plans/:planId/self-service': { scope: 'platform' },
   'GET /api/v1/platform/plans': {
     scope: 'platform',
     note: 'SC2a — every plan and version, with subscriber counts.',

@@ -52,9 +52,15 @@ export function windDownMessage(access: {
   return `${lead} Ask a business owner or manager for help.`;
 }
 
+// SC4b — a business its owner created, billed at the chosen price but not
+// set up with the payment provider yet: what is (and is not) on meanwhile.
+export const PAYMENT_SETUP_OPENS_SOON_MESSAGE =
+  "Payment setup is the next step and will open here soon. Nothing is charged until then. Meanwhile your plan's extra modules and online ordering stay off — you can keep setting up your business.";
+
 // SC3c-1 — the admin-wide notice for a billing state that needs attention
 // (null when nothing does). Plain facts only: what is off, until when.
 export function billingNotice(billing: BusinessBillingSummary): string | null {
+  if (billing.paymentSetupOpensSoon) return PAYMENT_SETUP_OPENS_SOON_MESSAGE;
   // SC3e-4 — payment setup: the deadline passed (paused), or is set.
   const setup = paymentSetupNotice(billing);
   if (setup) return setup;
@@ -97,6 +103,10 @@ export function billingStateDescription(billing: BusinessBillingSummary): string
     case "COMPLIMENTARY":
       return "Your CENTERIVO plan is complimentary. There is nothing to pay.";
     case "AWAITING_SETUP":
+      // SC4b — chosen by the owner; billing not started with the provider yet.
+      if (billing.paymentSetupOpensSoon) {
+        return "You chose this plan. No charge today: the price applies only once you set up payment, which opens here soon.";
+      }
       return "Your CENTERIVO subscription is ready. Nothing is charged until you set up payment, and if a free trial is offered it starts first.";
     case "TRIALING":
       return billing.paymentMethodOnFile

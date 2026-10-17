@@ -63,6 +63,26 @@ export function paymentSetupCompleted(row: PaymentSetupRow): boolean {
   );
 }
 
+// SC4b — a BILLED subscription the billing provider has never authorized
+// in any way: no recurring-payment authorization, no trial and no paid
+// period has ever been recorded (all three are set only from verified
+// provider events). For a business its owner created themselves this is
+// the PAYMENT SETUP PENDING onboarding state (owner decision B1): core only
+// and no customer sales, whatever the billing enforcement switch says.
+export function awaitingFirstAuthorization(row: {
+  billingMode: 'BILLED' | 'COMPLIMENTARY';
+  recurringPaymentAuthorizedAt: Date | null;
+  trialStartedAt: Date | null;
+  currentPeriodStart: Date | null;
+}): boolean {
+  return (
+    row.billingMode === 'BILLED' &&
+    row.recurringPaymentAuthorizedAt === null &&
+    row.trialStartedAt === null &&
+    row.currentPeriodStart === null
+  );
+}
+
 export function windowDeadline(start: Date): Date {
   return new Date(start.getTime() + PAYMENT_SETUP_WINDOW_DAYS * DAY_MS);
 }

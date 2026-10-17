@@ -19,8 +19,38 @@ import { PLATFORM_AUDIT_ACTIONS } from '../../platform-auth/application/platform
 import type { PlatformOperatorRow } from '../../platform-auth/infrastructure/platform-identity';
 import {
   provisionRequestHash,
+  slugCandidate,
   type NormalisedProvisionRequest,
 } from './tenant-provision-request';
+
+// SC4b — what the owner's onboarding asks for. The registration and login
+// come from the owner's VERIFIED session (never the request body); the plan
+// version, price and expected price from the owner's choice.
+export interface OwnerProvisionRequest {
+  registrationId: string;
+  identityProvider: string;
+  identitySubject: string;
+  businessName: string;
+  planVersionId: string;
+  planPriceId: string;
+  expectedPrice: {
+    interval: 'MONTH' | 'YEAR';
+    currency: string;
+    amountMinorUnits: number;
+  };
+}
+
+export type OwnerProvisionOutcome =
+  | {
+      kind: 'created' | 'replayed';
+      business: { id: string; name: string; slug: string };
+    }
+  | { kind: 'not-eligible' }
+  | { kind: 'plan-unavailable' }
+  | { kind: 'price-changed' };
+
+// Another request linked this registration to its business first.
+class OwnerAlreadyProvisioned extends Error {}
 
 // SC1d — the ONE place platform code writes a business's own (tenant-owned)
 // rows. Everywhere else the platform plane only reads business data; a test
@@ -168,31 +198,7 @@ export class TenantProvisioningService {
       data: { slug: request.slug, name: request.name, status: 'ACTIVE' },
     });
 
-    let administratorRoleId: string | null = null;
-    for (const definition of BUILT_IN_INTERNAL_ROLES) {
-      const role = await tx.internalRole.create({
-        data: {
-          tenantId: tenant.id,
-          key: definition.key,
-          displayName: definition.displayName,
-          description: definition.description,
-          isSystem: true,
-        },
-      });
-      await tx.internalRolePermission.createMany({
-        data: definition.permissionKeys.map((permissionKey) => ({
-          tenantId: tenant.id,
-          roleId: role.id,
-          permissionKey,
-        })),
-      });
-      if (definition.key === PLATFORM_ADMINISTRATOR_ROLE.key) {
-        administratorRoleId = role.id;
-      }
-    }
-    if (administratorRoleId === null) {
-      throw new Error('The built-in administrator role is not defined.');
-    }
+    const administratorRoleId = await this.createBuiltInRoles(tx, tenant.id);
 
     const owner = await tx.internalUser.create({
       data: {
@@ -251,6 +257,266 @@ export class TenantProvisioningService {
     });
 
     return { kind: 'created', tenantId: tenant.id };
+  }
+
+  // The built-in staff roles and their permissions (the shared definitions
+  // Tenant #1 uses). Returns the administrator role's id.
+  private async createBuiltInRoles(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+  ): Promise<string> {
+    let administratorRoleId: string | null = null;
+    for (const definition of BUILT_IN_INTERNAL_ROLES) {
+      const role = await tx.internalRole.create({
+        data: {
+          tenantId,
+          key: definition.key,
+          displayName: definition.displayName,
+          description: definition.description,
+          isSystem: true,
+        },
+      });
+      await tx.internalRolePermission.createMany({
+        data: definition.permissionKeys.map((permissionKey) => ({
+          tenantId,
+          roleId: role.id,
+          permissionKey,
+        })),
+      });
+      if (definition.key === PLATFORM_ADMINISTRATOR_ROLE.key) {
+        administratorRoleId = role.id;
+      }
+    }
+    if (administratorRoleId === null) {
+      throw new Error('The built-in administrator role is not defined.');
+    }
+    return administratorRoleId;
+  }
+
+  // --- SC4b: a business created by its OWNER (self-service) ---------------
+  //
+  // The same ONE writer of a business's own rows, for an owner instead of an
+  // operator (owner decisions B1–B4). Never impersonates an operator: no
+  // operator is recorded anywhere; history is source OWNER and the audit
+  // event names the owner's login (identity fields), not an operator.
+  //
+  // One SERIALIZABLE transaction creates, or nothing is created:
+  //   1. the business (ACTIVE registry entry, an automatic unique slug);
+  //   2. its built-in roles;
+  //   3. its first owner, bound to the owner's OWN verified login by subject
+  //      (never matched by email), administrator at corporate scope;
+  //   4. its subscription: BILLED at the exact plan version and price the
+  //      owner chose, PAYMENT SETUP PENDING (nothing at the provider,
+  //      nothing authorized or charged), with its history;
+  //   5. its billing contact (the owner);
+  //   6. the registration's immutable link to the business (one business
+  //      per verified owner: unique, never changes) and the audit event.
+  // A retry — or a concurrent request — for the same registration returns
+  // the business already created; it never creates a second one.
+  async provisionForOwner(
+    request: OwnerProvisionRequest,
+    requestReference: string | undefined,
+  ): Promise<OwnerProvisionOutcome> {
+    const attempt = () =>
+      runSerializable(this.prisma, (tx) =>
+        this.provisionForOwnerIn(tx, request, requestReference),
+      );
+    // A concurrent request for this owner won, or (very rarely) a slug
+    // collided: decide again from what is committed now (a few times).
+    for (let tries = 1; ; tries += 1) {
+      try {
+        return await attempt();
+      } catch (error) {
+        const retriable =
+          isUniqueViolation(error) || error instanceof OwnerAlreadyProvisioned;
+        if (!retriable || tries >= 3) throw error;
+      }
+    }
+  }
+
+  private async provisionForOwnerIn(
+    tx: Prisma.TransactionClient,
+    request: OwnerProvisionRequest,
+    requestReference: string | undefined,
+  ): Promise<OwnerProvisionOutcome> {
+    const registration = await tx.ownerRegistration.findUnique({
+      where: { id: request.registrationId },
+    });
+    if (
+      !registration ||
+      registration.status !== 'VERIFIED' ||
+      registration.identitySubject === null ||
+      registration.identityProvider !== request.identityProvider ||
+      registration.identitySubject !== request.identitySubject ||
+      registration.displayName === null
+    ) {
+      return { kind: 'not-eligible' };
+    }
+    if (registration.provisionedTenantId !== null) {
+      return this.ownerOutcome(tx, registration.provisionedTenantId, true);
+    }
+
+    // The exact version offered: the plan's newest PUBLISHED version, of a
+    // plan offered for self-service (never Founding).
+    const version = await tx.subscriptionPlanVersion.findUnique({
+      where: { id: request.planVersionId },
+      include: { plan: true },
+    });
+    if (
+      !version ||
+      version.status !== 'PUBLISHED' ||
+      !version.plan.selfServiceAvailable ||
+      version.plan.key === 'founding'
+    ) {
+      return { kind: 'plan-unavailable' };
+    }
+    const newest = await tx.subscriptionPlanVersion.findFirst({
+      where: { planId: version.planId, status: 'PUBLISHED' },
+      orderBy: { version: 'desc' },
+      select: { id: true },
+    });
+    if (newest?.id !== version.id) return { kind: 'plan-unavailable' };
+    const price = await tx.subscriptionPlanPrice.findUnique({
+      where: { id: request.planPriceId },
+    });
+    if (
+      !price ||
+      price.planId !== version.planId ||
+      price.status !== 'ACTIVE'
+    ) {
+      return { kind: 'plan-unavailable' };
+    }
+    // Never a different price than the one the owner saw.
+    if (
+      price.interval !== request.expectedPrice.interval ||
+      price.currency !== request.expectedPrice.currency ||
+      price.amountMinorUnits !== request.expectedPrice.amountMinorUnits
+    ) {
+      return { kind: 'price-changed' };
+    }
+
+    const slug = await this.freeSlug(tx, request.businessName);
+    const tenant = await tx.tenant.create({
+      data: { slug, name: request.businessName, status: 'ACTIVE' },
+    });
+    const administratorRoleId = await this.createBuiltInRoles(tx, tenant.id);
+
+    const now = new Date();
+    const owner = await tx.internalUser.create({
+      data: {
+        tenantId: tenant.id,
+        // The owner's own verified login, bound by subject from the start.
+        externalProvider: registration.identityProvider,
+        externalSubject: registration.identitySubject,
+        email: registration.email,
+        displayName: registration.displayName,
+        status: 'ACTIVE',
+        activatedAt: now,
+        verifiedEmail: registration.email,
+        emailVerifiedAt: registration.verifiedAt,
+      },
+    });
+    await tx.internalUserRoleAssignment.create({
+      data: {
+        tenantId: tenant.id,
+        internalUserId: owner.id,
+        roleId: administratorRoleId,
+        scopeType: 'CORPORATE',
+        scopeId: null,
+      },
+    });
+
+    const subscription = await tx.tenantSubscription.create({
+      data: {
+        subscriberTenantId: tenant.id,
+        planVersionId: version.id,
+        billingMode: 'BILLED',
+        planPriceId: price.id,
+        status: 'ACTIVE',
+        // SC3e-4 — payment setup is needed from now (a deadline only with
+        // billing enforcement on).
+        paymentSetupRequiredSince: now,
+      },
+    });
+    await tx.tenantSubscriptionEvent.createMany({
+      data: [
+        {
+          subscriptionId: subscription.id,
+          type: 'PLAN_ASSIGNED',
+          toPlanVersionId: version.id,
+          planPriceId: price.id,
+          source: 'OWNER',
+        },
+        {
+          subscriptionId: subscription.id,
+          type: 'PAYMENT_SETUP_REQUIRED',
+          fromStatus: 'ACTIVE',
+          toStatus: 'ACTIVE',
+          planPriceId: price.id,
+          source: 'OWNER',
+        },
+      ],
+    });
+    await tx.tenantBillingContact.create({
+      data: { tenantId: tenant.id, internalUserId: owner.id },
+    });
+
+    // The ONE business of this registration (unique, immutable). Losing a
+    // race here means another request created it: this one rolls back.
+    const linked = await tx.ownerRegistration.updateMany({
+      where: {
+        id: registration.id,
+        status: 'VERIFIED',
+        provisionedTenantId: null,
+      },
+      data: { provisionedTenantId: tenant.id, provisionedAt: now },
+    });
+    if (linked.count !== 1) throw new OwnerAlreadyProvisioned();
+    await tx.platformAuditEvent.create({
+      data: {
+        action: PLATFORM_AUDIT_ACTIONS.tenantSelfProvisioned,
+        outcome: 'SUCCEEDED',
+        actorPlatformOperatorId: null,
+        identityProvider: registration.identityProvider,
+        identitySubject: registration.identitySubject,
+        targetType: 'tenant',
+        targetId: tenant.id,
+        requestReference: requestReference ?? null,
+      },
+    });
+    return {
+      kind: 'created',
+      business: { id: tenant.id, name: tenant.name, slug: tenant.slug },
+    };
+  }
+
+  // An automatic, unique slug (owner decision D7): never shown or chosen
+  // before storefront routing exists.
+  private async freeSlug(
+    tx: Prisma.TransactionClient,
+    businessName: string,
+  ): Promise<string> {
+    for (let i = 0; i < 5; i += 1) {
+      const candidate = slugCandidate(businessName);
+      const taken = await tx.tenant.findUnique({
+        where: { slug: candidate },
+        select: { id: true },
+      });
+      if (!taken) return candidate;
+    }
+    throw new InternalServerErrorException('No free business key was found.');
+  }
+
+  private async ownerOutcome(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    replayed: boolean,
+  ): Promise<OwnerProvisionOutcome> {
+    const tenant = await tx.tenant.findUniqueOrThrow({
+      where: { id: tenantId },
+      select: { id: true, name: true, slug: true },
+    });
+    return { kind: replayed ? 'replayed' : 'created', business: tenant };
   }
 
   // What an already-used key or slug means for this request (null: neither

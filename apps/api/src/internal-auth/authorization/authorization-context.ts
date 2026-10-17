@@ -40,6 +40,7 @@ export type AuthorizedLocations =
 const ALL_MODULES_SUMMARY: InternalEntitlementsSummary = {
   modules: ['core', ...OPTIONAL_MODULE_KEYS],
   planName: null,
+  paymentSetupPending: false,
 };
 
 export class AuthorizationContext {

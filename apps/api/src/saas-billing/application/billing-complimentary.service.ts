@@ -286,6 +286,14 @@ export class BillingComplimentaryService {
         reason: 'Already complimentary (no billing to replace).',
       };
     }
+    // SC4b — a self-service business whose billing was never started with
+    // the provider (payment setup pending).
+    if (subscription.billingProvider === null) {
+      return {
+        eligible: false,
+        reason: 'Billing has not been started with the payment provider yet.',
+      };
+    }
     if (
       subscription.status === 'PAST_DUE' ||
       subscription.status === 'UNPAID'
