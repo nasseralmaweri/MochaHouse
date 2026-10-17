@@ -17,10 +17,16 @@ import {
   type ProviderSubscriptionSnapshot,
 } from '../domain/provider-sync';
 import {
+  INVOICE_HISTORY_CONFLICT_CASE,
+  recordInvoice,
+  type InvoiceRecordOutcome,
+} from './billing-invoice-history';
+import {
   SAAS_BILLING_PROVIDER,
   SaasBillingProviderError,
   type ProviderCheckoutSession,
   type ProviderInvoice,
+  type ProviderInvoiceRecord,
   type ProviderPayableInvoice,
   type ProviderSchedule,
   type ProviderLifecycleEvent,
@@ -63,6 +69,8 @@ type ProviderFacts =
   | {
       kind: 'invoice';
       invoice: ProviderInvoice | null;
+      // SC3e-1 — when the invoice was read (its billing-history version).
+      readAt?: Date;
       // SC3c-2 — a payment of a business that is UNPAID (or an expired
       // trial): the live subscription and its still-open invoices, read so
       // the payment restores access only when nothing is outstanding.
@@ -531,10 +539,33 @@ export class BillingLifecycleService {
                 : await this.provider.retrieveInvoice(waiting),
           };
         }
+      // SC3e-1 — an invoice (or a credit note on it) of one of OUR
+      // subscriptions or customers: its live record.
+      case 'INVOICE_CHANGED': {
+        if (
+          !(await this.isLinked(verified)) &&
+          (verified.externalSubscriptionId !== null ||
+            verified.externalCustomerId === null ||
+            (await this.prisma.tenantSubscription.findUnique({
+              where: {
+                billingProvider_externalCustomerId: {
+                  billingProvider: verified.provider,
+                  externalCustomerId: verified.externalCustomerId,
+                },
+              },
+              select: { id: true },
+            })) === null)
+        ) {
+          return { kind: 'none' };
+        }
+        const invoice = await this.provider.retrieveInvoice(event.reference);
+        return { kind: 'invoice', invoice, recovery: null, readAt: new Date() };
+      }
       case 'PAYMENT_SUCCEEDED':
       case 'PAYMENT_FAILED': {
         if (!(await this.isLinked(verified))) return { kind: 'none' };
         const invoice = await this.provider.retrieveInvoice(event.reference);
+        const readAt = new Date();
         let recovery: Extract<ProviderFacts, { kind: 'invoice' }>['recovery'] =
           null;
         if (
@@ -571,6 +602,7 @@ export class BillingLifecycleService {
         return {
           kind: 'invoice',
           invoice,
+          readAt,
           recovery,
           scheduledChange,
           planChangeSnapshot: planChange
@@ -658,6 +690,9 @@ export class BillingLifecycleService {
         finish,
       );
     }
+    if (verified.event.kind === 'INVOICE_CHANGED') {
+      return this.applyInvoiceChanged(tx, ledgerId, verified, facts, finish);
+    }
     if (verified.externalSubscriptionId === null) {
       return finish('IGNORED', 'NO_SUBSCRIPTION_REFERENCE', null);
     }
@@ -706,6 +741,22 @@ export class BillingLifecycleService {
       verified.claimedTenantId !== subscription.subscriberTenantId
     ) {
       return finish('REJECTED', 'TENANT_CLAIM_MISMATCH', subscription.id);
+    }
+    // SC3e-1 — a payment event's invoice, read live, joins the billing
+    // history (only when it is this subscription's own).
+    if (
+      (verified.event.kind === 'PAYMENT_SUCCEEDED' ||
+        verified.event.kind === 'PAYMENT_FAILED') &&
+      facts.kind === 'invoice' &&
+      facts.invoice?.record
+    ) {
+      await this.recordInvoiceHistory(
+        tx,
+        subscription,
+        facts.invoice.record,
+        facts.readAt ?? new Date(),
+        ledgerId,
+      );
     }
     // SC3b — a subscription change is applied from the provider's LIVE view
     // (read just before this transaction), so its delivery order does not
@@ -1081,7 +1132,13 @@ export class BillingLifecycleService {
     verified: VerifiedBillingProviderEvent,
     event: Exclude<
       ProviderLifecycleEvent,
-      { kind: 'UNSUPPORTED' | 'CHECKOUT_COMPLETED' | 'SUBSCRIPTION_CHANGED' }
+      {
+        kind:
+          | 'UNSUPPORTED'
+          | 'CHECKOUT_COMPLETED'
+          | 'SUBSCRIPTION_CHANGED'
+          | 'INVOICE_CHANGED';
+      }
     >,
   ): Promise<BillingEvent> {
     const at = verified.occurredAt;
@@ -1761,6 +1818,110 @@ export class BillingLifecycleService {
       select: { id: true },
     });
     return found !== null;
+  }
+
+  // SC3e-1 — an invoice changed (or a credit note was issued on it): its
+  // live record joins the billing history of the subscription it belongs
+  // to — found through OUR stored provider ids from the invoice itself, and
+  // checked against the event's own references. Nothing else changes.
+  private async applyInvoiceChanged(
+    tx: Tx,
+    ledgerId: string,
+    verified: VerifiedBillingProviderEvent,
+    facts: ProviderFacts,
+    finish: (
+      status: 'IGNORED' | 'REJECTED' | 'FAILED',
+      outcome: string,
+      subscriptionId: string | null,
+    ) => Promise<BillingEventOutcome>,
+  ): Promise<BillingEventOutcome> {
+    if (facts.kind === 'none') return finish('IGNORED', 'NOT_OURS', null);
+    if (facts.kind !== 'invoice') {
+      return finish('FAILED', 'PROVIDER_READ_MISSING', null);
+    }
+    if (facts.invoice === null) {
+      return finish('IGNORED', 'INVOICE_NOT_FOUND', null);
+    }
+    const record = facts.invoice.record;
+    if (!record || record.externalSubscriptionId === null) {
+      // Not a subscription invoice, or not readable faithfully.
+      return finish('IGNORED', 'INVOICE_NOT_RECORDED', null);
+    }
+    const subscription = await tx.tenantSubscription.findUnique({
+      where: {
+        billingProvider_externalSubscriptionId: {
+          billingProvider: verified.provider,
+          externalSubscriptionId: record.externalSubscriptionId,
+        },
+      },
+    });
+    if (!subscription) return finish('IGNORED', 'NOT_OURS', null);
+    if (
+      (verified.externalSubscriptionId !== null &&
+        verified.externalSubscriptionId !== record.externalSubscriptionId) ||
+      (verified.externalCustomerId !== null &&
+        verified.externalCustomerId !== subscription.externalCustomerId) ||
+      record.externalCustomerId !== subscription.externalCustomerId
+    ) {
+      await this.openCase(tx, 'INVOICE_MISMATCH', subscription.id, ledgerId);
+      return finish('REJECTED', 'INVOICE_MISMATCH', subscription.id);
+    }
+    if (
+      verified.claimedTenantId !== null &&
+      verified.claimedTenantId !== subscription.subscriberTenantId
+    ) {
+      return finish('REJECTED', 'TENANT_CLAIM_MISMATCH', subscription.id);
+    }
+    const outcome = await this.recordInvoiceHistory(
+      tx,
+      subscription,
+      record,
+      facts.readAt ?? new Date(),
+      ledgerId,
+    );
+    if (outcome === 'CONFLICT') {
+      return finish('REJECTED', INVOICE_HISTORY_CONFLICT_CASE, subscription.id);
+    }
+    return this.applied(
+      tx,
+      ledgerId,
+      subscription.id,
+      `INVOICE_${outcome}`,
+      'NONE',
+    );
+  }
+
+  // SC3e-1 — records an invoice in the billing history; a contradiction is
+  // reviewed (nothing written).
+  async recordInvoiceHistory(
+    tx: Tx,
+    subscription: {
+      id: string;
+      billingProvider: string | null;
+      externalSubscriptionId: string | null;
+      externalCustomerId: string | null;
+    },
+    record: ProviderInvoiceRecord,
+    readAt: Date,
+    ledgerId: string | null,
+  ): Promise<InvoiceRecordOutcome> {
+    const outcome = await recordInvoice(
+      tx,
+      subscription,
+      record,
+      readAt,
+      this.provider.livemode,
+    );
+    if (outcome === 'CONFLICT') {
+      await this.openCase(
+        tx,
+        INVOICE_HISTORY_CONFLICT_CASE,
+        subscription.id,
+        ledgerId,
+        `Invoice ${record.externalInvoiceId} (${record.status}) contradicts the recorded billing history. Nothing was written.`,
+      );
+    }
+    return outcome;
   }
 
   private async applied(

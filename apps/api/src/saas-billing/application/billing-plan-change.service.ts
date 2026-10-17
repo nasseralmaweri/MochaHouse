@@ -1404,12 +1404,20 @@ export class BillingPlanChangeService {
   async view(planChangeId: string): Promise<AdminPlanChangeView> {
     const change = await this.prisma.billingPlanChange.findUniqueOrThrow({
       where: { id: planChangeId },
-      include: { toPlanPrice: { include: { plan: true } } },
+      include: {
+        toPlanPrice: { include: { plan: true } },
+        fromPlanVersion: { select: { moduleKeys: true } },
+        toPlanVersion: { select: { moduleKeys: true } },
+      },
     });
     return {
       id: change.id,
       status: viewStatus(change.status),
       timing: change.timing as PlanChangeTiming,
+      modulesLost: moduleDifference(
+        change.fromPlanVersion.moduleKeys,
+        change.toPlanVersion.moduleKeys,
+      ).lost,
       effectiveAt:
         change.timing === 'IMMEDIATE'
           ? null

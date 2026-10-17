@@ -82,6 +82,8 @@ describe('Tenant query audit (report-only)', () => {
           'BillingNotification',
           // SC3d-1
           'BillingPlanChange',
+          // SC3e-1
+          'BillingInvoice',
         ].sort(),
       );
     });

@@ -14,6 +14,8 @@ import {
   type ProviderPriceChangeResult,
   type ProviderRecurringPreview,
   type ProviderSchedule,
+  type ProviderInvoiceRecord,
+  type ProviderPaymentMethodSummary,
   type ProviderInvoiceStatus,
   type ProviderPayableInvoice,
   type ProviderLifecycleEvent,
@@ -46,7 +48,9 @@ export type FakeEventType =
   | 'subscription.cancel_undone'
   | 'subscription.ended'
   | 'checkout.completed'
-  | 'subscription.changed';
+  | 'subscription.changed'
+  // SC3e-1 — an invoice changed (or a credit note was issued on it).
+  | 'invoice.changed';
 
 export interface FakeEventBody {
   id: string;
@@ -127,6 +131,15 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
   private readonly checkoutsByKey = new Map<string, string>();
   readonly subscriptions = new Map<string, ProviderSubscriptionSnapshot>();
   readonly invoices = new Map<string, ProviderPayableInvoice>();
+  // SC3e-1 — what an invoice's history record adds (tests set periods,
+  // credits, numbers, a different subscription or customer...).
+  readonly invoiceDetails = new Map<string, Partial<ProviderInvoiceRecord>>();
+  // SC3e-1 — the payment method shown for a subscription (default: a test
+  // Visa ending 4242 when the subscription has a payment method).
+  readonly paymentMethods = new Map<
+    string,
+    Pick<ProviderPaymentMethodSummary, 'type' | 'card'>
+  >();
   // SC3d-1 — the provider's prices (amount, currency, interval), the
   // subscription schedules it holds, and test hooks for plan changes.
   readonly priceCatalog = new Map<
@@ -317,7 +330,91 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
   retrieveInvoice(externalInvoiceId: string): Promise<ProviderInvoice | null> {
     this.call('retrieveInvoice', externalInvoiceId);
     const invoice = this.invoices.get(externalInvoiceId);
-    return Promise.resolve(invoice ? { ...invoice } : null);
+    return Promise.resolve(
+      invoice ? { ...invoice, record: this.invoiceRecord(invoice) } : null,
+    );
+  }
+
+  listInvoices(
+    externalSubscriptionId: string,
+  ): Promise<ProviderInvoiceRecord[]> {
+    this.call('listInvoices', externalSubscriptionId);
+    return Promise.resolve(
+      [...this.invoices.values()]
+        .map((invoice) => this.invoiceRecord(invoice))
+        .filter(
+          (record) => record.externalSubscriptionId === externalSubscriptionId,
+        )
+        .sort((a, b) => b.issuedAt.getTime() - a.issuedAt.getTime()),
+    );
+  }
+
+  retrievePaymentMethod(
+    externalSubscriptionId: string,
+  ): Promise<ProviderPaymentMethodSummary> {
+    this.call('retrievePaymentMethod', externalSubscriptionId);
+    const sub = this.subscriptions.get(externalSubscriptionId);
+    if (!sub) {
+      return Promise.reject(new SaasBillingProviderError('resource_missing'));
+    }
+    const source = sub.hasPaymentMethod
+      ? (sub.paymentMethodSource ?? 'SUBSCRIPTION')
+      : null;
+    const shown =
+      this.paymentMethods.get(externalSubscriptionId) ??
+      (source === null
+        ? { type: null, card: null }
+        : {
+            type: 'card',
+            card: { brand: 'visa', last4: '4242', expMonth: 12, expYear: 2030 },
+          });
+    return Promise.resolve({
+      externalSubscriptionId,
+      externalCustomerId: sub.externalCustomerId,
+      livemode: false,
+      source,
+      ...shown,
+    });
+  }
+
+  // SC3e-1 — an invoice's history record (with its document links).
+  private invoiceRecord(
+    invoice: ProviderPayableInvoice,
+  ): ProviderInvoiceRecord {
+    const paid = invoice.status === 'paid';
+    return {
+      externalInvoiceId: invoice.externalInvoiceId,
+      externalCustomerId: invoice.externalCustomerId,
+      externalSubscriptionId: invoice.externalSubscriptionId,
+      livemode: invoice.livemode,
+      number:
+        invoice.status === 'draft'
+          ? null
+          : `FAKE-${invoice.externalInvoiceId.slice(-6).toUpperCase()}`,
+      status: invoice.status,
+      billingReason: invoice.billingReason ?? null,
+      currency: (invoice.currency || 'usd').toLowerCase(),
+      totalMinorUnits: invoice.amountDueMinorUnits,
+      amountDueMinorUnits: invoice.amountDueMinorUnits,
+      amountPaidMinorUnits: invoice.amountPaidMinorUnits,
+      amountRemainingMinorUnits:
+        invoice.status === 'open' || invoice.status === 'uncollectible'
+          ? Math.max(
+              0,
+              invoice.amountDueMinorUnits - invoice.amountPaidMinorUnits,
+            )
+          : 0,
+      postPaymentCreditMinorUnits: 0,
+      prePaymentCreditMinorUnits: 0,
+      balanceAppliedMinorUnits: 0,
+      periodStart: null,
+      periodEnd: null,
+      issuedAt: invoice.createdAt,
+      paidAt: paid ? invoice.createdAt : null,
+      hostedInvoiceUrl: invoice.hostedInvoiceUrl,
+      invoicePdfUrl: `https://pay.fake.test/invoice/${invoice.externalInvoiceId}/pdf`,
+      ...this.invoiceDetails.get(invoice.externalInvoiceId),
+    };
   }
 
   listOpenInvoices(
@@ -982,6 +1079,10 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
       }
       case 'subscription.changed':
         return { kind: 'SUBSCRIPTION_CHANGED' };
+      case 'invoice.changed':
+        return reference
+          ? { kind: 'INVOICE_CHANGED', reference }
+          : { kind: 'UNSUPPORTED' };
       default:
         return { kind: 'UNSUPPORTED' };
     }

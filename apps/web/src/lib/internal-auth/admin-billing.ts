@@ -8,6 +8,9 @@ import type {
   AdminBillingCheckoutResponse,
   AdminBillingRecoveryResponse,
   AdminBillingResponse,
+  AdminBillingPaymentMethodResponse,
+  BillingInvoiceDocumentKind,
+  BillingInvoiceListResponse,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
 import { internalAuthHeaders } from "./active-business";
@@ -16,7 +19,9 @@ import {
   isAllowedCheckoutUrl,
   BILLING_MESSAGES,
   isAllowedRecoveryUrl,
+  isAllowedInvoiceDocumentUrl,
 } from "@/lib/admin/billing";
+import { documentRefusalMessage } from "@/lib/admin/billing-history";
 import { planChangeRefusalMessage } from "@/lib/admin/plan-change";
 
 // SC3b — server-only calls to the business's own billing API. The API is the
@@ -88,6 +93,93 @@ export async function openAdminBillingRecovery(
   const url = (body as AdminBillingRecoveryResponse | null)?.url;
   if (!isAllowedRecoveryUrl(url, kind)) {
     return { outcome: "refused", message: BILLING_MESSAGES.recoveryUnavailable };
+  }
+  return { outcome: "redirect", url };
+}
+
+// --- SC3e-1: billing history --------------------------------------------------------
+// The request carries only the API's own page cursor or OUR invoice id; the
+// API decides the business and checks the invoice is its own.
+
+export type AdminInvoicesResult =
+  | { outcome: "success"; data: BillingInvoiceListResponse }
+  | { outcome: "unauthenticated" }
+  | { outcome: "forbidden" }
+  | { outcome: "invalid-page" }
+  | { outcome: "error" };
+
+export async function getAdminInvoices(cursor: string | null): Promise<AdminInvoicesResult> {
+  const token = await getInternalSessionToken();
+  if (!token) return { outcome: "unauthenticated" };
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  let response: Response;
+  try {
+    response = await fetch(`${getApiUrl()}/admin/billing/invoices${query}`, {
+      headers: await internalAuthHeaders(token),
+      cache: "no-store",
+    });
+  } catch {
+    return { outcome: "error" };
+  }
+  if (response.status === 401) return { outcome: "unauthenticated" };
+  if (response.status === 403) return { outcome: "forbidden" };
+  if (response.status === 400) return { outcome: "invalid-page" };
+  if (!response.ok) return { outcome: "error" };
+  try {
+    return { outcome: "success", data: (await response.json()) as BillingInvoiceListResponse };
+  } catch {
+    return { outcome: "error" };
+  }
+}
+
+export type AdminPaymentMethodResult =
+  | { outcome: "success"; data: AdminBillingPaymentMethodResponse }
+  | { outcome: "unavailable" };
+
+export async function getAdminPaymentMethod(): Promise<AdminPaymentMethodResult> {
+  const token = await getInternalSessionToken();
+  if (!token) return { outcome: "unavailable" };
+  try {
+    const response = await fetch(`${getApiUrl()}/admin/billing/payment-method`, {
+      headers: await internalAuthHeaders(token),
+      cache: "no-store",
+    });
+    if (!response.ok) return { outcome: "unavailable" };
+    return { outcome: "success", data: (await response.json()) as AdminBillingPaymentMethodResponse };
+  } catch {
+    return { outcome: "unavailable" };
+  }
+}
+
+// The provider's own page or PDF for one invoice (checked against the
+// provider's hosts before the browser is sent there).
+export async function openAdminInvoiceDocument(
+  invoiceId: string,
+  kind: BillingInvoiceDocumentKind,
+): Promise<OpenCheckoutResult> {
+  const token = await getInternalSessionToken();
+  if (!token) return { outcome: "refused", message: documentRefusalMessage(401, null) };
+  let response: Response;
+  try {
+    response = await fetch(
+      `${getApiUrl()}/admin/billing/invoices/${encodeURIComponent(invoiceId)}/document`,
+      {
+        method: "POST",
+        headers: { ...(await internalAuthHeaders(token)), "Content-Type": "application/json" },
+        body: JSON.stringify({ kind }),
+        cache: "no-store",
+      },
+    );
+  } catch {
+    return { outcome: "refused", message: documentRefusalMessage(null, null) };
+  }
+  const body = (await response.json().catch(() => null)) as unknown;
+  if (!response.ok) {
+    return { outcome: "refused", message: documentRefusalMessage(response.status, body) };
+  }
+  const url = (body as AdminBillingRecoveryResponse | null)?.url;
+  if (!isAllowedInvoiceDocumentUrl(url, kind)) {
+    return { outcome: "refused", message: documentRefusalMessage(null, null) };
   }
   return { outcome: "redirect", url };
 }

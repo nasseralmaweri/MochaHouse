@@ -1386,3 +1386,184 @@ describe('SC3d-2 Stripe reads for plan changes (mocked HTTP)', () => {
     }
   });
 });
+
+// SC3e-1 — what the billing history and payment-method display rely on.
+describe('SC3e-1 Stripe billing history reads (mocked HTTP)', () => {
+  const paidInvoice = {
+    id: 'in_hist',
+    object: 'invoice',
+    livemode: false,
+    status: 'paid',
+    number: 'ABC-0001',
+    customer: 'cus_1',
+    currency: 'usd',
+    billing_reason: 'subscription_cycle',
+    total: 4900,
+    amount_due: 4900,
+    amount_paid: 4400,
+    amount_remaining: 0,
+    starting_balance: -500,
+    ending_balance: 0,
+    pre_payment_credit_notes_amount: 0,
+    post_payment_credit_notes_amount: 1000,
+    created: 1_800_000_000,
+    status_transitions: { paid_at: 1_800_000_100 },
+    hosted_invoice_url: 'https://invoice.stripe.com/i/acct_1/test_x',
+    invoice_pdf: 'https://pay.stripe.com/invoice/acct_1/test_x/pdf',
+    parent: { subscription_details: { subscription: 'sub_1' } },
+    lines: {
+      object: 'list',
+      data: [{ period: { start: 1_800_000_000, end: 1_802_592_000 } }],
+    },
+  };
+
+  it("maps an invoice's history record (amounts, credits, period, paid date, documents)", async () => {
+    const { provider } = harness({
+      'GET /v1/invoices/in_hist': () => [200, paidInvoice],
+    });
+    const invoice = await provider.retrieveInvoice('in_hist');
+    expect(invoice?.record).toEqual({
+      externalInvoiceId: 'in_hist',
+      externalCustomerId: 'cus_1',
+      externalSubscriptionId: 'sub_1',
+      livemode: false,
+      number: 'ABC-0001',
+      status: 'paid',
+      billingReason: 'subscription_cycle',
+      currency: 'usd',
+      totalMinorUnits: 4900,
+      amountDueMinorUnits: 4900,
+      amountPaidMinorUnits: 4400,
+      amountRemainingMinorUnits: 0,
+      postPaymentCreditMinorUnits: 1000,
+      prePaymentCreditMinorUnits: 0,
+      balanceAppliedMinorUnits: 500,
+      periodStart: new Date(1_800_000_000_000),
+      periodEnd: new Date(1_802_592_000_000),
+      issuedAt: new Date(1_800_000_000_000),
+      paidAt: new Date(1_800_000_100_000),
+      hostedInvoiceUrl: 'https://invoice.stripe.com/i/acct_1/test_x',
+      invoicePdfUrl: 'https://pay.stripe.com/invoice/acct_1/test_x/pdf',
+    });
+  });
+
+  it('an invoice it cannot read faithfully has no record (never guessed)', async () => {
+    const { provider } = harness({
+      'GET /v1/invoices/in_bad': () => [
+        200,
+        { ...paidInvoice, id: 'in_bad', status: 'mystery', total: 'x' },
+      ],
+    });
+    expect((await provider.retrieveInvoice('in_bad'))?.record).toBeNull();
+  });
+
+  it("lists a subscription's invoices, keeping only that subscription's", async () => {
+    const { provider, sent } = harness({
+      'GET /v1/invoices': () => [
+        200,
+        {
+          object: 'list',
+          has_more: false,
+          data: [
+            paidInvoice,
+            {
+              ...paidInvoice,
+              id: 'in_other',
+              parent: { subscription_details: { subscription: 'sub_2' } },
+            },
+          ],
+        },
+      ],
+    });
+    const records = await provider.listInvoices('sub_1');
+    expect(records.map((r) => r.externalInvoiceId)).toEqual(['in_hist']);
+    expect(sent[0].body.get('subscription')).toBe('sub_1');
+  });
+
+  it('a payment method is reduced to brand, last four and expiry', async () => {
+    const { provider } = harness({
+      'GET /v1/subscriptions/sub_1': () => [
+        200,
+        {
+          id: 'sub_1',
+          object: 'subscription',
+          livemode: false,
+          collection_method: 'charge_automatically',
+          customer: {
+            id: 'cus_1',
+            object: 'customer',
+            livemode: false,
+            invoice_settings: { default_payment_method: null },
+          },
+          default_payment_method: {
+            id: 'pm_1',
+            object: 'payment_method',
+            type: 'card',
+            billing_details: { name: 'Jane Owner', email: 'jane@example.com' },
+            card: {
+              brand: 'visa',
+              last4: '4242',
+              exp_month: 12,
+              exp_year: 2030,
+              fingerprint: 'fp_secret',
+              country: 'US',
+            },
+          },
+        },
+      ],
+    });
+    const summary = await provider.retrievePaymentMethod('sub_1');
+    expect(summary).toEqual({
+      externalSubscriptionId: 'sub_1',
+      externalCustomerId: 'cus_1',
+      livemode: false,
+      source: 'SUBSCRIPTION',
+      type: 'card',
+      card: { brand: 'visa', last4: '4242', expMonth: 12, expYear: 2030 },
+    });
+    expect(JSON.stringify(summary)).not.toMatch(/pm_1|fp_secret|Jane|jane@/);
+  });
+
+  it('invoice and credit-note events re-read the invoice', () => {
+    const { stripe, provider } = harness({});
+    for (const type of [
+      'invoice.finalized',
+      'invoice.updated',
+      'invoice.voided',
+      'invoice.marked_uncollectible',
+    ]) {
+      expect(
+        provider.verifyEvent(
+          signed(stripe, event(type, { ...paidInvoice, object: 'invoice' })),
+        ),
+      ).toMatchObject({
+        event: { kind: 'INVOICE_CHANGED', reference: 'in_hist' },
+        externalSubscriptionId: 'sub_1',
+        externalCustomerId: 'cus_1',
+      });
+    }
+    for (const type of [
+      'credit_note.created',
+      'credit_note.updated',
+      'credit_note.voided',
+    ]) {
+      expect(
+        provider.verifyEvent(
+          signed(
+            stripe,
+            event(type, {
+              id: 'cn_1',
+              object: 'credit_note',
+              invoice: 'in_hist',
+              customer: 'cus_1',
+            }),
+          ),
+        ),
+      ).toMatchObject({
+        event: { kind: 'INVOICE_CHANGED', reference: 'in_hist' },
+        externalSubscriptionId: null,
+        externalCustomerId: 'cus_1',
+      });
+    }
+  });
+});

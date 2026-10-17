@@ -40,6 +40,7 @@ const view = (
   status,
   timing: "IMMEDIATE",
   effectiveAt: null,
+  modulesLost: [],
   target: { planName: "Pro", price: { amountMinorUnits: 9900, currency: "USD", interval: "MONTH" } },
   amountDueMinorUnits: 3333,
   currency: "USD",
@@ -195,6 +196,17 @@ describe("SC3d-3 scheduled changes", () => {
     expect(planChangeStatusMessage(view("CANCELED", { timing: "PERIOD_END", effectiveAt }))).toMatch(
       /plan stays as it is/,
     );
+    // SC3e-1 — the date and the features it removes (data kept).
+    const lost = planChangeStatusMessage(
+      view("SCHEDULED", {
+        timing: "PERIOD_END",
+        effectiveAt: "2026-11-05T00:00:00Z",
+        modulesLost: [{ key: "marketing", label: "Marketing" }],
+      }),
+    );
+    expect(lost).toMatch(/on November 5, 2026/);
+    expect(lost).toMatch(/no longer have: Marketing. Your data in them is kept, not deleted./);
+    expect(planChangeStatusMessage(scheduled)).not.toMatch(/no longer have/);
     // Applied at the switch: never claims a payment was confirmed.
     const applied = planChangeStatusMessage(view("APPLIED", { timing: "PERIOD_END", effectiveAt }));
     expect(applied).toMatch(/now Pro/);

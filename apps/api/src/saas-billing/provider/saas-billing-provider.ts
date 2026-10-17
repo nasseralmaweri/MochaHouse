@@ -1,4 +1,7 @@
-import type { ProviderSubscriptionSnapshot } from '../domain/provider-sync';
+import type {
+  PaymentMethodSource,
+  ProviderSubscriptionSnapshot,
+} from '../domain/provider-sync';
 import type { ProviderPortalConfiguration } from './portal-configuration';
 
 // SC3a/SC3b — the CENTERIVO SaaS subscription-billing provider boundary.
@@ -39,6 +42,9 @@ export type ProviderLifecycleEvent =
   // SC3b — the provider subscription changed: the live subscription is
   // re-read and our state brought in line with it (provider-sync.ts).
   | { kind: 'SUBSCRIPTION_CHANGED' }
+  // SC3e-1 — an invoice (or a credit note on it) changed: its live record
+  // is re-read for the business's billing history (nothing else changes).
+  | { kind: 'INVOICE_CHANGED'; reference: string }
   // A type the lifecycle does not act on: recorded and ignored.
   | { kind: 'UNSUPPORTED' };
 
@@ -89,6 +95,56 @@ export interface ProviderInvoice {
   // change) and its currency (lower-case). Optional: undefined = not read.
   billingReason?: string | null;
   currency?: string | null;
+  // SC3e-1 — the full record for the billing history, from the same read
+  // (undefined: not read).
+  record?: ProviderInvoiceRecord | null;
+}
+
+// SC3e-1 — an invoice as the billing history records it. The document links
+// are only ever handed to the browser for one request; never stored.
+export interface ProviderInvoiceRecord {
+  externalInvoiceId: string;
+  externalCustomerId: string | null;
+  externalSubscriptionId: string | null;
+  livemode: boolean;
+  number: string | null;
+  status: ProviderInvoiceStatus;
+  billingReason: string | null;
+  // Lower-case ISO currency.
+  currency: string;
+  totalMinorUnits: number;
+  amountDueMinorUnits: number;
+  amountPaidMinorUnits: number;
+  amountRemainingMinorUnits: number;
+  // Credit notes after payment (refunds or account credits).
+  postPaymentCreditMinorUnits: number;
+  // Credit notes before payment, and account balance applied to it.
+  prePaymentCreditMinorUnits: number;
+  balanceAppliedMinorUnits: number;
+  periodStart: Date | null;
+  periodEnd: Date | null;
+  issuedAt: Date;
+  paidAt: Date | null;
+  hostedInvoiceUrl: string | null;
+  invoicePdfUrl: string | null;
+}
+
+// SC3e-1 — the payment method the provider will charge, reduced to what may
+// be shown (brand, last four digits, expiry). Never a card number,
+// fingerprint, billing address or provider payment-method id.
+export interface ProviderPaymentMethodSummary {
+  externalSubscriptionId: string;
+  externalCustomerId: string | null;
+  livemode: boolean;
+  source: PaymentMethodSource;
+  // card | us_bank_account | sepa_debit | link | … (null: none)
+  type: string | null;
+  card: {
+    brand: string;
+    last4: string;
+    expMonth: number;
+    expYear: number;
+  } | null;
 }
 
 // SC3c-2 — an invoice that can be paid on the provider's hosted page.
@@ -227,6 +283,17 @@ export interface SaasBillingProvider {
   // null when the provider has no such invoice.
   retrieveInvoice(externalInvoiceId: string): Promise<ProviderInvoice | null>;
 
+  // SC3e-1 — every invoice of a subscription (newest first, capped), for
+  // the reconciliation sweep's history backfill.
+  listInvoices(
+    externalSubscriptionId: string,
+  ): Promise<ProviderInvoiceRecord[]>;
+
+  // SC3e-1 — what may be shown of the payment method the provider charges.
+  retrievePaymentMethod(
+    externalSubscriptionId: string,
+  ): Promise<ProviderPaymentMethodSummary>;
+
   // SC3c-2 — the subscription's OPEN invoices, oldest first.
   listOpenInvoices(
     externalSubscriptionId: string,
@@ -326,6 +393,8 @@ export class DisabledSaasBillingProvider implements SaasBillingProvider {
   retrieveCheckoutSession = unavailable;
   retrieveSubscription = unavailable;
   retrieveInvoice = unavailable;
+  listInvoices = unavailable;
+  retrievePaymentMethod = unavailable;
   listOpenInvoices = unavailable;
   readonly portalConfigurationId = null;
   readonly expectedAccountId = null;

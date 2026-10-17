@@ -13,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type {
+  BillingInvoiceListResponse,
   BillingPlanChangePreview,
   PlatformBillingOverview,
   PlatformBillingEnforcementSweepResponse,
@@ -34,6 +35,7 @@ import {
 } from '../domain/pricing';
 import { BillingCatalogService } from '../application/billing-catalog.service';
 import { BillingAccountService } from '../application/billing-account.service';
+import { BillingHistoryService } from '../application/billing-history.service';
 import { BillingReconciliationService } from '../application/billing-reconciliation.service';
 import { BillingEnforcementService } from '../application/billing-enforcement.service';
 import {
@@ -84,6 +86,7 @@ export class PlatformBillingController {
     private readonly enforcement: BillingEnforcementService,
     private readonly operations: BillingOperationsService,
     private readonly planChanges: BillingPlanChangeService,
+    private readonly history: BillingHistoryService,
   ) {}
 
   // SC3d-1 — a PREVIEW of a business's plan change on its behalf (nothing
@@ -164,6 +167,16 @@ export class PlatformBillingController {
     @Param('tenantId') tenantId: string,
   ): Promise<PlatformTenantBillingResponse> {
     return this.accounts.platformView(tenantId);
+  }
+
+  // SC3e-1 — a business's invoices (read-only).
+  @Header('Cache-Control', 'no-store')
+  @Get('tenants/:tenantId/billing/invoices')
+  getTenantInvoices(
+    @Param('tenantId') tenantId: string,
+    @Query('cursor') cursor: unknown,
+  ): Promise<BillingInvoiceListResponse> {
+    return this.history.list(tenantId, cursor);
   }
 
   @UseGuards(RateLimitGuard)

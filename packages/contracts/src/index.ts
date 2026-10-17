@@ -2048,6 +2048,83 @@ export interface AdminBillingRecoveryResponse {
   url: string;
 }
 
+// --- SC3e-1: billing history ------------------------------------------------------
+// The business's CENTERIVO subscription invoices, as the billing provider
+// last reported them (the provider stays authoritative for money). Never a
+// restaurant order, payment or refund.
+
+export type BillingInvoiceStatus = "open" | "paid" | "void" | "uncollectible";
+// Why the invoice was issued (the provider's reason, simplified).
+export type BillingInvoiceReason =
+  | "SUBSCRIPTION_START"
+  | "RENEWAL"
+  | "PLAN_CHANGE"
+  | "OTHER";
+
+export interface BillingInvoiceView {
+  // Our id (the only one a client ever sends back).
+  id: string;
+  number: string | null;
+  status: BillingInvoiceStatus;
+  reason: BillingInvoiceReason;
+  // Upper-case ISO currency.
+  currency: string;
+  totalMinorUnits: number;
+  amountPaidMinorUnits: number;
+  amountRemainingMinorUnits: number;
+  // Credit notes issued after payment (refunds or account credits).
+  refundedOrCreditedMinorUnits: number;
+  // Credit notes before payment and account credit balance used.
+  creditAppliedMinorUnits: number;
+  periodStart: string | null;
+  periodEnd: string | null;
+  issuedAt: string;
+  paidAt: string | null;
+}
+
+// GET /api/v1/admin/billing/invoices?cursor= (billing.view) and
+// GET /api/v1/platform/tenants/:tenantId/billing/invoices?cursor=
+// (operators): newest first, 20 a page; nextCursor null on the last page.
+//   400 an unreadable cursor
+export interface BillingInvoiceListResponse {
+  invoices: BillingInvoiceView[];
+  nextCursor: string | null;
+}
+
+// POST /api/v1/admin/billing/invoices/:invoiceId/document — body exactly
+// { kind } (billing.view): the billing provider's own page or PDF for that
+// invoice of THIS business, resolved for this request only (never stored).
+//   404 not this business's invoice
+//   409 BILLING_DOCUMENT_UNAVAILABLE — the provider offers no document
+//   503 BILLING_UNAVAILABLE
+export type BillingInvoiceDocumentKind = "invoice" | "pdf";
+export interface BillingInvoiceDocumentRequest {
+  kind: BillingInvoiceDocumentKind;
+}
+export const BILLING_DOCUMENT_UNAVAILABLE = "BILLING_DOCUMENT_UNAVAILABLE";
+
+// GET /api/v1/admin/billing/payment-method (billing.view): what may be shown
+// of the payment method the provider charges — never a card number,
+// fingerprint, billing address or provider id. Changing it is the provider's
+// Customer Portal (billing.manage).
+//   503 BILLING_UNAVAILABLE
+export interface BillingPaymentMethodView {
+  // NONE: nothing to charge; CARD: a card (shown); OTHER: another method or
+  // one that cannot be shown.
+  kind: "NONE" | "CARD" | "OTHER";
+  card: {
+    brand: string;
+    last4: string;
+    expMonth: number;
+    expYear: number;
+    expired: boolean;
+  } | null;
+}
+export interface AdminBillingPaymentMethodResponse {
+  // null: this business is not billed by a provider.
+  paymentMethod: BillingPaymentMethodView | null;
+}
+
 // --- SC3d: plan changes ---------------------------------------------------------
 // SC3d-1 — a PREVIEW of changing the business's plan or price, with the
 // billing provider's own calculation. Nothing is charged or changed; the
@@ -2167,6 +2244,8 @@ export interface AdminPlanChangeView {
   id: string;
   status: AdminPlanChangeStatus;
   timing: BillingPlanChangeTiming;
+  // SC3e-1 — the features the change removes (when it takes effect).
+  modulesLost: { key: string; label: string }[];
   // When a scheduled change takes effect (null: immediate).
   effectiveAt: string | null;
   target: BillingPlanChangeSide;
@@ -2350,6 +2429,8 @@ export interface PlatformReconciliationRunResponse {
   subscriptionsChecked: number;
   casesOpened: number;
   checkoutsExpired: number;
+  // SC3e-1 — invoices added to (or updated in) the billing history.
+  invoicesRecorded: number;
 }
 
 // POST /api/v1/platform/billing/enforcement/sweep (SC3c-1) — applies due

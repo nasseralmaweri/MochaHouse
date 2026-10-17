@@ -21,6 +21,7 @@ import type {
 } from '../domain/provider-sync';
 import {
   SAAS_BILLING_PROVIDER,
+  SaasBillingProviderError,
   type SaasBillingProvider,
 } from '../provider/saas-billing-provider';
 import { BillingLifecycleService } from './billing-lifecycle.service';
@@ -96,6 +97,7 @@ export class BillingReconciliationService {
     const before = await this.prisma.billingReconciliationCase.count();
     let subscriptionsChecked = 0;
     let checkoutsExpired = 0;
+    let invoicesRecorded = 0;
 
     if (this.provider.available) {
       // 1. Our state against the provider's live subscription.
@@ -153,6 +155,34 @@ export class BillingReconciliationService {
         }
         if (kind !== null) {
           await this.open(kind, subscription.id, null, detail);
+        }
+        // SC3e-1 — the subscription's invoices into its billing history
+        // (the backstop for missed or delayed invoice events).
+        try {
+          const readAt = new Date();
+          const records = await this.provider.listInvoices(
+            subscription.externalSubscriptionId!,
+          );
+          for (const record of records) {
+            const outcome = await runSerializable(this.prisma, (tx) =>
+              this.lifecycle.recordInvoiceHistory(
+                tx,
+                subscription,
+                record,
+                readAt,
+                null,
+              ),
+            );
+            if (outcome === 'RECORDED') invoicesRecorded++;
+          }
+        } catch (error) {
+          if (!(error instanceof SaasBillingProviderError)) throw error;
+          await this.open(
+            'PROVIDER_UNREADABLE',
+            subscription.id,
+            null,
+            'The provider invoices could not be read.',
+          );
         }
       }
 
@@ -228,6 +258,7 @@ export class BillingReconciliationService {
       subscriptionsChecked,
       casesOpened: after - before,
       checkoutsExpired,
+      invoicesRecorded,
     };
   }
 

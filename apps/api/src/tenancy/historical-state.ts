@@ -46,6 +46,8 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'BillingNotification',
   // SC3d-1 — plan changes (20261030090000).
   'BillingPlanChange',
+  // SC3e-1 — billing history (20261101090000).
+  'BillingInvoice',
 ]);
 
 // Columns added after the 4C-era migrations to tables that already existed.

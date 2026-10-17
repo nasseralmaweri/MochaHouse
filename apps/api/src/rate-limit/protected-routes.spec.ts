@@ -168,6 +168,7 @@ const PROTECTED: ReadonlyArray<{
       'confirmPlanChange',
       'payPlanChange',
       'cancelPlanChange',
+      'invoiceDocument',
     ] as const
   ).map((method) => ({
     controller: AdminBillingController,

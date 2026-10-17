@@ -473,6 +473,8 @@ describe('SC3d-3 scheduled plan changes (integration, scratch database)', () => 
       status: 'SCHEDULED',
       timing: 'PERIOD_END',
       effectiveAt: b.periodEnd.toISOString(),
+      // SC3e-1 — the features it removes, for the status line.
+      modulesLost: [expect.objectContaining({ key: 'marketing' })],
     });
     // One schedule, with the change's own key; nothing charged.
     expect(callsOf('schedulePriceChangeAtPeriodEnd', p.previewId)).toBe(1);

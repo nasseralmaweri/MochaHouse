@@ -33,6 +33,12 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/admin/billing/plan-change/pay': { scope: 'tenant' },
   // SC3d-3 — cancelling a scheduled change.
   'POST /api/v1/admin/billing/plan-change/cancel': { scope: 'tenant' },
+  // SC3e-1 — billing history, invoice documents, payment method (read-only).
+  'GET /api/v1/admin/billing/invoices': { scope: 'tenant' },
+  'POST /api/v1/admin/billing/invoices/:invoiceId/document': {
+    scope: 'tenant',
+  },
+  'GET /api/v1/admin/billing/payment-method': { scope: 'tenant' },
   'GET /api/v1/admin/approvals/:approvalRequestId': { scope: 'tenant' },
   'GET /api/v1/admin/audit': { scope: 'tenant' },
   'GET /api/v1/admin/careers/applications': { scope: 'tenant' },
@@ -381,6 +387,10 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'GET /api/v1/platform/tenants/:tenantId/billing': {
     scope: 'platform',
     note: "SC3b — a business's billing state.",
+  },
+  'GET /api/v1/platform/tenants/:tenantId/billing/invoices': {
+    scope: 'platform',
+    note: "SC3e-1 — a business's invoice history (read-only).",
   },
   'POST /api/v1/platform/tenants/:tenantId/billing/start': {
     scope: 'platform',
