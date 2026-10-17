@@ -3135,4 +3135,14 @@ export interface PlatformOnboardingBusinessListResponse {
         stuck: number;
     };
 }
+export declare const STOREFRONT_HOST_HEADER = "x-centerivo-storefront-host";
+export declare const STOREFRONT_HOST_TIMESTAMP_HEADER = "x-centerivo-storefront-ts";
+export declare const STOREFRONT_HOST_SIGNATURE_HEADER = "x-centerivo-storefront-sig";
+export declare const STOREFRONT_CONTEXT_MAX_SKEW_SECONDS = 60;
+export declare function storefrontContextMessage(hostname: string, seconds: number): string;
+export declare const STOREFRONT_NOT_FOUND = "STOREFRONT_NOT_FOUND";
+export declare function normalizeStorefrontHost(raw: unknown): string | null;
+export declare const RESERVED_STOREFRONT_LABELS: readonly string[];
+export declare function isUsableStorefrontLabel(slug: unknown): boolean;
+export declare function platformStorefrontHost(slug: string, storefrontDomain: string): string | null;
 //# sourceMappingURL=index.d.ts.map

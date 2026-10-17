@@ -9,12 +9,18 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 import {
   HttpTenantContextResolver,
   SingleTenantHttpContextResolver,
+  StorefrontHostHttpContextResolver,
 } from './http-tenant-context.resolver';
 import {
   SINGLE_TENANT_RESOLUTION,
   singleTenantResolutionProvider,
 } from './single-tenant-resolution.provider';
 import { RequestIdMiddleware } from './request-id.middleware';
+import {
+  STOREFRONT_ROUTING_CONFIG,
+  type StorefrontRoutingConfig,
+  storefrontRoutingConfig,
+} from './storefront-context';
 import { TenantContextInterceptor } from './tenant-context.interceptor';
 import { TenantContextMiddleware } from './tenant-context.middleware';
 import { TenantDatabase } from './tenant-database';
@@ -57,7 +63,11 @@ export const BILLING_WEBHOOK_ROUTES = [
 //     request via TenantContextMiddleware (S0F: member routes excluded —
 //     see MEMBER_TENANT_ROUTES);
 //   - mirrors a guard-established TenantContext into the async-scoped
-//     diagnostics carrier (TenantContextInterceptor, S0F).
+//     diagnostics carrier (TenantContextInterceptor, S0F);
+//   - SC4f-1 — reads STOREFRONT_HOST_ROUTING_ENABLED once at startup (a
+//     malformed value, or routing on without STOREFRONT_CONTEXT_SECRET,
+//     fails startup) and picks the resolver: the single business (off, the
+//     default) or the approved hostname registry (on).
 // Global so any module can inject TenantDatabase / the resolver without
 // re-importing; PrismaService comes from the @Global PrismaModule.
 @Global()
@@ -65,8 +75,23 @@ export const BILLING_WEBHOOK_ROUTES = [
   providers: [
     singleTenantResolutionProvider,
     {
+      provide: STOREFRONT_ROUTING_CONFIG,
+      useFactory: () => storefrontRoutingConfig(),
+    },
+    SingleTenantHttpContextResolver,
+    StorefrontHostHttpContextResolver,
+    {
       provide: HttpTenantContextResolver,
-      useClass: SingleTenantHttpContextResolver,
+      inject: [
+        STOREFRONT_ROUTING_CONFIG,
+        SingleTenantHttpContextResolver,
+        StorefrontHostHttpContextResolver,
+      ],
+      useFactory: (
+        routing: StorefrontRoutingConfig,
+        single: SingleTenantHttpContextResolver,
+        hosts: StorefrontHostHttpContextResolver,
+      ) => (routing.hostRouting ? hosts : single),
     },
     RequestIdMiddleware,
     TenantContextMiddleware,
@@ -75,6 +100,7 @@ export const BILLING_WEBHOOK_ROUTES = [
   ],
   exports: [
     SINGLE_TENANT_RESOLUTION,
+    STOREFRONT_ROUTING_CONFIG,
     HttpTenantContextResolver,
     TenantDatabase,
   ],

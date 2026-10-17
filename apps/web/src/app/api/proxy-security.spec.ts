@@ -1,4 +1,7 @@
 import fs from "node:fs";
+
+// SC4f-1 — storefront-context.ts is server-only; stand the marker in.
+jest.mock("server-only", () => ({}));
 import path from "node:path";
 import { NextRequest } from "next/server";
 

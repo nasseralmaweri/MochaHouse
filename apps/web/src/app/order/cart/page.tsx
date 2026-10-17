@@ -244,7 +244,9 @@ export default function OrderCartPage() {
           <span className="text-lg font-semibold text-text-primary">
             {isRevalidating
               ? "…"
-              : formatPrice(subtotal, cart.lines[0]?.currency ?? "USD")}
+              : revalidationFailed
+                ? "—"
+                : formatPrice(subtotal, cart.lines[0]?.currency ?? "USD")}
           </span>
         </div>
         <p className="text-xs text-text-muted">

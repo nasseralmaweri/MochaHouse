@@ -10,6 +10,10 @@ import {
   RateLimitConfigurationError,
   assertRateLimitConfigSafe,
 } from './rate-limit/rate-limit.config';
+import {
+  StorefrontRoutingConfigError,
+  storefrontRoutingConfig,
+} from './tenancy/storefront-context';
 
 async function bootstrap() {
   // ESP-02 — fail closed BEFORE anything is created or listening: no dev
@@ -20,6 +24,9 @@ async function bootstrap() {
   // in a production-like environment, refuses to start (see
   // docs/security/public-api-rate-limiting.md).
   assertRateLimitConfigSafe();
+  // SC4f-1 — storefront host routing switched on without its signing secret
+  // (or a malformed switch) refuses to start: it never serves unverified.
+  storefrontRoutingConfig();
 
   // SC3b — rawBody: billing-provider webhooks are verified against the
   // ORIGINAL request bytes (request.rawBody); JSON parsing is unchanged.
@@ -58,7 +65,8 @@ bootstrap().catch((error: unknown) => {
   // non-zero; any other startup failure keeps its stack.
   console.error(
     error instanceof AuthConfigurationError ||
-      error instanceof RateLimitConfigurationError
+      error instanceof RateLimitConfigurationError ||
+      error instanceof StorefrontRoutingConfigError
       ? error.message
       : error,
   );

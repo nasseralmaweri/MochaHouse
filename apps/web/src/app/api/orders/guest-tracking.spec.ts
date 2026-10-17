@@ -1,5 +1,8 @@
 import { NextRequest } from "next/server";
 
+// SC4f-1 — storefront-context.ts is server-only; stand the marker in.
+jest.mock("server-only", () => ({}));
+
 jest.mock("@/lib/auth/session", () => ({
   CUSTOMER_SESSION_COOKIE: "mh_customer_session",
 }));

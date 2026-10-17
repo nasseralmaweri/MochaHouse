@@ -65,6 +65,8 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'LocationOpeningPeriod',
   // SC4e — the registration pause history.
   'RegistrationControlChange',
+  // SC4f-1 — approved storefront hostnames.
+  'StorefrontHost',
 ]);
 
 // Columns added after the 4C-era migrations to tables that already existed.

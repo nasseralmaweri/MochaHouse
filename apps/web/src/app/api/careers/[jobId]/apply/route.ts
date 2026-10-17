@@ -1,3 +1,4 @@
+import { storefrontApiFetch } from "@/lib/storefront-context";
 import { NextRequest, NextResponse } from "next/server";
 import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 
@@ -34,7 +35,7 @@ export async function POST(
 
   let response: Response;
   try {
-    response = await fetch(
+    response = await storefrontApiFetch(
       `${getApiUrl()}/careers/jobs/${encodeURIComponent(jobId)}/applications`,
       {
         method: "POST",

@@ -1,3 +1,4 @@
+import { storefrontApiFetch } from "@/lib/storefront-context";
 import { NextRequest, NextResponse } from "next/server";
 import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 
@@ -25,7 +26,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/gift-cards/balance`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/gift-cards/balance`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,

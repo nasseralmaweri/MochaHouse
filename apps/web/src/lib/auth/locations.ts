@@ -1,4 +1,5 @@
 import "server-only";
+import { storefrontApiFetch } from "@/lib/storefront-context";
 import type { LocationSummary } from "@mocha-house/contracts";
 
 // "server-only": attaches the raw bearer token to outgoing requests and
@@ -40,7 +41,7 @@ export async function getPreferredLocations(
 ): Promise<PreferredLocationsResult> {
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/customers/me/locations`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/customers/me/locations`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
@@ -62,7 +63,7 @@ export async function addPreferredLocation(
 ): Promise<AddPreferredLocationResult> {
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/customers/me/locations`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/customers/me/locations`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -102,7 +103,7 @@ export async function removePreferredLocation(
 ): Promise<PreferredLocationsResult> {
   let response: Response;
   try {
-    response = await fetch(
+    response = await storefrontApiFetch(
       `${getApiUrl()}/customers/me/locations/${encodeURIComponent(locationId)}`,
       {
         method: "DELETE",

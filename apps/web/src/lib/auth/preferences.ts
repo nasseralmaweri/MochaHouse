@@ -1,4 +1,5 @@
 import "server-only";
+import { storefrontApiFetch } from "@/lib/storefront-context";
 import type {
   CustomerCommunicationPreferences,
   CustomerUpdateCommunicationPreferencesRequest,
@@ -27,7 +28,7 @@ export async function getCommunicationPreferences(
 ): Promise<PreferencesResult> {
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/customers/me/preferences`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/customers/me/preferences`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
@@ -58,7 +59,7 @@ export async function updateCommunicationPreferences(
 ): Promise<UpdatePreferencesResult> {
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/customers/me/preferences`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/customers/me/preferences`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",

@@ -49,6 +49,8 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     BillingGraceExtension: 'platform',
     // SC4e — the registration pause history (platform data).
     RegistrationControlChange: 'platform',
+    // SC4f-1 — approved storefront hostnames (platform data).
+    StorefrontHost: 'platform',
     BillingPlanChange: 'platform',
     // SC3e-1 — the subscription invoice history.
     BillingInvoice: 'platform',

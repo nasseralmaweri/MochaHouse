@@ -1,4 +1,5 @@
 import "server-only";
+import { storefrontApiFetch } from "@/lib/storefront-context";
 import { cookies } from "next/headers";
 import type { CustomerProfile } from "@mocha-house/contracts";
 import { cookieName } from "@/lib/security/cookies";
@@ -44,7 +45,7 @@ export async function getCustomerSession(): Promise<CustomerProfile | null> {
 
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/customers/me`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/customers/me`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });

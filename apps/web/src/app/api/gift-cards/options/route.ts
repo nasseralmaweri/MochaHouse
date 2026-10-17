@@ -1,3 +1,4 @@
+import { storefrontApiFetch } from "@/lib/storefront-context";
 import { NextResponse } from "next/server";
 
 function getApiUrl(): string {
@@ -18,7 +19,7 @@ function getApiUrl(): string {
 export async function GET(): Promise<NextResponse> {
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/gift-cards/purchase-options`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/gift-cards/purchase-options`, {
       cache: "no-store",
     });
   } catch {

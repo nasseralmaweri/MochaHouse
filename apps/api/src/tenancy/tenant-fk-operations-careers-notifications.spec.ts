@@ -267,6 +267,8 @@ const GLOBAL_TABLES = [
   'OwnerRegistration',
   // SC4e — the registration pause history (platform data).
   'RegistrationControlChange',
+  // SC4f-1 — approved storefront hostnames (platform data).
+  'StorefrontHost',
   '_prisma_migrations',
 ];
 
