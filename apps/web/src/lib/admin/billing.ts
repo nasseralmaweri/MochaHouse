@@ -202,6 +202,27 @@ export function isAllowedRecoveryUrl(
   return env.NODE_ENV !== "production" && url.hostname === fake;
 }
 
+// SC3e-1 — an invoice's document: the provider's hosted invoice page, or
+// its PDF (the provider's own host, under /invoice/).
+export function isAllowedInvoiceDocumentUrl(
+  value: unknown,
+  kind: "invoice" | "pdf",
+  env: Record<string, string | undefined> = process.env,
+): value is string {
+  if (typeof value !== "string") return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.port) return false;
+  if (kind === "invoice") return isAllowedRecoveryUrl(value, "invoice", env);
+  if (!url.pathname.startsWith("/invoice/")) return false;
+  if (url.hostname === "pay.stripe.com") return true;
+  return env.NODE_ENV !== "production" && url.hostname === "pay.fake.test";
+}
+
 export function portalReturn(value: unknown): boolean {
   return value === "returned";
 }

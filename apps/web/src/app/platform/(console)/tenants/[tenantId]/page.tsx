@@ -14,11 +14,14 @@ import { TenantLifecyclePanel } from "@/components/platform/TenantLifecyclePanel
 import { SubscriptionPanel } from "@/components/platform/SubscriptionPanel";
 import { BillingPanel } from "@/components/platform/BillingPanel";
 import { BillingOperationsPanel } from "@/components/platform/BillingOperationsPanel";
+import { InvoiceList } from "@/components/billing/InvoiceList";
+import { pageCursor } from "@/lib/admin/billing-history";
 import { assignableVersions } from "@/lib/platform/subscriptions";
 import {
   getPlatformTenant,
   getPlatformTenantLifecycle,
   getPlatformTenantBilling,
+  getPlatformTenantInvoices,
   getPlatformTenantSubscription,
   listPlatformPlans,
   listPlatformTenantLocations,
@@ -61,7 +64,10 @@ export default async function PlatformTenantPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { tenantId } = await params;
-  const locationPage = parsePage((await searchParams).page);
+  const query = await searchParams;
+  const locationPage = parsePage(query.page);
+  // SC3e-1 — the invoice history page (the API's own cursor).
+  const invoicesCursor = pageCursor(query.invoices);
 
   if (!isTenantId(tenantId)) {
     return (
@@ -73,13 +79,14 @@ export default async function PlatformTenantPage({
     );
   }
 
-  const [detail, locations, lifecycle, subscription, plans, billing] = await Promise.all([
+  const [detail, locations, lifecycle, subscription, plans, billing, invoices] = await Promise.all([
     getPlatformTenant(tenantId),
     listPlatformTenantLocations(tenantId, locationPage),
     getPlatformTenantLifecycle(tenantId),
     getPlatformTenantSubscription(tenantId),
     listPlatformPlans(),
     getPlatformTenantBilling(tenantId),
+    getPlatformTenantInvoices(tenantId, invoicesCursor),
   ]);
   if (detail.state !== "ok") {
     return (
@@ -208,6 +215,46 @@ export default async function PlatformTenantPage({
                 />
                 {billing.data.billing && billing.data.billing.state !== "COMPLIMENTARY" ? (
                   <BillingOperationsPanel tenantId={tenant.id} view={billing.data} />
+                ) : null}
+                {billing.data.billing && billing.data.billing.state !== "COMPLIMENTARY" ? (
+                  <section aria-labelledby="tenant-invoices" className="flex flex-col gap-3">
+                    <h3 id="tenant-invoices" className="text-base font-semibold text-text-primary">
+                      Invoices
+                    </h3>
+                    <p className="text-xs text-text-secondary">
+                      CENTERIVO subscription invoices as the payment provider reported them (read-only). Documents
+                      are opened by the business, or in the provider dashboard.
+                    </p>
+                    {invoices.state === "ok" ? (
+                      invoices.data.invoices.length === 0 ? (
+                        <p className="text-sm text-text-secondary">No invoices recorded yet.</p>
+                      ) : (
+                        <>
+                          <InvoiceList invoices={invoices.data.invoices} />
+                          <nav aria-label="Invoice pages" className="flex flex-wrap gap-4 text-sm">
+                            {invoicesCursor ? (
+                              <Link
+                                href={`/platform/tenants/${tenant.id}`}
+                                className="inline-flex min-h-11 items-center font-medium underline underline-offset-2"
+                              >
+                                Newest invoices
+                              </Link>
+                            ) : null}
+                            {invoices.data.nextCursor ? (
+                              <Link
+                                href={`/platform/tenants/${tenant.id}?invoices=${invoices.data.nextCursor}`}
+                                className="inline-flex min-h-11 items-center font-medium underline underline-offset-2"
+                              >
+                                Older invoices
+                              </Link>
+                            ) : null}
+                          </nav>
+                        </>
+                      )
+                    ) : (
+                      <RegistryStatePanel state={invoices.state} retryHref={`/platform/tenants/${tenant.id}`} />
+                    )}
+                  </section>
                 ) : null}
               </>
             );

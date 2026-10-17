@@ -4,6 +4,7 @@ import type {
   PlatformReconciliationCaseListResponse,
   PlatformTenantBillingResponse,
   PlatformBillingOverview,
+  BillingInvoiceListResponse,
   PlatformTenantSubscriptionResponse,
   PlatformTenantDetailResponse,
   PlatformTenantLifecycleResponse,
@@ -94,6 +95,18 @@ export function getPlatformTenantBilling(
   tenantId: string,
 ): Promise<RegistryResult<PlatformTenantBillingResponse>> {
   return readRegistry(`/tenants/${encodeURIComponent(tenantId)}/billing`);
+}
+
+// SC3e-1 — a business's invoice history (read-only), a page at a time.
+export function getPlatformTenantInvoices(
+  tenantId: string,
+  cursor: string | null,
+): Promise<RegistryResult<BillingInvoiceListResponse>> {
+  return readRegistry(
+    `/tenants/${encodeURIComponent(tenantId)}/billing/invoices${
+      cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""
+    }`,
+  );
 }
 
 // SC3c-3 — the console's billing attention counts.

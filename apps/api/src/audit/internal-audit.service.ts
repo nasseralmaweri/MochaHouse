@@ -62,6 +62,34 @@ export class InternalAuditService {
     });
   }
 
+  // SC3e-1 — a business user opened one of its invoices' documents (the
+  // provider's page or PDF). Which invoice — never the link.
+  async recordBillingDocumentOpened(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      subscriptionId: string;
+      invoiceId: string;
+      kind: 'invoice' | 'pdf';
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'billing.invoice_document_opened',
+        targetType: 'billing_subscription',
+        targetId: 'company',
+        afterData: {
+          subscriptionId: input.subscriptionId,
+          invoiceId: input.invoiceId,
+          kind: input.kind,
+        },
+        reason: 'Billing document',
+      },
+    });
+  }
+
   // SC3d-2 — a business user CONFIRMED a plan change and its charge (the
   // business's consent): which change, to which price, for how much.
   async recordPlanChangeConfirmed(

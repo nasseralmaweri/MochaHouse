@@ -13,6 +13,8 @@ import {
   type ProviderPriceChangeResult,
   type ProviderRecurringPreview,
   type ProviderSchedule,
+  type ProviderInvoiceRecord,
+  type ProviderPaymentMethodSummary,
   type ProviderInvoice,
   type ProviderInvoiceStatus,
   type ProviderPayableInvoice,
@@ -809,11 +811,78 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
         amountPaidMinorUnits: amount(invoice.amount_paid),
         billingReason: text(invoice.billing_reason, 60),
         currency: text(invoice.currency, 3),
+        record: invoiceRecord(invoice),
       };
     } catch (error) {
       if ((error as { code?: unknown })?.code === 'resource_missing') {
         return null;
       }
+      throw providerError(error);
+    }
+  }
+
+  // SC3e-1 — the subscription's invoices (newest first), test mode only.
+  async listInvoices(
+    externalSubscriptionId: string,
+  ): Promise<ProviderInvoiceRecord[]> {
+    try {
+      const all = await this.stripe.invoices
+        .list({ subscription: externalSubscriptionId, limit: 100 })
+        .autoPagingToArray({ limit: INVOICE_HISTORY_CAP });
+      const records: ProviderInvoiceRecord[] = [];
+      for (const invoice of all) {
+        this.assertTestMode(invoice.livemode);
+        const record = invoiceRecord(invoice);
+        if (
+          record !== null &&
+          record.externalSubscriptionId === externalSubscriptionId
+        ) {
+          records.push(record);
+        }
+      }
+      return records;
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  // SC3e-1 — the payment method Stripe will charge (the subscription's
+  // default, else the customer's), reduced to brand, last four and expiry.
+  async retrievePaymentMethod(
+    externalSubscriptionId: string,
+  ): Promise<ProviderPaymentMethodSummary> {
+    try {
+      const sub = await this.stripe.subscriptions.retrieve(
+        externalSubscriptionId,
+        {
+          expand: [
+            'default_payment_method',
+            'customer.invoice_settings.default_payment_method',
+          ],
+        },
+      );
+      this.assertTestMode(sub.livemode);
+      const source = paymentMethodSource(sub);
+      const customer =
+        typeof sub.customer === 'object' &&
+        sub.customer !== null &&
+        !('deleted' in sub.customer && sub.customer.deleted === true)
+          ? sub.customer
+          : null;
+      const method =
+        source === 'SUBSCRIPTION'
+          ? sub.default_payment_method
+          : source === 'CUSTOMER_DEFAULT'
+            ? (customer?.invoice_settings?.default_payment_method ?? null)
+            : null;
+      return {
+        externalSubscriptionId: sub.id,
+        externalCustomerId: id(sub.customer),
+        livemode: sub.livemode,
+        source,
+        ...paymentMethodView(method, source),
+      };
+    } catch (error) {
       throw providerError(error);
     }
   }
@@ -982,6 +1051,109 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
   }
 }
 
+const INVOICE_HISTORY_CAP = 200;
+
+// SC3e-1 — an invoice's record for the billing history (null when it cannot
+// be read faithfully: refused, never guessed).
+function invoiceRecord(invoice: Stripe.Invoice): ProviderInvoiceRecord | null {
+  const status = INVOICE_STATUSES.includes(
+    invoice.status as ProviderInvoiceStatus,
+  )
+    ? (invoice.status as ProviderInvoiceStatus)
+    : null;
+  const currency = text(invoice.currency, 3)?.toLowerCase() ?? null;
+  const issuedAt = date(invoice.created);
+  const invoiceId = text(invoice.id);
+  if (status === null || currency === null || issuedAt === null || !invoiceId) {
+    return null;
+  }
+  const integer = (value: unknown) =>
+    typeof value === 'number' && Number.isInteger(value) ? value : null;
+  const total = integer(invoice.total);
+  if (total === null) return null;
+  // The subscription period(s) the invoice bills.
+  const periods = (invoice.lines?.data ?? [])
+    .map((line) => ({
+      start: date(line.period?.start),
+      end: date(line.period?.end),
+    }))
+    .filter((p) => p.start !== null && p.end !== null);
+  const starting = integer(invoice.starting_balance) ?? 0;
+  const ending = integer(invoice.ending_balance) ?? starting;
+  return {
+    externalInvoiceId: invoiceId,
+    externalCustomerId: id(invoice.customer),
+    externalSubscriptionId: invoiceSubscription(invoice),
+    livemode: invoice.livemode,
+    number: text(invoice.number, 100),
+    status,
+    billingReason: text(invoice.billing_reason, 60),
+    currency,
+    totalMinorUnits: total,
+    amountDueMinorUnits: amount(invoice.amount_due),
+    amountPaidMinorUnits: amount(invoice.amount_paid),
+    amountRemainingMinorUnits: amount(invoice.amount_remaining),
+    postPaymentCreditMinorUnits: amount(
+      invoice.post_payment_credit_notes_amount,
+    ),
+    prePaymentCreditMinorUnits: amount(invoice.pre_payment_credit_notes_amount),
+    // A credit balance (negative) used by this invoice.
+    balanceAppliedMinorUnits:
+      starting < 0 ? Math.max(0, Math.min(-starting, ending - starting)) : 0,
+    periodStart:
+      periods.length > 0
+        ? new Date(Math.min(...periods.map((p) => p.start!.getTime())))
+        : null,
+    periodEnd:
+      periods.length > 0
+        ? new Date(Math.max(...periods.map((p) => p.end!.getTime())))
+        : null,
+    issuedAt,
+    paidAt:
+      status === 'paid'
+        ? (date(invoice.status_transitions?.paid_at) ?? issuedAt)
+        : null,
+    hostedInvoiceUrl: text(invoice.hosted_invoice_url, 2048),
+    invoicePdfUrl: text(invoice.invoice_pdf, 2048),
+  };
+}
+
+// SC3e-1 — only brand, last four digits and expiry of a card (nothing for
+// other methods but their type).
+function paymentMethodView(
+  method: string | Stripe.PaymentMethod | null,
+  source: PaymentMethodSource,
+): Pick<ProviderPaymentMethodSummary, 'type' | 'card'> {
+  if (source === null) return { type: null, card: null };
+  if (typeof method !== 'object' || method === null) {
+    // A legacy source, or a method that was not expanded: present, not shown.
+    return { type: 'other', card: null };
+  }
+  const type = text(method.type, 40) ?? 'other';
+  const card = method.card;
+  if (type !== 'card' || !card) return { type, card: null };
+  const last4 = text(card.last4, 4);
+  const brand = text(card.brand, 40);
+  if (
+    !last4 ||
+    !/^[0-9]{4}$/.test(last4) ||
+    !brand ||
+    !Number.isInteger(card.exp_month) ||
+    !Number.isInteger(card.exp_year)
+  ) {
+    return { type, card: null };
+  }
+  return {
+    type,
+    card: {
+      brand,
+      last4,
+      expMonth: card.exp_month,
+      expYear: card.exp_year,
+    },
+  };
+}
+
 function invoiceSubscription(invoice: unknown): string | null {
   const record = invoice as {
     parent?: {
@@ -1064,6 +1236,33 @@ function normalize(
               periodEnd: date(line?.period?.end),
             },
             externalSubscriptionId: invoiceSubscription(object),
+          }
+        : { event: { kind: 'UNSUPPORTED' }, externalSubscriptionId: null };
+    }
+    // SC3e-1 — an invoice changed (finalized, voided, uncollectible,
+    // updated) or a credit note was issued on it: its record is re-read.
+    case 'invoice.finalized':
+    case 'invoice.updated':
+    case 'invoice.voided':
+    case 'invoice.marked_uncollectible': {
+      const reference = text(object.id);
+      return reference
+        ? {
+            event: { kind: 'INVOICE_CHANGED', reference },
+            externalSubscriptionId: invoiceSubscription(object),
+          }
+        : { event: { kind: 'UNSUPPORTED' }, externalSubscriptionId: null };
+    }
+    case 'credit_note.created':
+    case 'credit_note.updated':
+    case 'credit_note.voided': {
+      // A credit note names its invoice and customer, not the subscription:
+      // the invoice read decides whose it is.
+      const reference = id(object.invoice);
+      return reference
+        ? {
+            event: { kind: 'INVOICE_CHANGED', reference },
+            externalSubscriptionId: null,
           }
         : { event: { kind: 'UNSUPPORTED' }, externalSubscriptionId: null };
     }

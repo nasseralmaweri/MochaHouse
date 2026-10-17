@@ -104,7 +104,8 @@ function nothingToPay(): ConflictException {
 export function isProviderPage(
   value: string,
   provider: string,
-  kind: 'invoice' | 'portal',
+  // SC3e-1 — 'invoice-pdf': an invoice's PDF (the provider's own host).
+  kind: 'invoice' | 'portal' | 'invoice-pdf',
 ): boolean {
   let url: URL;
   try {
@@ -113,17 +114,22 @@ export function isProviderPage(
     return false;
   }
   if (url.protocol !== 'https:' || url.username || url.password) return false;
-  const host =
-    provider === 'stripe'
-      ? kind === 'invoice'
-        ? 'invoice.stripe.com'
-        : 'billing.stripe.com'
-      : provider === 'fake'
-        ? kind === 'invoice'
-          ? 'invoice.fake.test'
-          : 'billing.fake.test'
-        : null;
-  return host !== null && url.hostname === host;
+  const hosts: Record<string, Record<typeof kind, string>> = {
+    stripe: {
+      invoice: 'invoice.stripe.com',
+      portal: 'billing.stripe.com',
+      'invoice-pdf': 'pay.stripe.com',
+    },
+    fake: {
+      invoice: 'invoice.fake.test',
+      portal: 'billing.fake.test',
+      'invoice-pdf': 'pay.fake.test',
+    },
+  };
+  const host = hosts[provider]?.[kind] ?? null;
+  if (host === null || url.hostname !== host || url.port !== '') return false;
+  // An invoice PDF lives under /invoice/ on that host.
+  return kind !== 'invoice-pdf' || url.pathname.startsWith('/invoice/');
 }
 
 function unavailable(): ServiceUnavailableException {

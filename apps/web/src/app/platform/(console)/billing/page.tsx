@@ -49,6 +49,9 @@ const CASE_LABELS: Record<string, string> = {
   UPGRADE_PAID_NOT_APPLIED: "A plan change was paid but not applied",
   PLAN_CHANGE_UNCERTAIN: "A plan change needs checking against the payment provider",
   // SC3d-3
+  // SC3e-1
+  INVOICE_HISTORY_CONFLICT:
+    "The payment provider reported an invoice differently from the recorded billing history (nothing was overwritten)",
   SCHEDULED_CHANGE_DISRUPTED:
     "A scheduled plan change was removed or altered at the payment provider, or didn't take effect (never recreated)",
   EXTENSION_ENDED_BY_PROVIDER:

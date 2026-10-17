@@ -422,6 +422,8 @@ model TenantSubscription {
   graceExtensions      BillingGraceExtension[]
   billingNotifications BillingNotification[]
   planChanges          BillingPlanChange[]
+  // SC3e-1 — the provider invoices of this subscription (history).
+  invoices             BillingInvoice[]
   billingEvents        BillingProviderEvent[]
   checkoutSessions     BillingCheckoutSession[]
   reconciliationCases  BillingReconciliationCase[]
@@ -3962,4 +3964,55 @@ model BillingPlanChange {
   @@index([fromPlanPriceId])
   @@index([toPlanPriceId])
   @@index([actorPlatformOperatorId])
+}
+
+// SC3e-1 — the business's CENTERIVO subscription invoices as the billing
+// provider last reported them (owner decision D1): kept in line from
+// verified provider events (invoices, credit notes) and the reconciliation
+// sweep, always from a LIVE provider read. The provider stays authoritative
+// for money; this is history to show, never a basis for charging or
+// refunding. No document URL and no payment-method detail is ever stored
+// (document links are resolved per request — owner decision D2).
+//
+// Platform billing data (no tenantId): the business is reached only through
+// TenantSubscription. Never a restaurant order, payment or refund.
+// Never deleted; the provider invoice and its subscription are set once; a
+// paid or void invoice stays so (database trigger).
+model BillingInvoice {
+  id                          String    @id @default(uuid(7))
+  subscriptionId              String
+  provider                    String
+  externalInvoiceId           String
+  externalCustomerId          String
+  externalSubscriptionId      String
+  // The provider's invoice number (null while a draft).
+  number                      String?
+  // draft | open | paid | void | uncollectible
+  status                      String
+  billingReason               String?
+  // Lower-case ISO currency, as the provider reports it.
+  currency                    String
+  totalMinorUnits             Int
+  amountDueMinorUnits         Int
+  amountPaidMinorUnits        Int
+  amountRemainingMinorUnits   Int
+  // Credit notes issued after payment (refunds or account credits).
+  postPaymentCreditMinorUnits Int       @default(0)
+  // Credit notes before payment and account balance applied to it.
+  prePaymentCreditMinorUnits  Int       @default(0)
+  balanceAppliedMinorUnits    Int       @default(0)
+  periodStart                 DateTime?
+  periodEnd                   DateTime?
+  issuedAt                    DateTime
+  paidAt                      DateTime?
+  // When the provider was read for this version (a stale read never
+  // overwrites a newer one).
+  syncedAt                    DateTime
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
+
+  subscription TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([provider, externalInvoiceId])
+  @@index([subscriptionId, issuedAt(sort: Desc), id(sort: Desc)])
 }

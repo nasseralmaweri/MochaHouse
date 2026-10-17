@@ -1,7 +1,13 @@
 import { redirect } from "next/navigation";
 import { getInternalSession } from "@/lib/internal-auth/session";
 import { can } from "@/lib/admin/capabilities";
-import { getAdminBilling, getAdminPlanOptions } from "@/lib/internal-auth/admin-billing";
+import Link from "next/link";
+import {
+  getAdminBilling,
+  getAdminPaymentMethod,
+  getAdminPlanOptions,
+} from "@/lib/internal-auth/admin-billing";
+import { BILLING_HISTORY_MESSAGES, paymentMethodSentence } from "@/lib/admin/billing-history";
 import { canCancelScheduled, planChangeStatusMessage } from "@/lib/admin/plan-change";
 import { formatDeadline } from "@/lib/admin/billing";
 import {
@@ -77,6 +83,9 @@ export default async function AdminBillingPage({
   } = result.data;
   // SC3d-2 — the plans the business may move to (only when it may).
   const planOptions = canChangePlan ? await getAdminPlanOptions() : null;
+  // SC3e-1 — what may be shown of the payment method (billed businesses).
+  const billed = billing.state !== "COMPLIMENTARY" && billing.state !== "AWAITING_SETUP";
+  const paymentMethod = billed ? await getAdminPaymentMethod() : null;
   const returned = checkoutReturn(params.checkout);
   const fromPortal = portalReturn(params.portal);
   // Back from the provider but not confirmed yet (a new setup, or a restart
@@ -171,6 +180,37 @@ export default async function AdminBillingPage({
           <p className="text-sm text-text-secondary">{BILLING_MESSAGES.recoveryForbidden}</p>
         ) : null}
       </Card>
+      {billed ? (
+        <Card className="flex flex-col gap-3">
+          <h2 className="text-base font-semibold text-text-primary">Payment method and invoices</h2>
+          {paymentMethod?.outcome === "success" ? (
+            <>
+              <p className="text-sm text-text-primary">
+                {paymentMethodSentence(paymentMethod.data.paymentMethod ?? { kind: "NONE", card: null })}
+              </p>
+              {paymentMethod.data.paymentMethod?.card?.expired ? (
+                <p className="text-sm text-status-error">
+                  This card has expired. Update your payment method so your next renewal can be paid.
+                </p>
+              ) : null}
+            </>
+          ) : paymentMethod?.outcome === "unavailable" ? (
+            <p className="text-sm text-text-secondary">{BILLING_HISTORY_MESSAGES.paymentMethodUnavailable}</p>
+          ) : null}
+          {canManagePaymentMethod && !confirming ? (
+            <p className="text-xs text-text-secondary">
+              To change it, use Update payment method above — card details are entered on our payment
+              provider&apos;s secure page, never here.
+            </p>
+          ) : null}
+          <Link
+            href="/admin/billing/invoices"
+            className="inline-flex min-h-11 items-center self-start text-sm font-medium text-text-primary underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+          >
+            View billing history
+          </Link>
+        </Card>
+      ) : null}
       {planChange || (canChangePlan && planOptions) ? (
         <Card className="flex flex-col gap-4">
           {planChange ? (

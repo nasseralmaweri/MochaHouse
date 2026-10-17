@@ -48,6 +48,8 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     // SC3c-3 — grace extensions and the billing notification queue.
     BillingGraceExtension: 'platform',
     BillingPlanChange: 'platform',
+    // SC3e-1 — the subscription invoice history.
+    BillingInvoice: 'platform',
     BillingNotification: 'platform',
 
     // Catalog & locations

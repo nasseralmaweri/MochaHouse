@@ -14,6 +14,7 @@ import { BillingReconciliationService } from './application/billing-reconciliati
 import { BillingEnforcementService } from './application/billing-enforcement.service';
 import { BillingOperationsService } from './application/billing-operations.service';
 import { BillingPlanChangeService } from './application/billing-plan-change.service';
+import { BillingHistoryService } from './application/billing-history.service';
 import { PlanChangeMaintenanceService } from './application/plan-change-maintenance.service';
 import { createSaasBillingProvider } from './provider/saas-billing-provider-mode';
 import { SAAS_BILLING_PROVIDER } from './provider/saas-billing-provider';
@@ -45,6 +46,7 @@ import { SAAS_BILLING_PROVIDER } from './provider/saas-billing-provider';
     BillingEnforcementService,
     BillingOperationsService,
     BillingPlanChangeService,
+    BillingHistoryService,
     PlanChangeMaintenanceService,
     {
       provide: SAAS_BILLING_PROVIDER,

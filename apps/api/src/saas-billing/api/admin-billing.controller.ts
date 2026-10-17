@@ -5,7 +5,9 @@ import {
   Header,
   HttpCode,
   NotFoundException,
+  Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -16,6 +18,8 @@ import type {
   AdminBillingCheckoutResponse,
   AdminBillingRecoveryResponse,
   AdminBillingResponse,
+  AdminBillingPaymentMethodResponse,
+  BillingInvoiceListResponse,
 } from '@mocha-house/contracts';
 import type { TenantContext } from '@mocha-house/database';
 import { CurrentTenantContext } from '../../tenancy/current-tenant-context.decorator';
@@ -27,6 +31,10 @@ import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastru
 import { RateLimit } from '../../rate-limit/rate-limit.decorator';
 import { RateLimitGuard } from '../../rate-limit/rate-limit.guard';
 import { BillingAccountService } from '../application/billing-account.service';
+import {
+  BillingHistoryService,
+  parseInvoiceDocumentRequest,
+} from '../application/billing-history.service';
 import {
   BillingPlanChangeService,
   parsePlanChangeCancel,
@@ -43,6 +51,7 @@ export class AdminBillingController {
   constructor(
     private readonly accounts: BillingAccountService,
     private readonly planChanges: BillingPlanChangeService,
+    private readonly history: BillingHistoryService,
   ) {}
 
   // SC3d-2 — the prices the business may move to.
@@ -139,6 +148,59 @@ export class AdminBillingController {
       parsePlanChangePreview(body),
       { kind: 'STAFF', internalUserId: request.internalUser!.id },
     );
+  }
+
+  // SC3e-1 — the business's invoices (billing.view; readable during a
+  // billing wind-down, like the billing page).
+  @AllowDuringBillingWindDown()
+  @RequirePermission('billing.view')
+  @Header('Cache-Control', 'no-store')
+  @Get('invoices')
+  invoices(
+    @Query('cursor') cursor: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ): Promise<BillingInvoiceListResponse> {
+    request.authorization!.assertCorporate('billing.view');
+    return this.history.list(tenant.tenantId, cursor);
+  }
+
+  // SC3e-1 — the provider's own page or PDF for one of the business's
+  // invoices, resolved for this request only.
+  @AllowDuringBillingWindDown()
+  @RequirePermission('billing.view')
+  @UseGuards(RateLimitGuard)
+  @RateLimit('billing-checkout')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @Post('invoices/:invoiceId/document')
+  invoiceDocument(
+    @Param('invoiceId') invoiceId: string,
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ): Promise<AdminBillingRecoveryResponse> {
+    request.authorization!.assertCorporate('billing.view');
+    return this.history.documentLink(
+      tenant.tenantId,
+      invoiceId,
+      parseInvoiceDocumentRequest(body),
+      request.internalUser!.id,
+    );
+  }
+
+  // SC3e-1 — what may be shown of the payment method (brand, last four,
+  // expiry).
+  @AllowDuringBillingWindDown()
+  @RequirePermission('billing.view')
+  @Header('Cache-Control', 'no-store')
+  @Get('payment-method')
+  paymentMethod(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ): Promise<AdminBillingPaymentMethodResponse> {
+    request.authorization!.assertCorporate('billing.view');
+    return this.history.paymentMethod(tenant.tenantId);
   }
 
   // SC3c-1 — the billing page stays readable during a billing wind-down.

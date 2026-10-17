@@ -187,11 +187,16 @@ export function planChangeStatusMessage(view: AdminPlanChangeView): string {
   )} ${perInterval(view.target.price.interval)})`;
   const scheduled = view.timing !== "IMMEDIATE" && view.effectiveAt !== null;
   const date = scheduled ? formatDeadline(view.effectiveAt!) : "";
+  // SC3e-1 — what a scheduled change removes, and that nothing is deleted.
+  const lostSentence =
+    scheduled && view.modulesLost.length > 0
+      ? ` From ${date} you'll no longer have: ${view.modulesLost.map((module) => module.label).join(", ")}. Your data in them is kept, not deleted.`
+      : "";
   const messages: Record<AdminPlanChangeStatus, string> = {
     SCHEDULED:
       view.timing === "TRIAL_END"
-        ? `When your trial ends (${date}), your plan becomes ${target} and your saved payment method is charged. Your trial continues on your current plan until then; nothing has been charged yet.`
-        : `Your plan changes to ${target} on ${date}. You keep your current plan and its features until then; nothing has been charged.`,
+        ? `When your trial ends (${date}), your plan becomes ${target} and your saved payment method is charged. Your trial continues on your current plan until then; nothing has been charged yet.${lostSentence}`
+        : `Your plan changes to ${target} on ${date}. You keep your current plan and its features until then; nothing has been charged.${lostSentence}`,
     CANCELED: `You cancelled the change to ${target}. Your plan stays as it is.`,
     PROCESSING: scheduled
       ? `We're setting up your change to ${target} with our payment provider. Nothing has been charged. Refresh this page in a minute.`

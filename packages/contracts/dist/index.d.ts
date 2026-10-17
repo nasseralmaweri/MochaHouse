@@ -1021,6 +1021,46 @@ export interface AdminBillingCheckoutResponse {
 export interface AdminBillingRecoveryResponse {
     url: string;
 }
+export type BillingInvoiceStatus = "open" | "paid" | "void" | "uncollectible";
+export type BillingInvoiceReason = "SUBSCRIPTION_START" | "RENEWAL" | "PLAN_CHANGE" | "OTHER";
+export interface BillingInvoiceView {
+    id: string;
+    number: string | null;
+    status: BillingInvoiceStatus;
+    reason: BillingInvoiceReason;
+    currency: string;
+    totalMinorUnits: number;
+    amountPaidMinorUnits: number;
+    amountRemainingMinorUnits: number;
+    refundedOrCreditedMinorUnits: number;
+    creditAppliedMinorUnits: number;
+    periodStart: string | null;
+    periodEnd: string | null;
+    issuedAt: string;
+    paidAt: string | null;
+}
+export interface BillingInvoiceListResponse {
+    invoices: BillingInvoiceView[];
+    nextCursor: string | null;
+}
+export type BillingInvoiceDocumentKind = "invoice" | "pdf";
+export interface BillingInvoiceDocumentRequest {
+    kind: BillingInvoiceDocumentKind;
+}
+export declare const BILLING_DOCUMENT_UNAVAILABLE = "BILLING_DOCUMENT_UNAVAILABLE";
+export interface BillingPaymentMethodView {
+    kind: "NONE" | "CARD" | "OTHER";
+    card: {
+        brand: string;
+        last4: string;
+        expMonth: number;
+        expYear: number;
+        expired: boolean;
+    } | null;
+}
+export interface AdminBillingPaymentMethodResponse {
+    paymentMethod: BillingPaymentMethodView | null;
+}
 export declare const BILLING_PLAN_CHANGE_UNAVAILABLE = "BILLING_PLAN_CHANGE_UNAVAILABLE";
 export declare const BILLING_PLAN_CHANGE_SAME_PRICE = "BILLING_PLAN_CHANGE_SAME_PRICE";
 export declare const BILLING_PLAN_CHANGE_CURRENCY = "BILLING_PLAN_CHANGE_CURRENCY";
@@ -1080,6 +1120,10 @@ export interface AdminPlanChangeView {
     id: string;
     status: AdminPlanChangeStatus;
     timing: BillingPlanChangeTiming;
+    modulesLost: {
+        key: string;
+        label: string;
+    }[];
     effectiveAt: string | null;
     target: BillingPlanChangeSide;
     amountDueMinorUnits: number | null;
@@ -1188,6 +1232,7 @@ export interface PlatformReconciliationRunResponse {
     subscriptionsChecked: number;
     casesOpened: number;
     checkoutsExpired: number;
+    invoicesRecorded: number;
 }
 export interface PlatformBillingEnforcementSweepResponse {
     enabled: boolean;
