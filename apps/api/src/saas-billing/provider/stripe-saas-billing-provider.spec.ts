@@ -1444,7 +1444,34 @@ describe('SC3e-1 Stripe billing history reads (mocked HTTP)', () => {
       paidAt: new Date(1_800_000_100_000),
       hostedInvoiceUrl: 'https://invoice.stripe.com/i/acct_1/test_x',
       invoicePdfUrl: 'https://pay.stripe.com/invoice/acct_1/test_x/pdf',
+      // SC3f — not in this read: unknown, never zero.
+      amounts: null,
+      attemptCount: null,
     });
+  });
+
+  it("SC3f — captures Stripe's own subtotal, discounts, taxes and payment attempts", async () => {
+    const { provider } = harness({
+      'GET /v1/invoices/in_hist': () => [
+        200,
+        {
+          ...paidInvoice,
+          subtotal: 5000,
+          total_excluding_tax: 4500,
+          total_discount_amounts: [{ amount: 300 }, { amount: 200 }],
+          total_taxes: [{ amount: 250 }, { amount: 150 }],
+          attempt_count: 3,
+        },
+      ],
+    });
+    const record = (await provider.retrieveInvoice('in_hist'))?.record;
+    expect(record?.amounts).toEqual({
+      subtotalMinorUnits: 5000,
+      discountMinorUnits: 500,
+      taxMinorUnits: 400,
+      totalExcludingTaxMinorUnits: 4500,
+    });
+    expect(record?.attemptCount).toBe(3);
   });
 
   it('an invoice it cannot read faithfully has no record (never guessed)', async () => {

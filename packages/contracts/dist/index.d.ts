@@ -784,7 +784,7 @@ export interface PlatformMeResponse {
     operator: PlatformOperatorProfile;
     permissions: PlatformPermission[];
 }
-export declare const PLATFORM_PERMISSIONS: readonly ["billing.prices.manage", "billing.policy.manage", "billing.accounts.manage", "billing.reconciliation.run", "billing.cases.manage", "billing.schedules.release", "billing.complimentary.manage", "billing.adjustments.request", "billing.adjustments.approve", "platform.permissions.manage"];
+export declare const PLATFORM_PERMISSIONS: readonly ["billing.prices.manage", "billing.policy.manage", "billing.accounts.manage", "billing.reconciliation.run", "billing.cases.manage", "billing.schedules.release", "billing.complimentary.manage", "billing.adjustments.request", "billing.adjustments.approve", "platform.permissions.manage", "billing.reports.view"];
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 export interface PlatformOperatorPermissionView {
     permission: PlatformPermission;
@@ -2660,5 +2660,113 @@ export interface BillingInvoiceAdjustmentView {
     currency: string;
     totalMinorUnits: number;
     at: string;
+}
+export type RevenueReportEnvironment = "STRIPE_TEST_MODE" | "STRIPE_LIVE_MODE" | "DEVELOPMENT" | "NO_PROVIDER";
+export type RevenueMetricStatus = "COMPLETE" | "INCOMPLETE" | "UNAVAILABLE";
+export interface RevenueRecurring {
+    currency: string;
+    mrrMinorUnits: number;
+    arrMinorUnits: number;
+    atRiskMrrMinorUnits: number;
+    activePaidSubscriptions: number;
+    atRiskSubscriptions: number;
+    monthlySubscriptions: number;
+    annualSubscriptions: number;
+}
+export interface RevenuePlanBreakdown {
+    planName: string;
+    interval: "MONTH" | "YEAR";
+    currency: string;
+    subscriptions: number;
+    mrrMinorUnits: number;
+    arrMinorUnits: number;
+}
+export interface RevenueCash {
+    currency: string;
+    collectedMinorUnits: number;
+    taxMinorUnits: number | null;
+    refundsMinorUnits: number;
+    refundsOutsideProviderMinorUnits: number;
+    creditsIssuedMinorUnits: number;
+    balanceAppliedMinorUnits: number;
+    recoveredMinorUnits: number;
+}
+export interface RevenueMonth {
+    month: string;
+    status: RevenueMetricStatus;
+    partial: boolean;
+    missingPrices: number;
+    recurring: RevenueRecurring[];
+    activePaidAtStart: number;
+    activePaidAtEnd: number;
+    churn: {
+        ended: number;
+        endedOther: number;
+        movedToComplimentary: number;
+        revenue: {
+            currency: string;
+            startMrrMinorUnits: number;
+            churnedMrrMinorUnits: number;
+        }[];
+    };
+    cash: RevenueCash[];
+    failedInvoices: {
+        count: number;
+        amountDue: {
+            currency: string;
+            minorUnits: number;
+        }[];
+        unverified: number;
+    };
+    recoveredInvoices: number;
+    complimentaryAtEnd: number;
+}
+export interface RevenueTrialCohort {
+    month: string;
+    started: number;
+    converted: number;
+    expired: number;
+    inProgress: number;
+    complete: boolean;
+}
+export interface RevenueAdjustmentTotal {
+    currency: string;
+    kind: "REFUND" | "CREDIT" | "OUT_OF_BAND";
+    origin: "CENTERIVO" | "EXTERNAL";
+    count: number;
+    totalMinorUnits: number;
+}
+export interface PlatformRevenueReport {
+    environment: RevenueReportEnvironment;
+    generatedAt: string;
+    period: {
+        from: string;
+        to: string;
+    };
+    current: {
+        asOf: string;
+        status: RevenueMetricStatus;
+        recurring: RevenueRecurring[];
+        byPlan: RevenuePlanBreakdown[];
+        complimentary: {
+            withArrangement: number;
+            withoutArrangement: number;
+            listPriceEquivalent: {
+                currency: string;
+                mrrMinorUnits: number;
+            }[];
+        };
+    };
+    months: RevenueMonth[];
+    trialCohorts: RevenueTrialCohort[];
+    adjustments: RevenueAdjustmentTotal[];
+    dataQuality: {
+        incompleteSubscriptions: number;
+        invoicesWithoutAmounts: number;
+        violations: {
+            code: string;
+            count: number;
+        }[];
+    };
 }
 //# sourceMappingURL=index.d.ts.map

@@ -4034,6 +4034,13 @@ model BillingInvoice {
   // Credit notes before payment and account balance applied to it.
   prePaymentCreditMinorUnits  Int                 @default(0)
   balanceAppliedMinorUnits    Int                 @default(0)
+  // SC3f — the provider's own amounts and payment attempts, from a
+  // verified read; NULL until captured (never assumed zero).
+  subtotalMinorUnits          Int?
+  discountMinorUnits          Int?
+  taxMinorUnits               Int?
+  totalExcludingTaxMinorUnits Int?
+  attemptCount                Int?
   periodStart                 DateTime?
   periodEnd                   DateTime?
   issuedAt                    DateTime

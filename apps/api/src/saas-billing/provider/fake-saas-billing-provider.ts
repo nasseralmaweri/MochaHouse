@@ -413,6 +413,15 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
       postPaymentCreditMinorUnits: 0,
       prePaymentCreditMinorUnits: 0,
       balanceAppliedMinorUnits: 0,
+      // SC3f — untaxed, undiscounted by default (tests set others); one
+      // payment attempt once paid or attempted.
+      amounts: {
+        subtotalMinorUnits: invoice.amountDueMinorUnits,
+        discountMinorUnits: 0,
+        taxMinorUnits: 0,
+        totalExcludingTaxMinorUnits: invoice.amountDueMinorUnits,
+      },
+      attemptCount: paid ? 1 : 0,
       periodStart: null,
       periodEnd: null,
       issuedAt: invoice.createdAt,

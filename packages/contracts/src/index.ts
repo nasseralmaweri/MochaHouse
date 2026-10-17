@@ -1631,6 +1631,8 @@ export const PLATFORM_PERMISSIONS = [
   "billing.adjustments.request",
   "billing.adjustments.approve",
   "platform.permissions.manage",
+  // SC3f — CENTERIVO-wide SaaS revenue reporting (read-only).
+  "billing.reports.view",
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 
@@ -5728,4 +5730,159 @@ export interface BillingInvoiceAdjustmentView {
   currency: string;
   totalMinorUnits: number;
   at: string;
+}
+
+// --- SC3f: CENTERIVO SaaS revenue reporting (read-only) -----------------------------
+// GET /api/v1/platform/billing/reports/revenue?from=YYYY-MM&to=YYYY-MM
+// (billing.reports.view). Months are calendar months in UTC, at most 24 and
+// never in the future; default the last 12 including the current month.
+// Only CENTERIVO subscription billing — never a restaurant's sales, orders,
+// customer payments or gift cards. Every amount is per currency (never
+// converted or combined) and in minor units.
+//   400 an invalid period
+export type RevenueReportEnvironment =
+  | "STRIPE_TEST_MODE"
+  | "STRIPE_LIVE_MODE"
+  | "DEVELOPMENT"
+  | "NO_PROVIDER";
+// COMPLETE: every input was available; INCOMPLETE: some history is missing
+// (counted where known, flagged); UNAVAILABLE: not computable.
+export type RevenueMetricStatus = "COMPLETE" | "INCOMPLETE" | "UNAVAILABLE";
+
+// Contracted recurring revenue (D1): monthly prices as agreed, annual / 12.
+// ARR is exact (monthly x 12 + annual); MRR = ARR / 12, rounded once.
+export interface RevenueRecurring {
+  currency: string;
+  mrrMinorUnits: number;
+  arrMinorUnits: number;
+  // The PAST_DUE part (included above), shown as at risk.
+  atRiskMrrMinorUnits: number;
+  activePaidSubscriptions: number;
+  atRiskSubscriptions: number;
+  monthlySubscriptions: number;
+  annualSubscriptions: number;
+}
+
+export interface RevenuePlanBreakdown {
+  planName: string;
+  interval: "MONTH" | "YEAR";
+  currency: string;
+  subscriptions: number;
+  mrrMinorUnits: number;
+  arrMinorUnits: number;
+}
+
+export interface RevenueCash {
+  currency: string;
+  // Cash collected: paid invoices by payment date (includes tax). Not
+  // recognized revenue — an annual invoice is collected once.
+  collectedMinorUnits: number;
+  // Of which tax — null when any invoice in the month lacks verified
+  // amounts (never assumed zero).
+  taxMinorUnits: number | null;
+  // Cash refunds to payment methods through the provider (CENTERIVO and
+  // external), by date.
+  refundsMinorUnits: number;
+  // Refunded outside the provider (recorded on a credit note), by date.
+  refundsOutsideProviderMinorUnits: number;
+  // Account credits issued (credit notes to the customer balance).
+  creditsIssuedMinorUnits: number;
+  // Customer balance applied to invoices issued this month (credits, and
+  // proration credits, used — already reflected in collected cash).
+  balanceAppliedMinorUnits: number;
+  // Collected on invoices that had failed at least once (verified paid).
+  recoveredMinorUnits: number;
+}
+
+export interface RevenueMonth {
+  month: string; // YYYY-MM
+  status: RevenueMetricStatus;
+  // The current month: figures up to now only.
+  partial: boolean;
+  // Paying subscriptions whose price couldn't be found (not counted; the
+  // month is INCOMPLETE).
+  missingPrices: number;
+  // At the end of the month (or now, for the current month).
+  recurring: RevenueRecurring[];
+  activePaidAtStart: number;
+  activePaidAtEnd: number;
+  // Paid subscriptions that actually ended (canceled) this month.
+  //   ended         of those paying at the start of the month — the churn
+  //                 rate is ended / activePaidAtStart (customer churn) and
+  //                 churnedMrr / startMrr per currency (revenue churn);
+  //   endedOther    other paid subscriptions that ended (unpaid at the
+  //                 start, or started paying within the month);
+  //   movedToComplimentary  paid subscriptions that became complimentary
+  //                 (not churn).
+  churn: {
+    ended: number;
+    endedOther: number;
+    movedToComplimentary: number;
+    revenue: {
+      currency: string;
+      startMrrMinorUnits: number;
+      churnedMrrMinorUnits: number;
+    }[];
+  };
+  cash: RevenueCash[];
+  // Invoices issued this month with at least one failed payment attempt
+  // (each counted once, however many retries).
+  failedInvoices: {
+    count: number;
+    amountDue: { currency: string; minorUnits: number }[];
+    // Issued invoices whose attempts aren't known yet (not counted).
+    unverified: number;
+  };
+  // Failed invoices paid this month (verified payment).
+  recoveredInvoices: number;
+  // Complimentary arrangements active at the end of the month (businesses
+  // complimentary without an arrangement have no history to count).
+  complimentaryAtEnd: number;
+}
+
+export interface RevenueTrialCohort {
+  month: string; // the month trials started
+  started: number;
+  converted: number;
+  expired: number;
+  inProgress: number;
+  // false while any trial can still convert.
+  complete: boolean;
+}
+
+export interface RevenueAdjustmentTotal {
+  currency: string;
+  kind: "REFUND" | "CREDIT" | "OUT_OF_BAND";
+  origin: "CENTERIVO" | "EXTERNAL";
+  count: number;
+  totalMinorUnits: number;
+}
+
+export interface PlatformRevenueReport {
+  environment: RevenueReportEnvironment;
+  generatedAt: string;
+  period: { from: string; to: string };
+  current: {
+    asOf: string;
+    status: RevenueMetricStatus;
+    recurring: RevenueRecurring[];
+    byPlan: RevenuePlanBreakdown[];
+    complimentary: {
+      withArrangement: number;
+      withoutArrangement: number;
+      // What the arrangements' previous prices would bill — a list-price
+      // equivalent, NOT lost revenue.
+      listPriceEquivalent: { currency: string; mrrMinorUnits: number }[];
+    };
+  };
+  months: RevenueMonth[];
+  trialCohorts: RevenueTrialCohort[];
+  // Completed refunds and credits in the period.
+  adjustments: RevenueAdjustmentTotal[];
+  dataQuality: {
+    incompleteSubscriptions: number;
+    invoicesWithoutAmounts: number;
+    // Accounting invariants that failed (each a short code and count).
+    violations: { code: string; count: number }[];
+  };
 }

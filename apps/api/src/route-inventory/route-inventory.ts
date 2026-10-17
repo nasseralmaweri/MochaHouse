@@ -411,6 +411,11 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
       scope: 'platform',
       note: 'SC3e-2 — revoke an active grant (billing.complimentary.manage).',
     },
+  // SC3f — CENTERIVO-wide SaaS revenue reporting (read-only).
+  'GET /api/v1/platform/billing/reports/revenue': {
+    scope: 'platform',
+    note: 'SC3f — revenue report totals (billing.reports.view; audited; no business detail).',
+  },
   // SC3e-3 — refunds and credits, and operator permissions.
   'GET /api/v1/platform/billing/adjustments': {
     scope: 'platform',

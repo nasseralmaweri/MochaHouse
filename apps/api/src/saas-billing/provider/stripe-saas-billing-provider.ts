@@ -1352,6 +1352,26 @@ function invoiceRecord(invoice: Stripe.Invoice): ProviderInvoiceRecord | null {
     .filter((p) => p.start !== null && p.end !== null);
   const starting = integer(invoice.starting_balance) ?? 0;
   const ending = integer(invoice.ending_balance) ?? starting;
+  // SC3f — all four amounts as Stripe computed them, or none.
+  const subtotal = integer(invoice.subtotal);
+  const excludingTax = integer(invoice.total_excluding_tax);
+  const discounts = (invoice.total_discount_amounts ?? []).map((d) =>
+    integer(d.amount),
+  );
+  const taxes = (invoice.total_taxes ?? []).map((t) => integer(t.amount));
+  const amounts =
+    subtotal !== null &&
+    excludingTax !== null &&
+    discounts.every((v) => v !== null && v >= 0) &&
+    taxes.every((v) => v !== null && v >= 0)
+      ? {
+          subtotalMinorUnits: subtotal,
+          discountMinorUnits: sum(discounts),
+          taxMinorUnits: sum(taxes),
+          totalExcludingTaxMinorUnits: excludingTax,
+        }
+      : null;
+  const attempts = integer(invoice.attempt_count);
   return {
     externalInvoiceId: invoiceId,
     externalCustomerId: id(invoice.customer),
@@ -1372,6 +1392,8 @@ function invoiceRecord(invoice: Stripe.Invoice): ProviderInvoiceRecord | null {
     // A credit balance (negative) used by this invoice.
     balanceAppliedMinorUnits:
       starting < 0 ? Math.max(0, Math.min(-starting, ending - starting)) : 0,
+    amounts,
+    attemptCount: attempts !== null && attempts >= 0 ? attempts : null,
     periodStart:
       periods.length > 0
         ? new Date(Math.min(...periods.map((p) => p.start!.getTime())))
