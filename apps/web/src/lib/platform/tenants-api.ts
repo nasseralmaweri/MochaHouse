@@ -8,6 +8,9 @@ import type {
   PlatformComplimentaryListResponse,
   PlatformComplimentaryView,
   PlatformPaymentSetupListResponse,
+  PlatformOnboardingBusinessListResponse,
+  PlatformRegistrationControlView,
+  PlatformRegistrationListResponse,
   PlatformRevenueReport,
   PlatformAdjustableInvoice,
   PlatformAdjustmentListResponse,
@@ -208,4 +211,18 @@ export function listPlatformTenantLocations(
   return readRegistry(
     `/tenants/${encodeURIComponent(tenantId)}/locations?${query.toString()}`,
   );
+}
+
+// SC4e — onboarding oversight (onboarding.view). The query strings come from
+// lib/platform/onboarding.ts and are re-validated by the API.
+export function getRegistrationControl(): Promise<RegistryResult<PlatformRegistrationControlView>> {
+  return readRegistry("/onboarding/registration-control");
+}
+
+export function listRegistrations(query: string): Promise<RegistryResult<PlatformRegistrationListResponse>> {
+  return readRegistry(`/onboarding/registrations?${query}`);
+}
+
+export function listOnboardingBusinesses(query: string): Promise<RegistryResult<PlatformOnboardingBusinessListResponse>> {
+  return readRegistry(`/onboarding/businesses?${query}`);
 }

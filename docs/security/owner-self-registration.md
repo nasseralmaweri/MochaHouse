@@ -250,6 +250,59 @@ requirements are separate.
   (restaurants need customizable products); ordering-hours enforcement; more
   than one location; the business storefront (SC4f).
 
+## SC4e — onboarding oversight in the Platform Console
+
+Operators see owner registrations and the setup progress of self-service
+businesses, and can pause NEW registrations in an emergency
+(`/platform/onboarding`). Platform routes only: business staff and customers
+never reach them.
+
+| Route | Permission | |
+|---|---|---|
+| `GET /api/v1/platform/onboarding/registrations` | `onboarding.view` | registrations, newest first; filters for status, issue and dates; each view audited |
+| `GET /api/v1/platform/onboarding/businesses` | `onboarding.view` | each self-service business's getting-started steps; filters; stuck after N days (default 7) |
+| `GET /api/v1/platform/onboarding/registration-control` | `onboarding.view` | availability, pause history, rolling 24-hour quota, issue counts |
+| `POST /api/v1/platform/onboarding/registration-control` | `onboarding.manage` | pause / resume new registrations: recent sign-in, a reason, audited |
+
+- **Permissions.** `onboarding.view` and `onboarding.manage` are granted only
+  through the existing audited grant flows (the provisioning CLI or the
+  console's permission management; never to oneself); nobody receives them
+  automatically. Every route re-reads the operator's grants and audits a
+  refusal.
+- **What is never shown.** Verification codes, passwords, the server-only
+  initial-password nonce, login identifiers (identity provider subject) and
+  tokens. An unverified email is masked (`j***@example.com`); a verified
+  one is shown to `onboarding.view` holders. Each view of the registrations
+  list is a `platform.onboarding.registrations_viewed` audit event.
+- **Issues** are derived from the registration records — no separate
+  failure log: code expired before verification; stopped during
+  verification (mailbox proven but password not set, or every attempt at
+  the code used); verified without a business.
+- **Progress** is the SC4d getting-started calculation itself
+  (`location-readiness.ts`, now batched — a fixed handful of queries for
+  any number of businesses), so the console and the business's own
+  checklist can never disagree. At most the 5,000 most recent self-service
+  businesses are computed per request (the response says when it was
+  truncated). No progress table.
+- **The pause.** Registration is available only when the deployment flag
+  `SELF_SERVICE_REGISTRATION_ENABLED` is ON **and** registration is not
+  paused. The flag stays the master control: the console can never turn
+  registration on. While paused, every new start — and so every new code,
+  including a new password-setup code — is refused with the same 503 as the
+  quota (nothing reveals an email's state); completing with a code already
+  sent still works, and existing businesses are unaffected. If the pause
+  state cannot be read, new starts fail closed. Pause and resume are
+  serialized (an advisory lock), each needs `onboarding.manage`, a sign-in
+  within the last 15 minutes and a 10–500 character reason, and each writes
+  an append-only `RegistrationControlChange` row and a
+  `platform.registration.paused` / `resumed` audit event.
+- **The quota** shown is the count the start route enforces — new
+  registrations in the rolling 24 hours — never a second counter. When it is
+  used up, the console shows when the next place frees up.
+- **Monitoring only.** Operators cannot act as an owner, delete a
+  registration or skip identity verification. Payment setup deadlines keep
+  their own permission (`billing.accounts.manage`).
+
 ## Rollback
 
 `packages/database/prisma/rollbacks/20261106090000_owner_registration.down.sql`
@@ -261,4 +314,8 @@ owner history or offered plan exists; run before the SC4a rollback).
 (manual, SC4d; refuses while any location profile detail or opening hours
 exist — so in practice only before any location was created or completed
 through SC4d; removes the `locations.create` grants; run before the SC4b
+rollback).
+`packages/database/prisma/rollbacks/20261109090000_onboarding_oversight.down.sql`
+(manual, SC4e; refuses while any registration pause history or any
+onboarding permission grant, active or revoked, exists; run before the SC4d
 rollback).

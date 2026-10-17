@@ -5,6 +5,7 @@
 export type PlatformNavKey =
   | "overview"
   | "tenants"
+  | "onboarding"
   | "plans"
   | "subscriptions"
   | "billing"
@@ -30,6 +31,12 @@ export const PLATFORM_NAV_ITEMS: readonly PlatformNavItem[] = [
     label: "Tenants",
     href: "/platform/tenants",
     description: "Businesses on CENTERIVO and their lifecycle.",
+  },
+  {
+    key: "onboarding",
+    label: "Onboarding",
+    href: "/platform/onboarding",
+    description: "Owner sign-ups, setup progress and the registration pause.",
   },
   {
     key: "plans",

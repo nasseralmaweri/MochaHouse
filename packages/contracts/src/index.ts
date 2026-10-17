@@ -2266,6 +2266,10 @@ export const PLATFORM_PERMISSIONS = [
   "platform.permissions.manage",
   // SC3f — CENTERIVO-wide SaaS revenue reporting (read-only).
   "billing.reports.view",
+  // SC4e — owner registration and onboarding oversight: read-only reports,
+  // and pausing / resuming new owner registrations.
+  "onboarding.view",
+  "onboarding.manage",
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 
@@ -6644,5 +6648,166 @@ export interface PlatformRevenueReport {
     invoicesWithoutAmounts: number;
     // Accounting invariants that failed (each a short code and count).
     violations: { code: string; count: number }[];
+  };
+}
+
+// --- CENTERIVO platform: onboarding oversight (SC4e) ----------------------
+// Read-only reports for operators holding onboarding.view, and the emergency
+// pause of NEW owner registrations (onboarding.manage). Never a business's
+// staff: these are platform routes only.
+
+export type OwnerRegistrationStatusValue =
+  | "PENDING_VERIFICATION"
+  | "PASSWORD_SETUP"
+  | "VERIFIED";
+
+// What a registration needs attention for, if anything:
+//   EXPIRED      never verified, and its latest code has expired;
+//   STALLED      never verified, its code still valid, but stopped: the
+//                mailbox is proven and the password not yet set, or every
+//                attempt at the code was used;
+//   NO_BUSINESS  verified, but no business was created.
+export type PlatformRegistrationIssue = "EXPIRED" | "STALLED" | "NO_BUSINESS";
+
+export const PLATFORM_REGISTRATION_FILTERS = [
+  "all",
+  "pending",
+  "password-setup",
+  "verified",
+  "with-business",
+  "expired",
+  "stalled",
+  "no-business",
+] as const;
+export type PlatformRegistrationFilter =
+  (typeof PLATFORM_REGISTRATION_FILTERS)[number];
+
+export interface PlatformRegistrationRow {
+  id: string;
+  // A verified address in full; an unverified one masked (e.g. "j***@example.com").
+  email: string;
+  emailMasked: boolean;
+  status: OwnerRegistrationStatusValue;
+  createdAt: string;
+  verifiedAt: string | null;
+  // When the latest code stops being accepted (unverified registrations).
+  codeExpiresAt: string | null;
+  codesSent: number;
+  failedAttempts: number;
+  business: { id: string; name: string; createdAt: string } | null;
+  issue: PlatformRegistrationIssue | null;
+}
+
+// GET /api/v1/platform/onboarding/registrations
+//   ?filter=&createdFrom=YYYY-MM-DD&createdTo=YYYY-MM-DD&page=&pageSize=
+// Newest first. pageSize 1–50 (default 20). Anything else is a 400.
+export interface PlatformRegistrationListResponse {
+  items: PlatformRegistrationRow[];
+  filter: PlatformRegistrationFilter;
+  createdFrom: string | null;
+  createdTo: string | null;
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface PlatformRegistrationControlChange {
+  paused: boolean;
+  reason: string;
+  operatorEmail: string;
+  at: string;
+}
+
+// GET /api/v1/platform/onboarding/registration-control (onboarding.view).
+export interface PlatformRegistrationControlView {
+  // The deployment's master switch (SELF_SERVICE_REGISTRATION_ENABLED): ON
+  // only when enabled and fully configured. Operators cannot change it.
+  flag: "ON" | "OFF" | "MISCONFIGURED";
+  // The platform's emergency pause of NEW registrations.
+  paused: boolean;
+  // New registrations are accepted: flag ON and not paused.
+  accepting: boolean;
+  lastChange: PlatformRegistrationControlChange | null;
+  // Most recent first (at most 20).
+  history: PlatformRegistrationControlChange[];
+  quota: {
+    // New registrations allowed per rolling 24 hours; null when the
+    // configured value is malformed.
+    limit: number | null;
+    // Created in the last 24 hours (the count registration enforces).
+    usedInWindow: number;
+    windowHours: 24;
+    // While the quota is used up: when the oldest counted registration
+    // leaves the window, freeing a place.
+    nextFreeAt: string | null;
+    asOf: string;
+  };
+  issues: { expired: number; stalled: number; verifiedWithoutBusiness: number };
+}
+
+// POST /api/v1/platform/onboarding/registration-control
+// (onboarding.manage, recent sign-in; audited). Body exactly
+// { paused, reason } — reason 10–500 characters. 409
+// REGISTRATION_CONTROL_UNCHANGED when it is already in that state.
+// Returns PlatformRegistrationControlView.
+export interface PlatformRegistrationControlRequest {
+  paused: boolean;
+  reason: string;
+}
+export const REGISTRATION_CONTROL_UNCHANGED = "REGISTRATION_CONTROL_UNCHANGED";
+
+export const PLATFORM_ONBOARDING_FILTERS = [
+  "all",
+  "awaiting-payment",
+  "missing-location",
+  "missing-hours",
+  "missing-menu",
+  "ordering-off",
+  "stuck",
+] as const;
+export type PlatformOnboardingFilter =
+  (typeof PLATFORM_ONBOARDING_FILTERS)[number];
+
+export const PLATFORM_ONBOARDING_STUCK_DAYS_DEFAULT = 7;
+
+export interface PlatformOnboardingBusinessRow {
+  tenantId: string;
+  name: string;
+  slug: string;
+  tenantStatus: "ACTIVE" | "SUSPENDED";
+  registeredAt: string;
+  businessCreatedAt: string;
+  // The business's own getting-started checklist (SC4d), as it sees it.
+  steps: GettingStartedStep[];
+  completedCount: number;
+  totalCount: number;
+  setupComplete: boolean;
+  // Not complete, and the business was created more than stuckDays ago.
+  stuck: boolean;
+}
+
+// GET /api/v1/platform/onboarding/businesses?filter=&stuckDays=&page=&pageSize=
+// Self-service businesses, most recently created first. stuckDays 1–90
+// (default 7). The progress is computed live for at most the `scanLimit`
+// most recent businesses; `truncated` says older ones were not included.
+export interface PlatformOnboardingBusinessListResponse {
+  items: PlatformOnboardingBusinessRow[];
+  filter: PlatformOnboardingFilter;
+  stuckDays: number;
+  page: number;
+  pageSize: number;
+  total: number;
+  scanned: number;
+  scanLimit: number;
+  truncated: boolean;
+  summary: {
+    businesses: number;
+    complete: number;
+    awaitingPayment: number;
+    missingLocation: number;
+    missingHours: number;
+    missingMenu: number;
+    orderingOff: number;
+    stuck: number;
   };
 }

@@ -65,6 +65,8 @@ export type PolicyName =
   | 'platform-mfa'
   | 'platform-provisioning'
   | 'platform-lifecycle'
+  // SC4e — the onboarding reports (computed per request).
+  | 'platform-onboarding-report'
   // SC3b — opening a billing Checkout (a business owner) and receiving
   // billing-provider webhooks.
   | 'billing-checkout'
@@ -293,6 +295,19 @@ const DEFAULTS: Record<PolicyName, PolicyDefault> = {
         name: 'ip',
         key: ['tenant', 'ip'],
         limit: 30,
+        windowSeconds: HOUR,
+      },
+    ],
+  },
+  // SC4e — the Platform Console's onboarding reports (after PlatformAuthGuard
+  // and onboarding.view). Each request is computed live; generous for real
+  // browsing, it caps a runaway client or stolen session.
+  'platform-onboarding-report': {
+    scopes: [
+      {
+        name: 'ip',
+        key: ['tenant', 'ip'],
+        limit: 300,
         windowSeconds: HOUR,
       },
     ],

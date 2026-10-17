@@ -992,7 +992,7 @@ export interface PlatformMeResponse {
     operator: PlatformOperatorProfile;
     permissions: PlatformPermission[];
 }
-export declare const PLATFORM_PERMISSIONS: readonly ["billing.prices.manage", "billing.policy.manage", "billing.accounts.manage", "billing.reconciliation.run", "billing.cases.manage", "billing.schedules.release", "billing.complimentary.manage", "billing.adjustments.request", "billing.adjustments.approve", "platform.permissions.manage", "billing.reports.view"];
+export declare const PLATFORM_PERMISSIONS: readonly ["billing.prices.manage", "billing.policy.manage", "billing.accounts.manage", "billing.reconciliation.run", "billing.cases.manage", "billing.schedules.release", "billing.complimentary.manage", "billing.adjustments.request", "billing.adjustments.approve", "platform.permissions.manage", "billing.reports.view", "onboarding.view", "onboarding.manage"];
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 export interface PlatformOperatorPermissionView {
     permission: PlatformPermission;
@@ -3036,6 +3036,103 @@ export interface PlatformRevenueReport {
             code: string;
             count: number;
         }[];
+    };
+}
+export type OwnerRegistrationStatusValue = "PENDING_VERIFICATION" | "PASSWORD_SETUP" | "VERIFIED";
+export type PlatformRegistrationIssue = "EXPIRED" | "STALLED" | "NO_BUSINESS";
+export declare const PLATFORM_REGISTRATION_FILTERS: readonly ["all", "pending", "password-setup", "verified", "with-business", "expired", "stalled", "no-business"];
+export type PlatformRegistrationFilter = (typeof PLATFORM_REGISTRATION_FILTERS)[number];
+export interface PlatformRegistrationRow {
+    id: string;
+    email: string;
+    emailMasked: boolean;
+    status: OwnerRegistrationStatusValue;
+    createdAt: string;
+    verifiedAt: string | null;
+    codeExpiresAt: string | null;
+    codesSent: number;
+    failedAttempts: number;
+    business: {
+        id: string;
+        name: string;
+        createdAt: string;
+    } | null;
+    issue: PlatformRegistrationIssue | null;
+}
+export interface PlatformRegistrationListResponse {
+    items: PlatformRegistrationRow[];
+    filter: PlatformRegistrationFilter;
+    createdFrom: string | null;
+    createdTo: string | null;
+    page: number;
+    pageSize: number;
+    total: number;
+}
+export interface PlatformRegistrationControlChange {
+    paused: boolean;
+    reason: string;
+    operatorEmail: string;
+    at: string;
+}
+export interface PlatformRegistrationControlView {
+    flag: "ON" | "OFF" | "MISCONFIGURED";
+    paused: boolean;
+    accepting: boolean;
+    lastChange: PlatformRegistrationControlChange | null;
+    history: PlatformRegistrationControlChange[];
+    quota: {
+        limit: number | null;
+        usedInWindow: number;
+        windowHours: 24;
+        nextFreeAt: string | null;
+        asOf: string;
+    };
+    issues: {
+        expired: number;
+        stalled: number;
+        verifiedWithoutBusiness: number;
+    };
+}
+export interface PlatformRegistrationControlRequest {
+    paused: boolean;
+    reason: string;
+}
+export declare const REGISTRATION_CONTROL_UNCHANGED = "REGISTRATION_CONTROL_UNCHANGED";
+export declare const PLATFORM_ONBOARDING_FILTERS: readonly ["all", "awaiting-payment", "missing-location", "missing-hours", "missing-menu", "ordering-off", "stuck"];
+export type PlatformOnboardingFilter = (typeof PLATFORM_ONBOARDING_FILTERS)[number];
+export declare const PLATFORM_ONBOARDING_STUCK_DAYS_DEFAULT = 7;
+export interface PlatformOnboardingBusinessRow {
+    tenantId: string;
+    name: string;
+    slug: string;
+    tenantStatus: "ACTIVE" | "SUSPENDED";
+    registeredAt: string;
+    businessCreatedAt: string;
+    steps: GettingStartedStep[];
+    completedCount: number;
+    totalCount: number;
+    setupComplete: boolean;
+    stuck: boolean;
+}
+export interface PlatformOnboardingBusinessListResponse {
+    items: PlatformOnboardingBusinessRow[];
+    filter: PlatformOnboardingFilter;
+    stuckDays: number;
+    page: number;
+    pageSize: number;
+    total: number;
+    scanned: number;
+    scanLimit: number;
+    truncated: boolean;
+    summary: {
+        businesses: number;
+        complete: number;
+        awaitingPayment: number;
+        missingLocation: number;
+        missingHours: number;
+        missingMenu: number;
+        orderingOff: number;
+        stuck: number;
     };
 }
 //# sourceMappingURL=index.d.ts.map

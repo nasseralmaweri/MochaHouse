@@ -63,6 +63,8 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'OwnerRegistration',
   // SC4d — a location's weekly opening hours.
   'LocationOpeningPeriod',
+  // SC4e — the registration pause history.
+  'RegistrationControlChange',
 ]);
 
 // Columns added after the 4C-era migrations to tables that already existed.

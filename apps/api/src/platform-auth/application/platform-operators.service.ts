@@ -88,6 +88,11 @@ export const PLATFORM_AUDIT_ACTIONS = {
   // SC4a — a business owner completed self-service registration (no
   // operator; the identity fields name the login, target: the registration).
   ownerRegistrationVerified: 'platform.owner_registration.verified',
+  // SC4e — an operator read the registrations list (owner emails), and
+  // paused / resumed NEW registrations (target: the history row).
+  onboardingRegistrationsViewed: 'platform.onboarding.registrations_viewed',
+  registrationPaused: 'platform.registration.paused',
+  registrationResumed: 'platform.registration.resumed',
   // SC4b — a plan offered / withdrawn for self-service (target: the plan),
   // and a business created by its owner (no operator; the identity fields
   // name the owner's login; target: the tenant).
