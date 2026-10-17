@@ -13,6 +13,7 @@ import {
   type ProviderInvoice,
   type ProviderPriceChangeResult,
   type ProviderRecurringPreview,
+  type ProviderSchedule,
   type ProviderInvoiceStatus,
   type ProviderPayableInvoice,
   type ProviderLifecycleEvent,
@@ -138,7 +139,8 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
       externalSubscriptionId: string;
       fromExternalPriceId: string;
       toExternalPriceId: string;
-      status: 'active' | 'released';
+      status: 'active' | 'released' | 'canceled' | 'completed';
+      switchAt?: Date | null;
     }
   >();
   private readonly changeResults = new Map<string, ProviderPriceChangeResult>();
@@ -541,6 +543,12 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
       fromExternalPriceId: input.fromExternalPriceId,
       toExternalPriceId: input.toExternalPriceId,
       status: 'active',
+      // Fixed when created (as Stripe's phase dates are): the trial end, or
+      // the period end.
+      switchAt:
+        sub.status === 'trialing' && sub.trialEnd
+          ? sub.trialEnd
+          : (sub.currentPeriodEnd ?? null),
     });
     this.schedulesByKey.set(input.idempotencyKey, scheduleId);
     this.subscriptions.set(input.externalSubscriptionId, {
@@ -548,6 +556,88 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
       scheduleId,
     });
     return Promise.resolve({ externalScheduleId: scheduleId });
+  }
+
+  retrieveSchedule(
+    externalScheduleId: string,
+  ): Promise<ProviderSchedule | null> {
+    this.call('retrieveSchedule', externalScheduleId);
+    const schedule = this.schedules.get(externalScheduleId);
+    if (!schedule) return Promise.resolve(null);
+    const sub = this.subscriptions.get(schedule.externalSubscriptionId);
+    const end = sub?.currentPeriodEnd ?? null;
+    return Promise.resolve({
+      externalScheduleId,
+      livemode: false,
+      status: schedule.status,
+      externalSubscriptionId: schedule.externalSubscriptionId,
+      phases: [
+        {
+          externalPriceId: schedule.fromExternalPriceId,
+          quantity: 1,
+          startDate: sub?.currentPeriodStart ?? null,
+          endDate: schedule.switchAt ?? end,
+          trialEnd: sub?.trialEnd ?? null,
+        },
+        {
+          externalPriceId: schedule.toExternalPriceId,
+          quantity: 1,
+          startDate: schedule.switchAt ?? end,
+          endDate: null,
+          trialEnd: null,
+        },
+      ],
+    });
+  }
+
+  // SC3d-3 — the schedule's next phase starts: the subscription moves to the
+  // new price and a new period (the trial, if any, ends). The schedule stays
+  // attached for its last phase.
+  switchSchedule(externalScheduleId: string, switchAt?: Date): void {
+    const schedule = this.schedules.get(externalScheduleId)!;
+    const at = switchAt ?? schedule.switchAt ?? new Date();
+    const sub = this.subscriptions.get(schedule.externalSubscriptionId)!;
+    const to = this.priceCatalog.get(schedule.toExternalPriceId);
+    const length = (to?.interval === 'YEAR' ? 365 : 30) * 86_400_000;
+    this.subscriptions.set(schedule.externalSubscriptionId, {
+      ...sub,
+      status: sub.status === 'trialing' ? 'active' : sub.status,
+      items: sub.items!.map((item, index) =>
+        index === 0
+          ? { ...item, externalPriceId: schedule.toExternalPriceId }
+          : item,
+      ),
+      currentPeriodStart: at,
+      currentPeriodEnd: new Date(at.getTime() + length),
+    });
+  }
+
+  // SC3d-3 — tests: a schedule changed outside CENTERIVO (cancelled,
+  // released, completed or re-priced in the provider dashboard). Detaching
+  // removes it from its subscription.
+  alterSchedule(
+    externalScheduleId: string,
+    patch: {
+      status?: 'active' | 'released' | 'canceled' | 'completed';
+      toExternalPriceId?: string;
+      switchAt?: Date;
+      detach?: boolean;
+      remove?: boolean;
+    },
+  ): void {
+    const schedule = this.schedules.get(externalScheduleId)!;
+    const { detach, remove, ...rest } = patch;
+    Object.assign(schedule, rest);
+    if (detach || remove) {
+      const sub = this.subscriptions.get(schedule.externalSubscriptionId);
+      if (sub && sub.scheduleId === externalScheduleId) {
+        this.subscriptions.set(schedule.externalSubscriptionId, {
+          ...sub,
+          scheduleId: null,
+        });
+      }
+    }
+    if (remove) this.schedules.delete(externalScheduleId);
   }
 
   // Releases the schedule: the subscription itself is left exactly as it is.

@@ -71,8 +71,11 @@ export class InternalAuditService {
       subscriptionId: string;
       planChangeId: string;
       toPlanPriceId: string;
-      amountDueMinorUnits: number;
+      // null: a scheduled change (nothing charged now).
+      amountDueMinorUnits: number | null;
       currency: string;
+      timing?: 'IMMEDIATE' | 'PERIOD_END' | 'TRIAL_END';
+      effectiveAt?: string | null;
     },
   ): Promise<void> {
     await tx.internalAuditEvent.create({
@@ -88,8 +91,37 @@ export class InternalAuditService {
           toPlanPriceId: input.toPlanPriceId,
           amountDueMinorUnits: input.amountDueMinorUnits,
           currency: input.currency,
+          timing: input.timing ?? 'IMMEDIATE',
+          effectiveAt: input.effectiveAt ?? null,
         },
         reason: 'Plan change confirmed',
+      },
+    });
+  }
+
+  // SC3d-3 — a business user cancelled a scheduled plan change.
+  async recordPlanChangeCanceled(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      subscriptionId: string;
+      planChangeId: string;
+      externalScheduleId: string | null;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'billing.plan_change_canceled',
+        targetType: 'billing_subscription',
+        targetId: 'company',
+        afterData: {
+          subscriptionId: input.subscriptionId,
+          planChangeId: input.planChangeId,
+          externalScheduleId: input.externalScheduleId,
+        },
+        reason: 'Scheduled plan change cancelled',
       },
     });
   }

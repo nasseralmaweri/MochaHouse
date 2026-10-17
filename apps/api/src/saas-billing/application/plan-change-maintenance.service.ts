@@ -17,6 +17,12 @@ import {
   BillingLifecycleService,
   PLAN_CHANGE_UNCERTAIN_CASE,
 } from './billing-lifecycle.service';
+
+const SYSTEM_ORIGIN = {
+  source: 'SYSTEM' as const,
+  billingProviderEventId: null,
+  actorPlatformOperatorId: null,
+};
 import { BillingPlanChangeService } from './billing-plan-change.service';
 
 // SC3d-2 — plan change bookkeeping (owner decision D5). Runs whatever the
@@ -33,6 +39,15 @@ import { BillingPlanChangeService } from './billing-plan-change.service';
 //   3. a change waiting for payment is settled against the provider's live
 //      view (applied once paid and verified; abandoned only once the provider
 //      discarded it; reviewed after 48 hours without a resolution).
+//   4. (SC3d-3) a scheduled change is checked against the provider's live
+//      subscription and schedule — the backstop for missed or delayed
+//      webhooks: applied once the provider switched it, closed when the
+//      subscription ended, reviewed when the schedule was removed or altered
+//      (never recreated) or the switch is overdue.
+// A scheduled change whose schedule creation was interrupted follows (2):
+// re-sent (the same key, the date re-checked) within 30 minutes; after that
+// the provider is read — our own matching schedule adopted, none closed,
+// anything else reviewed.
 // Provider writes happen only in (2), for a change the business already
 // confirmed, through the configured (test-mode) provider.
 
@@ -50,6 +65,8 @@ export interface PlanChangeSweepResult {
   resubmitted: number;
   settled: number;
   reviewed: number;
+  // SC3d-3 — scheduled changes applied or closed by the sweep.
+  scheduledSettled: number;
 }
 
 @Injectable()
@@ -91,6 +108,7 @@ export class PlanChangeMaintenanceService
       resubmitted: 0,
       settled: 0,
       reviewed: 0,
+      scheduledSettled: 0,
     };
     if (this.running) return result;
     this.running = true;
@@ -113,14 +131,20 @@ export class PlanChangeMaintenanceService
         },
         orderBy: { confirmedAt: 'asc' },
         take: BATCH,
-        select: { id: true, confirmedAt: true },
+        select: { id: true, confirmedAt: true, timing: true },
       });
       for (const change of requested) {
         try {
-          if (
-            now.getTime() - change.confirmedAt!.getTime() <
-            REPLAY_WINDOW_MS
-          ) {
+          const inWindow =
+            now.getTime() - change.confirmedAt!.getTime() < REPLAY_WINDOW_MS;
+          if (change.timing !== 'IMMEDIATE') {
+            if (inWindow) {
+              await this.planChanges.submitScheduled(change.id, now);
+              result.resubmitted++;
+            } else if (await this.inspectScheduleAfterWindow(change.id)) {
+              result.reviewed++;
+            }
+          } else if (inWindow) {
             await this.planChanges.resubmitChecked(change.id);
             result.resubmitted++;
           } else if (await this.inspectAfterWindow(change.id)) {
@@ -182,10 +206,123 @@ export class PlanChangeMaintenanceService
           this.logError(change.id, error);
         }
       }
+
+      // 4. Scheduled changes (the earliest dates first).
+      const scheduled = await this.prisma.billingPlanChange.findMany({
+        where: { status: 'SCHEDULED', externalScheduleId: { not: null } },
+        orderBy: { nextRecurringStartsAt: 'asc' },
+        take: BATCH,
+        include: { subscription: { select: { externalSubscriptionId: true } } },
+      });
+      for (const change of scheduled) {
+        try {
+          const externalSubscriptionId =
+            change.subscription.externalSubscriptionId;
+          if (externalSubscriptionId === null) continue;
+          const snapshot = await this.provider.retrieveSubscription(
+            externalSubscriptionId,
+          );
+          const schedule = await this.provider.retrieveSchedule(
+            change.externalScheduleId!,
+          );
+          const outcome = await runSerializable(this.prisma, (tx) =>
+            this.lifecycle.settleScheduledChange(
+              tx,
+              change.id,
+              snapshot,
+              schedule,
+              now,
+              SYSTEM_ORIGIN,
+            ),
+          );
+          if (outcome === 'REVIEW') result.reviewed++;
+          else if (outcome !== 'WAITING') result.scheduledSettled++;
+        } catch (error) {
+          this.logError(change.id, error);
+        }
+      }
     } finally {
       this.running = false;
     }
     return result;
+  }
+
+  // SC3d-3 — a scheduled change whose schedule creation was never recorded,
+  // past the replay window: never re-sent. The provider is read: our own
+  // matching schedule is adopted, none closes the change (nothing changed),
+  // anything else is reviewed. Returns true when reviewed.
+  private async inspectScheduleAfterWindow(
+    planChangeId: string,
+  ): Promise<boolean> {
+    const change = await this.prisma.billingPlanChange.findUniqueOrThrow({
+      where: { id: planChangeId },
+      include: {
+        subscription: true,
+        fromPlanPrice: { select: { externalPriceId: true } },
+        toPlanPrice: { select: { externalPriceId: true } },
+      },
+    });
+    const externalSubscriptionId = change.subscription.externalSubscriptionId;
+    if (
+      externalSubscriptionId === null ||
+      change.nextRecurringStartsAt === null
+    ) {
+      return false;
+    }
+    const snapshot = await this.provider.retrieveSubscription(
+      externalSubscriptionId,
+    );
+    if (snapshot.scheduleId === undefined) return false;
+    if (snapshot.scheduleId === null) {
+      await this.prisma.billingPlanChange.updateMany({
+        where: { id: change.id, status: 'REQUESTED' },
+        data: {
+          status: 'FAILED',
+          failureCode: 'NOT_SUBMITTED',
+          finishedAt: new Date(),
+        },
+      });
+      return false;
+    }
+    const schedule = await this.provider.retrieveSchedule(snapshot.scheduleId);
+    const SKEW = 5 * 60 * 1000;
+    const ours =
+      schedule !== null &&
+      schedule.livemode === this.provider.livemode &&
+      schedule.externalSubscriptionId === externalSubscriptionId &&
+      (schedule.status === 'active' || schedule.status === 'not_started') &&
+      schedule.phases.length >= 2 &&
+      schedule.phases[0].externalPriceId ===
+        change.fromPlanPrice.externalPriceId &&
+      schedule.phases[0].endDate !== null &&
+      Math.abs(
+        schedule.phases[0].endDate.getTime() -
+          change.nextRecurringStartsAt.getTime(),
+      ) <= SKEW &&
+      schedule.phases[1].externalPriceId ===
+        change.toPlanPrice.externalPriceId &&
+      schedule.phases[1].quantity === 1;
+    if (ours) {
+      const outcome = await runSerializable(this.prisma, (tx) =>
+        this.lifecycle.recordScheduleCreated(
+          tx,
+          change.id,
+          schedule.externalScheduleId,
+          change.nextRecurringStartsAt!,
+          SYSTEM_ORIGIN,
+        ),
+      );
+      return outcome === 'REVIEW';
+    }
+    await runSerializable(this.prisma, (tx) =>
+      this.lifecycle.markPlanChangeReview(
+        tx,
+        change.id,
+        PLAN_CHANGE_UNCERTAIN_CASE,
+        `Plan change ${change.id} was confirmed for ${change.nextRecurringStartsAt!.toISOString()} but its schedule was never recorded, and the subscription now has a schedule (${snapshot.scheduleId}) that does not match it. Not re-sent, released or adopted.`,
+      ),
+    );
+    return true;
   }
 
   // Past the provider's idempotency window the request is NEVER re-sent (it

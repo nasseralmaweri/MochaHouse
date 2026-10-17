@@ -145,6 +145,24 @@ export interface ProviderPriceChangeResult {
   pendingUpdate: boolean;
 }
 
+// SC3d-3 — a subscription schedule as the provider holds it (its phases'
+// prices and dates), to compare with the change we scheduled.
+export interface ProviderSchedule {
+  externalScheduleId: string;
+  livemode: boolean;
+  // not_started | active | completed | released | canceled
+  status: string;
+  // The subscription it manages (or released).
+  externalSubscriptionId: string | null;
+  phases: {
+    externalPriceId: string | null;
+    quantity: number;
+    startDate: Date | null;
+    endDate: Date | null;
+    trialEnd: Date | null;
+  }[];
+}
+
 // A provider call that failed (network, provider outage, rate limit):
 // retryable. Never carries provider error text beyond a short code.
 export class SaasBillingProviderError extends Error {
@@ -276,6 +294,11 @@ export interface SaasBillingProvider {
     externalScheduleId: string;
   }): Promise<{ releasedSubscriptionId: string | null }>;
 
+  // SC3d-3 — read a schedule (null: the provider has none).
+  retrieveSchedule(
+    externalScheduleId: string,
+  ): Promise<ProviderSchedule | null>;
+
   // Verifies an incoming event's signature and freshness and normalizes it.
   // Throws BillingEventVerificationError for anything unverifiable.
   verifyEvent(input: {
@@ -313,6 +336,7 @@ export class DisabledSaasBillingProvider implements SaasBillingProvider {
   changePriceNow = unavailable;
   schedulePriceChangeAtPeriodEnd = unavailable;
   releaseSchedule = unavailable;
+  retrieveSchedule = unavailable;
   verifyEvent(): VerifiedBillingProviderEvent {
     throw new BillingEventVerificationError('SaaS billing is not configured.');
   }

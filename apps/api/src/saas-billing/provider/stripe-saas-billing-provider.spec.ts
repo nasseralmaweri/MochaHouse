@@ -100,6 +100,38 @@ const event = (type: string, object: object, over: object = {}) => ({
   ...over,
 });
 
+// SC3d-3 — a schedule phase as Stripe returns it (defaults: our one item at
+// price_m99, nothing else set).
+const phase = (over: object = {}) => ({
+  start_date: 1_799_000_000,
+  end_date: 1_802_000_000,
+  items: [
+    {
+      price: 'price_m99',
+      quantity: 1,
+      discounts: [],
+      tax_rates: [],
+      metadata: {},
+    },
+  ],
+  currency: 'usd',
+  trial_end: null,
+  add_invoice_items: [],
+  application_fee_percent: null,
+  billing_thresholds: null,
+  on_behalf_of: null,
+  transfer_data: null,
+  automatic_tax: { enabled: false, liability: null },
+  collection_method: null,
+  default_payment_method: null,
+  default_tax_rates: [],
+  description: null,
+  discounts: [],
+  invoice_settings: null,
+  metadata: {},
+  ...over,
+});
+
 describe('SC3b Stripe adapter (mocked HTTP)', () => {
   describe('webhook verification', () => {
     it('verifies the signature over the ORIGINAL raw body and normalizes a Checkout completion', () => {
@@ -953,7 +985,7 @@ describe('SC3d-1 Stripe plan change foundations (mocked HTTP)', () => {
           object: 'subscription_schedule',
           livemode: false,
           phases: [
-            { start_date: 1_799_000_000, end_date: 1_802_000_000, items: [] },
+            phase({ start_date: 1_799_000_000, end_date: 1_802_000_000 }),
           ],
         },
       ],
@@ -986,12 +1018,262 @@ describe('SC3d-1 Stripe plan change foundations (mocked HTTP)', () => {
     expect(update.body.get('phases[0][start_date]')).toBe('1799000000');
     expect(update.body.get('phases[0][end_date]')).toBe('1802000000');
     expect(update.body.get('phases[0][proration_behavior]')).toBe('none');
+    expect(update.body.get('phases[0][currency]')).toBe('usd');
+    expect(update.body.get('phases[0][trial_end]')).toBeNull();
     expect(update.body.get('phases[1][items][0][price]')).toBe('price_m49');
     expect(update.body.get('phases[1][duration][interval]')).toBe('month');
     expect(update.body.get('phases[1][proration_behavior]')).toBe('none');
     expect(update.idempotencyKey).toBe(
       'centerivo-plan-change-c2-schedule-phases',
     );
+  });
+
+  // SC3d-3 — Stripe UNSETS current-phase settings an update omits: a trial
+  // must be passed back or it would end at once.
+  it('a trial plan choice keeps the trial end, the payment method and the tax settings of the current phase', async () => {
+    const { provider, sent } = harness({
+      'POST /v1/subscription_schedules': () => [
+        200,
+        {
+          id: 'sub_sched_t',
+          object: 'subscription_schedule',
+          livemode: false,
+          phases: [
+            phase({
+              start_date: 1_799_000_000,
+              end_date: 1_800_209_600,
+              trial_end: 1_800_209_600,
+              default_payment_method: 'pm_1',
+              default_tax_rates: [{ id: 'txr_1', object: 'tax_rate' }],
+              collection_method: 'charge_automatically',
+              metadata: { centerivo_tenant_id: 'tenant-1' },
+            }),
+          ],
+        },
+      ],
+      'POST /v1/subscription_schedules/sub_sched_t': () => [
+        200,
+        {
+          id: 'sub_sched_t',
+          object: 'subscription_schedule',
+          livemode: false,
+          phases: [],
+        },
+      ],
+    });
+    await provider.schedulePriceChangeAtPeriodEnd({
+      idempotencyKey: 'centerivo-plan-change-t1-schedule',
+      externalSubscriptionId: 'sub_1',
+      fromExternalPriceId: 'price_m99',
+      toExternalPriceId: 'price_y990',
+      toInterval: 'YEAR',
+    });
+    const update = sent[1].body;
+    expect(update.get('phases[0][trial_end]')).toBe('1800209600');
+    expect(update.get('phases[0][end_date]')).toBe('1800209600');
+    expect(update.get('phases[0][default_payment_method]')).toBe('pm_1');
+    expect(update.get('phases[0][default_tax_rates][0]')).toBe('txr_1');
+    expect(update.get('phases[0][collection_method]')).toBe(
+      'charge_automatically',
+    );
+    expect(update.get('phases[0][metadata][centerivo_tenant_id]')).toBe(
+      'tenant-1',
+    );
+    expect(update.get('phases[1][items][0][price]')).toBe('price_y990');
+    expect(update.get('phases[1][duration][interval]')).toBe('year');
+    // The next phase keeps the payment, tax and metadata settings.
+    expect(update.get('phases[1][default_payment_method]')).toBe('pm_1');
+    expect(update.get('phases[1][default_tax_rates][0]')).toBe('txr_1');
+    expect(update.get('phases[1][collection_method]')).toBe(
+      'charge_automatically',
+    );
+    expect(update.get('phases[1][metadata][centerivo_tenant_id]')).toBe(
+      'tenant-1',
+    );
+    expect(update.get('phases[1][currency]')).toBeNull();
+    // Nothing that would end the trial or bill now.
+    expect(update.get('phases[1][trial_end]')).toBeNull();
+    expect(update.get('phases[0][billing_cycle_anchor]')).toBeNull();
+  });
+
+  it('a current phase with settings we cannot reproduce: the new schedule is RELEASED and nothing is changed', async () => {
+    const { provider, sent } = harness({
+      'POST /v1/subscription_schedules': () => [
+        200,
+        {
+          id: 'sub_sched_u',
+          object: 'subscription_schedule',
+          livemode: false,
+          phases: [
+            phase({
+              start_date: 1_799_000_000,
+              end_date: 1_802_000_000,
+              add_invoice_items: [{ price: 'price_setup', quantity: 1 }],
+            }),
+          ],
+        },
+      ],
+      'POST /v1/subscription_schedules/sub_sched_u/release': () => [
+        200,
+        {
+          id: 'sub_sched_u',
+          object: 'subscription_schedule',
+          livemode: false,
+          status: 'released',
+          released_subscription: 'sub_1',
+        },
+      ],
+    });
+    await expect(
+      provider.schedulePriceChangeAtPeriodEnd({
+        idempotencyKey: 'centerivo-plan-change-u1-schedule',
+        externalSubscriptionId: 'sub_1',
+        fromExternalPriceId: 'price_m99',
+        toExternalPriceId: 'price_m49',
+        toInterval: 'MONTH',
+      }),
+    ).rejects.toThrow('schedule_phase_unsupported');
+    expect(sent.map((r) => `${r.method} ${r.path}`)).toEqual([
+      'POST /v1/subscription_schedules',
+      'POST /v1/subscription_schedules/sub_sched_u/release',
+    ]);
+  });
+
+  it('a different price in the current phase is never carried into the schedule', async () => {
+    const { provider, sent } = harness({
+      'POST /v1/subscription_schedules': () => [
+        200,
+        {
+          id: 'sub_sched_p',
+          object: 'subscription_schedule',
+          livemode: false,
+          phases: [
+            phase({
+              start_date: 1_799_000_000,
+              end_date: 1_802_000_000,
+              items: [{ price: 'price_other', quantity: 1 }],
+            }),
+          ],
+        },
+      ],
+      'POST /v1/subscription_schedules/sub_sched_p/release': () => [
+        200,
+        {
+          id: 'sub_sched_p',
+          object: 'subscription_schedule',
+          livemode: false,
+          status: 'released',
+          released_subscription: 'sub_1',
+        },
+      ],
+    });
+    await expect(
+      provider.schedulePriceChangeAtPeriodEnd({
+        idempotencyKey: 'centerivo-plan-change-p1-schedule',
+        externalSubscriptionId: 'sub_1',
+        fromExternalPriceId: 'price_m99',
+        toExternalPriceId: 'price_m49',
+        toInterval: 'MONTH',
+      }),
+    ).rejects.toThrow('schedule_phase_unsupported');
+    expect(
+      sent.some((r) => r.path === '/v1/subscription_schedules/sub_sched_p'),
+    ).toBe(false);
+  });
+
+  it('reads a schedule (phases, trial end, status) and treats a missing one as none', async () => {
+    const { provider } = harness({
+      'GET /v1/subscription_schedules/sub_sched_1': () => [
+        200,
+        {
+          id: 'sub_sched_1',
+          object: 'subscription_schedule',
+          livemode: false,
+          status: 'active',
+          subscription: 'sub_1',
+          phases: [
+            phase({
+              start_date: 1_799_000_000,
+              end_date: 1_802_000_000,
+              trial_end: 1_802_000_000,
+            }),
+            phase({
+              start_date: 1_802_000_000,
+              end_date: 1_804_592_000,
+              items: [{ price: 'price_m49', quantity: 1 }],
+            }),
+          ],
+        },
+      ],
+    });
+    await expect(provider.retrieveSchedule('sub_sched_1')).resolves.toEqual({
+      externalScheduleId: 'sub_sched_1',
+      livemode: false,
+      status: 'active',
+      externalSubscriptionId: 'sub_1',
+      phases: [
+        {
+          externalPriceId: 'price_m99',
+          quantity: 1,
+          startDate: new Date(1_799_000_000_000),
+          endDate: new Date(1_802_000_000_000),
+          trialEnd: new Date(1_802_000_000_000),
+        },
+        {
+          externalPriceId: 'price_m49',
+          quantity: 1,
+          startDate: new Date(1_802_000_000_000),
+          endDate: new Date(1_804_592_000_000),
+          trialEnd: null,
+        },
+      ],
+    });
+    await expect(
+      provider.retrieveSchedule('sub_sched_gone'),
+    ).resolves.toBeNull();
+  });
+
+  it('schedule events re-read the subscription they manage (or released)', () => {
+    const { stripe, provider } = harness({});
+    for (const type of [
+      'subscription_schedule.updated',
+      'subscription_schedule.canceled',
+      'subscription_schedule.completed',
+      'subscription_schedule.aborted',
+      'subscription_schedule.expiring',
+    ]) {
+      const verified = provider.verifyEvent(
+        signed(
+          stripe,
+          event(type, {
+            id: 'sub_sched_1',
+            object: 'subscription_schedule',
+            customer: 'cus_1',
+            subscription: 'sub_1',
+          }),
+        ),
+      );
+      expect(verified).toMatchObject({
+        event: { kind: 'SUBSCRIPTION_CHANGED' },
+        externalSubscriptionId: 'sub_1',
+      });
+    }
+    const released = provider.verifyEvent(
+      signed(
+        stripe,
+        event('subscription_schedule.released', {
+          id: 'sub_sched_1',
+          object: 'subscription_schedule',
+          customer: 'cus_1',
+          subscription: null,
+          released_subscription: 'sub_1',
+        }),
+      ),
+    );
+    expect(released).toMatchObject({
+      event: { kind: 'SUBSCRIPTION_CHANGED' },
+      externalSubscriptionId: 'sub_1',
+    });
   });
 
   it('removing a scheduled change RELEASES the schedule and never cancels it (or the subscription)', async () => {

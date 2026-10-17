@@ -17,6 +17,10 @@ import {
   BILLING_PLAN_CHANGE_PREVIEW_EXPIRED,
   BILLING_PLAN_CHANGE_NOT_PAYABLE,
   BILLING_UNAVAILABLE,
+  BILLING_PLAN_CHANGE_NOT_CANCELABLE,
+  BILLING_PLAN_CHANGE_PAYMENT_METHOD_REQUIRED,
+  BILLING_PLAN_CHANGE_TOO_LATE,
+  SUBSCRIPTION_MODULES,
   type AdminPlanChangeStatus,
   type AdminPlanChangeView,
   type AdminPlanOption,
@@ -28,6 +32,7 @@ import { InternalAuditService } from '../../audit/internal-audit.service';
 import { PLATFORM_AUDIT_ACTIONS } from '../../platform-auth/application/platform-operators.service';
 import { isUuid } from '../../platform-subscriptions/application/plan-input';
 import {
+  PLAN_CHANGE_CUTOFF_MS,
   PLAN_CHANGE_PREVIEW_TTL_MS,
   planChangeIdempotencyKey,
   planChangeTiming,
@@ -164,6 +169,23 @@ export function parsePlanChangeConfirm(body: unknown): string {
   return value;
 }
 
+// SC3d-3 — body exactly { planChangeId } (a UUID).
+export function parsePlanChangeCancel(body: unknown): string {
+  if (
+    typeof body !== 'object' ||
+    body === null ||
+    Array.isArray(body) ||
+    Object.keys(body).join(',') !== 'planChangeId'
+  ) {
+    throw new BadRequestException('Cancel one plan change (planChangeId).');
+  }
+  const value = (body as { planChangeId: unknown }).planChangeId;
+  if (typeof value !== 'string' || !isUuid(value)) {
+    throw new BadRequestException('Cancel one plan change (planChangeId).');
+  }
+  return value;
+}
+
 function hasControlCharacter(value: string): boolean {
   for (const char of value) {
     const code = char.codePointAt(0)!;
@@ -172,6 +194,37 @@ function hasControlCharacter(value: string): boolean {
     }
   }
   return false;
+}
+
+// SC3d-3 — marks a SCHEDULED change whose cancellation the business asked
+// for (its schedule is being released).
+export const CANCEL_REQUESTED = 'CANCEL_REQUESTED';
+
+const tooLate = () =>
+  conflict(
+    BILLING_PLAN_CHANGE_TOO_LATE,
+    "It's too close to your renewal to change this now. Try again after your renewal.",
+  );
+const paymentMethodRequired = () =>
+  conflict(
+    BILLING_PLAN_CHANGE_PAYMENT_METHOD_REQUIRED,
+    'Add a payment method first. You can then choose the plan your trial becomes.',
+  );
+const notCancelable = () =>
+  conflict(
+    BILLING_PLAN_CHANGE_NOT_CANCELABLE,
+    'There is no scheduled plan change to cancel. This page shows the latest status.',
+  );
+
+// The features a change removes and adds (labels from the module catalog).
+function moduleDifference(from: string[], to: string[]) {
+  const label = (key: string) =>
+    SUBSCRIPTION_MODULES.find((module) => module.key === key)?.label ?? key;
+  const row = (key: string) => ({ key, label: label(key) });
+  return {
+    lost: from.filter((key) => !to.includes(key)).map(row),
+    gained: to.filter((key) => !from.includes(key)).map(row),
+  };
 }
 
 const previewExpired = () =>
@@ -189,6 +242,10 @@ const previewChanged = () =>
 // provider's payment AND price are verified).
 function viewStatus(status: string): AdminPlanChangeStatus {
   switch (status) {
+    case 'SCHEDULED':
+      return 'SCHEDULED';
+    case 'CANCELED':
+      return 'CANCELED';
     case 'REQUESTED':
       return 'PROCESSING';
     case 'AWAITING_PAYMENT':
@@ -198,7 +255,6 @@ function viewStatus(status: string): AdminPlanChangeStatus {
     case 'EXPIRED':
       return 'EXPIRED';
     case 'FAILED':
-    case 'CANCELED':
       return 'FAILED';
     default:
       return 'REVIEW';
@@ -261,7 +317,7 @@ export class BillingPlanChangeService {
     const targetVersion = await this.prisma.subscriptionPlanVersion.findFirst({
       where: { planId: target.planId, status: 'PUBLISHED' },
       orderBy: { version: 'desc' },
-      select: { id: true },
+      select: { id: true, moduleKeys: true },
     });
     if (
       target.status !== 'ACTIVE' ||
@@ -371,6 +427,25 @@ export class BillingPlanChangeService {
           "We couldn't confirm this subscription's current price with the payment provider. Our team has been notified; nothing was changed.",
         );
       }
+      // SC3d-3 — a scheduled change: at least an hour before its date
+      // (verified provider dates, server time); after a trial only with a
+      // payment method on file (a cardless trial keeps its expiry).
+      if (timing !== 'IMMEDIATE') {
+        const effective =
+          timing === 'TRIAL_END'
+            ? snapshot.trialEnd
+            : (snapshot.currentPeriodEnd ?? null);
+        if (effective === null) throw notChangeable();
+        if (effective.getTime() - now.getTime() < PLAN_CHANGE_CUTOFF_MS)
+          throw tooLate();
+        if (
+          timing === 'TRIAL_END' &&
+          (subscription.recurringPaymentAuthorizedAt === null ||
+            !snapshot.hasPaymentMethod)
+        ) {
+          throw paymentMethodRequired();
+        }
+      }
       toExternalPriceId = await syncProviderPrice(
         this.prisma,
         this.provider,
@@ -458,6 +533,10 @@ export class BillingPlanChangeService {
         timing,
         current: side(subscription.planVersion.plan.name, current),
         target: side(target.plan.name, target),
+        modules: moduleDifference(
+          subscription.planVersion.moduleKeys,
+          targetVersion.moduleKeys,
+        ),
         chargeNow: charge
           ? {
               amountDueMinorUnits: charge.amountDueMinorUnits,
@@ -507,10 +586,11 @@ export class BillingPlanChangeService {
       throw previewExpired();
     }
     if (change.timing !== 'IMMEDIATE') {
-      // SC3d-3 — period-end changes and trial plan choices.
-      throw conflict(
-        BILLING_PLAN_CHANGE_UNAVAILABLE,
-        "This change can't be confirmed yet: changes at the end of the billing period are not available.",
+      return this.confirmScheduled(
+        tenantId,
+        change.id,
+        actorInternalUserId,
+        now,
       );
     }
     const subscription = await this.prisma.tenantSubscription.findUniqueOrThrow(
@@ -820,6 +900,423 @@ export class BillingPlanChangeService {
     await this.submit(change.id);
   }
 
+  // --- SC3d-3: scheduled changes -----------------------------------------------------
+
+  // The business confirms a change that takes effect at the period end (a
+  // downgrade, annual -> monthly) or the plan its trial becomes. Nothing is
+  // charged now. Everything is re-checked (the subscription, the plan and
+  // price Stripe bills, the date — at least an hour away — the recurring
+  // price and, after a trial, the payment method); then the one open change,
+  // and the provider schedule (verified once created).
+  private async confirmScheduled(
+    tenantId: string,
+    planChangeId: string,
+    actorInternalUserId: string,
+    now: Date,
+  ): Promise<AdminPlanChangeView> {
+    const change = await this.prisma.billingPlanChange.findUniqueOrThrow({
+      where: { id: planChangeId },
+      include: { toPlanPrice: { include: { plan: true } } },
+    });
+    const subscription = await this.prisma.tenantSubscription.findUniqueOrThrow(
+      {
+        where: { id: change.subscriptionId },
+        include: SUBSCRIPTION_INCLUDE,
+      },
+    );
+    if (subscription.subscriberTenantId !== tenantId) {
+      throw new NotFoundException('Preview not found.');
+    }
+    const current = subscription.planPrice;
+    const target = change.toPlanPrice;
+    const expectedStatus =
+      change.timing === 'TRIAL_END' ? 'TRIALING' : 'ACTIVE';
+    if (
+      subscription.billingMode !== 'BILLED' ||
+      subscription.externalSubscriptionId === null ||
+      current === null ||
+      subscription.status !== expectedStatus ||
+      subscription.subscriberTenant.status !== 'ACTIVE' ||
+      subscription.cancelAtPeriodEnd ||
+      subscription.pendingChangeKind !== null
+    ) {
+      throw notChangeable();
+    }
+    if (
+      subscription.billingProvider !== this.provider.name ||
+      !this.provider.available
+    ) {
+      throw unavailable();
+    }
+    const latestVersion = await this.prisma.subscriptionPlanVersion.findFirst({
+      where: { planId: target.planId, status: 'PUBLISHED' },
+      orderBy: { version: 'desc' },
+      select: { id: true },
+    });
+    if (
+      current.id !== change.fromPlanPriceId ||
+      subscription.planVersionId !== change.fromPlanVersionId ||
+      target.status !== 'ACTIVE' ||
+      target.externalPriceId === null ||
+      latestVersion?.id !== change.toPlanVersionId ||
+      target.currency.toUpperCase() !== change.currency ||
+      change.nextRecurringStartsAt === null
+    ) {
+      throw previewExpired();
+    }
+    const open = await this.prisma.billingPlanChange.count({
+      where: {
+        subscriptionId: subscription.id,
+        status: {
+          in: ['REQUESTED', 'AWAITING_PAYMENT', 'SCHEDULED', 'REVIEW'],
+        },
+      },
+    });
+    if (open > 0) {
+      throw conflict(
+        BILLING_PLAN_CHANGE_IN_PROGRESS,
+        'A plan change is already in progress for this business.',
+      );
+    }
+    try {
+      const snapshot = await this.provider.retrieveSubscription(
+        subscription.externalSubscriptionId,
+      );
+      this.assertScheduleable(
+        subscription,
+        change.timing,
+        snapshot,
+        current.externalPriceId,
+        change.nextRecurringStartsAt,
+        now,
+      );
+      const item = snapshot.items![0];
+      const recurring = await this.provider.previewRecurring({
+        externalSubscriptionId: subscription.externalSubscriptionId,
+        externalItemId: item.externalItemId,
+        toExternalPriceId: target.externalPriceId,
+      });
+      if (
+        recurring.livemode !== this.provider.livemode ||
+        recurring.currency.toUpperCase() !== change.currency ||
+        Math.max(0, recurring.totalMinorUnits) !==
+          change.nextRecurringMinorUnits
+      ) {
+        throw previewChanged();
+      }
+    } catch (error) {
+      if (error instanceof SaasBillingProviderError) throw unavailable();
+      throw error;
+    }
+
+    try {
+      await runSerializable(this.prisma, async (tx) => {
+        const fresh = await tx.tenantSubscription.findUniqueOrThrow({
+          where: { id: subscription.id },
+          select: { billingStateVersion: true },
+        });
+        if (fresh.billingStateVersion !== subscription.billingStateVersion) {
+          throw previewChanged();
+        }
+        const { count } = await tx.billingPlanChange.updateMany({
+          where: { id: change.id, status: 'PREVIEWED' },
+          data: { status: 'REQUESTED', confirmedAt: now },
+        });
+        if (count !== 1) throw previewExpired();
+        await this.audit.recordPlanChangeConfirmed(tx, {
+          actorInternalUserId,
+          subscriptionId: subscription.id,
+          planChangeId: change.id,
+          toPlanPriceId: target.id,
+          amountDueMinorUnits: null,
+          currency: change.currency,
+          timing: change.timing as 'PERIOD_END' | 'TRIAL_END',
+          effectiveAt: change.nextRecurringStartsAt!.toISOString(),
+        });
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw conflict(
+          BILLING_PLAN_CHANGE_IN_PROGRESS,
+          'A plan change is already in progress for this business.',
+        );
+      }
+      throw error;
+    }
+    await this.submitScheduled(change.id, now);
+    return this.view(change.id);
+  }
+
+  // What a schedule may be created on (or cancelled before): our
+  // subscription, billing exactly our price with nothing pending or
+  // scheduled, the date still the one the business was shown and at least
+  // an hour away, and — after a trial — a payment method on file.
+  private assertScheduleable(
+    subscription: {
+      externalSubscriptionId: string | null;
+      externalCustomerId: string | null;
+      recurringPaymentAuthorizedAt: Date | null;
+    },
+    timing: string,
+    snapshot: ProviderSubscriptionSnapshot,
+    currentExternalPriceId: string | null,
+    effectiveAt: Date,
+    now: Date,
+  ): void {
+    if (
+      snapshot.externalSubscriptionId !== subscription.externalSubscriptionId ||
+      snapshot.externalCustomerId !== subscription.externalCustomerId ||
+      snapshot.livemode !== this.provider.livemode ||
+      snapshot.status !== (timing === 'TRIAL_END' ? 'trialing' : 'active') ||
+      snapshot.cancelAtPeriodEnd
+    ) {
+      throw notChangeable();
+    }
+    const billed = verifyBilledPrice(snapshot, currentExternalPriceId);
+    if (!billed.ok) {
+      if (
+        billed.problem === 'SCHEDULE_ATTACHED' ||
+        billed.problem === 'PENDING_UPDATE'
+      ) {
+        throw conflict(
+          BILLING_PLAN_CHANGE_IN_PROGRESS,
+          'A plan change is already in progress for this business.',
+        );
+      }
+      throw conflict(
+        BILLING_PLAN_CHANGE_UNVERIFIED,
+        "We couldn't confirm this subscription's current price with the payment provider. Nothing was changed.",
+      );
+    }
+    const live =
+      timing === 'TRIAL_END'
+        ? snapshot.trialEnd
+        : (snapshot.currentPeriodEnd ?? null);
+    if (live === null || live.getTime() !== effectiveAt.getTime())
+      throw previewChanged();
+    if (effectiveAt.getTime() - now.getTime() < PLAN_CHANGE_CUTOFF_MS)
+      throw tooLate();
+    if (
+      timing === 'TRIAL_END' &&
+      (subscription.recurringPaymentAuthorizedAt === null ||
+        !snapshot.hasPaymentMethod)
+    ) {
+      throw paymentMethodRequired();
+    }
+  }
+
+  // Creates the provider schedule for a REQUESTED scheduled change — the
+  // date re-checked IMMEDIATELY before — and verifies what was created (our
+  // current price until the date, the trial end kept, then the new price).
+  // A schedule that does not match is released (the subscription untouched)
+  // and the change ends. A provider error leaves it REQUESTED for the sweep
+  // (the same keys replay the same request).
+  async submitScheduled(
+    planChangeId: string,
+    now: Date = new Date(),
+  ): Promise<void> {
+    const change = await this.prisma.billingPlanChange.findUniqueOrThrow({
+      where: { id: planChangeId },
+      include: {
+        subscription: true,
+        fromPlanPrice: { select: { externalPriceId: true } },
+        toPlanPrice: { select: { externalPriceId: true, interval: true } },
+      },
+    });
+    const sub = change.subscription;
+    if (
+      change.status !== 'REQUESTED' ||
+      change.timing === 'IMMEDIATE' ||
+      change.externalScheduleId !== null ||
+      change.nextRecurringStartsAt === null ||
+      sub.externalSubscriptionId === null ||
+      change.fromPlanPrice.externalPriceId === null ||
+      change.toPlanPrice.externalPriceId === null
+    ) {
+      return;
+    }
+    const fail = (code: string) =>
+      this.prisma.billingPlanChange.updateMany({
+        where: { id: change.id, status: 'REQUESTED', externalScheduleId: null },
+        data: { status: 'FAILED', failureCode: code, finishedAt: new Date() },
+      });
+    let externalScheduleId: string;
+    try {
+      const snapshot = await this.provider.retrieveSubscription(
+        sub.externalSubscriptionId,
+      );
+      // With no schedule yet, everything is re-checked — the date against
+      // the clock IMMEDIATELY before the provider call. A schedule already
+      // there is either ours (an interrupted attempt: the same key replays
+      // it, then it is verified below) or not (the provider refuses a second
+      // one; the sweep reviews it after the replay window).
+      if (snapshot.scheduleId == null) {
+        try {
+          this.assertScheduleable(
+            sub,
+            change.timing,
+            snapshot,
+            change.fromPlanPrice.externalPriceId,
+            change.nextRecurringStartsAt,
+            new Date(Math.max(now.getTime(), Date.now())),
+          );
+        } catch (error) {
+          if (error instanceof ConflictException) {
+            await fail('NO_LONGER_SCHEDULEABLE');
+            return;
+          }
+          throw error;
+        }
+      }
+      ({ externalScheduleId } =
+        await this.provider.schedulePriceChangeAtPeriodEnd({
+          idempotencyKey: planChangeIdempotencyKey(change.id, 'schedule'),
+          externalSubscriptionId: sub.externalSubscriptionId,
+          fromExternalPriceId: change.fromPlanPrice.externalPriceId,
+          toExternalPriceId: change.toPlanPrice.externalPriceId,
+          toInterval: change.toPlanPrice.interval,
+        }));
+      const schedule = await this.provider.retrieveSchedule(externalScheduleId);
+      const trialEnd = change.timing === 'TRIAL_END' ? snapshot.trialEnd : null;
+      const SKEW = 5 * 60 * 1000;
+      const matches =
+        schedule !== null &&
+        schedule.livemode === this.provider.livemode &&
+        schedule.externalSubscriptionId === sub.externalSubscriptionId &&
+        schedule.phases.length >= 2 &&
+        schedule.phases[0].externalPriceId ===
+          change.fromPlanPrice.externalPriceId &&
+        schedule.phases[0].endDate !== null &&
+        Math.abs(
+          schedule.phases[0].endDate.getTime() -
+            change.nextRecurringStartsAt.getTime(),
+        ) <= SKEW &&
+        (trialEnd === null ||
+          (schedule.phases[0].trialEnd !== null &&
+            Math.abs(
+              schedule.phases[0].trialEnd.getTime() - trialEnd.getTime(),
+            ) <= SKEW)) &&
+        schedule.phases[1].externalPriceId ===
+          change.toPlanPrice.externalPriceId &&
+        schedule.phases[1].quantity === 1;
+      if (!matches) {
+        await this.provider.releaseSchedule({
+          idempotencyKey: planChangeIdempotencyKey(change.id, 'release'),
+          externalScheduleId,
+        });
+        await fail('SCHEDULE_MISMATCH');
+        return;
+      }
+    } catch (error) {
+      if (error instanceof SaasBillingProviderError) return;
+      throw error;
+    }
+    await runSerializable(this.prisma, (tx) =>
+      this.lifecycle.recordScheduleCreated(
+        tx,
+        change.id,
+        externalScheduleId,
+        change.nextRecurringStartsAt!,
+        {
+          source: 'SYSTEM',
+          billingProviderEventId: null,
+          actorPlatformOperatorId: null,
+        },
+      ),
+    );
+  }
+
+  // The business withdraws its SCHEDULED change (up to an hour before the
+  // date): the provider schedule is RELEASED — never cancelled, so the
+  // subscription itself is untouched — and the change ends.
+  async cancelScheduled(
+    tenantId: string,
+    planChangeId: string,
+    actorInternalUserId: string,
+    now: Date = new Date(),
+  ): Promise<AdminPlanChangeView> {
+    if (!isUuid(tenantId)) throw new NotFoundException('Business not found.');
+    const change = await this.prisma.billingPlanChange.findFirst({
+      where: {
+        id: planChangeId,
+        subscription: { subscriberTenantId: tenantId },
+      },
+      include: { subscription: true },
+    });
+    if (!change) throw new NotFoundException('Plan change not found.');
+    if (
+      change.status !== 'SCHEDULED' ||
+      change.externalScheduleId === null ||
+      change.nextRecurringStartsAt === null ||
+      change.subscription.externalSubscriptionId === null
+    ) {
+      throw notCancelable();
+    }
+    if (
+      change.nextRecurringStartsAt.getTime() - now.getTime() <
+      PLAN_CHANGE_CUTOFF_MS
+    ) {
+      throw tooLate();
+    }
+    try {
+      const snapshot = await this.provider.retrieveSubscription(
+        change.subscription.externalSubscriptionId,
+      );
+      if (
+        snapshot.externalSubscriptionId !==
+          change.subscription.externalSubscriptionId ||
+        snapshot.scheduleId !== change.externalScheduleId
+      ) {
+        // Not as we scheduled it any more: the reconciliation decides.
+        throw notCancelable();
+      }
+      // The business's request is recorded BEFORE the release, so a release
+      // seen first by a webhook or the sweep (or a failure after it) closes
+      // the change as cancelled, never as a disruption.
+      const marked = await this.prisma.billingPlanChange.updateMany({
+        where: { id: change.id, status: 'SCHEDULED' },
+        data: { failureCode: CANCEL_REQUESTED },
+      });
+      if (marked.count !== 1) throw notCancelable();
+      const released = await this.provider.releaseSchedule({
+        idempotencyKey: planChangeIdempotencyKey(change.id, 'release'),
+        externalScheduleId: change.externalScheduleId,
+      });
+      if (
+        released.releasedSubscriptionId !==
+        change.subscription.externalSubscriptionId
+      ) {
+        throw new SaasBillingProviderError('release_unexpected');
+      }
+    } catch (error) {
+      if (error instanceof SaasBillingProviderError) throw unavailable();
+      throw error;
+    }
+    await runSerializable(this.prisma, async (tx) => {
+      const { count } = await tx.billingPlanChange.updateMany({
+        where: { id: change.id, status: 'SCHEDULED' },
+        data: { status: 'CANCELED', failureCode: null, finishedAt: now },
+      });
+      if (count === 1) {
+        await this.lifecycle.withdrawScheduledChange(tx, change.subscriptionId);
+      } else {
+        // Already closed by the release's own webhook (as cancelled).
+        const current = await tx.billingPlanChange.findUniqueOrThrow({
+          where: { id: change.id },
+          select: { status: true },
+        });
+        if (current.status !== 'CANCELED') return;
+      }
+      await this.audit.recordPlanChangeCanceled(tx, {
+        actorInternalUserId,
+        subscriptionId: change.subscriptionId,
+        planChangeId: change.id,
+        externalScheduleId: change.externalScheduleId,
+      });
+    });
+    return this.view(change.id);
+  }
+
   // The provider's hosted page for the WAITING change's own invoice — found
   // through OUR records, checked to be ours and open, on the provider's host.
   async payLink(
@@ -912,6 +1409,11 @@ export class BillingPlanChangeService {
     return {
       id: change.id,
       status: viewStatus(change.status),
+      timing: change.timing as PlanChangeTiming,
+      effectiveAt:
+        change.timing === 'IMMEDIATE'
+          ? null
+          : (change.nextRecurringStartsAt?.toISOString() ?? null),
       target: side(change.toPlanPrice.plan.name, change.toPlanPrice),
       amountDueMinorUnits: change.previewAmountDueMinorUnits,
       currency: change.currency,

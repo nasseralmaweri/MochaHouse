@@ -1029,6 +1029,9 @@ export declare const BILLING_PLAN_CHANGE_UNVERIFIED = "BILLING_PLAN_CHANGE_UNVER
 export declare const BILLING_PLAN_CHANGE_PREVIEW_EXPIRED = "BILLING_PLAN_CHANGE_PREVIEW_EXPIRED";
 export declare const BILLING_PLAN_CHANGE_PREVIEW_CHANGED = "BILLING_PLAN_CHANGE_PREVIEW_CHANGED";
 export declare const BILLING_PLAN_CHANGE_NOT_PAYABLE = "BILLING_PLAN_CHANGE_NOT_PAYABLE";
+export declare const BILLING_PLAN_CHANGE_TOO_LATE = "BILLING_PLAN_CHANGE_TOO_LATE";
+export declare const BILLING_PLAN_CHANGE_PAYMENT_METHOD_REQUIRED = "BILLING_PLAN_CHANGE_PAYMENT_METHOD_REQUIRED";
+export declare const BILLING_PLAN_CHANGE_NOT_CANCELABLE = "BILLING_PLAN_CHANGE_NOT_CANCELABLE";
 export type BillingPlanChangeTiming = "IMMEDIATE" | "PERIOD_END" | "TRIAL_END";
 export interface BillingPlanChangePreviewRequest {
     planPriceId: string;
@@ -1054,6 +1057,16 @@ export interface BillingPlanChangePreview {
         prorationMinorUnits: number;
         currency: string;
     } | null;
+    modules: {
+        lost: {
+            key: string;
+            label: string;
+        }[];
+        gained: {
+            key: string;
+            label: string;
+        }[];
+    };
     nextRecurring: {
         amountMinorUnits: number;
         currency: string;
@@ -1062,10 +1075,12 @@ export interface BillingPlanChangePreview {
     };
     expiresAt: string;
 }
-export type AdminPlanChangeStatus = "PROCESSING" | "PAYMENT_NEEDED" | "APPLIED" | "REVIEW" | "EXPIRED" | "FAILED";
+export type AdminPlanChangeStatus = "SCHEDULED" | "CANCELED" | "PROCESSING" | "PAYMENT_NEEDED" | "APPLIED" | "REVIEW" | "EXPIRED" | "FAILED";
 export interface AdminPlanChangeView {
     id: string;
     status: AdminPlanChangeStatus;
+    timing: BillingPlanChangeTiming;
+    effectiveAt: string | null;
     target: BillingPlanChangeSide;
     amountDueMinorUnits: number | null;
     currency: string;
@@ -1077,6 +1092,9 @@ export interface BillingPlanChangeConfirmRequest {
 }
 export interface BillingPlanChangeConfirmResponse {
     planChange: AdminPlanChangeView;
+}
+export interface BillingPlanChangeCancelRequest {
+    planChangeId: string;
 }
 export interface AdminPlanOption {
     planPriceId: string;

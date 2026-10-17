@@ -48,6 +48,9 @@ const CASE_LABELS: Record<string, string> = {
     "A plan change was paid, but the amount differs from the price the business confirmed",
   UPGRADE_PAID_NOT_APPLIED: "A plan change was paid but not applied",
   PLAN_CHANGE_UNCERTAIN: "A plan change needs checking against the payment provider",
+  // SC3d-3
+  SCHEDULED_CHANGE_DISRUPTED:
+    "A scheduled plan change was removed or altered at the payment provider, or didn't take effect (never recreated)",
   EXTENSION_ENDED_BY_PROVIDER:
     "The payment provider ended a subscription during extra time an operator gave",
 };

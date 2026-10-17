@@ -12,6 +12,7 @@ import {
   type ProviderCheckoutSession,
   type ProviderPriceChangeResult,
   type ProviderRecurringPreview,
+  type ProviderSchedule,
   type ProviderInvoice,
   type ProviderInvoiceStatus,
   type ProviderPayableInvoice,
@@ -132,6 +133,105 @@ function sum(values: unknown[]): number {
 }
 
 const seconds = (at: Date) => Math.floor(at.getTime() / 1000);
+
+// SC3d-3 — what the next phase keeps from the current one (Stripe unsets
+// what a phase omits): everything but the item, the dates, the trial end and
+// the currency (the new price's own).
+function carriedSettings(
+  phase: Stripe.SubscriptionScheduleUpdateParams.Phase,
+): Omit<Stripe.SubscriptionScheduleUpdateParams.Phase, 'items'> {
+  /* eslint-disable @typescript-eslint/no-unused-vars */
+  const {
+    items,
+    start_date,
+    end_date,
+    trial_end,
+    currency,
+    proration_behavior,
+    ...carried
+  } = phase;
+  /* eslint-enable @typescript-eslint/no-unused-vars */
+  return carried;
+}
+
+// SC3d-3 — the schedule's current phase as update parameters, exactly as it
+// is (our one item at our price, its dates and trial end, payment, tax,
+// invoice settings, discounts and metadata). null when it carries anything we
+// do not reproduce faithfully (the caller then changes nothing).
+function currentPhaseParams(
+  phase: Stripe.SubscriptionSchedule.Phase,
+  expectedPrice: string,
+): Stripe.SubscriptionScheduleUpdateParams.Phase | null {
+  const item = phase.items?.length === 1 ? phase.items[0] : null;
+  if (
+    item === null ||
+    id(item.price) !== expectedPrice ||
+    (item.quantity ?? 1) !== 1 ||
+    (item.discounts ?? []).length > 0 ||
+    (phase.add_invoice_items ?? []).length > 0 ||
+    phase.application_fee_percent != null ||
+    phase.billing_thresholds != null ||
+    phase.on_behalf_of != null ||
+    phase.transfer_data != null ||
+    (phase.automatic_tax?.enabled === true &&
+      phase.automatic_tax.liability != null &&
+      phase.automatic_tax.liability.type !== 'self')
+  ) {
+    return null;
+  }
+  const discounts: Stripe.SubscriptionScheduleUpdateParams.Phase.Discount[] =
+    [];
+  for (const discount of phase.discounts ?? []) {
+    const existing = id(discount.discount);
+    const coupon = id(discount.coupon);
+    const promotion = id(discount.promotion_code);
+    if (existing) discounts.push({ discount: existing });
+    else if (coupon) discounts.push({ coupon });
+    else if (promotion) discounts.push({ promotion_code: promotion });
+    else return null;
+  }
+  const params: Stripe.SubscriptionScheduleUpdateParams.Phase = {
+    items: [
+      {
+        price: expectedPrice,
+        quantity: 1,
+        ...(item.tax_rates && item.tax_rates.length > 0
+          ? { tax_rates: item.tax_rates.map((rate) => rate.id) }
+          : {}),
+        ...(item.metadata && Object.keys(item.metadata).length > 0
+          ? { metadata: item.metadata }
+          : {}),
+      },
+    ],
+    start_date: phase.start_date,
+    end_date: phase.end_date,
+    proration_behavior: 'none',
+    currency: phase.currency,
+  };
+  if (typeof phase.trial_end === 'number') params.trial_end = phase.trial_end;
+  if (phase.collection_method != null) {
+    params.collection_method = phase.collection_method;
+  }
+  const paymentMethod = id(phase.default_payment_method ?? null);
+  if (paymentMethod !== null) params.default_payment_method = paymentMethod;
+  if (phase.default_tax_rates && phase.default_tax_rates.length > 0) {
+    params.default_tax_rates = phase.default_tax_rates.map((rate) => rate.id);
+  }
+  if (phase.description != null) params.description = phase.description;
+  if (discounts.length > 0) params.discounts = discounts;
+  if (phase.metadata && Object.keys(phase.metadata).length > 0) {
+    params.metadata = phase.metadata;
+  }
+  if (phase.automatic_tax?.enabled === true) {
+    params.automatic_tax = { enabled: true };
+  }
+  if (phase.invoice_settings?.days_until_due != null) {
+    params.invoice_settings = {
+      days_until_due: phase.invoice_settings.days_until_due,
+    };
+  }
+  return params;
+}
 
 function amount(value: unknown): number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0
@@ -594,18 +694,29 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
       ) {
         throw new SaasBillingProviderError('schedule_phase_unreadable');
       }
+      // SC3d-3 — Stripe UNSETS every current-phase setting an update omits
+      // (a trial would end at once). The current phase is passed back as it
+      // is — its trial end included — or, when it carries settings we do not
+      // reproduce, the new schedule is released (the subscription untouched)
+      // and nothing is changed.
+      const phase0 = currentPhaseParams(current, input.fromExternalPriceId);
+      if (phase0 === null) {
+        await this.stripe.subscriptionSchedules.release(created.id, {
+          preserve_cancel_date: true,
+        });
+        throw new SaasBillingProviderError('schedule_phase_unsupported');
+      }
       const updated = await this.stripe.subscriptionSchedules.update(
         created.id,
         {
           end_behavior: 'release',
           phases: [
+            phase0,
             {
-              items: [{ price: input.fromExternalPriceId, quantity: 1 }],
-              start_date: current.start_date,
-              end_date: current.end_date,
-              proration_behavior: 'none',
-            },
-            {
+              // The same payment, tax, invoice, discount and metadata
+              // settings as now (what the recurring preview priced) — never
+              // the trial end.
+              ...carriedSettings(phase0),
               items: [{ price: input.toExternalPriceId, quantity: 1 }],
               duration: {
                 interval: input.toInterval === 'YEAR' ? 'year' : 'month',
@@ -620,6 +731,41 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
       this.assertTestMode(updated.livemode);
       return { externalScheduleId: updated.id };
     } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  // SC3d-3 — a schedule as Stripe holds it (null: none).
+  async retrieveSchedule(
+    externalScheduleId: string,
+  ): Promise<ProviderSchedule | null> {
+    try {
+      const schedule =
+        await this.stripe.subscriptionSchedules.retrieve(externalScheduleId);
+      this.assertTestMode(schedule.livemode);
+      return {
+        externalScheduleId: schedule.id,
+        livemode: schedule.livemode,
+        status: text(schedule.status, 40) ?? 'unknown',
+        externalSubscriptionId:
+          id(schedule.subscription) ?? id(schedule.released_subscription),
+        phases: (schedule.phases ?? []).map((phase) => ({
+          externalPriceId:
+            phase.items?.length === 1 ? id(phase.items[0].price) : null,
+          quantity:
+            phase.items?.length === 1 &&
+            typeof phase.items[0].quantity === 'number'
+              ? phase.items[0].quantity
+              : 0,
+          startDate: date(phase.start_date),
+          endDate: date(phase.end_date),
+          trialEnd: date(phase.trial_end),
+        })),
+      };
+    } catch (error) {
+      if ((error as { code?: unknown })?.code === 'resource_missing') {
+        return null;
+      }
       throw providerError(error);
     }
   }
@@ -871,6 +1017,20 @@ function normalize(
     // SC3d-2 — pending_update_applied / _expired: a plan change waiting for
     // payment was applied (paid) or discarded: re-read live, like any
     // subscription change.
+    // SC3d-3 — a schedule changed (created, updated, released, canceled,
+    // completed, aborted): re-read the subscription it manages.
+    case 'subscription_schedule.created':
+    case 'subscription_schedule.updated':
+    case 'subscription_schedule.released':
+    case 'subscription_schedule.canceled':
+    case 'subscription_schedule.completed':
+    case 'subscription_schedule.aborted':
+    case 'subscription_schedule.expiring':
+      return {
+        event: { kind: 'SUBSCRIPTION_CHANGED' },
+        externalSubscriptionId:
+          id(object.subscription) ?? id(object.released_subscription),
+      };
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted':

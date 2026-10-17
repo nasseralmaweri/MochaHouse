@@ -29,6 +29,7 @@ import { RateLimitGuard } from '../../rate-limit/rate-limit.guard';
 import { BillingAccountService } from '../application/billing-account.service';
 import {
   BillingPlanChangeService,
+  parsePlanChangeCancel,
   parsePlanChangeConfirm,
   parsePlanChangePreview,
 } from '../application/billing-plan-change.service';
@@ -74,6 +75,30 @@ export class AdminBillingController {
       planChange: await this.planChanges.confirm(
         tenant.tenantId,
         parsePlanChangeConfirm(body),
+        request.internalUser!.id,
+      ),
+    };
+  }
+
+  // SC3d-3 — the business CANCELS its scheduled change (up to an hour
+  // before the date): the provider schedule is released, the subscription
+  // untouched. billing.manage, business-wide; FULL access only.
+  @RequirePermission('billing.manage')
+  @UseGuards(RateLimitGuard)
+  @RateLimit('billing-checkout')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @Post('plan-change/cancel')
+  async cancelPlanChange(
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ): Promise<BillingPlanChangeConfirmResponse> {
+    request.authorization!.assertCorporate('billing.manage');
+    return {
+      planChange: await this.planChanges.cancelScheduled(
+        tenant.tenantId,
+        parsePlanChangeCancel(body),
         request.internalUser!.id,
       ),
     };

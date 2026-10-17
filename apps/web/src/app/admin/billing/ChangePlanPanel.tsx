@@ -7,9 +7,13 @@ import {
   PLAN_CHANGE_MESSAGES,
   canConfirm,
   chargeLines,
+  moduleChangeSentences,
   money,
   nextChargeSentence,
   optionLabel,
+  planChangeStatusMessage,
+  scheduledDate,
+  scheduledTerms,
 } from "@/lib/admin/plan-change";
 import {
   confirmPlanChangeAction,
@@ -49,7 +53,9 @@ function Charge({ preview }: { preview: BillingPlanChangePreview }) {
 }
 
 // SC3d-2 — choose a plan, see the payment provider's own price for the
-// change, and confirm exactly that charge. A completed change is only ever
+// change, and confirm exactly that charge. SC3d-3 — or schedule a change for
+// the period (or trial) end: nothing charged now, the features it removes
+// listed first. A completed change is only ever
 // shown once the API reports it applied (payment and price verified) — by
 // the page's status line, not here.
 export function ChangePlanPanel({ options }: { options: AdminPlanOption[] }) {
@@ -65,6 +71,7 @@ export function ChangePlanPanel({ options }: { options: AdminPlanOption[] }) {
   const selectRef = useRef<HTMLSelectElement>(null);
   const reviewRef = useRef<HTMLDivElement>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
+  const doneRef = useRef<HTMLParagraphElement>(null);
   const returnFocus = useRef(false);
 
   // A confirmation refused because the price moved or the preview is gone
@@ -103,6 +110,9 @@ export function ChangePlanPanel({ options }: { options: AdminPlanOption[] }) {
     if (preview) reviewRef.current?.focus();
   }, [preview]);
   useEffect(() => {
+    if (confirmState.kind === "done") doneRef.current?.focus();
+  }, [confirmState]);
+  useEffect(() => {
     if (error) errorRef.current?.focus();
   }, [error, confirmState, previewState]);
   useEffect(() => {
@@ -127,7 +137,13 @@ export function ChangePlanPanel({ options }: { options: AdminPlanOption[] }) {
         Change plan
       </h2>
       <p role="status" className="sr-only">
-        {previewing ? "Getting the price…" : confirming ? "Confirming your payment…" : ""}
+        {previewing
+          ? "Getting the price…"
+          : confirming
+            ? preview !== null && scheduledDate(preview) !== null
+              ? "Scheduling your change…"
+              : "Confirming your payment…"
+            : ""}
       </p>
       {error ? (
         <p
@@ -140,8 +156,8 @@ export function ChangePlanPanel({ options }: { options: AdminPlanOption[] }) {
         </p>
       ) : null}
       {confirmState.kind === "done" ? (
-        <p className="text-sm text-text-secondary">
-          Your plan change was submitted. Its status is shown above.
+        <p ref={doneRef} tabIndex={-1} role="status" className="text-sm text-text-primary focus:outline-none">
+          {planChangeStatusMessage(confirmState.planChange)}
         </p>
       ) : (
         <>
@@ -190,7 +206,50 @@ export function ChangePlanPanel({ options }: { options: AdminPlanOption[] }) {
                 {preview.current.planName} → {preview.target.planName}
               </p>
               <Charge preview={preview} />
-              {confirmable ? (
+              {moduleChangeSentences(preview).map((sentence) => (
+                <p key={sentence} className="text-text-primary">
+                  {sentence}
+                </p>
+              ))}
+              {confirmable && scheduledDate(preview) !== null ? (
+                <form
+                  action={confirmAction}
+                  onSubmit={(event) => {
+                    if (confirming) event.preventDefault();
+                  }}
+                  className="flex flex-col gap-3"
+                >
+                  <p id={`${id}-terms`} className="text-xs text-text-secondary">
+                    {scheduledTerms(preview)} This choice is held until {formatDeadline(preview.expiresAt)}.
+                  </p>
+                  <input type="hidden" name="previewId" value={preview.previewId} />
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="submit"
+                      aria-disabled={confirming}
+                      aria-busy={confirming}
+                      aria-describedby={`${id}-terms`}
+                      className={PRIMARY}
+                    >
+                      {confirming
+                        ? "Scheduling…"
+                        : preview.timing === "TRIAL_END"
+                          ? `Choose ${preview.target.planName} after my trial (${formatDeadline(scheduledDate(preview)!)})`
+                          : `Schedule change for ${formatDeadline(scheduledDate(preview)!)}`}
+                    </button>
+                    <button
+                      type="button"
+                      aria-disabled={confirming}
+                      onClick={() => {
+                        if (!confirming) leave();
+                      }}
+                      className={SECONDARY}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : confirmable ? (
                 <>
                   <p id={`${id}-terms`} className="text-xs text-text-secondary">
                     Calculated by our payment provider and held until {formatDeadline(preview.expiresAt)}.
@@ -230,11 +289,7 @@ export function ChangePlanPanel({ options }: { options: AdminPlanOption[] }) {
                   </form>
                 </>
               ) : (
-                <p className="text-sm text-text-secondary">
-                  {preview.timing === "IMMEDIATE"
-                    ? PLAN_CHANGE_MESSAGES.expired
-                    : PLAN_CHANGE_MESSAGES.laterOnly}
-                </p>
+                <p className="text-sm text-text-secondary">{PLAN_CHANGE_MESSAGES.expired}</p>
               )}
             </div>
           ) : null}

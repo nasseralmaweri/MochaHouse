@@ -516,7 +516,10 @@ describe('SC3a billing lifecycle', () => {
       });
     });
 
-    it('a downgrade applies at the period boundary, not before', () => {
+    // SC3d-3 (owner decision D1) — a scheduled change applies when the
+    // provider's verified switch is reported, paid or not; never with a
+    // payment, never before its date.
+    it('a scheduled change applies at the verified switch — not with a payment, not before its date', () => {
       const scheduled = ok(
         transition(active, {
           type: 'DOWNGRADE_SCHEDULED',
@@ -527,24 +530,80 @@ describe('SC3a billing lifecycle', () => {
         }),
       );
       expect(scheduled.next.planVersionId).toBe('plan-v1');
-      // A payment inside the current period leaves it pending.
-      const early = ok(
-        transition(scheduled.next, paid(day(10), 'inv-x', day(10), day(30))),
-      );
-      expect(early.next.planVersionId).toBe('plan-v1');
-      // The renewal for the next period applies it.
+      // A payment (even the renewal's) leaves it pending.
       const renewal = ok(
         transition(scheduled.next, paid(day(30), 'inv-2', day(30), day(60))),
       );
       expect(renewal.next).toMatchObject({
+        planVersionId: 'plan-v1',
+        pending: scheduled.next.pending,
+      });
+      expect(
+        transition(scheduled.next, {
+          type: 'SCHEDULED_CHANGE_APPLIED',
+          at: day(29),
+          periodStart: day(29),
+          periodEnd: day(59),
+        }),
+      ).toEqual({ ok: false, reason: 'INVALID_EFFECTIVE_DATE' });
+      const switched = ok(
+        transition(scheduled.next, {
+          type: 'SCHEDULED_CHANGE_APPLIED',
+          at: day(30),
+          periodStart: day(30),
+          periodEnd: day(60),
+        }),
+      );
+      expect(switched.next).toMatchObject({
         planVersionId: 'plan-v0',
         planPriceId: 'price-0',
+        currentPeriodEnd: day(60),
         pending: null,
       });
-      expect(renewal.history.map((h) => h.type)).toEqual([
-        'PAYMENT_SUCCEEDED',
+      expect(switched.history.map((h) => h.type)).toEqual([
         'PLAN_CHANGE_APPLIED',
       ]);
+      // A failed renewal after the switch: ordinary delinquency at the new
+      // price, with the new plan.
+      const failedRenewal = ok(
+        transition(switched.next, failed(day(30), 'inv-renewal')),
+      );
+      expect(failedRenewal.next).toMatchObject({
+        status: 'PAST_DUE',
+        planPriceId: 'price-0',
+        planVersionId: 'plan-v0',
+      });
+    });
+
+    it('a scheduled change can be withdrawn; nothing else is', () => {
+      const scheduled = ok(
+        transition(active, {
+          type: 'DOWNGRADE_SCHEDULED',
+          at: day(2),
+          planVersionId: 'plan-v0',
+          planPriceId: 'price-0',
+          effectiveAt: day(30),
+        }),
+      );
+      const canceled = ok(
+        transition(scheduled.next, {
+          type: 'SCHEDULED_CHANGE_CANCELED',
+          at: day(3),
+        }),
+      );
+      expect(canceled.next).toMatchObject({
+        planVersionId: 'plan-v1',
+        pending: null,
+      });
+      expect(canceled.history.map((h) => h.type)).toEqual([
+        'PLAN_CHANGE_ABANDONED',
+      ]);
+      expect(
+        transition(active, { type: 'SCHEDULED_CHANGE_CANCELED', at: day(3) }),
+      ).toEqual({
+        ok: false,
+        reason: 'NOT_CHANGEABLE',
+      });
     });
 
     it('refuses overlapping, no-op and invalid changes', () => {

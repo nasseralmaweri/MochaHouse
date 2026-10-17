@@ -110,5 +110,9 @@ export function planChangeIdempotencyKey(
   return `centerivo-plan-change-${planChangeId}-${step}`;
 }
 
+// SC3d-3 (owner decision D4) — a scheduled change is made or cancelled only
+// up to an hour before the period (or trial) end.
+export const PLAN_CHANGE_CUTOFF_MS = 60 * 60 * 1000;
+
 // How long a preview may be confirmed (owner decision: 10 minutes).
 export const PLAN_CHANGE_PREVIEW_TTL_MS = 10 * 60 * 1000;
