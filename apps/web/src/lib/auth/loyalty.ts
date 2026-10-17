@@ -1,4 +1,5 @@
 import "server-only";
+import { storefrontApiFetch } from "@/lib/storefront-context";
 import type { CustomerLoyaltySummary } from "@mocha-house/contracts";
 
 // Server-only read of the authenticated customer's Mocha Bean balance
@@ -27,7 +28,7 @@ export async function getCustomerLoyalty(
 ): Promise<CustomerLoyaltyResult> {
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/customers/me/loyalty`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/customers/me/loyalty`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });

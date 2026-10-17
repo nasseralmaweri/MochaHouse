@@ -91,28 +91,17 @@ import type {
 import { parseLocationMenuResponse } from "@/lib/menu";
 
 // Browser-safe counterpart to lib/api.ts's getLocationMenu. The cart lives
-// in localStorage (browser-only), so /order/cart must revalidate it
-// directly from the client — Server Components can't read localStorage.
-// This is the one ordering screen with a genuine client-side fetch need;
-// every other screen fetches server-side via lib/api.ts's server-only
-// API_URL. See apps/web/.env.example.
-function getPublicApiUrl(): string {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-
-  if (!apiUrl) {
-    throw new Error(
-      "NEXT_PUBLIC_API_URL environment variable is not set. See apps/web/.env.example.",
-    );
-  }
-
-  return apiUrl;
-}
-
+// in localStorage (browser-only), so /order/cart must revalidate it from
+// the client — Server Components can't read localStorage. SC4f-1: it goes
+// through this app's own /api/locations/:id/menu route, never the API
+// directly, so the web server can attach the signed storefront context and
+// the prices are always those of the storefront the shopper is on.
 export async function getLocationMenuFromBrowser(
   locationId: string,
 ): Promise<LocationMenuResponse | null> {
   const response = await fetch(
-    `${getPublicApiUrl()}/locations/${locationId}/menu`,
+    `/api/locations/${encodeURIComponent(locationId)}/menu`,
+    { cache: "no-store" },
   );
 
   if (!response.ok) {

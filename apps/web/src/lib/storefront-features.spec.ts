@@ -1,4 +1,7 @@
 import type { CheckoutRequest } from '@mocha-house/contracts';
+
+// SC4f-1 — storefront-context.ts is server-only; stand the marker in.
+jest.mock('server-only', () => ({}));
 import { getPublicJobOpenings, getStorefrontFeatures } from './api';
 import {
   getCheckoutRewardsFromBrowser,

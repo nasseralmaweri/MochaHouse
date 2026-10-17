@@ -1,3 +1,4 @@
+import { storefrontApiFetch } from "@/lib/storefront-context";
 import type {
   FranchisingPageContent,
   LocationMenuResponse,
@@ -24,7 +25,7 @@ function getApiUrl(): string {
 }
 
 export async function getLocations(): Promise<LocationSummary[]> {
-  const response = await fetch(`${getApiUrl()}/locations`);
+  const response = await storefrontApiFetch(`${getApiUrl()}/locations`);
 
   if (!response.ok) {
     throw new Error(`Failed to load locations (${response.status}).`);
@@ -36,8 +37,8 @@ export async function getLocations(): Promise<LocationSummary[]> {
 export async function getLocationMenu(
   locationId: string,
 ): Promise<LocationMenuResponse | null> {
-  const response = await fetch(
-    `${getApiUrl()}/locations/${locationId}/menu`,
+  const response = await storefrontApiFetch(
+    `${getApiUrl()}/locations/${encodeURIComponent(locationId)}/menu`,
   );
 
   if (!response.ok) {
@@ -55,7 +56,7 @@ export async function getLocationMenu(
 
 // SC2b — null when the business does not offer careers (the API answers 404).
 export async function getPublicJobOpenings(): Promise<PublicJobOpeningsResponse | null> {
-  const response = await fetch(`${getApiUrl()}/careers/jobs`, {
+  const response = await storefrontApiFetch(`${getApiUrl()}/careers/jobs`, {
     cache: "no-store",
   });
   if (response.status === 404) {
@@ -70,7 +71,7 @@ export async function getPublicJobOpenings(): Promise<PublicJobOpeningsResponse 
 export async function getPublicJobOpening(
   jobId: string,
 ): Promise<PublicJobOpeningDetail | null> {
-  const response = await fetch(
+  const response = await storefrontApiFetch(
     `${getApiUrl()}/careers/jobs/${encodeURIComponent(jobId)}`,
     { cache: "no-store" },
   );
@@ -92,7 +93,7 @@ export async function getPublicJobOpening(
 
 export async function getPublishedFranchisingContent(): Promise<FranchisingPageContent | null> {
   try {
-    const response = await fetch(`${getApiUrl()}/content/franchising`, {
+    const response = await storefrontApiFetch(`${getApiUrl()}/content/franchising`, {
       cache: "no-store",
     });
     if (!response.ok) {
@@ -113,7 +114,7 @@ export async function getPublishedFranchisingContent(): Promise<FranchisingPageC
 
 export async function getPublishedHomeContent(): Promise<PublicHomePageContent | null> {
   try {
-    const response = await fetch(`${getApiUrl()}/content/home`, {
+    const response = await storefrontApiFetch(`${getApiUrl()}/content/home`, {
       cache: "no-store",
     });
     if (!response.ok) {
@@ -136,7 +137,7 @@ export type StorefrontFeatures = StorefrontFeaturesResponse["features"];
 
 export async function getStorefrontFeatures(): Promise<StorefrontFeatures | null> {
   try {
-    const response = await fetch(`${getApiUrl()}/storefront/features`, {
+    const response = await storefrontApiFetch(`${getApiUrl()}/storefront/features`, {
       cache: "no-store",
     });
     if (!response.ok) {

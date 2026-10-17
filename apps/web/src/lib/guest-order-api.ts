@@ -2,6 +2,7 @@
 // by the tracking routes. The access token goes in a request header, never in
 // the URL, so it cannot appear in the API's (or a proxy's) request logs.
 
+import { storefrontApiFetch } from "@/lib/storefront-context";
 import { signedClientIpHeaders } from "@/lib/client-ip-forwarding";
 
 export const ORDER_ACCESS_TOKEN_HEADER = "x-order-access-token";
@@ -21,7 +22,7 @@ export function fetchGuestOrderStatus(
   token: string,
   requestHeaders: { get(name: string): string | null },
 ): Promise<Response> {
-  return fetch(`${getApiUrl()}/orders/${encodeURIComponent(orderId)}`, {
+  return storefrontApiFetch(`${getApiUrl()}/orders/${encodeURIComponent(orderId)}`, {
     headers: {
       [ORDER_ACCESS_TOKEN_HEADER]: token,
       ...signedClientIpHeaders(requestHeaders),

@@ -98,6 +98,8 @@ describe('Tenant query audit (report-only)', () => {
           'OwnerRegistration',
           // SC4e
           'RegistrationControlChange',
+          // SC4f-1
+          'StorefrontHost',
         ].sort(),
       );
     });

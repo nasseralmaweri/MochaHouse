@@ -133,6 +133,9 @@ model Tenant {
 
   // SC2a — the business's SaaS subscription (platform data; at most one).
   subscription TenantSubscription? @relation("TenantSubscriptionSubscriber")
+
+  // SC4f — the approved hostnames its storefront is served at (platform data).
+  storefrontHosts StorefrontHost[] @relation("StorefrontHostTenant")
 }
 
 // --- SC1a, CENTERIVO platform operators ----------------------------
@@ -4041,6 +4044,29 @@ model RegistrationControlChange {
 
   @@index([createdAt])
   @@index([actorPlatformOperatorId])
+}
+
+// SC4f — an APPROVED storefront hostname: the registry the storefront's
+// business is resolved from. Exact match on the normalized hostname (unique);
+// an unknown or unpublished hostname never resolves to any business. The
+// owning business never changes (database guard), and a row is never deleted
+// (unpublish instead). Platform data: managed only by platform operators.
+//   kind  PLATFORM_SUBDOMAIN — "{slug}.{storefront domain}"
+//         LEGACY             — an existing address kept (Mocha House)
+//         CUSTOM             — a business's own domain (not managed yet)
+model StorefrontHost {
+  id                 String    @id @default(uuid(7))
+  hostname           String    @unique
+  storefrontTenantId String
+  kind               String
+  published          Boolean   @default(false)
+  publishedAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  tenant Tenant @relation("StorefrontHostTenant", fields: [storefrontTenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([storefrontTenantId])
 }
 
 // SC3c-3 — the platform billing notification queue (SEPARATE from the

@@ -6811,3 +6811,91 @@ export interface PlatformOnboardingBusinessListResponse {
     stuck: number;
   };
 }
+
+// --- CENTERIVO storefront routing (SC4f) ---------------------------------
+// Each business's storefront is served at an APPROVED hostname from a
+// database registry (StorefrontHost) — its platform subdomain
+// "{slug}.{storefront domain}", a legacy address (Mocha House's existing
+// ones) or, later, a custom domain. Nothing ever falls back to a default
+// business for an unknown or unpublished hostname.
+
+// The signed storefront context the web server sends with every API call
+// it makes for a storefront visitor: the hostname it trusts, a timestamp
+// and an HMAC-SHA256 over "storefront-host:v1:<seconds>:<hostname>" with a
+// secret shared only by the web tier and the API. A browser cannot produce
+// it, so it can never choose its own business.
+export const STOREFRONT_HOST_HEADER = "x-centerivo-storefront-host";
+export const STOREFRONT_HOST_TIMESTAMP_HEADER = "x-centerivo-storefront-ts";
+export const STOREFRONT_HOST_SIGNATURE_HEADER = "x-centerivo-storefront-sig";
+export const STOREFRONT_CONTEXT_MAX_SKEW_SECONDS = 60;
+
+export function storefrontContextMessage(hostname: string, seconds: number): string {
+  return `storefront-host:v1:${seconds}:${hostname}`;
+}
+
+// Answer for an unsigned or invalid context, an unknown hostname or an
+// unpublished one alike (404): nothing reveals which businesses exist.
+export const STOREFRONT_NOT_FOUND = "STOREFRONT_NOT_FOUND";
+
+const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+// A hostname in the one form the registry stores and matches: lower case,
+// no port, no trailing dot, ASCII (internationalised names in their
+// "xn--" form), every label 1–63 characters of letters, digits and inner
+// hyphens, 253 characters at most, at least two labels — or "localhost"
+// for local development. Null for anything else (an IP address included).
+export function normalizeStorefrontHost(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  let host = raw.trim().toLowerCase();
+  if (host === "" || host.length > 260) return null;
+  // A port, if any (an IPv6 literal is refused below anyway).
+  const colon = host.lastIndexOf(":");
+  if (colon !== -1) {
+    const port = host.slice(colon + 1);
+    if (!/^\d{1,5}$/.test(port)) return null;
+    host = host.slice(0, colon);
+  }
+  if (host.endsWith(".")) host = host.slice(0, -1);
+  if (host === "localhost") return host;
+  if (host.length > 253) return null;
+  const labels = host.split(".");
+  if (labels.length < 2) return null;
+  if (!labels.every((label) => HOST_LABEL.test(label))) return null;
+  // An IPv4 address is not a storefront.
+  if (labels.every((label) => /^\d+$/.test(label))) return null;
+  return host;
+}
+
+// Labels a business slug may never take as its subdomain: names the
+// platform uses or may use, and ones that would mislead customers.
+export const RESERVED_STOREFRONT_LABELS: readonly string[] = [
+  "www", "api", "app", "admin", "platform", "console", "internal", "staff",
+  "mail", "email", "smtp", "imap", "pop", "ftp", "ns", "ns1", "ns2", "dns",
+  "cdn", "static", "assets", "media", "img", "images", "files", "status",
+  "help", "support", "docs", "blog", "billing", "pay", "payments", "checkout",
+  "account", "accounts", "auth", "login", "signin", "signup", "register",
+  "centerivo", "test", "dev", "staging", "stage", "demo", "sandbox", "local",
+  "localhost", "root", "system", "security", "webhooks", "health",
+];
+
+// Whether a business slug can be used as its storefront subdomain label:
+// a DNS label (at most 63 characters, letters, digits and single inner
+// hyphens — the business slug format) that is not reserved.
+export function isUsableStorefrontLabel(slug: unknown): boolean {
+  return (
+    typeof slug === "string" &&
+    slug.length >= 1 &&
+    slug.length <= 63 &&
+    /^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug) &&
+    !RESERVED_STOREFRONT_LABELS.includes(slug)
+  );
+}
+
+// "{slug}.{storefront domain}", normalized; null when the slug is not usable
+// or the domain is not a valid hostname.
+export function platformStorefrontHost(slug: string, storefrontDomain: string): string | null {
+  if (!isUsableStorefrontLabel(slug)) return null;
+  const domain = normalizeStorefrontHost(storefrontDomain);
+  if (!domain || domain === "localhost") return null;
+  return normalizeStorefrontHost(`${slug}.${domain}`);
+}

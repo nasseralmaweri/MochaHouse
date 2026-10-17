@@ -212,6 +212,8 @@ const APPROVED_GLOBAL_MODELS = [
   'OwnerRegistration',
   // SC4e — the registration pause history (platform data).
   'RegistrationControlChange',
+  // SC4f-1 — approved storefront hostnames (platform data).
+  'StorefrontHost',
 ];
 // SC2a review — identifiers issued by an OUTSIDE system (not a record of
 // ours): the SaaS billing provider's ids (SC3a).
@@ -261,6 +263,11 @@ const APPROVED_PLATFORM_TENANT_RELATIONS: Readonly<
   Record<string, readonly string[]>
 > = {
   TenantSubscription: ['subscriberTenant'],
+  // SC4f-1 review (owner decision F2) — an approved storefront hostname's
+  // real foreign key to the ONE business it serves, so the database itself
+  // guarantees every address belongs to an existing business (RESTRICT; the
+  // owner never changes — guard_storefront_host).
+  StorefrontHost: ['tenant'],
 };
 // The ONLY references a global model may hold: between the platform-operator
 // models themselves. Tenant is deliberately not part of this set — a
@@ -335,6 +342,8 @@ const PLATFORM_OPERATOR_MODELS = [
   'OwnerRegistration',
   // SC4e — the registration pause history (platform data).
   'RegistrationControlChange',
+  // SC4f-1 — approved storefront hostnames (platform data).
+  'StorefrontHost',
 ];
 
 describe('Tenant relationship inventory (Security 4C-1)', () => {

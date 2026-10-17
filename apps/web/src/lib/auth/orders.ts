@@ -1,4 +1,5 @@
 import "server-only";
+import { storefrontApiFetch } from "@/lib/storefront-context";
 import type {
   CustomerOrderDetail,
   CustomerOrderSummary,
@@ -34,7 +35,7 @@ export async function getCustomerOrders(
 ): Promise<CustomerOrdersResult> {
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/customers/me/orders`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/customers/me/orders`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
@@ -64,7 +65,7 @@ export async function getCustomerOrderDetail(
 ): Promise<CustomerOrderDetailResult> {
   let response: Response;
   try {
-    response = await fetch(
+    response = await storefrontApiFetch(
       `${getApiUrl()}/customers/me/orders/${orderId}`,
       { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
     );

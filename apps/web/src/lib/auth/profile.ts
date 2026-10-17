@@ -1,4 +1,5 @@
 import "server-only";
+import { storefrontApiFetch } from "@/lib/storefront-context";
 import type {
   CustomerProfile,
   CustomerUpdateProfileRequest,
@@ -33,7 +34,7 @@ export async function updateCustomerProfile(
 ): Promise<UpdateProfileResult> {
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/customers/me`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/customers/me`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",

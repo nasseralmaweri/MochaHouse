@@ -5,6 +5,10 @@ import type {
   TenantContext,
 } from '@mocha-house/database';
 import { SINGLE_TENANT_RESOLUTION } from '../../tenancy/single-tenant-resolution.provider';
+import {
+  STOREFRONT_ROUTING_CONFIG,
+  type StorefrontRoutingConfig,
+} from '../../tenancy/storefront-context';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import { onboardingProgress } from './location-readiness';
@@ -23,6 +27,8 @@ export class GettingStartedService {
     private readonly prisma: PrismaService,
     @Inject(SINGLE_TENANT_RESOLUTION)
     private readonly storefront: SingleTenantResolution,
+    @Inject(STOREFRONT_ROUTING_CONFIG)
+    private readonly routing: StorefrontRoutingConfig,
   ) {}
 
   async checklist(
@@ -38,8 +44,21 @@ export class GettingStartedService {
     )!;
     return {
       ...progress,
-      // The storefront serves exactly one business per deployment until SC4f.
-      storefrontLive: this.storefront.tenantId === tenantId,
+      storefrontLive: await this.storefrontLive(tenantId),
     };
+  }
+
+  // Legacy routing: the deployment's storefront serves exactly one business.
+  // SC4f-1 host routing: live once any of its approved hostnames is
+  // published.
+  private async storefrontLive(tenantId: string): Promise<boolean> {
+    if (!this.routing.hostRouting) {
+      return this.storefront.tenantId === tenantId;
+    }
+    const published = await this.prisma.storefrontHost.findFirst({
+      where: { storefrontTenantId: tenantId, published: true },
+      select: { id: true },
+    });
+    return published !== null;
   }
 }

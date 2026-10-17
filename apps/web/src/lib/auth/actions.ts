@@ -1,5 +1,6 @@
 "use server";
 
+import { storefrontApiFetch } from "@/lib/storefront-context";
 import { cookies } from "next/headers";
 import { clearLegacySessionCookie, clearSessionCookie, sessionCookieOptions } from "@/lib/security/cookies";
 import { serverActionClientIpHeaders } from "@/lib/client-ip-forwarding";
@@ -65,7 +66,7 @@ export async function signInAction(
 
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/auth/sign-in`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/auth/sign-in`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -130,7 +131,7 @@ export async function registerAction(
 
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/auth/register`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/auth/register`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -178,7 +179,7 @@ export async function verifyAction(
 
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/auth/verify`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/auth/verify`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -224,7 +225,7 @@ export async function resendVerificationAction(
 
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/auth/verification/resend`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/auth/verification/resend`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -280,7 +281,7 @@ export async function forgotPasswordAction(
 
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/auth/forgot-password`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/auth/forgot-password`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -339,7 +340,7 @@ export async function resetPasswordAction(
 
   let response: Response;
   try {
-    response = await fetch(`${getApiUrl()}/auth/reset-password`, {
+    response = await storefrontApiFetch(`${getApiUrl()}/auth/reset-password`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

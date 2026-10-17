@@ -1,12 +1,23 @@
 import {
+  Inject,
   Injectable,
   NestMiddleware,
+  NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import type { NextFunction, Response } from 'express';
 import { runWithTenantContext } from '@mocha-house/database';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  STOREFRONT_HOST_HEADER,
+  STOREFRONT_NOT_FOUND,
+} from '@mocha-house/contracts';
 import { HttpTenantContextResolver } from './http-tenant-context.resolver';
+import {
+  STOREFRONT_ROUTING_CONFIG,
+  type StorefrontRoutingConfig,
+  verifyStorefrontContext,
+} from './storefront-context';
 import type { TenantContextRequest } from './tenant-context-request';
 
 export { REQUEST_ID_HEADER } from './request-id.middleware';
@@ -31,6 +42,30 @@ const SUSPENDED_TENANT_ALLOWED_GET_PATHS: readonly RegExp[] = [
   /^\/api\/v1\/orders\/[^/]+\/?$/i,
 ];
 
+// SC4f-1 — the only routes on this surface that serve NO business, and so
+// are answered without a storefront context while host routing is on (a
+// browser or load balancer reaches them directly, unsigned):
+//   GET /                                    static scaffold route (probe)
+//   GET /api/v1/media/objects/:folder/:file  local/dev media bytes; reads no
+//                                            business data
+// They get no TenantContext at all, so nothing tenant-scoped can run on
+// them. Like the list above: GET/HEAD only, fail closed for anything else.
+const BUSINESS_FREE_GET_PATHS: readonly RegExp[] = [
+  /^\/$/,
+  /^\/api\/v1\/media\/objects\/[^/]+\/[^/]+\/?$/i,
+];
+
+export function isBusinessFreeRoute(
+  method: string,
+  originalUrl: string,
+): boolean {
+  if (method !== 'GET' && method !== 'HEAD') {
+    return false;
+  }
+  const path = originalUrl.split('?', 1)[0];
+  return BUSINESS_FREE_GET_PATHS.some((pattern) => pattern.test(path));
+}
+
 export function isAllowedWhileTenantInactive(
   method: string,
   originalUrl: string,
@@ -50,7 +85,12 @@ export function isAllowedWhileTenantInactive(
 //   1. Reads the server-side request id RequestIdMiddleware assigned.
 //   2. Asks the resolver for the context. The resolver is never given the
 //      request, so no client-supplied tenant id (header, query, body) can
-//      reach tenant selection.
+//      reach tenant selection. SC4f-1 — with host routing on, the only
+//      request input it receives is the storefront hostname, and only after
+//      its web-tier signature has been verified here. No business (unsigned,
+//      forged or stale context, unknown or unpublished hostname) is one
+//      uniform 404 that never says which check failed — and never a fallback
+//      to the deployment's single business.
 //   3. SC0.5a — refuses the request unless the business is ACTIVE (or the
 //      route is one of the few listed above). Read on EVERY request, so a
 //      suspension takes effect, and a reactivation restores service, without
@@ -72,6 +112,8 @@ export class TenantContextMiddleware implements NestMiddleware {
   constructor(
     private readonly resolver: HttpTenantContextResolver,
     private readonly prisma: PrismaService,
+    @Inject(STOREFRONT_ROUTING_CONFIG)
+    private readonly routing: StorefrontRoutingConfig,
   ) {}
 
   async use(
@@ -84,7 +126,35 @@ export class TenantContextMiddleware implements NestMiddleware {
         'RequestIdMiddleware must run before TenantContextMiddleware.',
       );
     }
-    const context = this.resolver.resolve(request.requestId);
+    let verifiedHost: string | null = null;
+    if (this.routing.hostRouting) {
+      if (isBusinessFreeRoute(request.method, request.originalUrl)) {
+        next();
+        return;
+      }
+      // One response per business: shared caches must neither store it nor
+      // serve it for another storefront.
+      response.setHeader('Cache-Control', 'no-store');
+      response.setHeader('Vary', STOREFRONT_HOST_HEADER);
+      verifiedHost = verifyStorefrontContext({
+        headers: request.headers,
+        secret: this.routing.secret!,
+        nowSeconds: Math.floor(Date.now() / 1000),
+      });
+    }
+    const context = await this.resolver.resolve(
+      request.requestId,
+      verifiedHost,
+    );
+    if (!context) {
+      response.setHeader('Cache-Control', 'no-store');
+      throw new NotFoundException({
+        statusCode: 404,
+        error: 'Not Found',
+        code: STOREFRONT_NOT_FOUND,
+        message: 'This storefront is not available.',
+      });
+    }
 
     if (!isAllowedWhileTenantInactive(request.method, request.originalUrl)) {
       const tenant = await this.prisma.tenant.findUnique({

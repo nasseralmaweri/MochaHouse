@@ -1,4 +1,5 @@
 import "server-only";
+import { storefrontApiFetch } from "@/lib/storefront-context";
 import type { ReorderPreparation } from "@mocha-house/contracts";
 
 // "server-only": attaches the raw bearer token and reads the server-only
@@ -29,7 +30,7 @@ export async function prepareReorder(
 ): Promise<PrepareReorderResult> {
   let response: Response;
   try {
-    response = await fetch(
+    response = await storefrontApiFetch(
       `${getApiUrl()}/customers/me/orders/${encodeURIComponent(orderId)}/reorder`,
       {
         method: "POST",
