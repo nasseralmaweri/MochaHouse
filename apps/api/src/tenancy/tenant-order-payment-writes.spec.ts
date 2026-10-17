@@ -509,9 +509,7 @@ describe('S0D-2C-1 order & payment tenant ownership (integration)', () => {
       );
       const attempt = await attemptByKey(k1);
       expect(attempt?.tenantId).toBe(TENANT_1_MOCHA_HOUSE_ID);
-      expect(attempt?.giftCardPurchase?.tenantId).toBe(
-        TENANT_1_MOCHA_HOUSE_ID,
-      );
+      expect(attempt?.giftCardPurchase?.tenantId).toBe(TENANT_1_MOCHA_HOUSE_ID);
     });
 
     it("refuses to replay another tenant's intent (normal and race paths), revealing and creating nothing", async () => {

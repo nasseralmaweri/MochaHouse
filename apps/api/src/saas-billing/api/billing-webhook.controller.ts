@@ -4,6 +4,7 @@ import {
   Headers,
   HttpCode,
   Inject,
+  Logger,
   NotFoundException,
   Param,
   Post,
@@ -16,6 +17,7 @@ import type { Request } from 'express';
 import { RateLimit } from '../../rate-limit/rate-limit.decorator';
 import { RateLimitGuard } from '../../rate-limit/rate-limit.guard';
 import { BillingLifecycleService } from '../application/billing-lifecycle.service';
+import { BillingComplimentaryService } from '../application/billing-complimentary.service';
 import {
   BillingEventVerificationError,
   SAAS_BILLING_PROVIDER,
@@ -37,8 +39,11 @@ import {
 // provider is not the one configured.
 @Controller('api/v1/billing/webhooks')
 export class BillingWebhookController {
+  private readonly logger = new Logger(BillingWebhookController.name);
+
   constructor(
     private readonly lifecycle: BillingLifecycleService,
+    private readonly complimentary: BillingComplimentaryService,
     @Inject(SAAS_BILLING_PROVIDER)
     private readonly provider: SaasBillingProvider,
   ) {}
@@ -74,6 +79,18 @@ export class BillingWebhookController {
       throw error;
     }
     const outcome = await this.lifecycle.recordAndApply(verified);
+    // SC3e-2 — a scheduled complimentary grant on this subscription is
+    // settled against the provider's live view (verified, or started once
+    // the paid subscription ended). Best effort: the sweep is the backstop.
+    if (outcome.status !== 'FAILED') {
+      await this.complimentary
+        .settleForSubscription(verified.externalSubscriptionId)
+        .catch((error: unknown) =>
+          this.logger.warn(
+            `Complimentary settlement after event failed: ${error instanceof Error ? error.name : 'unknown'}`,
+          ),
+        );
+    }
     if (outcome.status === 'FAILED') {
       // Not durably handled yet: the provider retries.
       throw new ServiceUnavailableException('Try again later.');

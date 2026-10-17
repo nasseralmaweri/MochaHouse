@@ -253,6 +253,10 @@ const GLOBAL_TABLES = [
   'BillingPlanChange',
   // SC3e-1
   'BillingInvoice',
+  // SC3e-2
+  'PlatformOperatorPermission',
+  'BillingComplimentaryGrant',
+  'BillingReconciliationCaseAction',
   '_prisma_migrations',
 ];
 

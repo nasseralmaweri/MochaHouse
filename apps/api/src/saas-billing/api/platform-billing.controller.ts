@@ -15,6 +15,10 @@ import {
 import type {
   BillingInvoiceListResponse,
   BillingPlanChangePreview,
+  PlatformCaseDetailResponse,
+  PlatformCaseRecheckResponse,
+  PlatformComplimentaryListResponse,
+  PlatformComplimentaryView,
   PlatformBillingOverview,
   PlatformBillingEnforcementSweepResponse,
   PlatformBillingPolicy,
@@ -24,6 +28,7 @@ import type {
   PlatformTenantBillingResponse,
 } from '@mocha-house/contracts';
 import { PlatformAuthGuard } from '../../platform-auth/infrastructure/platform-auth.guard';
+import { RequirePlatformPermission } from '../../platform-auth/authorization/platform-permission.guard';
 import type { PlatformAuthenticatedRequest } from '../../platform-auth/infrastructure/platform-identity';
 import { RateLimit } from '../../rate-limit/rate-limit.decorator';
 import { RateLimitGuard } from '../../rate-limit/rate-limit.guard';
@@ -36,6 +41,16 @@ import {
 import { BillingCatalogService } from '../application/billing-catalog.service';
 import { BillingAccountService } from '../application/billing-account.service';
 import { BillingHistoryService } from '../application/billing-history.service';
+import {
+  BillingComplimentaryService,
+  parseGrantRequest,
+  parseReasonBody,
+} from '../application/billing-complimentary.service';
+import {
+  BillingCaseActionsService,
+  parseCloseRequest,
+  parseReleaseRequest,
+} from '../application/billing-case-actions.service';
 import { BillingReconciliationService } from '../application/billing-reconciliation.service';
 import { BillingEnforcementService } from '../application/billing-enforcement.service';
 import {
@@ -87,7 +102,136 @@ export class PlatformBillingController {
     private readonly operations: BillingOperationsService,
     private readonly planChanges: BillingPlanChangeService,
     private readonly history: BillingHistoryService,
+    private readonly complimentary: BillingComplimentaryService,
+    private readonly caseActions: BillingCaseActionsService,
   ) {}
+
+  // --- SC3e-2: complimentary arrangements (owner decisions D2–D4) ---------------
+
+  @Header('Cache-Control', 'no-store')
+  @Get('billing/complimentary')
+  listComplimentary(): Promise<PlatformComplimentaryListResponse> {
+    return this.complimentary.list();
+  }
+
+  @Header('Cache-Control', 'no-store')
+  @Get('tenants/:tenantId/billing/complimentary')
+  getComplimentary(
+    @Param('tenantId') tenantId: string,
+  ): Promise<PlatformComplimentaryView> {
+    return this.complimentary.view(tenantId);
+  }
+
+  @UseGuards(RateLimitGuard)
+  @RateLimit('platform-lifecycle')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @RequirePlatformPermission('billing.complimentary.manage')
+  @Post('tenants/:tenantId/billing/complimentary')
+  grantComplimentary(
+    @Param('tenantId') tenantId: string,
+    @Body() body: unknown,
+    @Req() request: PlatformAuthenticatedRequest,
+  ): Promise<PlatformComplimentaryView> {
+    assertRecentSignIn(request.platformIdentity);
+    return this.complimentary.grant(
+      tenantId,
+      parseGrantRequest(body),
+      request.platformOperator!,
+      request.requestId,
+    );
+  }
+
+  @UseGuards(RateLimitGuard)
+  @RateLimit('platform-lifecycle')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @RequirePlatformPermission('billing.complimentary.manage')
+  @Post('tenants/:tenantId/billing/complimentary/:grantId/withdraw')
+  withdrawComplimentary(
+    @Param('tenantId') tenantId: string,
+    @Param('grantId') grantId: string,
+    @Body() body: unknown,
+    @Req() request: PlatformAuthenticatedRequest,
+  ): Promise<PlatformComplimentaryView> {
+    assertRecentSignIn(request.platformIdentity);
+    return this.complimentary.withdraw(
+      tenantId,
+      grantId,
+      parseReasonBody(body),
+      request.platformOperator!,
+      request.requestId,
+    );
+  }
+
+  @UseGuards(RateLimitGuard)
+  @RateLimit('platform-lifecycle')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @RequirePlatformPermission('billing.complimentary.manage')
+  @Post('tenants/:tenantId/billing/complimentary/:grantId/revoke')
+  revokeComplimentary(
+    @Param('tenantId') tenantId: string,
+    @Param('grantId') grantId: string,
+    @Body() body: unknown,
+    @Req() request: PlatformAuthenticatedRequest,
+  ): Promise<PlatformComplimentaryView> {
+    assertRecentSignIn(request.platformIdentity);
+    return this.complimentary.revoke(
+      tenantId,
+      grantId,
+      parseReasonBody(body),
+      request.platformOperator!,
+      request.requestId,
+    );
+  }
+
+  // --- SC3e-2: review-case actions (owner decision D5) ---------------------------
+
+  @Header('Cache-Control', 'no-store')
+  @Get('billing/reconciliation-cases/:caseId')
+  getCase(
+    @Param('caseId') caseId: string,
+  ): Promise<PlatformCaseDetailResponse> {
+    return this.caseActions.detail(caseId);
+  }
+
+  @UseGuards(RateLimitGuard)
+  @RateLimit('platform-lifecycle')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @RequirePlatformPermission('billing.cases.manage')
+  @Post('billing/reconciliation-cases/:caseId/recheck')
+  recheckCase(
+    @Param('caseId') caseId: string,
+    @Req() request: PlatformAuthenticatedRequest,
+  ): Promise<PlatformCaseRecheckResponse> {
+    return this.caseActions.recheck(
+      caseId,
+      request.platformOperator!,
+      request.requestId,
+    );
+  }
+
+  @UseGuards(RateLimitGuard)
+  @RateLimit('platform-lifecycle')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @RequirePlatformPermission('billing.schedules.release')
+  @Post('billing/reconciliation-cases/:caseId/release-schedule')
+  releaseCaseSchedule(
+    @Param('caseId') caseId: string,
+    @Body() body: unknown,
+    @Req() request: PlatformAuthenticatedRequest,
+  ): Promise<PlatformCaseDetailResponse> {
+    assertRecentSignIn(request.platformIdentity);
+    return this.caseActions.releaseSchedule(
+      caseId,
+      parseReleaseRequest(body),
+      request.platformOperator!,
+      request.requestId,
+    );
+  }
 
   // SC3d-1 — a PREVIEW of a business's plan change on its behalf (nothing
   // charged or changed; audited). SC3d-2 — a recent sign-in and a written
@@ -96,6 +240,7 @@ export class PlatformBillingController {
   @RateLimit('platform-lifecycle')
   @Header('Cache-Control', 'no-store')
   @HttpCode(200)
+  @RequirePlatformPermission('billing.accounts.manage')
   @Post('tenants/:tenantId/billing/plan-change/preview')
   previewPlanChange(
     @Param('tenantId') tenantId: string,
@@ -117,6 +262,7 @@ export class PlatformBillingController {
   @UseGuards(RateLimitGuard)
   @RateLimit('platform-lifecycle')
   @Header('Cache-Control', 'no-store')
+  @RequirePlatformPermission('billing.accounts.manage')
   @Put('tenants/:tenantId/billing/contact')
   async assignBillingContact(
     @Param('tenantId') tenantId: string,
@@ -137,6 +283,7 @@ export class PlatformBillingController {
   @RateLimit('platform-lifecycle')
   @Header('Cache-Control', 'no-store')
   @HttpCode(200)
+  @RequirePlatformPermission('billing.accounts.manage')
   @Post('tenants/:tenantId/billing/grace-extension')
   async extendGrace(
     @Param('tenantId') tenantId: string,
@@ -183,6 +330,7 @@ export class PlatformBillingController {
   @RateLimit('platform-lifecycle')
   @Header('Cache-Control', 'no-store')
   @HttpCode(200)
+  @RequirePlatformPermission('billing.accounts.manage')
   @Post('tenants/:tenantId/billing/start')
   startBilling(
     @Param('tenantId') tenantId: string,
@@ -202,6 +350,7 @@ export class PlatformBillingController {
   @RateLimit('platform-lifecycle')
   @Header('Cache-Control', 'no-store')
   @HttpCode(200)
+  @RequirePlatformPermission('billing.reconciliation.run')
   @Post('billing/reconcile')
   reconcile(
     @Req() request: PlatformAuthenticatedRequest,
@@ -217,6 +366,7 @@ export class PlatformBillingController {
   @RateLimit('platform-lifecycle')
   @Header('Cache-Control', 'no-store')
   @HttpCode(200)
+  @RequirePlatformPermission('billing.reconciliation.run')
   @Post('billing/enforcement/sweep')
   sweepEnforcement(
     @Req() request: PlatformAuthenticatedRequest,
@@ -240,14 +390,18 @@ export class PlatformBillingController {
   @RateLimit('platform-lifecycle')
   @Header('Cache-Control', 'no-store')
   @HttpCode(200)
+  @RequirePlatformPermission('billing.cases.manage')
   @Post('billing/reconciliation-cases/:caseId/resolve')
   async resolveCase(
     @Param('caseId') caseId: string,
+    @Body() body: unknown,
     @Req() request: PlatformAuthenticatedRequest,
   ): Promise<{ resolved: true }> {
     assertRecentSignIn(request.platformIdentity);
-    await this.reconciliation.resolve(
+    // SC3e-2 — closed with an outcome code and a note.
+    await this.caseActions.close(
       caseId,
+      parseCloseRequest(body),
       request.platformOperator!,
       request.requestId,
     );
@@ -257,6 +411,7 @@ export class PlatformBillingController {
   @UseGuards(RateLimitGuard)
   @RateLimit('platform-lifecycle')
   @Header('Cache-Control', 'no-store')
+  @RequirePlatformPermission('billing.prices.manage')
   @Post('plans/:planId/prices')
   createPrice(
     @Param('planId') planId: string,
@@ -276,6 +431,7 @@ export class PlatformBillingController {
   @RateLimit('platform-lifecycle')
   @Header('Cache-Control', 'no-store')
   @HttpCode(200)
+  @RequirePlatformPermission('billing.prices.manage')
   @Post('plans/:planId/prices/:priceId/archive')
   archivePrice(
     @Param('planId') planId: string,
@@ -300,6 +456,7 @@ export class PlatformBillingController {
   @UseGuards(RateLimitGuard)
   @RateLimit('platform-lifecycle')
   @Header('Cache-Control', 'no-store')
+  @RequirePlatformPermission('billing.policy.manage')
   @Put('billing/policy')
   updatePolicy(
     @Body() body: unknown,

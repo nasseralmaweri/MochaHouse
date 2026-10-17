@@ -18,6 +18,7 @@ import {
   type ScratchDatabase,
 } from '@mocha-house/testing';
 import { AppModule } from '../app.module';
+import { grantPlatformPermissions } from '../../test/platform-permissions';
 import { PrismaService } from '../prisma/prisma.service';
 import { runSerializable } from '../prisma/serializable-transaction';
 import { signInternalDevJwt } from '../internal-auth/infrastructure/internal-dev-jwt';
@@ -326,7 +327,7 @@ describe('SC3e-1 billing history (integration, scratch database)', () => {
     lifecycle = app.get(BillingLifecycleService);
     fake = app.get(SAAS_BILLING_PROVIDER);
 
-    await prisma.platformOperator.create({
+    const grantee = await prisma.platformOperator.create({
       data: {
         externalProvider: 'platform-dev',
         externalSubject: `platform-dev:sc3e1-${run}`,
@@ -334,6 +335,7 @@ describe('SC3e-1 billing history (integration, scratch database)', () => {
         status: 'ACTIVE',
       },
     });
+    await grantPlatformPermissions(prisma, grantee.id);
     const plan = await prisma.subscriptionPlan.create({
       data: { key: `growth-${run}`, name: 'Growth' },
     });

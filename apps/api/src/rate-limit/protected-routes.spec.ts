@@ -153,6 +153,12 @@ const PROTECTED: ReadonlyArray<{
       'extendGrace',
       'previewPlanChange',
       'resolveCase',
+      // SC3e-2
+      'grantComplimentary',
+      'withdrawComplimentary',
+      'revokeComplimentary',
+      'recheckCase',
+      'releaseCaseSchedule',
     ] as const
   ).map((method) => ({
     controller: PlatformBillingController,

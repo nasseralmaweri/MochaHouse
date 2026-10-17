@@ -65,6 +65,10 @@ const EVENT_LABELS: Record<PlatformSubscriptionEventType, string> = {
   GRACE_EXTENDED: "Grace period extended",
   GRACE_EXCEPTION_GRANTED: "Grace exception granted",
   GRACE_EXCEPTION_EXPIRED: "Grace exception ended",
+  COMPLIMENTARY_SCHEDULED: "Complimentary scheduled (after the paid period)",
+  COMPLIMENTARY_STARTED: "Complimentary started",
+  COMPLIMENTARY_WITHDRAWN: "Scheduled complimentary withdrawn",
+  COMPLIMENTARY_ENDED: "Complimentary ended",
   SUBSCRIPTION_REPLACED: "Subscription restarted (paid)",
 };
 

@@ -782,7 +782,11 @@ export interface PlatformOperatorProfile {
 }
 export interface PlatformMeResponse {
     operator: PlatformOperatorProfile;
+    permissions: PlatformPermission[];
 }
+export declare const PLATFORM_PERMISSIONS: readonly ["billing.prices.manage", "billing.policy.manage", "billing.accounts.manage", "billing.reconciliation.run", "billing.cases.manage", "billing.schedules.release", "billing.complimentary.manage"];
+export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
+export declare const PLATFORM_PERMISSION_REQUIRED = "PLATFORM_PERMISSION_REQUIRED";
 export interface PlatformSignInRequest {
     email: string;
     password: string;
@@ -1202,6 +1206,12 @@ export interface PlatformGraceExtensionRequest {
     reason: string;
 }
 export interface PlatformBillingOverview {
+    complimentary: {
+        active: number;
+        scheduled: number;
+        endingSoon: number;
+        attention: number;
+    };
     inGrace: number;
     unpaid: number;
     billingSuspended: number;
@@ -1224,6 +1234,113 @@ export interface PlatformReconciliationCase {
     status: PlatformReconciliationCaseStatus;
     createdAt: string;
     resolvedAt: string | null;
+    resolutionOutcome: PlatformCaseOutcome | null;
+    resolutionNote: string | null;
+}
+export declare const PLATFORM_CASE_OUTCOMES: readonly ["FIXED_AT_PROVIDER", "SCHEDULE_RELEASED", "CONSISTENT_ON_RECHECK", "NO_ACTION_NEEDED", "DUPLICATE", "NEEDS_FINANCIAL_ADJUSTMENT"];
+export type PlatformCaseOutcome = (typeof PLATFORM_CASE_OUTCOMES)[number];
+export interface PlatformCaseActionView {
+    action: "RECHECKED" | "SCHEDULE_RELEASED" | "CLOSED";
+    result: string;
+    note: string | null;
+    externalScheduleId: string | null;
+    actor: {
+        id: string;
+        email: string;
+    };
+    at: string;
+}
+export interface PlatformCaseDetailResponse {
+    case: PlatformReconciliationCase;
+    actions: PlatformCaseActionView[];
+    provider: {
+        schedule: {
+            externalScheduleId: string;
+            status: string;
+        } | null;
+        scheduleIsOpenPlanChange: boolean;
+    } | null;
+    providerUnavailable: boolean;
+}
+export interface PlatformCaseRecheckResponse {
+    result: "CONSISTENT" | "MISMATCH_FOUND" | "PROVIDER_UNAVAILABLE";
+    openCases: string[];
+}
+export interface PlatformCaseReleaseRequest {
+    externalScheduleId: string;
+    reason: string;
+}
+export interface PlatformCaseCloseRequest {
+    outcome: PlatformCaseOutcome;
+    note: string;
+}
+export declare const BILLING_CASE_SCHEDULE_MISMATCH = "BILLING_CASE_SCHEDULE_MISMATCH";
+export declare const BILLING_CASE_NOT_RELEASABLE = "BILLING_CASE_NOT_RELEASABLE";
+export type PlatformComplimentaryStatus = "SCHEDULED" | "ACTIVE" | "WITHDRAWN" | "ENDED";
+export interface PlatformComplimentaryGrantView {
+    id: string;
+    status: PlatformComplimentaryStatus;
+    plan: {
+        planName: string;
+        versionId: string;
+        version: number;
+        moduleKeys: string[];
+    };
+    endsAt: string | null;
+    reason: string;
+    grantedBy: {
+        id: string;
+        email: string;
+    };
+    createdAt: string;
+    previousStatus: string;
+    previousPlanName: string;
+    previousPrice: {
+        amountMinorUnits: number;
+        currency: string;
+        interval: "MONTH" | "YEAR";
+    };
+    effectiveAt: string | null;
+    cancellationVerified: boolean;
+    startedAt: string | null;
+    finishedAt: string | null;
+    finishCode: string | null;
+    finishReason: string | null;
+    finishedBy: {
+        id: string;
+        email: string;
+    } | null;
+    attention: "CANCELLATION_UNVERIFIED" | "ENDS_SOON" | null;
+}
+export interface PlatformComplimentaryView {
+    billingMode: "BILLED" | "COMPLIMENTARY";
+    legacyComplimentary: boolean;
+    current: PlatformComplimentaryGrantView | null;
+    history: PlatformComplimentaryGrantView[];
+    eligibility: {
+        eligible: boolean;
+        reason: string | null;
+    };
+}
+export interface PlatformComplimentaryGrantRequest {
+    planVersionId: string;
+    endsAt: string | null;
+    reason: string;
+}
+export interface PlatformComplimentaryReasonRequest {
+    reason: string;
+}
+export declare const BILLING_COMPLIMENTARY_NOT_ELIGIBLE = "BILLING_COMPLIMENTARY_NOT_ELIGIBLE";
+export declare const BILLING_COMPLIMENTARY_UNPAID_INVOICES = "BILLING_COMPLIMENTARY_UNPAID_INVOICES";
+export declare const BILLING_COMPLIMENTARY_IN_PROGRESS = "BILLING_COMPLIMENTARY_IN_PROGRESS";
+export declare const BILLING_COMPLIMENTARY_NOT_WITHDRAWABLE = "BILLING_COMPLIMENTARY_NOT_WITHDRAWABLE";
+export declare const BILLING_COMPLIMENTARY_NOT_REVOCABLE = "BILLING_COMPLIMENTARY_NOT_REVOCABLE";
+export interface PlatformComplimentaryListResponse {
+    grants: (PlatformComplimentaryGrantView & {
+        tenantId: string;
+        businessName: string;
+    })[];
+    legacyComplimentary: number;
 }
 export interface PlatformReconciliationCaseListResponse {
     cases: PlatformReconciliationCase[];
@@ -1254,7 +1371,7 @@ export interface PlatformPlanCreateRequest {
 export interface PlatformPlanVersionModulesRequest {
     moduleKeys: OptionalModuleKey[];
 }
-export type PlatformSubscriptionEventType = "PLAN_ASSIGNED" | "PLAN_CHANGED" | "ADDON_GRANTED" | "ADDON_REVOKED" | "TRIAL_STARTED" | "PAYMENT_AUTHORIZED" | "PAYMENT_SUCCEEDED" | "PAYMENT_FAILED" | "GRACE_EXPIRED" | "TRIAL_EXPIRED" | "CANCEL_SCHEDULED" | "CANCEL_UNDONE" | "CANCELED" | "PLAN_CHANGE_PENDING" | "PLAN_CHANGE_APPLIED" | "PLAN_CHANGE_ABANDONED" | "RECOVERY_EXPIRED" | "BILLING_SUSPENDED" | "BILLING_SUSPENSION_LIFTED" | "SUBSCRIPTION_REPLACED" | "GRACE_EXTENDED" | "GRACE_EXCEPTION_GRANTED" | "GRACE_EXCEPTION_EXPIRED";
+export type PlatformSubscriptionEventType = "PLAN_ASSIGNED" | "PLAN_CHANGED" | "ADDON_GRANTED" | "ADDON_REVOKED" | "TRIAL_STARTED" | "PAYMENT_AUTHORIZED" | "PAYMENT_SUCCEEDED" | "PAYMENT_FAILED" | "GRACE_EXPIRED" | "TRIAL_EXPIRED" | "CANCEL_SCHEDULED" | "CANCEL_UNDONE" | "CANCELED" | "PLAN_CHANGE_PENDING" | "PLAN_CHANGE_APPLIED" | "PLAN_CHANGE_ABANDONED" | "RECOVERY_EXPIRED" | "BILLING_SUSPENDED" | "BILLING_SUSPENSION_LIFTED" | "SUBSCRIPTION_REPLACED" | "GRACE_EXTENDED" | "GRACE_EXCEPTION_GRANTED" | "GRACE_EXCEPTION_EXPIRED" | "COMPLIMENTARY_SCHEDULED" | "COMPLIMENTARY_STARTED" | "COMPLIMENTARY_WITHDRAWN" | "COMPLIMENTARY_ENDED";
 export type PlatformSubscriptionStatus = "ACTIVE" | "TRIALING" | "PAST_DUE" | "UNPAID" | "TRIAL_EXPIRED" | "CANCELED";
 export type PlatformBillingMode = "COMPLIMENTARY" | "BILLED";
 export interface PlatformTenantSubscription {

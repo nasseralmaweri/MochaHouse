@@ -1,20 +1,15 @@
-import {
-  ConflictException,
-  Inject,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import type {
   PlatformReconciliationCase,
   PlatformReconciliationCaseListResponse,
   PlatformReconciliationCaseStatus,
   PlatformReconciliationRunResponse,
 } from '@mocha-house/contracts';
+import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { runSerializable } from '../../prisma/serializable-transaction';
 import { PLATFORM_AUDIT_ACTIONS } from '../../platform-auth/application/platform-operators.service';
 import type { PlatformOperatorRow } from '../../platform-auth/infrastructure/platform-identity';
-import { isUuid } from '../../platform-subscriptions/application/plan-input';
 import type {
   ProviderSubscriptionSnapshot,
   ProviderSubscriptionStatus,
@@ -25,6 +20,7 @@ import {
   type SaasBillingProvider,
 } from '../provider/saas-billing-provider';
 import { BillingLifecycleService } from './billing-lifecycle.service';
+import { ownedExternalSubscriptionIds } from './billing-invoice-history';
 
 // SC3b (F6) — operator-run, REVIEW-ONLY billing reconciliation. It compares
 // our billing records with the provider's and opens cases for a person to
@@ -112,78 +108,8 @@ export class BillingReconciliationService {
       });
       for (const subscription of billed) {
         subscriptionsChecked++;
-        let detail: string | null = null;
-        let kind: string | null = null;
-        try {
-          const live = await this.provider.retrieveSubscription(
-            subscription.externalSubscriptionId!,
-          );
-          const expected = EXPECTED[live.status];
-          const paymentMethod = paymentMethodCase(
-            live,
-            subscription.status,
-            subscription.recurringPaymentAuthorizedAt !== null,
-          );
-          if (live.externalCustomerId !== subscription.externalCustomerId) {
-            kind = 'CUSTOMER_MISMATCH';
-            detail = 'The provider subscription belongs to another customer.';
-          } else if (
-            expected !== null &&
-            !expected.includes(subscription.status)
-          ) {
-            kind = 'STATE_MISMATCH';
-            detail = `Ours ${subscription.status}; provider ${live.status}.`;
-          } else if (paymentMethod !== null) {
-            kind = paymentMethod;
-            detail =
-              kind === 'PAYMENT_METHOD_NOT_RECORDED'
-                ? `The provider will charge a payment method (${
-                    live.paymentMethodSource === 'CUSTOMER_DEFAULT'
-                      ? "the customer's default"
-                      : "the subscription's"
-                  }); ours has no authorization recorded.`
-                : 'Ours is authorized to charge, but the provider has no payment method to charge.';
-          } else if (
-            live.cancelAtPeriodEnd !== subscription.cancelAtPeriodEnd
-          ) {
-            kind = 'CANCELLATION_MISMATCH';
-            detail = `Ours cancel-at-period-end ${subscription.cancelAtPeriodEnd}; provider ${live.cancelAtPeriodEnd}.`;
-          }
-        } catch {
-          kind = 'PROVIDER_UNREADABLE';
-          detail = 'The provider subscription could not be read.';
-        }
-        if (kind !== null) {
-          await this.open(kind, subscription.id, null, detail);
-        }
-        // SC3e-1 — the subscription's invoices into its billing history
-        // (the backstop for missed or delayed invoice events).
-        try {
-          const readAt = new Date();
-          const records = await this.provider.listInvoices(
-            subscription.externalSubscriptionId!,
-          );
-          for (const record of records) {
-            const outcome = await runSerializable(this.prisma, (tx) =>
-              this.lifecycle.recordInvoiceHistory(
-                tx,
-                subscription,
-                record,
-                readAt,
-                null,
-              ),
-            );
-            if (outcome === 'RECORDED') invoicesRecorded++;
-          }
-        } catch (error) {
-          if (!(error instanceof SaasBillingProviderError)) throw error;
-          await this.open(
-            'PROVIDER_UNREADABLE',
-            subscription.id,
-            null,
-            'The provider invoices could not be read.',
-          );
-        }
+        invoicesRecorded += (await this.checkSubscription(subscription))
+          .invoicesRecorded;
       }
 
       // 2. Checkouts: expired ones are closed; completed ones never linked
@@ -262,6 +188,100 @@ export class BillingReconciliationService {
     };
   }
 
+  // One BILLED subscription against the provider's live view (state,
+  // customer, payment method, cancellation), and its invoices into the
+  // billing history. Opens review cases; never writes to the provider and
+  // never adopts what the provider holds. Returns the case kinds opened.
+  async checkSubscription(
+    subscription: Prisma.TenantSubscriptionGetPayload<object>,
+  ): Promise<{
+    opened: string[];
+    invoicesRecorded: number;
+    providerUnavailable: boolean;
+  }> {
+    let detail: string | null = null;
+    let kind: string | null = null;
+    try {
+      const live = await this.provider.retrieveSubscription(
+        subscription.externalSubscriptionId!,
+      );
+      const expected = EXPECTED[live.status];
+      const paymentMethod = paymentMethodCase(
+        live,
+        subscription.status,
+        subscription.recurringPaymentAuthorizedAt !== null,
+      );
+      if (live.externalCustomerId !== subscription.externalCustomerId) {
+        kind = 'CUSTOMER_MISMATCH';
+        detail = 'The provider subscription belongs to another customer.';
+      } else if (expected !== null && !expected.includes(subscription.status)) {
+        kind = 'STATE_MISMATCH';
+        detail = `Ours ${subscription.status}; provider ${live.status}.`;
+      } else if (paymentMethod !== null) {
+        kind = paymentMethod;
+        detail =
+          kind === 'PAYMENT_METHOD_NOT_RECORDED'
+            ? `The provider will charge a payment method (${
+                live.paymentMethodSource === 'CUSTOMER_DEFAULT'
+                  ? "the customer's default"
+                  : "the subscription's"
+              }); ours has no authorization recorded.`
+            : 'Ours is authorized to charge, but the provider has no payment method to charge.';
+      } else if (live.cancelAtPeriodEnd !== subscription.cancelAtPeriodEnd) {
+        kind = 'CANCELLATION_MISMATCH';
+        detail = `Ours cancel-at-period-end ${subscription.cancelAtPeriodEnd}; provider ${live.cancelAtPeriodEnd}.`;
+      }
+    } catch {
+      kind = 'PROVIDER_UNREADABLE';
+      detail = 'The provider subscription could not be read.';
+    }
+    const opened: string[] = [];
+    if (kind !== null) {
+      await this.open(kind, subscription.id, null, detail);
+      opened.push(kind);
+    }
+    // SC3e-1 — the subscription's invoices into its billing history (the
+    // backstop for missed or delayed invoice events). SC3e-2 (owner decision
+    // D6) — also those of its earlier provider subscriptions, proven ours by
+    // our own completed restart Checkout (never a value from a request).
+    let invoicesRecorded = 0;
+    let providerUnavailable = kind === 'PROVIDER_UNREADABLE';
+    try {
+      for (const externalSubscriptionId of await ownedExternalSubscriptionIds(
+        this.prisma,
+        subscription,
+      )) {
+        const readAt = new Date();
+        const records = await this.provider.listInvoices(
+          externalSubscriptionId,
+        );
+        for (const record of records) {
+          const outcome = await runSerializable(this.prisma, (tx) =>
+            this.lifecycle.recordInvoiceHistory(
+              tx,
+              subscription,
+              record,
+              readAt,
+              null,
+            ),
+          );
+          if (outcome === 'RECORDED') invoicesRecorded++;
+        }
+      }
+    } catch (error) {
+      if (!(error instanceof SaasBillingProviderError)) throw error;
+      providerUnavailable = true;
+      await this.open(
+        'PROVIDER_UNREADABLE',
+        subscription.id,
+        null,
+        'The provider invoices could not be read.',
+      );
+      opened.push('PROVIDER_UNREADABLE');
+    }
+    return { opened, invoicesRecorded, providerUnavailable };
+  }
+
   private async open(
     kind: string,
     subscriptionId: string | null,
@@ -316,48 +336,11 @@ export class BillingReconciliationService {
           status: row.status,
           createdAt: row.createdAt.toISOString(),
           resolvedAt: row.resolvedAt?.toISOString() ?? null,
+          resolutionOutcome:
+            row.resolutionOutcome as PlatformReconciliationCase['resolutionOutcome'],
+          resolutionNote: row.resolutionNote,
         };
       }),
     };
-  }
-
-  // Marks a case reviewed. It changes nothing else.
-  async resolve(
-    caseId: string,
-    operator: PlatformOperatorRow,
-    requestReference: string | undefined,
-  ): Promise<void> {
-    if (!isUuid(caseId)) throw new NotFoundException('Case not found.');
-    await runSerializable(this.prisma, async (tx) => {
-      const { count } = await tx.billingReconciliationCase.updateMany({
-        where: { id: caseId, status: 'OPEN' },
-        data: {
-          status: 'RESOLVED',
-          resolvedAt: new Date(),
-          resolvedByPlatformOperatorId: operator.id,
-        },
-      });
-      if (count !== 1) {
-        const exists = await tx.billingReconciliationCase.findUnique({
-          where: { id: caseId },
-          select: { id: true },
-        });
-        if (!exists) throw new NotFoundException('Case not found.');
-        throw new ConflictException({
-          statusCode: 409,
-          error: 'Conflict',
-          code: 'CASE_ALREADY_RESOLVED',
-          message: 'This case was already resolved.',
-        });
-      }
-      await tx.platformAuditEvent.create({
-        data: {
-          action: PLATFORM_AUDIT_ACTIONS.billingCaseResolved,
-          outcome: 'SUCCEEDED',
-          actorPlatformOperatorId: operator.id,
-          requestReference: requestReference ?? null,
-        },
-      });
-    });
   }
 }

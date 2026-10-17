@@ -48,6 +48,11 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'BillingPlanChange',
   // SC3e-1 — billing history (20261101090000).
   'BillingInvoice',
+  // SC3e-2 — operator permissions, complimentary grants, case actions
+  // (20261102090000).
+  'PlatformOperatorPermission',
+  'BillingComplimentaryGrant',
+  'BillingReconciliationCaseAction',
 ]);
 
 // Columns added after the 4C-era migrations to tables that already existed.

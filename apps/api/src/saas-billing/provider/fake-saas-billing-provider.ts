@@ -738,6 +738,64 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
   }
 
   // Releases the schedule: the subscription itself is left exactly as it is.
+  // SC3e-2 — cancel at period end (or undo it). The subscription keeps
+  // running until a test ends it (endSubscription).
+  setCancelAtPeriodEnd(input: {
+    idempotencyKey: string;
+    externalSubscriptionId: string;
+    cancelAtPeriodEnd: boolean;
+  }): Promise<void> {
+    this.call('setCancelAtPeriodEnd', input.idempotencyKey);
+    const sub = this.subscriptions.get(input.externalSubscriptionId);
+    if (!sub) {
+      return Promise.reject(new SaasBillingProviderError('resource_missing'));
+    }
+    if (sub.status === 'canceled' || sub.status === 'incomplete_expired') {
+      return Promise.reject(new SaasBillingProviderError('subscription_ended'));
+    }
+    if (sub.scheduleId) {
+      return Promise.reject(new SaasBillingProviderError('schedule_attached'));
+    }
+    if (!this.ignoreCancelRequests) {
+      this.subscriptions.set(input.externalSubscriptionId, {
+        ...sub,
+        cancelAtPeriodEnd: input.cancelAtPeriodEnd,
+      });
+    }
+    return Promise.resolve();
+  }
+
+  // SC3e-2 — tests: a provider that accepts the request but does not apply
+  // it (verification must catch that).
+  ignoreCancelRequests = false;
+
+  // SC3e-2 — tests: the period ends and the provider ends the subscription
+  // (after a scheduled cancellation).
+  endSubscription(externalSubscriptionId: string): void {
+    const sub = this.subscriptions.get(externalSubscriptionId)!;
+    this.subscriptions.set(externalSubscriptionId, {
+      ...sub,
+      status: 'canceled',
+      cancelAtPeriodEnd: false,
+      scheduleId: null,
+    });
+  }
+
+  listUnpaidCustomerInvoices(
+    externalCustomerId: string,
+  ): Promise<ProviderPayableInvoice[]> {
+    this.call('listUnpaidCustomerInvoices', externalCustomerId);
+    return Promise.resolve(
+      [...this.invoices.values()]
+        .filter(
+          (invoice) =>
+            invoice.externalCustomerId === externalCustomerId &&
+            (invoice.status === 'open' || invoice.status === 'uncollectible'),
+        )
+        .map((invoice) => ({ ...invoice })),
+    );
+  }
+
   releaseSchedule(input: {
     idempotencyKey: string;
     externalScheduleId: string;

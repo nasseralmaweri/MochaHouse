@@ -774,6 +774,57 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
 
   // RELEASE (never cancel — cancelling a schedule cancels its subscription):
   // the schedule stops, the subscription stays exactly as it is.
+  // SC3e-2 — cancel_at_period_end only (never an immediate cancellation,
+  // never proration or a refund).
+  async setCancelAtPeriodEnd(input: {
+    idempotencyKey: string;
+    externalSubscriptionId: string;
+    cancelAtPeriodEnd: boolean;
+  }): Promise<void> {
+    try {
+      const updated = await this.stripe.subscriptions.update(
+        input.externalSubscriptionId,
+        { cancel_at_period_end: input.cancelAtPeriodEnd },
+        { idempotencyKey: input.idempotencyKey },
+      );
+      this.assertTestMode(updated.livemode);
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
+  // SC3e-2 — the customer's open and uncollectible invoices (capped).
+  async listUnpaidCustomerInvoices(
+    externalCustomerId: string,
+  ): Promise<ProviderPayableInvoice[]> {
+    try {
+      const unpaid: ProviderPayableInvoice[] = [];
+      for (const status of ['open', 'uncollectible'] as const) {
+        const page = await this.stripe.invoices
+          .list({ customer: externalCustomerId, status, limit: 100 })
+          .autoPagingToArray({ limit: OPEN_INVOICE_CAP });
+        for (const invoice of page) {
+          this.assertTestMode(invoice.livemode);
+          unpaid.push({
+            externalInvoiceId: invoice.id ?? '',
+            status,
+            externalSubscriptionId: invoiceSubscription(invoice),
+            externalCustomerId: id(invoice.customer),
+            livemode: invoice.livemode,
+            amountPaidMinorUnits: amount(invoice.amount_paid),
+            amountDueMinorUnits: amount(invoice.amount_remaining),
+            currency: text(invoice.currency, 3) ?? '',
+            createdAt: date(invoice.created) ?? new Date(0),
+            hostedInvoiceUrl: null,
+          });
+        }
+      }
+      return unpaid;
+    } catch (error) {
+      throw providerError(error);
+    }
+  }
+
   async releaseSchedule(input: {
     idempotencyKey: string;
     externalScheduleId: string;

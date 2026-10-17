@@ -229,7 +229,7 @@ describe('S0D-2D careers & franchising NOT NULL migration (scratch databases)', 
     expect(at('other than Tenant #1')).toBeLessThan(firstUpdate);
     // The Tenant #1 fallback tiers run after the parent-derived tier.
     expect(at('FROM "Location" AS l')).toBeLessThan(
-      at("corporate row(s) assigned to Tenant #1"),
+      at('corporate row(s) assigned to Tenant #1'),
     );
     const lastCheck = at(
       "FranchiseInquiryNote row(s) do not match their FranchiseInquiry''s tenant",
@@ -350,27 +350,29 @@ describe('S0D-2D careers & franchising NOT NULL migration (scratch databases)', 
     });
 
     expect(
-      notices.find((n) => n.includes('JobOpening -> ') && n.includes('from Location')),
+      notices.find(
+        (n) => n.includes('JobOpening -> ') && n.includes('from Location'),
+      ),
     ).toMatch(/-> 1 row\(s\)/);
     expect(
       notices.find(
         (n) => n.includes('JobOpening -> ') && n.includes('corporate row(s)'),
       ),
     ).toMatch(/-> 1 corporate row\(s\)/);
-    expect(
-      notices.find((n) => n.includes('JobApplication -> ')),
-    ).toMatch(/-> 2 row\(s\) from JobOpening/);
-    expect(
-      notices.find((n) => n.includes('JobApplicationNote -> ')),
-    ).toMatch(/-> 1 row\(s\) from JobApplication/);
+    expect(notices.find((n) => n.includes('JobApplication -> '))).toMatch(
+      /-> 2 row\(s\) from JobOpening/,
+    );
+    expect(notices.find((n) => n.includes('JobApplicationNote -> '))).toMatch(
+      /-> 1 row\(s\) from JobApplication/,
+    );
     expect(
       notices.find(
         (n) => n.includes('FranchiseInquiry -> ') && !n.includes('Note'),
       ),
     ).toMatch(/-> 1 row\(s\) assigned to Tenant #1/);
-    expect(
-      notices.find((n) => n.includes('FranchiseInquiryNote -> ')),
-    ).toMatch(/-> 1 row\(s\) from FranchiseInquiry/);
+    expect(notices.find((n) => n.includes('FranchiseInquiryNote -> '))).toMatch(
+      /-> 1 row\(s\) from FranchiseInquiry/,
+    );
 
     for (const table of CONVERTED) {
       const ids = await tenantIds(scratch.url, table);

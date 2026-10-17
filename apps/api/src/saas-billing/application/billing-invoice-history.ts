@@ -22,6 +22,32 @@ export const INVOICE_HISTORY_CONFLICT_CASE = 'INVOICE_HISTORY_CONFLICT';
 
 type Tx = Prisma.TransactionClient;
 
+// SC3e-2 (owner decision D6) — the provider subscriptions whose invoices
+// belong to this subscription's history: its current one, and every one a
+// completed restart Checkout of OURS replaced (recorded by us when the
+// Checkout was created — never a value from a request or an event).
+export async function ownedExternalSubscriptionIds(
+  tx: Pick<Tx, 'billingCheckoutSession'>,
+  subscription: { id: string; externalSubscriptionId: string | null },
+): Promise<string[]> {
+  const replaced = await tx.billingCheckoutSession.findMany({
+    where: {
+      subscriptionId: subscription.id,
+      status: 'COMPLETED',
+      replacesExternalSubscriptionId: { not: null },
+    },
+    select: { replacesExternalSubscriptionId: true },
+  });
+  return [
+    ...new Set(
+      [
+        subscription.externalSubscriptionId,
+        ...replaced.map((row) => row.replacesExternalSubscriptionId),
+      ].filter((id): id is string => id !== null),
+    ),
+  ];
+}
+
 export async function recordInvoice(
   tx: Tx,
   subscription: {
@@ -39,8 +65,11 @@ export async function recordInvoice(
     subscription.externalSubscriptionId === null ||
     subscription.externalCustomerId === null ||
     record.livemode !== livemode ||
-    record.externalSubscriptionId !== subscription.externalSubscriptionId ||
-    record.externalCustomerId !== subscription.externalCustomerId
+    record.externalSubscriptionId === null ||
+    record.externalCustomerId !== subscription.externalCustomerId ||
+    !(await ownedExternalSubscriptionIds(tx, subscription)).includes(
+      record.externalSubscriptionId,
+    )
   ) {
     return 'NOT_OURS';
   }

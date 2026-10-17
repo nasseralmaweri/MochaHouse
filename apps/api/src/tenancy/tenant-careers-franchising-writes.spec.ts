@@ -234,8 +234,14 @@ describe('S0D-2D careers & franchising tenant ownership (integration)', () => {
       await prisma.outboxEvent.deleteMany({
         where: {
           OR: [
-            { aggregateType: 'JobApplication', aggregateId: { in: applicationIds } },
-            { aggregateType: 'FranchiseInquiry', aggregateId: { in: inquiryIds } },
+            {
+              aggregateType: 'JobApplication',
+              aggregateId: { in: applicationIds },
+            },
+            {
+              aggregateType: 'FranchiseInquiry',
+              aggregateId: { in: inquiryIds },
+            },
           ],
         },
       });
@@ -290,7 +296,12 @@ describe('S0D-2D careers & franchising tenant ownership (integration)', () => {
     });
 
     it('Tenant B structural equivalent: a Tenant B context persists Tenant B', async () => {
-      const job = await jobOpenings.create(jobBody(), actorId, careersManage, tenantB);
+      const job = await jobOpenings.create(
+        jobBody(),
+        actorId,
+        careersManage,
+        tenantB,
+      );
       jobIds.push(job.id);
       const row = await prisma.jobOpening.findUniqueOrThrow({
         where: { id: job.id },
@@ -328,7 +339,12 @@ describe('S0D-2D careers & franchising tenant ownership (integration)', () => {
     });
 
     it('a Tenant A job cannot be updated to reference a Tenant B Location', async () => {
-      const job = await jobOpenings.create(jobBody(), actorId, careersManage, tenantOne);
+      const job = await jobOpenings.create(
+        jobBody(),
+        actorId,
+        careersManage,
+        tenantOne,
+      );
       jobIds.push(job.id);
       await expect(
         jobOpenings.update(
@@ -346,7 +362,12 @@ describe('S0D-2D careers & franchising tenant ownership (integration)', () => {
     });
 
     it('Tenant A cannot update / publish / unpublish / archive a Tenant B job — same 404 as missing, no audit event, owner can still act', async () => {
-      const job = await jobOpenings.create(jobBody(), actorId, careersManage, tenantB);
+      const job = await jobOpenings.create(
+        jobBody(),
+        actorId,
+        careersManage,
+        tenantB,
+      );
       jobIds.push(job.id);
       const notFound = new NotFoundException('Job opening not found.');
       const auditBefore = await prisma.internalAuditEvent.count({

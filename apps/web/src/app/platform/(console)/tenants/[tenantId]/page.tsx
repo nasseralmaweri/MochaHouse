@@ -15,6 +15,9 @@ import { SubscriptionPanel } from "@/components/platform/SubscriptionPanel";
 import { BillingPanel } from "@/components/platform/BillingPanel";
 import { BillingOperationsPanel } from "@/components/platform/BillingOperationsPanel";
 import { InvoiceList } from "@/components/billing/InvoiceList";
+import { ComplimentaryPanel } from "@/components/platform/ComplimentaryPanel";
+import { getPlatformSession } from "@/lib/platform-auth/session";
+import { holds } from "@/lib/platform/complimentary";
 import { pageCursor } from "@/lib/admin/billing-history";
 import { assignableVersions } from "@/lib/platform/subscriptions";
 import {
@@ -22,6 +25,7 @@ import {
   getPlatformTenantLifecycle,
   getPlatformTenantBilling,
   getPlatformTenantInvoices,
+  getPlatformTenantComplimentary,
   getPlatformTenantSubscription,
   listPlatformPlans,
   listPlatformTenantLocations,
@@ -79,7 +83,7 @@ export default async function PlatformTenantPage({
     );
   }
 
-  const [detail, locations, lifecycle, subscription, plans, billing, invoices] = await Promise.all([
+  const [detail, locations, lifecycle, subscription, plans, billing, invoices, complimentary, session] = await Promise.all([
     getPlatformTenant(tenantId),
     listPlatformTenantLocations(tenantId, locationPage),
     getPlatformTenantLifecycle(tenantId),
@@ -87,7 +91,10 @@ export default async function PlatformTenantPage({
     listPlatformPlans(),
     getPlatformTenantBilling(tenantId),
     getPlatformTenantInvoices(tenantId, invoicesCursor),
+    getPlatformTenantComplimentary(tenantId),
+    getPlatformSession(),
   ]);
+  const permissions = session.state === "signed-in" ? session.permissions : [];
   if (detail.state !== "ok") {
     return (
       <div className="flex flex-col gap-6">
@@ -216,6 +223,16 @@ export default async function PlatformTenantPage({
                 {billing.data.billing && billing.data.billing.state !== "COMPLIMENTARY" ? (
                   <BillingOperationsPanel tenantId={tenant.id} view={billing.data} />
                 ) : null}
+                {complimentary.state === "ok" ? (
+                  <ComplimentaryPanel
+                    tenantId={tenant.id}
+                    view={complimentary.data}
+                    versions={assignableVersions(plans.data.plans)}
+                    canManage={holds(permissions, "billing.complimentary.manage")}
+                  />
+                ) : (
+                  <RegistryStatePanel state={complimentary.state} retryHref={`/platform/tenants/${tenant.id}`} />
+                )}
                 {billing.data.billing && billing.data.billing.state !== "COMPLIMENTARY" ? (
                   <section aria-labelledby="tenant-invoices" className="flex flex-col gap-3">
                     <h3 id="tenant-invoices" className="text-base font-semibold text-text-primary">

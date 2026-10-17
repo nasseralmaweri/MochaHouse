@@ -84,6 +84,10 @@ describe('Tenant query audit (report-only)', () => {
           'BillingPlanChange',
           // SC3e-1
           'BillingInvoice',
+          // SC3e-2
+          'PlatformOperatorPermission',
+          'BillingComplimentaryGrant',
+          'BillingReconciliationCaseAction',
         ].sort(),
       );
     });

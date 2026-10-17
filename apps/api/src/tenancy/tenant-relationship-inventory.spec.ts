@@ -198,6 +198,10 @@ const APPROVED_GLOBAL_MODELS = [
   'BillingPlanChange',
   // SC3e-1 — billing history (platform data).
   'BillingInvoice',
+  // SC3e-2 — operator permissions, complimentary grants, case actions.
+  'PlatformOperatorPermission',
+  'BillingComplimentaryGrant',
+  'BillingReconciliationCaseAction',
 ];
 // SC2a review — identifiers issued by an OUTSIDE system (not a record of
 // ours): the SaaS billing provider's ids (SC3a).
@@ -230,6 +234,12 @@ const EXTERNAL_IDENTIFIER_COLUMNS: Readonly<Record<string, readonly string[]>> =
       'externalCustomerId',
       'externalSubscriptionId',
     ],
+    // SC3e-2 — what a complimentary grant restores, and a released schedule.
+    BillingComplimentaryGrant: [
+      'previousExternalCustomerId',
+      'previousExternalSubscriptionId',
+    ],
+    BillingReconciliationCaseAction: ['externalScheduleId'],
   };
 // SC2a review (owner decision S3) — the ONLY relation from platform data to
 // a business: a subscription's real foreign key to its Tenant, so the
@@ -260,7 +270,14 @@ const APPROVED_PLATFORM_BUSINESS_POINTERS: Readonly<
 // SC1d — PlatformAuditEvent target types (platform audit; distinct from the
 // tenant audit's InternalAuditEvent targets classified below).
 // SC2a — plus 'plan' (plan and plan version changes).
-const PLATFORM_AUDIT_TARGET_TYPES = ['tenant', 'plan'];
+// SC3e-2 — plus 'billing_case' (review-case actions) and 'platform_operator'
+// (permission grants, CLI).
+const PLATFORM_AUDIT_TARGET_TYPES = [
+  'tenant',
+  'plan',
+  'billing_case',
+  'platform_operator',
+];
 const PLATFORM_OPERATOR_MODELS = [
   'PlatformOperator',
   'PlatformAuditEvent',
@@ -285,6 +302,10 @@ const PLATFORM_OPERATOR_MODELS = [
   'BillingPlanChange',
   // SC3e-1 — billing history (platform data).
   'BillingInvoice',
+  // SC3e-2 — operator permissions, complimentary grants, case actions.
+  'PlatformOperatorPermission',
+  'BillingComplimentaryGrant',
+  'BillingReconciliationCaseAction',
 ];
 
 describe('Tenant relationship inventory (Security 4C-1)', () => {

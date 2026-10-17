@@ -356,6 +356,22 @@ export interface SaasBillingProvider {
     toInterval: 'MONTH' | 'YEAR';
   }): Promise<{ externalScheduleId: string }>;
 
+  // SC3e-2 — schedules (true) or undoes (false) the subscription's
+  // cancellation at the end of the current period (owner decision D2).
+  // Never cancels anything immediately and never refunds; the caller
+  // re-reads the subscription to verify what the provider accepted.
+  setCancelAtPeriodEnd(input: {
+    idempotencyKey: string;
+    externalSubscriptionId: string;
+    cancelAtPeriodEnd: boolean;
+  }): Promise<void>;
+
+  // SC3e-2 — every unpaid invoice of the customer (open or uncollectible,
+  // across all its subscriptions — current and historical), owner decision D3.
+  listUnpaidCustomerInvoices(
+    externalCustomerId: string,
+  ): Promise<ProviderPayableInvoice[]>;
+
   releaseSchedule(input: {
     idempotencyKey: string;
     externalScheduleId: string;
@@ -405,6 +421,8 @@ export class DisabledSaasBillingProvider implements SaasBillingProvider {
   changePriceNow = unavailable;
   schedulePriceChangeAtPeriodEnd = unavailable;
   releaseSchedule = unavailable;
+  setCancelAtPeriodEnd = unavailable;
+  listUnpaidCustomerInvoices = unavailable;
   retrieveSchedule = unavailable;
   verifyEvent(): VerifiedBillingProviderEvent {
     throw new BillingEventVerificationError('SaaS billing is not configured.');

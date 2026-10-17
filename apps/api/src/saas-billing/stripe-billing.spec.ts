@@ -21,6 +21,7 @@ import {
   type ScratchDatabase,
 } from '@mocha-house/testing';
 import { AppModule } from '../app.module';
+import { grantPlatformPermissions } from '../../test/platform-permissions';
 import { PrismaService } from '../prisma/prisma.service';
 import { signPlatformDevJwt } from '../platform-auth/infrastructure/platform-dev-jwt';
 import { signInternalDevJwt } from '../internal-auth/infrastructure/internal-dev-jwt';
@@ -268,7 +269,7 @@ describe('SC3b Stripe-mode billing (integration, scratch database)', () => {
     prisma = app.get(PrismaService);
     fake = app.get(SAAS_BILLING_PROVIDER);
 
-    await prisma.platformOperator.create({
+    const grantee = await prisma.platformOperator.create({
       data: {
         externalProvider: 'platform-dev',
         externalSubject: `platform-dev:sc3b-${run}`,
@@ -276,6 +277,7 @@ describe('SC3b Stripe-mode billing (integration, scratch database)', () => {
         status: 'ACTIVE',
       },
     });
+    await grantPlatformPermissions(prisma, grantee.id);
     const plan = await prisma.subscriptionPlan.create({
       data: { key: `growth-${run}`, name: 'Growth' },
     });
@@ -1179,12 +1181,20 @@ describe('SC3b Stripe-mode billing (integration, scratch database)', () => {
     await platform(
       'post',
       `/billing/reconciliation-cases/${mine[0].id}/resolve`,
+      {
+        outcome: 'NO_ACTION_NEEDED',
+        note: 'Reviewed in the provider dashboard.',
+      },
     ).expect(200);
     expect(
       (
         await platform(
           'post',
           `/billing/reconciliation-cases/${mine[0].id}/resolve`,
+          {
+            outcome: 'NO_ACTION_NEEDED',
+            note: 'Reviewed in the provider dashboard.',
+          },
         ).expect(409)
       ).body,
     ).toMatchObject({

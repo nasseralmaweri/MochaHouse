@@ -5,6 +5,7 @@ import { PlatformMeController } from './api/platform-me.controller';
 import { PlatformOperatorsService } from './application/platform-operators.service';
 import { PlatformSignInService } from './application/platform-sign-in.service';
 import { PlatformAuthGuard } from './infrastructure/platform-auth.guard';
+import { PlatformPermissionGuard } from './authorization/platform-permission.guard';
 import {
   PlatformCognitoTokenVerifier,
   PlatformLocalDevTokenVerifier,
@@ -27,6 +28,7 @@ import { PlatformDevSignInProvider } from './sign-in/platform-dev-sign-in.provid
   providers: [
     PlatformOperatorsService,
     PlatformAuthGuard,
+    PlatformPermissionGuard,
     PlatformCognitoTokenVerifier,
     PlatformLocalDevTokenVerifier,
     PlatformSignInService,
@@ -38,6 +40,7 @@ import { PlatformDevSignInProvider } from './sign-in/platform-dev-sign-in.provid
   // so its own dependencies are exported with it.
   exports: [
     PlatformAuthGuard,
+    PlatformPermissionGuard,
     PlatformOperatorsService,
     PlatformCognitoTokenVerifier,
     PlatformLocalDevTokenVerifier,

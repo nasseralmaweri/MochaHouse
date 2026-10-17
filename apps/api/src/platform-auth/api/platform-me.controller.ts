@@ -23,7 +23,9 @@ export class PlatformMeController {
   @UseGuards(PlatformAuthGuard)
   @Header('Cache-Control', 'no-store')
   @Get('me')
-  me(@Req() request: PlatformAuthenticatedRequest): PlatformMeResponse {
+  me(
+    @Req() request: PlatformAuthenticatedRequest,
+  ): Promise<PlatformMeResponse> {
     return this.operators.profile(request.platformOperator!);
   }
 

@@ -18,6 +18,7 @@ import {
   type ScratchDatabase,
 } from '@mocha-house/testing';
 import { AppModule } from '../app.module';
+import { grantPlatformPermissions } from '../../test/platform-permissions';
 import { PrismaService } from '../prisma/prisma.service';
 import { signInternalDevJwt } from '../internal-auth/infrastructure/internal-dev-jwt';
 import { signPlatformDevJwt } from '../platform-auth/infrastructure/platform-dev-jwt';
@@ -382,7 +383,7 @@ describe('SC3d-3 scheduled plan changes (integration, scratch database)', () => 
     maintenance = app.get(PlanChangeMaintenanceService);
     fake = app.get(SAAS_BILLING_PROVIDER);
 
-    await prisma.platformOperator.create({
+    const grantee = await prisma.platformOperator.create({
       data: {
         externalProvider: 'platform-dev',
         externalSubject: `platform-dev:sc3d3-${run}`,
@@ -390,6 +391,7 @@ describe('SC3d-3 scheduled plan changes (integration, scratch database)', () => 
         status: 'ACTIVE',
       },
     });
+    await grantPlatformPermissions(prisma, grantee.id);
     const plans: Record<string, string> = {};
     for (const key of ['growth', 'pro']) {
       const plan = await prisma.subscriptionPlan.create({

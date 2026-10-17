@@ -16,6 +16,7 @@ import {
   type ScratchDatabase,
 } from '@mocha-house/testing';
 import { AppModule } from '../app.module';
+import { grantPlatformPermissions } from '../../test/platform-permissions';
 import { PrismaService } from '../prisma/prisma.service';
 import { signInternalDevJwt } from '../internal-auth/infrastructure/internal-dev-jwt';
 import { signPlatformDevJwt } from '../platform-auth/infrastructure/platform-dev-jwt';
@@ -271,6 +272,7 @@ describe('SC3d-1 plan change preview (integration, scratch database)', () => {
         },
       })
     ).id;
+    await grantPlatformPermissions(prisma, operatorId);
     // Growth (49 / month, 490 / year), Pro (99 / month; EUR; an archived
     // price), Lite (19 / month).
     const plans: Record<string, string> = {};
