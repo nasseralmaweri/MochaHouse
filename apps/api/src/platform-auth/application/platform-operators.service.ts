@@ -78,6 +78,8 @@ export const PLATFORM_AUDIT_ACTIONS = {
   billingAdjustmentSettled: 'platform.billing.adjustment_settled',
   billingAdjustmentExternalRecorded:
     'platform.billing.adjustment_external_recorded',
+  // SC3f — CENTERIVO-wide revenue report read (billing.reports.view).
+  billingRevenueReportViewed: 'platform.billing.revenue_report_viewed',
   billingComplimentaryEnded: 'platform.billing.complimentary_ended',
   billingCaseRechecked: 'platform.billing.case_rechecked',
   billingScheduleReleased: 'platform.billing.schedule_released',

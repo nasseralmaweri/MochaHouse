@@ -88,6 +88,12 @@ export async function recordInvoice(
     periodStart: record.periodStart,
     periodEnd: record.periodEnd,
     paidAt: record.paidAt,
+    // SC3f — written only when the read carried them (a known amount is
+    // never cleared; the database refuses it too).
+    ...(record.amounts ? record.amounts : {}),
+    ...(record.attemptCount !== null
+      ? { attemptCount: record.attemptCount }
+      : {}),
   };
   const existing = await tx.billingInvoice.findUnique({
     where: {

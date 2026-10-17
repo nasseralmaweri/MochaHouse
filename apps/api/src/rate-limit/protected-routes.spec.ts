@@ -14,6 +14,7 @@ import { PlatformTenantSubscriptionController } from '../platform-subscriptions/
 import type { PolicyName } from './rate-limit.config';
 import { PlatformBillingController } from '../saas-billing/api/platform-billing.controller';
 import { PlatformAdjustmentsController } from '../saas-billing/api/platform-adjustments.controller';
+import { PlatformRevenueController } from '../saas-billing/api/platform-revenue.controller';
 import { PlatformPermissionsController } from '../platform-auth/api/platform-permissions.controller';
 import { AdminBillingController } from '../saas-billing/api/admin-billing.controller';
 import { BillingWebhookController } from '../saas-billing/api/billing-webhook.controller';
@@ -183,6 +184,12 @@ const PROTECTED: ReadonlyArray<{
     method,
     policy: 'platform-lifecycle' as const,
   })),
+  // SC3f — revenue reports (computed on request).
+  {
+    controller: PlatformRevenueController,
+    method: 'revenue',
+    policy: 'platform-lifecycle',
+  },
   ...(['grantPermission', 'revokePermission'] as const).map((method) => ({
     controller: PlatformPermissionsController,
     method,

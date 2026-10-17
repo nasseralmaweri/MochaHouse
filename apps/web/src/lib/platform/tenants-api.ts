@@ -7,6 +7,7 @@ import type {
   PlatformCaseDetailResponse,
   PlatformComplimentaryListResponse,
   PlatformComplimentaryView,
+  PlatformRevenueReport,
   PlatformAdjustableInvoice,
   PlatformAdjustmentListResponse,
   PlatformAdjustmentView,
@@ -166,6 +167,15 @@ export function getPlatformAdjustableInvoice(
 
 export function listPlatformOperators(): Promise<RegistryResult<PlatformOperatorDirectoryResponse>> {
   return readRegistry("/operators");
+}
+
+// SC3f — the SaaS revenue report (billing.reports.view).
+export function getPlatformRevenueReport(period: {
+  from?: string;
+  to?: string;
+}): Promise<RegistryResult<PlatformRevenueReport>> {
+  const query = new URLSearchParams(period as Record<string, string>).toString();
+  return readRegistry(`/billing/reports/revenue${query ? `?${query}` : ""}`);
 }
 
 // SC3c-3 — the console's billing attention counts.

@@ -237,6 +237,8 @@ export const PLATFORM_PERMISSIONS = [
   "billing.adjustments.request",
   "billing.adjustments.approve",
   "platform.permissions.manage",
+  // SC3f — read-only SaaS revenue reporting (granted through this CLI).
+  "billing.reports.view",
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 

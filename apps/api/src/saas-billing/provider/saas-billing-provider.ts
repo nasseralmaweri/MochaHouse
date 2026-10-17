@@ -124,6 +124,16 @@ export interface ProviderInvoiceRecord {
   // Credit notes before payment, and account balance applied to it.
   prePaymentCreditMinorUnits: number;
   balanceAppliedMinorUnits: number;
+  // SC3f — the provider's own subtotal, discounts, taxes and total excluding
+  // tax (null when the read didn't carry all of them: never assumed zero),
+  // and how many payment attempts it made.
+  amounts: {
+    subtotalMinorUnits: number;
+    discountMinorUnits: number;
+    taxMinorUnits: number;
+    totalExcludingTaxMinorUnits: number;
+  } | null;
+  attemptCount: number | null;
   periodStart: Date | null;
   periodEnd: Date | null;
   issuedAt: Date;
