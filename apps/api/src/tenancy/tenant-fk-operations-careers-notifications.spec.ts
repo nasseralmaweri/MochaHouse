@@ -257,6 +257,10 @@ const GLOBAL_TABLES = [
   'PlatformOperatorPermission',
   'BillingComplimentaryGrant',
   'BillingReconciliationCaseAction',
+  // SC3e-3 — refunds and credits, their decisions and history.
+  'BillingAdjustment',
+  'BillingAdjustmentDecision',
+  'BillingAdjustmentEvent',
   '_prisma_migrations',
 ];
 

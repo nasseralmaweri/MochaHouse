@@ -32,7 +32,7 @@ export default async function PlatformBillingPage({
     <div className="flex flex-col gap-6">
       <PlatformPageHeader
         title="Billing"
-        description="Review where our billing records and the payment provider disagree. Nothing here charges, refunds or changes a subscription."
+        description="Review where our billing records and the payment provider disagree. Nothing on this page charges, refunds or changes a subscription."
       />
       {overview.state === "ok" ? (
         <BillingOverviewCards overview={overview.data} caseLabels={CASE_LABELS} />
@@ -40,12 +40,26 @@ export default async function PlatformBillingPage({
         <RegistryStatePanel state={overview.state} retryHref="/platform/billing" />
       )}
       <RunReconciliation />
-      <Link
-        href="/platform/billing/complimentary"
-        className="inline-flex min-h-11 items-center self-start text-sm font-medium text-text-primary underline underline-offset-2"
-      >
-        Complimentary arrangements
-      </Link>
+      <nav aria-label="Billing management" className="flex flex-wrap gap-x-6 text-sm">
+        <Link
+          href="/platform/billing/complimentary"
+          className="inline-flex min-h-11 items-center font-medium text-text-primary underline underline-offset-2"
+        >
+          Complimentary arrangements
+        </Link>
+        <Link
+          href="/platform/billing/adjustments"
+          className="inline-flex min-h-11 items-center font-medium text-text-primary underline underline-offset-2"
+        >
+          Refunds and credits
+        </Link>
+        <Link
+          href="/platform/operators"
+          className="inline-flex min-h-11 items-center font-medium text-text-primary underline underline-offset-2"
+        >
+          Operator permissions
+        </Link>
+      </nav>
       <nav aria-label="Case status" className="flex gap-4 text-sm">
         <Link
           href="/platform/billing"

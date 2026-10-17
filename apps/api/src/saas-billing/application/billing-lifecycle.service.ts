@@ -699,6 +699,11 @@ export class BillingLifecycleService {
         finish,
       );
     }
+    // SC3e-3 — a refund event changes no subscription state: the invoice's
+    // refunds and credits are reconciled after it (BillingAdjustmentsService).
+    if (verified.event.kind === 'REFUND_CHANGED') {
+      return finish('IGNORED', 'ADJUSTMENT_EVENT', null);
+    }
     if (verified.event.kind === 'INVOICE_CHANGED') {
       return this.applyInvoiceChanged(tx, ledgerId, verified, facts, finish);
     }
@@ -1146,7 +1151,8 @@ export class BillingLifecycleService {
           | 'UNSUPPORTED'
           | 'CHECKOUT_COMPLETED'
           | 'SUBSCRIPTION_CHANGED'
-          | 'INVOICE_CHANGED';
+          | 'INVOICE_CHANGED'
+          | 'REFUND_CHANGED';
       }
     >,
   ): Promise<BillingEvent> {

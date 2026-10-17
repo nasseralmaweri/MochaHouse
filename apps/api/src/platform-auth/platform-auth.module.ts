@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { RateLimitModule } from '../rate-limit/rate-limit.module';
 import { PlatformAuthController } from './api/platform-auth.controller';
 import { PlatformMeController } from './api/platform-me.controller';
+import { PlatformPermissionsController } from './api/platform-permissions.controller';
+import { PlatformPermissionsService } from './application/platform-permissions.service';
 import { PlatformOperatorsService } from './application/platform-operators.service';
 import { PlatformSignInService } from './application/platform-sign-in.service';
 import { PlatformAuthGuard } from './infrastructure/platform-auth.guard';
@@ -24,11 +26,16 @@ import { PlatformDevSignInProvider } from './sign-in/platform-dev-sign-in.provid
 // (/api/v1/platform/auth/*), its server-side challenge store, and sign-out.
 @Module({
   imports: [RateLimitModule],
-  controllers: [PlatformMeController, PlatformAuthController],
+  controllers: [
+    PlatformMeController,
+    PlatformAuthController,
+    PlatformPermissionsController,
+  ],
   providers: [
     PlatformOperatorsService,
     PlatformAuthGuard,
     PlatformPermissionGuard,
+    PlatformPermissionsService,
     PlatformCognitoTokenVerifier,
     PlatformLocalDevTokenVerifier,
     PlatformSignInService,

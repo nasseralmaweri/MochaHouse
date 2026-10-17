@@ -411,6 +411,63 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
       scope: 'platform',
       note: 'SC3e-2 — revoke an active grant (billing.complimentary.manage).',
     },
+  // SC3e-3 — refunds and credits, and operator permissions.
+  'GET /api/v1/platform/billing/adjustments': {
+    scope: 'platform',
+    note: 'SC3e-3 — refund/credit requests (read-only).',
+  },
+  'GET /api/v1/platform/billing/adjustments/:adjustmentId': {
+    scope: 'platform',
+    note: 'SC3e-3 — one refund/credit and its history (read-only).',
+  },
+  'GET /api/v1/platform/tenants/:tenantId/billing/adjustments': {
+    scope: 'platform',
+    note: "SC3e-3 — a business's refunds and credits (read-only).",
+  },
+  'GET /api/v1/platform/tenants/:tenantId/billing/invoices/:invoiceId/adjustable':
+    {
+      scope: 'platform',
+      note: 'SC3e-3 — the invoice read live from the provider (billing.adjustments.request).',
+    },
+  'POST /api/v1/platform/tenants/:tenantId/billing/invoices/:invoiceId/adjustments/preview':
+    {
+      scope: 'platform',
+      note: "SC3e-3 — the provider's credit-note preview (billing.adjustments.request; nothing recorded).",
+    },
+  'POST /api/v1/platform/tenants/:tenantId/billing/invoices/:invoiceId/adjustments':
+    {
+      scope: 'platform',
+      note: 'SC3e-3 — request a refund/credit (billing.adjustments.request, recent sign-in, reason).',
+    },
+  'POST /api/v1/platform/billing/adjustments/:adjustmentId/approve': {
+    scope: 'platform',
+    note: 'SC3e-3 — approve; the final approval executes it (billing.adjustments.approve, never the requester).',
+  },
+  'POST /api/v1/platform/billing/adjustments/:adjustmentId/reject': {
+    scope: 'platform',
+    note: 'SC3e-3 — reject (billing.adjustments.approve, never the requester).',
+  },
+  'POST /api/v1/platform/billing/adjustments/:adjustmentId/cancel': {
+    scope: 'platform',
+    note: 'SC3e-3 — the requester withdraws its pending request.',
+  },
+  'POST /api/v1/platform/billing/adjustments/:adjustmentId/resolve-not-issued':
+    {
+      scope: 'platform',
+      note: 'SC3e-3 — close a reviewed adjustment after re-reading the provider (billing.adjustments.approve).',
+    },
+  'GET /api/v1/platform/operators': {
+    scope: 'platform',
+    note: 'SC3e-3 — operators and their permissions (platform.permissions.manage).',
+  },
+  'POST /api/v1/platform/operators/:operatorId/permissions': {
+    scope: 'platform',
+    note: 'SC3e-3 — grant a permission to ANOTHER operator (platform.permissions.manage, recent sign-in).',
+  },
+  'POST /api/v1/platform/operators/:operatorId/permissions/revoke': {
+    scope: 'platform',
+    note: "SC3e-3 — revoke ANOTHER operator's permission (platform.permissions.manage, recent sign-in).",
+  },
   'GET /api/v1/platform/billing/reconciliation-cases/:caseId': {
     scope: 'platform',
     note: 'SC3e-2 — a review case, its actions and the live schedule.',

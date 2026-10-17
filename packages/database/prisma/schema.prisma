@@ -189,6 +189,13 @@ model PlatformOperator {
   complimentaryGranted         BillingComplimentaryGrant[]       @relation("BillingComplimentaryGrantGrantedBy")
   complimentaryFinished        BillingComplimentaryGrant[]       @relation("BillingComplimentaryGrantFinishedBy")
   billingCaseActions           BillingReconciliationCaseAction[] @relation("BillingCaseActionActor")
+  // SC3e-3 — permissions granted / revoked by this operator (console), and
+  // billing adjustments requested, decided and acted on.
+  permissionsGranted           PlatformOperatorPermission[]      @relation("PlatformOperatorPermissionGrantor")
+  permissionsRevoked           PlatformOperatorPermission[]      @relation("PlatformOperatorPermissionRevoker")
+  adjustmentsRequested         BillingAdjustment[]               @relation("BillingAdjustmentRequester")
+  adjustmentDecisions          BillingAdjustmentDecision[]       @relation("BillingAdjustmentDecider")
+  adjustmentEvents             BillingAdjustmentEvent[]          @relation("BillingAdjustmentEventActor")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -440,6 +447,8 @@ model TenantSubscription {
   invoices             BillingInvoice[]
   // SC3e-2 — complimentary grants (current and past).
   complimentaryGrants  BillingComplimentaryGrant[]
+  // SC3e-3 — refunds and credits on its invoices.
+  adjustments          BillingAdjustment[]
   billingEvents        BillingProviderEvent[]
   checkoutSessions     BillingCheckoutSession[]
   reconciliationCases  BillingReconciliationCase[]
@@ -4001,7 +4010,9 @@ model BillingPlanChange {
 // Never deleted; the provider invoice and its subscription are set once; a
 // paid or void invoice stays so (database trigger).
 model BillingInvoice {
-  id                          String    @id @default(uuid(7))
+  // SC3e-3 — refunds and credits on this invoice.
+  adjustments                 BillingAdjustment[]
+  id                          String              @id @default(uuid(7))
   subscriptionId              String
   provider                    String
   externalInvoiceId           String
@@ -4019,10 +4030,10 @@ model BillingInvoice {
   amountPaidMinorUnits        Int
   amountRemainingMinorUnits   Int
   // Credit notes issued after payment (refunds or account credits).
-  postPaymentCreditMinorUnits Int       @default(0)
+  postPaymentCreditMinorUnits Int                 @default(0)
   // Credit notes before payment and account balance applied to it.
-  prePaymentCreditMinorUnits  Int       @default(0)
-  balanceAppliedMinorUnits    Int       @default(0)
+  prePaymentCreditMinorUnits  Int                 @default(0)
+  balanceAppliedMinorUnits    Int                 @default(0)
   periodStart                 DateTime?
   periodEnd                   DateTime?
   issuedAt                    DateTime
@@ -4030,8 +4041,8 @@ model BillingInvoice {
   // When the provider was read for this version (a stale read never
   // overwrites a newer one).
   syncedAt                    DateTime
-  createdAt                   DateTime  @default(now())
-  updatedAt                   DateTime  @updatedAt
+  createdAt                   DateTime            @default(now())
+  updatedAt                   DateTime            @updatedAt
 
   subscription TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
@@ -4047,17 +4058,31 @@ model BillingInvoice {
 // who could do what is never lost. At most one live grant per operator and
 // permission (partial unique index); never deleted (database trigger).
 model PlatformOperatorPermission {
-  id           String    @id @default(uuid(7))
-  operatorId   String
-  permission   String
-  grantReason  String
-  grantedAt    DateTime  @default(now())
-  revokedAt    DateTime?
-  revokeReason String?
+  id                  String    @id @default(uuid(7))
+  operatorId          String
+  permission          String
+  grantReason         String
+  grantedAt           DateTime  @default(now())
+  revokedAt           DateTime?
+  revokeReason        String?
+  // SC3e-3 (owner decision D7) — how it was granted: CLI (non-financial
+  // permissions only), CLI_BOOTSTRAP (the documented, restricted first grants
+  // of financial permissions: who ran it and the independent approval's
+  // reference are recorded), or CONSOLE (an authenticated operator holding
+  // platform.permissions.manage, never for itself).
+  grantedVia          String    @default("CLI")
+  grantedByOperatorId String?
+  approvalReference   String?
+  executedBy          String?
+  revokedByOperatorId String?
 
-  operator PlatformOperator @relation("PlatformOperatorPermissionHolder", fields: [operatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  operator  PlatformOperator  @relation("PlatformOperatorPermissionHolder", fields: [operatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  grantedBy PlatformOperator? @relation("PlatformOperatorPermissionGrantor", fields: [grantedByOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  revokedBy PlatformOperator? @relation("PlatformOperatorPermissionRevoker", fields: [revokedByOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([operatorId])
+  @@index([grantedByOperatorId])
+  @@index([revokedByOperatorId])
 }
 
 // SC3e-2 — a complimentary arrangement for a business (owner decisions
@@ -4141,5 +4166,102 @@ model BillingReconciliationCaseAction {
   actor PlatformOperator          @relation("BillingCaseActionActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([caseId, createdAt])
+  @@index([actorPlatformOperatorId])
+}
+
+// SC3e-3 — a refund or credit on one of a business's CENTERIVO subscription
+// invoices (owner decisions D1–D6), as a Stripe credit note against that paid
+// invoice. Platform billing data (no tenantId); never a restaurant payment
+// or refund.
+//   origin CENTERIVO: requested by an operator, approved by one or two OTHER
+//     operators (by amount, currency and annual full refunds), executed by
+//     the final approver: PENDING_APPROVAL -> EXECUTING (reserved before the
+//     provider is called) -> SUBMITTED (credit note issued, refund not yet
+//     confirmed) -> SUCCEEDED; or REJECTED / CANCELED / EXPIRED before it,
+//     FAILED (nothing issued) or REVIEW (unclear: an operator investigates).
+//   origin EXTERNAL: a credit note or refund made directly in Stripe,
+//     RECORDED (never approved here, never repeated or reversed).
+// What was requested (amounts as Stripe previewed them, tax included —
+// never computed here) never changes; at most one open CENTERIVO adjustment
+// per invoice; never deleted (database trigger).
+model BillingAdjustment {
+  id                    String    @id @default(uuid(7))
+  subscriptionId        String
+  invoiceId             String
+  origin                String
+  // REFUND (to the original payment method) | CREDIT (customer balance,
+  // toward future invoices) | OUT_OF_BAND (external only)
+  kind                  String
+  // FULL | PARTIAL (CENTERIVO only)
+  scope                 String?
+  status                String
+  currency              String
+  totalMinorUnits       Int
+  taxMinorUnits         Int       @default(0)
+  // A full refund of an annual period (always two approvers).
+  annualFullRefund      Boolean   @default(false)
+  requiredApprovals     Int       @default(0)
+  reason                String?
+  requestedByOperatorId String?
+  // The credit-note lines requested (invoice line ids and amounts), exactly
+  // as previewed.
+  lineSpec              Json?
+  expiresAt             DateTime?
+  executionStartedAt    DateTime?
+  submittedAt           DateTime?
+  finishedAt            DateTime?
+  failureCode           String?
+  externalCreditNoteId  String?   @unique
+  externalRefundId      String?   @unique
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  subscription TenantSubscription          @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  invoice      BillingInvoice              @relation(fields: [invoiceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  requestedBy  PlatformOperator?           @relation("BillingAdjustmentRequester", fields: [requestedByOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  decisions    BillingAdjustmentDecision[]
+  events       BillingAdjustmentEvent[]
+
+  @@index([subscriptionId, createdAt])
+  @@index([invoiceId])
+  @@index([status, expiresAt])
+  @@index([requestedByOperatorId])
+}
+
+// SC3e-3 — one operator's decision on an adjustment: APPROVED or REJECTED,
+// with a note. One per operator per adjustment, never the requester's;
+// append-only (database trigger).
+model BillingAdjustmentDecision {
+  id           String   @id @default(uuid(7))
+  adjustmentId String
+  operatorId   String
+  decision     String
+  note         String
+  createdAt    DateTime @default(now())
+
+  adjustment BillingAdjustment @relation(fields: [adjustmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  operator   PlatformOperator  @relation("BillingAdjustmentDecider", fields: [operatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([adjustmentId, operatorId])
+  @@index([operatorId])
+}
+
+// SC3e-3 — the adjustment's history (requested, approved, executing,
+// submitted, succeeded, failed, review, recorded …): append-only.
+model BillingAdjustmentEvent {
+  id                      String   @id @default(uuid(7))
+  adjustmentId            String
+  type                    String
+  // A short result code (e.g. PREVIEW_CHANGED, REFUND_PENDING).
+  code                    String?
+  // The operator's written note (a withdrawal or a review resolution).
+  note                    String?
+  actorPlatformOperatorId String?
+  createdAt               DateTime @default(now())
+
+  adjustment BillingAdjustment @relation(fields: [adjustmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor      PlatformOperator? @relation("BillingAdjustmentEventActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([adjustmentId, createdAt])
   @@index([actorPlatformOperatorId])
 }

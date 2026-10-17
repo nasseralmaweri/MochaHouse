@@ -88,6 +88,10 @@ describe('Tenant query audit (report-only)', () => {
           'PlatformOperatorPermission',
           'BillingComplimentaryGrant',
           'BillingReconciliationCaseAction',
+          // SC3e-3 — refunds and credits, their decisions and history.
+          'BillingAdjustment',
+          'BillingAdjustmentDecision',
+          'BillingAdjustmentEvent',
         ].sort(),
       );
     });

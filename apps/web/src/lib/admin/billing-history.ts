@@ -1,4 +1,5 @@
 import type {
+  BillingInvoiceAdjustmentView,
   BillingInvoiceReason,
   BillingInvoiceStatus,
   BillingInvoiceView,
@@ -69,6 +70,19 @@ export function invoiceAmountLines(invoice: BillingInvoiceView): { label: string
     });
   }
   return lines;
+}
+
+// SC3e-3 — a refund or credit on the invoice, as the business sees it
+// (read-only): what it is, how much, and whether it is complete.
+export function invoiceAdjustmentLine(adjustment: BillingInvoiceAdjustmentView): string {
+  const amount = formatMinorUnits(adjustment.totalMinorUnits, adjustment.currency);
+  const what =
+    adjustment.kind === "REFUND"
+      ? `Refund of ${amount} to your payment method`
+      : `Credit of ${amount} toward future invoices`;
+  return adjustment.status === "COMPLETED"
+    ? `${what} · completed ${invoiceDate(adjustment.at)}`
+    : `${what} · in progress`;
 }
 
 const BRANDS: Record<string, string> = {

@@ -412,6 +412,8 @@ describe('SC3e-1 billing history (integration, scratch database)', () => {
         periodEnd: '2026-11-01T00:00:00.000Z',
         issuedAt: row.issuedAt.toISOString(),
         paidAt: row.paidAt!.toISOString(),
+        // SC3e-3 — none on this invoice.
+        adjustments: [],
       },
     ]);
   });

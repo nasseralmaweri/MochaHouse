@@ -7,6 +7,10 @@ import type {
   PlatformCaseDetailResponse,
   PlatformComplimentaryListResponse,
   PlatformComplimentaryView,
+  PlatformAdjustableInvoice,
+  PlatformAdjustmentListResponse,
+  PlatformAdjustmentView,
+  PlatformOperatorDirectoryResponse,
   BillingInvoiceListResponse,
   PlatformTenantSubscriptionResponse,
   PlatformTenantDetailResponse,
@@ -129,6 +133,39 @@ export function getPlatformCase(
   caseId: string,
 ): Promise<RegistryResult<PlatformCaseDetailResponse>> {
   return readRegistry(`/billing/reconciliation-cases/${encodeURIComponent(caseId)}`);
+}
+
+// SC3e-3 — refunds and credits, and operator permissions.
+export function listPlatformAdjustments(
+  status: "OPEN" | "ALL",
+): Promise<RegistryResult<PlatformAdjustmentListResponse>> {
+  return readRegistry(`/billing/adjustments?status=${status}`);
+}
+
+export function listPlatformTenantAdjustments(
+  tenantId: string,
+): Promise<RegistryResult<PlatformAdjustmentListResponse>> {
+  return readRegistry(`/tenants/${encodeURIComponent(tenantId)}/billing/adjustments`);
+}
+
+export function getPlatformAdjustment(
+  adjustmentId: string,
+): Promise<RegistryResult<PlatformAdjustmentView>> {
+  return readRegistry(`/billing/adjustments/${encodeURIComponent(adjustmentId)}`);
+}
+
+// Read live from the payment provider (billing.adjustments.request).
+export function getPlatformAdjustableInvoice(
+  tenantId: string,
+  invoiceId: string,
+): Promise<RegistryResult<PlatformAdjustableInvoice>> {
+  return readRegistry(
+    `/tenants/${encodeURIComponent(tenantId)}/billing/invoices/${encodeURIComponent(invoiceId)}/adjustable`,
+  );
+}
+
+export function listPlatformOperators(): Promise<RegistryResult<PlatformOperatorDirectoryResponse>> {
+  return readRegistry("/operators");
 }
 
 // SC3c-3 — the console's billing attention counts.

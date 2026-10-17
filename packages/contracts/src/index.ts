@@ -1626,8 +1626,44 @@ export const PLATFORM_PERMISSIONS = [
   "billing.cases.manage",
   "billing.schedules.release",
   "billing.complimentary.manage",
+  // SC3e-3 — refunds and credits (request / approve), and granting
+  // permissions in the console.
+  "billing.adjustments.request",
+  "billing.adjustments.approve",
+  "platform.permissions.manage",
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
+
+// --- SC3e-3: operator permissions in the console (owner decision D7) ------------
+// GET /api/v1/platform/operators (platform.permissions.manage): every operator
+// and its live permissions (how each was granted).
+export interface PlatformOperatorPermissionView {
+  permission: PlatformPermission;
+  grantedAt: string;
+  grantedVia: "CLI" | "CLI_BOOTSTRAP" | "CONSOLE";
+  grantedBy: { id: string; email: string } | null;
+  reason: string;
+}
+export interface PlatformOperatorDirectoryEntry {
+  id: string;
+  email: string;
+  displayName: string | null;
+  status: "ACTIVE" | "DISABLED";
+  permissions: PlatformOperatorPermissionView[];
+}
+export interface PlatformOperatorDirectoryResponse {
+  operators: PlatformOperatorDirectoryEntry[];
+}
+// POST /api/v1/platform/operators/:operatorId/permissions — body exactly
+// { permission, reason } (platform.permissions.manage, recent sign-in);
+// POST .../permissions/revoke — the same body. Never for yourself.
+//   409 PLATFORM_PERMISSION_SELF / PLATFORM_OPERATOR_NOT_ACTIVE
+export interface PlatformPermissionChangeRequest {
+  permission: PlatformPermission;
+  reason: string;
+}
+export const PLATFORM_PERMISSION_SELF = "PLATFORM_PERMISSION_SELF";
+export const PLATFORM_OPERATOR_NOT_ACTIVE = "PLATFORM_OPERATOR_NOT_ACTIVE";
 // 403 — the operator lacks the permission (or it was revoked).
 export const PLATFORM_PERMISSION_REQUIRED = "PLATFORM_PERMISSION_REQUIRED";
 
@@ -2100,6 +2136,8 @@ export interface BillingInvoiceView {
   periodEnd: string | null;
   issuedAt: string;
   paidAt: string | null;
+  // SC3e-3 — refunds and credits on it (pending or completed).
+  adjustments: BillingInvoiceAdjustmentView[];
 }
 
 // GET /api/v1/admin/billing/invoices?cursor= (billing.view) and
@@ -2598,6 +2636,8 @@ export interface PlatformReconciliationRunResponse {
   checkoutsExpired: number;
   // SC3e-1 — invoices added to (or updated in) the billing history.
   invoicesRecorded: number;
+  // SC3e-3 — refunds or credits found made directly at the provider.
+  externalAdjustmentsRecorded: number;
 }
 
 // POST /api/v1/platform/billing/enforcement/sweep (SC3c-1) — applies due
@@ -5550,4 +5590,142 @@ export interface NotificationHealthResponse {
   // True when more problem notifications exist than the list shows (it is
   // capped; dead letters first, then the longest-overdue).
   itemsTruncated: boolean;
+}
+
+// --- SC3e-3: CENTERIVO subscription refunds and credits (owner decisions D1–D6) ----
+// A refund (to the original payment method) or a credit (toward future
+// invoices) on one of a business's PAID CENTERIVO invoices, as a Stripe credit
+// note. Never a restaurant order, payment or refund. Amounts and tax are
+// Stripe's own (previewed), never computed here.
+
+export type BillingAdjustmentKind = "REFUND" | "CREDIT" | "OUT_OF_BAND";
+export type BillingAdjustmentScope = "FULL" | "PARTIAL";
+export type BillingAdjustmentStatus =
+  | "PENDING_APPROVAL"
+  | "EXECUTING"
+  | "SUBMITTED"
+  | "SUCCEEDED"
+  | "REJECTED"
+  | "CANCELED"
+  | "EXPIRED"
+  | "FAILED"
+  | "REVIEW"
+  | "RECORDED";
+
+// The invoice as Stripe holds it now, for an adjustment request.
+export interface PlatformAdjustableInvoice {
+  invoiceId: string;
+  number: string | null;
+  currency: string;
+  amountPaidMinorUnits: number;
+  // Already refunded or credited (credit notes and refunds made outside them).
+  adjustedMinorUnits: number;
+  // What can still be refunded or credited.
+  remainingMinorUnits: number;
+  // A refund can go back to the original payment method (paid by a charge).
+  refundable: boolean;
+  // The billed period is a year or longer (a full refund needs two approvers).
+  annual: boolean;
+  lines: {
+    lineId: string;
+    description: string | null;
+    // Before tax.
+    amountMinorUnits: number;
+  }[];
+}
+
+// POST .../tenants/:tenantId/billing/invoices/:invoiceId/adjustments/preview —
+// body exactly { kind, scope, lineId?, amountMinorUnits? } (billing.
+// adjustments.request): Stripe's own preview (nothing recorded or changed).
+// PARTIAL names one invoice line and its pre-tax amount; Stripe adds tax.
+export interface PlatformAdjustmentPreviewRequest {
+  kind: "REFUND" | "CREDIT";
+  scope: BillingAdjustmentScope;
+  lineId?: string;
+  amountMinorUnits?: number;
+}
+export interface PlatformAdjustmentPreview {
+  kind: "REFUND" | "CREDIT";
+  scope: BillingAdjustmentScope;
+  currency: string;
+  totalMinorUnits: number;
+  taxMinorUnits: number;
+  remainingAfterMinorUnits: number;
+  requiredApprovals: 1 | 2;
+  annualFullRefund: boolean;
+}
+// POST .../adjustments — the same body plus { reason } (billing.adjustments.
+// request, recent sign-in): records the request with Stripe's preview.
+//   409 BILLING_ADJUSTMENT_NOT_ELIGIBLE / _EXCEEDS_REMAINING / _IN_PROGRESS
+export interface PlatformAdjustmentRequest extends PlatformAdjustmentPreviewRequest {
+  reason: string;
+}
+
+export interface PlatformAdjustmentView {
+  id: string;
+  tenantId: string;
+  businessName: string;
+  invoiceId: string;
+  invoiceNumber: string | null;
+  origin: "CENTERIVO" | "EXTERNAL";
+  kind: BillingAdjustmentKind;
+  scope: BillingAdjustmentScope | null;
+  status: BillingAdjustmentStatus;
+  currency: string;
+  totalMinorUnits: number;
+  taxMinorUnits: number;
+  annualFullRefund: boolean;
+  requiredApprovals: number;
+  reason: string | null;
+  requestedBy: { id: string; email: string } | null;
+  createdAt: string;
+  expiresAt: string | null;
+  finishedAt: string | null;
+  failureCode: string | null;
+  decisions: {
+    decision: "APPROVED" | "REJECTED";
+    note: string;
+    operator: { id: string; email: string };
+    at: string;
+  }[];
+  events: {
+    type: string;
+    code: string | null;
+    at: string;
+    actorEmail: string | null;
+    note: string | null;
+  }[];
+}
+export interface PlatformAdjustmentListResponse {
+  adjustments: PlatformAdjustmentView[];
+}
+// GET /api/v1/platform/billing/adjustments?status=OPEN|ALL (any operator);
+// GET /api/v1/platform/tenants/:tenantId/billing/adjustments.
+// POST /api/v1/platform/billing/adjustments/:adjustmentId/approve |
+// /reject — body exactly { note } (billing.adjustments.approve, recent
+// sign-in; never the requester; one decision per operator). The final
+// approval executes it.
+// POST .../adjustments/:adjustmentId/cancel — { note } (the requester).
+//   409 BILLING_ADJUSTMENT_OWN_REQUEST / _NOT_PENDING / _ALREADY_DECIDED /
+//       _EXPIRED / _PREVIEW_CHANGED
+export interface PlatformAdjustmentDecisionRequest {
+  note: string;
+}
+export const BILLING_ADJUSTMENT_NOT_ELIGIBLE = "BILLING_ADJUSTMENT_NOT_ELIGIBLE";
+export const BILLING_ADJUSTMENT_EXCEEDS_REMAINING = "BILLING_ADJUSTMENT_EXCEEDS_REMAINING";
+export const BILLING_ADJUSTMENT_IN_PROGRESS = "BILLING_ADJUSTMENT_IN_PROGRESS";
+export const BILLING_ADJUSTMENT_OWN_REQUEST = "BILLING_ADJUSTMENT_OWN_REQUEST";
+export const BILLING_ADJUSTMENT_NOT_PENDING = "BILLING_ADJUSTMENT_NOT_PENDING";
+export const BILLING_ADJUSTMENT_ALREADY_DECIDED = "BILLING_ADJUSTMENT_ALREADY_DECIDED";
+export const BILLING_ADJUSTMENT_EXPIRED = "BILLING_ADJUSTMENT_EXPIRED";
+export const BILLING_ADJUSTMENT_PREVIEW_CHANGED = "BILLING_ADJUSTMENT_PREVIEW_CHANGED";
+
+// Business (read-only): the refunds and credits on its own invoices that were
+// approved and executed (pending) or completed — never requests under review.
+export interface BillingInvoiceAdjustmentView {
+  kind: "REFUND" | "CREDIT";
+  status: "PENDING" | "COMPLETED";
+  currency: string;
+  totalMinorUnits: number;
+  at: string;
 }

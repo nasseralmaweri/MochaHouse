@@ -3,6 +3,7 @@ import { isAllowedInvoiceDocumentUrl } from "./billing";
 import {
   BILLING_HISTORY_MESSAGES,
   documentRefusalMessage,
+  invoiceAdjustmentLine,
   invoiceAmountLines,
   invoicePeriod,
   pageCursor,
@@ -27,6 +28,7 @@ const invoice = (over: Partial<BillingInvoiceView> = {}): BillingInvoiceView => 
   periodEnd: "2026-11-01T00:00:00.000Z",
   issuedAt: "2026-10-01T00:00:00.000Z",
   paidAt: "2026-10-01T00:00:00.000Z",
+  adjustments: [],
   ...over,
 });
 
@@ -130,5 +132,30 @@ describe("SC3e-1 invoice document links", () => {
       true,
     );
     expect(isAllowedInvoiceDocumentUrl("https://pay.fake.test/invoice/in_1/pdf", "pdf", prod)).toBe(false);
+  });
+});
+
+// SC3e-3 — the business sees its refunds and credits read-only: what, how
+// much, and whether complete (never who requested or approved).
+describe("SC3e-3 invoice refunds and credits (business view)", () => {
+  it("describes a completed refund and a pending credit", () => {
+    expect(
+      invoiceAdjustmentLine({
+        kind: "REFUND",
+        status: "COMPLETED",
+        currency: "USD",
+        totalMinorUnits: 4900,
+        at: "2026-10-05T12:00:00.000Z",
+      }),
+    ).toBe("Refund of $49.00 to your payment method · completed Oct 5, 2026");
+    expect(
+      invoiceAdjustmentLine({
+        kind: "CREDIT",
+        status: "PENDING",
+        currency: "USD",
+        totalMinorUnits: 1250,
+        at: "2026-10-05T12:00:00.000Z",
+      }),
+    ).toBe("Credit of $12.50 toward future invoices · in progress");
   });
 });

@@ -25,6 +25,7 @@ const SYSTEM_ORIGIN = {
 };
 import { BillingPlanChangeService } from './billing-plan-change.service';
 import { BillingComplimentaryService } from './billing-complimentary.service';
+import { BillingAdjustmentsService } from './billing-adjustments.service';
 
 // SC3d-2 — plan change bookkeeping (owner decision D5). Runs whatever the
 // billing enforcement and notification switches are: it never suspends,
@@ -70,6 +71,10 @@ export interface PlanChangeSweepResult {
   scheduledSettled: number;
   // SC3e-2 — complimentary grants verified, started, withdrawn or expired.
   complimentarySettled: number;
+  // SC3e-3 — refund/credit requests expired, confirmed or reviewed.
+  adjustmentsExpired: number;
+  adjustmentsSettled: number;
+  adjustmentsReviewed: number;
 }
 
 @Injectable()
@@ -87,6 +92,7 @@ export class PlanChangeMaintenanceService
     private readonly lifecycle: BillingLifecycleService,
     private readonly planChanges: BillingPlanChangeService,
     private readonly complimentary: BillingComplimentaryService,
+    private readonly adjustments: BillingAdjustmentsService,
   ) {}
 
   onModuleInit(): void {
@@ -114,6 +120,9 @@ export class PlanChangeMaintenanceService
       reviewed: 0,
       scheduledSettled: 0,
       complimentarySettled: 0,
+      adjustmentsExpired: 0,
+      adjustmentsSettled: 0,
+      adjustmentsReviewed: 0,
     };
     if (this.running) return result;
     this.running = true;
@@ -252,6 +261,14 @@ export class PlanChangeMaintenanceService
       result.complimentarySettled = (
         await this.complimentary.sweep(now)
       ).settled;
+      // 6. SC3e-3 — refunds and credits: requests past 72 hours expired;
+      //    executing and submitted ones confirmed from the provider (an
+      //    interrupted one re-sent with its key only within its window,
+      //    otherwise reviewed).
+      const adjustments = await this.adjustments.sweep(now);
+      result.adjustmentsExpired = adjustments.expired;
+      result.adjustmentsSettled = adjustments.settled;
+      result.adjustmentsReviewed = adjustments.reviewed;
     } finally {
       this.running = false;
     }

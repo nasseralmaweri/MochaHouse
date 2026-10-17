@@ -54,6 +54,10 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     PlatformOperatorPermission: 'platform',
     BillingComplimentaryGrant: 'platform',
     BillingReconciliationCaseAction: 'platform',
+    // SC3e-3 — refunds and credits, their decisions and history.
+    BillingAdjustment: 'platform',
+    BillingAdjustmentDecision: 'platform',
+    BillingAdjustmentEvent: 'platform',
     BillingNotification: 'platform',
 
     // Catalog & locations

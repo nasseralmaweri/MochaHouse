@@ -18,6 +18,7 @@ import { RateLimit } from '../../rate-limit/rate-limit.decorator';
 import { RateLimitGuard } from '../../rate-limit/rate-limit.guard';
 import { BillingLifecycleService } from '../application/billing-lifecycle.service';
 import { BillingComplimentaryService } from '../application/billing-complimentary.service';
+import { BillingAdjustmentsService } from '../application/billing-adjustments.service';
 import {
   BillingEventVerificationError,
   SAAS_BILLING_PROVIDER,
@@ -44,6 +45,7 @@ export class BillingWebhookController {
   constructor(
     private readonly lifecycle: BillingLifecycleService,
     private readonly complimentary: BillingComplimentaryService,
+    private readonly adjustments: BillingAdjustmentsService,
     @Inject(SAAS_BILLING_PROVIDER)
     private readonly provider: SaasBillingProvider,
   ) {}
@@ -88,6 +90,16 @@ export class BillingWebhookController {
         .catch((error: unknown) =>
           this.logger.warn(
             `Complimentary settlement after event failed: ${error instanceof Error ? error.name : 'unknown'}`,
+          ),
+        );
+      // SC3e-3 — the invoice's refunds and credits: ours confirmed from the
+      // provider, any made directly there recorded as external and
+      // reviewed. Best effort: the sweep and reconciliation are the backstop.
+      await this.adjustments
+        .reconcileForEvent(verified)
+        .catch((error: unknown) =>
+          this.logger.warn(
+            `Adjustment reconciliation after event failed: ${error instanceof Error ? error.name : 'unknown'}`,
           ),
         );
     }

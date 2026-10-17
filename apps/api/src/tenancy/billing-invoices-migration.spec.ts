@@ -25,6 +25,10 @@ const ROLLBACK = join(
   __dirname,
   '../../../../packages/database/prisma/rollbacks/20261101090000_billing_invoices.down.sql',
 );
+const ADJUSTMENTS_ROLLBACK = join(
+  __dirname,
+  '../../../../packages/database/prisma/rollbacks/20261103090000_billing_adjustments.down.sql',
+);
 const THIS = '20261101090000_billing_invoices';
 const FOUNDING_VERSION = '01a0db02-f800-7000-8000-00000000f002';
 const TENANT = '01a0db02-f800-7000-8000-7e5700003e1a';
@@ -195,6 +199,11 @@ describe('SC3e-1 billing invoices migration (scratch database)', () => {
     );
     try {
       await applyMigrations(clean.url, listMigrations(MIGRATIONS));
+      // SC3e-3 references invoices: rolled back first (newest first).
+      await applyMigrationSql(
+        clean.url,
+        readFileSync(ADJUSTMENTS_ROLLBACK, 'utf8'),
+      );
       await applyMigrationSql(clean.url, readFileSync(ROLLBACK, 'utf8'));
       const left = await withScratchClient(
         clean.url,

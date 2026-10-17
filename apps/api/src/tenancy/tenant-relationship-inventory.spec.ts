@@ -202,6 +202,10 @@ const APPROVED_GLOBAL_MODELS = [
   'PlatformOperatorPermission',
   'BillingComplimentaryGrant',
   'BillingReconciliationCaseAction',
+  // SC3e-3 — refunds and credits, their decisions and history.
+  'BillingAdjustment',
+  'BillingAdjustmentDecision',
+  'BillingAdjustmentEvent',
 ];
 // SC2a review — identifiers issued by an OUTSIDE system (not a record of
 // ours): the SaaS billing provider's ids (SC3a).
@@ -240,6 +244,8 @@ const EXTERNAL_IDENTIFIER_COLUMNS: Readonly<Record<string, readonly string[]>> =
       'previousExternalSubscriptionId',
     ],
     BillingReconciliationCaseAction: ['externalScheduleId'],
+    // SC3e-3 — the provider's credit note and refund an adjustment is.
+    BillingAdjustment: ['externalCreditNoteId', 'externalRefundId'],
   };
 // SC2a review (owner decision S3) — the ONLY relation from platform data to
 // a business: a subscription's real foreign key to its Tenant, so the
@@ -306,6 +312,10 @@ const PLATFORM_OPERATOR_MODELS = [
   'PlatformOperatorPermission',
   'BillingComplimentaryGrant',
   'BillingReconciliationCaseAction',
+  // SC3e-3 — refunds and credits, their decisions and history.
+  'BillingAdjustment',
+  'BillingAdjustmentDecision',
+  'BillingAdjustmentEvent',
 ];
 
 describe('Tenant relationship inventory (Security 4C-1)', () => {
