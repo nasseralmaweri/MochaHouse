@@ -25,10 +25,13 @@ import { awaitingFirstAuthorization } from '../../saas-billing/domain/payment-se
 //
 // SC4b — a business its OWNER created (self-service) whose billing the
 // provider has never authorized (payment setup pending, owner decision B1)
-// has core only — plus explicit operator add-on grants — and may not take
-// customer sales, whether billing enforcement is on or off. It never looks
-// complimentary: it is BILLED at the price the owner chose. Businesses
-// created or billed by an operator keep the existing rules unchanged.
+// has core only — neither its plan's modules NOR operator add-on grants
+// (owner decision, PR #66) — and may not take customer sales, whether
+// billing enforcement is on or off. The grants are kept (never deleted) and
+// apply again, with the plan's modules, once the provider has authorized
+// billing or a trial. It never looks complimentary: it is BILLED at the
+// price the owner chose. Businesses created or billed by an operator,
+// complimentary and Founding businesses keep the existing rules unchanged.
 
 export interface TenantEntitlements {
   modules: ReadonlySet<SubscriptionModuleKey>;
@@ -118,7 +121,10 @@ export class EntitlementsService {
     return {
       modules: effectiveModules(
         planModules,
-        subscription.moduleGrants.map((grant) => grant.moduleKey),
+        // SC4b — add-ons too are withheld (not removed) while pending.
+        paymentSetupPending
+          ? []
+          : subscription.moduleGrants.map((grant) => grant.moduleKey),
       ),
       planName: subscription.planVersion.plan.name,
       subscribed: true,

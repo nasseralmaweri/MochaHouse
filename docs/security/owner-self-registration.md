@@ -146,7 +146,8 @@ substituted.
 with no billing-provider customer yet (the narrowest relaxation of
 `TenantSubscription_billed_check`: exactly this state, nothing authorized,
 started or owed). Until the provider verifies billing or a trial, the
-business has **core only** (plus explicit operator add-ons) and **no customer
+business has **core only** — no plan modules and no operator add-ons (kept, not
+deleted; they apply again once billing is verified) — and **no customer
 sales** (checkout refuses with `SALES_NOT_AVAILABLE`), whatever the billing
 enforcement switch says. After provisioning, the web app moves the owner to
 a normal session only once the API admits the login to that business

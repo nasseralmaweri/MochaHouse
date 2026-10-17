@@ -667,6 +667,174 @@ describe('SC4b owner self-service provisioning (integration, scratch database)',
     expect(operatorBilled.modules.has('loyalty')).toBe(true);
   });
 
+  // --- owner decision (PR #66): add-ons are withheld too while pending ------------
+
+  const grant = async (tenantId: string, ...moduleKeys: string[]) => {
+    const subscription = await prisma.tenantSubscription.findUniqueOrThrow({
+      where: { subscriberTenantId: tenantId },
+    });
+    await prisma.tenantModuleGrant.createMany({
+      data: moduleKeys.map((moduleKey) => ({
+        subscriptionId: subscription.id,
+        moduleKey,
+      })),
+    });
+    return subscription.id;
+  };
+  const verifySetup = (tenantId: string, key: string) =>
+    prisma.tenantSubscription.update({
+      where: { subscriberTenantId: tenantId },
+      data: {
+        billingProvider: 'fake',
+        externalCustomerId: `cus_${key}_${run}`,
+        externalSubscriptionId: `sub_${key}_${run}`,
+        recurringPaymentAuthorizedAt: new Date(),
+        currentPeriodStart: new Date(),
+        currentPeriodEnd: new Date(Date.now() + 30 * 86400000),
+      },
+    });
+
+  it('withholds the plan modules AND operator add-ons while setup is pending — server-side, keeping the add-ons — and restores both once verified', async () => {
+    const entitlements = app.get(EntitlementsService);
+    const storefront = app.get(StorefrontFeaturesService);
+    const email = emailOf('addons');
+    await register(email);
+    const tenantId = (
+      (await create(email).expect(201)).body as OwnerBusinessCreateResponse
+    ).business.id;
+    // Add-ons an operator assigned (one also in no plan of this business).
+    const subscriptionId = await grant(tenantId, 'giftcards', 'careers');
+    const token = ownerToken(email);
+    const admin = (path: string) =>
+      http()
+        .get(path)
+        .set('Authorization', `Bearer ${token}`)
+        .set('X-Tenant-Id', tenantId);
+
+    const pending = await entitlements.forTenant(tenantId);
+    expect([...pending.modules]).toEqual(['core']);
+    expect(pending).toMatchObject({
+      salesEnabled: false,
+      paymentSetupPending: true,
+    });
+    expect(
+      (
+        (await admin('/api/v1/internal/me').expect(200))
+          .body as InternalMeResponse
+      ).entitlements.modules,
+    ).toEqual(['core']);
+    // A plan module, two add-on modules: refused by the API; core works.
+    await admin('/api/v1/admin/loyalty/rewards').expect(403);
+    await admin('/api/v1/admin/gift-cards/configuration').expect(403);
+    await admin('/api/v1/admin/careers/jobs').expect(403);
+    await admin('/api/v1/admin/locations').expect(200);
+    // No sales of any kind, the add-on included.
+    const checkout = await storefront.forCheckout(tenantId);
+    expect(checkout.salesOpen).toBe(false);
+    expect(checkout.features.giftcards).toBe(false);
+    await expect(
+      storefront.assertAvailableForSale(tenantId, 'giftcards'),
+    ).rejects.toMatchObject({ response: { code: 'SALES_NOT_AVAILABLE' } });
+    // The add-ons are kept, only inaccessible.
+    expect(
+      await prisma.tenantModuleGrant.count({ where: { subscriptionId } }),
+    ).toBe(2);
+
+    await verifySetup(tenantId, 'addons');
+    const verified = await entitlements.forTenant(tenantId);
+    expect([...verified.modules].sort()).toEqual(
+      ['careers', 'core', 'crm', 'giftcards', 'loyalty'].sort(),
+    );
+    expect(verified).toMatchObject({
+      salesEnabled: true,
+      paymentSetupPending: false,
+    });
+    await admin('/api/v1/admin/gift-cards/configuration').expect(200);
+    await admin('/api/v1/admin/loyalty/rewards').expect(200);
+    const open = await storefront.forCheckout(tenantId);
+    expect(open).toMatchObject({ salesOpen: true });
+    expect(open.features.giftcards).toBe(true);
+  });
+
+  it('keeps the existing rules for operator-provisioned, complimentary and Founding businesses (add-ons included), and confines the restriction to the pending business', async () => {
+    const entitlements = app.get(EntitlementsService);
+    // Operator-provisioned, billed by an operator, never authorized.
+    const billed = await prisma.tenant.create({
+      data: {
+        slug: `sc4b-op-addon-${run}`,
+        name: 'Operator billed',
+        status: 'ACTIVE',
+      },
+    });
+    await prisma.tenantSubscription.create({
+      data: {
+        subscriberTenantId: billed.id,
+        planVersionId: growth.versionId,
+        billingMode: 'BILLED',
+        billingProvider: 'fake',
+        externalCustomerId: `cus_op_addon_${run}`,
+        planPriceId: growth.month,
+        paymentSetupRequiredSince: new Date(),
+      },
+    });
+    await grant(billed.id, 'giftcards');
+    expect(
+      [...(await entitlements.forTenant(billed.id)).modules].sort(),
+    ).toEqual(['core', 'crm', 'giftcards', 'loyalty'].sort());
+    // Complimentary, with an add-on.
+    const complimentary = await prisma.tenant.create({
+      data: {
+        slug: `sc4b-comp-addon-${run}`,
+        name: 'Complimentary',
+        status: 'ACTIVE',
+      },
+    });
+    await prisma.tenantSubscription.create({
+      data: {
+        subscriberTenantId: complimentary.id,
+        planVersionId: growth.versionId,
+      },
+    });
+    await grant(complimentary.id, 'careers');
+    const comp = await entitlements.forTenant(complimentary.id);
+    expect([...comp.modules].sort()).toEqual(
+      ['careers', 'core', 'crm', 'loyalty'].sort(),
+    );
+    expect(comp).toMatchObject({
+      salesEnabled: true,
+      paymentSetupPending: false,
+    });
+    // Founding (Mocha House): its whole plan, sales open.
+    const foundingVersion =
+      await prisma.subscriptionPlanVersion.findUniqueOrThrow({
+        where: { id: FOUNDING_VERSION },
+      });
+    const founding = await entitlements.forTenant(TENANT_1_MOCHA_HOUSE_ID);
+    expect(founding).toMatchObject({
+      salesEnabled: true,
+      paymentSetupPending: false,
+    });
+    expect([...founding.modules].sort()).toEqual(
+      ['core', ...foundingVersion.moduleKeys].sort(),
+    );
+
+    // Tenant isolation: a pending owner reaches none of these businesses.
+    const email = emailOf('isolated');
+    await register(email);
+    await create(email).expect(201);
+    for (const tenantId of [
+      billed.id,
+      complimentary.id,
+      TENANT_1_MOCHA_HOUSE_ID,
+    ]) {
+      await http()
+        .get('/api/v1/internal/me')
+        .set('Authorization', `Bearer ${ownerToken(email)}`)
+        .set('X-Tenant-Id', tenantId)
+        .expect(403);
+    }
+  });
+
   it('keeps the payment-setup-pending state exact (database CHECK)', async () => {
     const email = emailOf('check');
     await register(email);
