@@ -614,33 +614,179 @@ describe('SC3e-4 payment setup deadlines (integration, scratch database)', () =>
     }
   });
 
-  // --- C. re-activation ------------------------------------------------------------------------
+  // --- C. outages, pauses, fluctuations: one window per episode -----------------------
 
-  it('C. after enforcement was off, a new activation gives a fresh window — never a deadline that ran while off', async () => {
+  it('C1. outages, sweep gaps and enforcement pauses never reset or extend a persisted deadline', async () => {
+    const operatorId = await operator('extender', ['billing.accounts.manage']);
     const late = await business('late', 'awaiting');
-    await sweep(at(17)); // window for `late` in the current activation
+    const capped = await business('capped', 'awaiting');
+    const racer = await business('racer', 'awaiting');
+    // Concurrency: two sweeps at once give ONE window.
+    await Promise.all([sweep(at(17)), sweep(at(17))]);
+    for (const b of [late, capped, racer]) {
+      const row = await subOf(b);
+      expect([row.paymentSetupWindowStartedAt, row.paymentSetupDueAt]).toEqual([
+        at(17),
+        at(31),
+      ]);
+      expect(
+        (await historyOf(b)).filter(
+          (t) => t === 'PAYMENT_SETUP_WINDOW_STARTED',
+        ),
+      ).toHaveLength(1);
+    }
+    // Extensions within the episode: 14 + 2 days = the 30-day maximum.
+    const extend = (days: number, now: Date) =>
+      lifecycle.extendPaymentSetup(
+        capped.subscriptionId,
+        { days, reason: 'Owner is waiting for a new card.' },
+        operatorId,
+        null,
+        now,
+      );
+    await extend(14, at(18));
+    await extend(2, at(19));
+    expect((await subOf(capped)).paymentSetupDueAt).toEqual(at(47));
+
+    // A sweep outage of 6 days (enforcement still on): nothing restarts.
+    const activations = await prisma.billingEnforcementActivation.count();
+    await sweep(at(25));
+    expect(await prisma.billingEnforcementActivation.count()).toBe(
+      activations + 1,
+    );
     expect((await subOf(late)).paymentSetupDueAt).toEqual(at(31));
+    expect((await subOf(capped)).paymentSetupDueAt).toEqual(at(47));
+    // ...and the 30-day maximum still holds after it.
+    await expect(extend(1, at(26))).rejects.toMatchObject({
+      reason: 'EXTENSION_LIMIT',
+    });
+
+    // Enforcement paused for two weeks: nothing happens, no deadline shown...
     enforce(false);
-    // Enforcement off for 10 days: nothing happens; no deadline shown.
-    expect(await sweep(at(27))).toEqual({
+    expect(await sweep(at(30))).toEqual({
       windows: 0,
       expired: 0,
       reminders: 0,
     });
     expect((await summaryOf(late)).deadline).toBeNull();
+    // ...and re-enabled: the persisted deadline that passed applies now —
+    // never a fresh 14 days.
     enforce(true);
-    await sweep(at(40));
-    expect(await prisma.billingEnforcementActivation.count()).toBe(2);
-    const row = await subOf(late);
-    expect(row.paymentSetupWindowStartedAt).toEqual(at(40));
-    expect(row.paymentSetupDueAt).toEqual(at(54));
-    expect(row.paymentSetupExpiredAt).toBeNull();
-    expect(await tenantOf(late)).toEqual({
-      status: 'ACTIVE',
-      suspensionReason: null,
-    });
-    // Already expired and suspended businesses stay so (no new window).
-    expect((await subOf(started)).paymentSetupExpiredAt).not.toBeNull();
+    const resumed = await sweep(at(40));
+    expect(resumed.windows).toBe(0);
+    for (const b of [late, racer]) {
+      const row = await subOf(b);
+      expect(row.paymentSetupWindowStartedAt).toEqual(at(17));
+      expect(row.paymentSetupExpiredAt).toEqual(at(40));
+      expect(await tenantOf(b)).toEqual({
+        status: 'SUSPENDED',
+        suspensionReason: 'BILLING',
+      });
+      expect(
+        (await historyOf(b)).filter(
+          (t) => t === 'PAYMENT_SETUP_WINDOW_STARTED',
+        ),
+      ).toHaveLength(1);
+    }
+    // The extended deadline is honoured, then applies after another gap.
+    expect((await subOf(capped)).paymentSetupExpiredAt).toBeNull();
+    await sweep(at(47.5));
+    expect((await subOf(capped)).paymentSetupExpiredAt).toEqual(at(47.5));
+    expect((await subOf(capped)).paymentSetupWindowStartedAt).toEqual(at(17));
+  });
+
+  it('C2. payment failures and state fluctuations keep the same episode; only a genuinely new episode gets a new window', async () => {
+    const b = await business('fluctuating', 'awaiting');
+    await sweep(at(48));
+    const before = await subOf(b);
+    expect(before.paymentSetupDueAt).toEqual(at(62));
+    const setState = async (
+      data: Parameters<typeof prisma.tenantSubscription.update>[0]['data'],
+      now: Date,
+    ) => {
+      await prisma.tenantSubscription.update({
+        where: { id: b.subscriptionId },
+        data,
+      });
+      await runSerializable(prisma, (tx) =>
+        lifecycle.syncPaymentSetup(tx, b.subscriptionId, now),
+      );
+    };
+    const same = async () => {
+      const row = await subOf(b);
+      expect({
+        since: row.paymentSetupRequiredSince,
+        start: row.paymentSetupWindowStartedAt,
+        due: row.paymentSetupDueAt,
+      }).toEqual({
+        since: before.paymentSetupRequiredSince,
+        start: before.paymentSetupWindowStartedAt,
+        due: before.paymentSetupDueAt,
+      });
+    };
+    // A first payment fails (past due), then is retried back to active
+    // without setup: the same episode, the same deadline.
+    await setState(
+      { status: 'PAST_DUE', pastDueAt: at(49), graceEndsAt: at(56) },
+      at(49),
+    );
+    await same();
+    await sweep(at(50)); // never re-windowed or expired while past due
+    await same();
+    await setState(
+      { status: 'ACTIVE', pastDueAt: null, graceEndsAt: null },
+      at(51),
+    );
+    await sweep(at(51));
+    await same();
+    expect(
+      (await historyOf(b)).filter((t) => t === 'PAYMENT_SETUP_REQUIRED'),
+    ).toHaveLength(1);
+    expect(
+      (await historyOf(b)).filter((t) => t === 'PAYMENT_SETUP_WINDOW_STARTED'),
+    ).toHaveLength(1);
+
+    // Setup verified: the episode ends (completed).
+    await setState(
+      {
+        externalSubscriptionId: `fake_sub_fluct_${run}`,
+        recurringPaymentAuthorizedAt: at(52),
+        currentPeriodStart: at(52),
+        currentPeriodEnd: at(82),
+      },
+      at(52),
+    );
+    expect((await subOf(b)).paymentSetupRequiredSince).toBeNull();
+    expect(await historyOf(b)).toEqual(
+      expect.arrayContaining(['PAYMENT_SETUP_COMPLETED']),
+    );
+    // Later the subscription ends, and billing restarts without a
+    // subscription: a genuinely NEW episode gets its own 14 days.
+    await setState(
+      {
+        status: 'CANCELED',
+        canceledAt: at(53),
+        currentPeriodStart: null,
+        currentPeriodEnd: null,
+      },
+      at(53),
+    );
+    await setState(
+      {
+        status: 'ACTIVE',
+        canceledAt: null,
+        externalSubscriptionId: null,
+        recurringPaymentAuthorizedAt: null,
+      },
+      at(54),
+    );
+    await sweep(at(54));
+    const renewed = await subOf(b);
+    expect(renewed.paymentSetupWindowStartedAt).toEqual(at(54));
+    expect(renewed.paymentSetupDueAt).toEqual(at(68));
+    expect(
+      (await historyOf(b)).filter((t) => t === 'PAYMENT_SETUP_WINDOW_STARTED'),
+    ).toHaveLength(2);
   });
 
   // --- D. real time: extensions, Checkout, recovery ------------------------------------------------

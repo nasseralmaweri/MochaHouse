@@ -3145,8 +3145,13 @@ export class BillingLifecycleService {
   //                   invoice of the subscription is still owed; until then
   //                   the record stays and the sweep retries. Never a
   //                   SECURITY or administrative suspension.
-  //   otherwise    -> (canceled, trial, unpaid…) the record is cleared;
-  //                   their own rules apply.
+  //   otherwise    -> the SAME episode continues: a payment failure, an
+  //                   unpaid invoice, a trial or any other fluctuation keeps
+  //                   the record — its window, deadline and extensions —
+  //                   unchanged (their own rules apply meanwhile). Only an
+  //                   ended subscription, or a complimentary arrangement
+  //                   (which clears it itself), ends the episode; a later
+  //                   need for setup is then a genuinely new episode.
   async syncPaymentSetup(
     tx: Tx,
     subscriptionId: string,
@@ -3194,12 +3199,10 @@ export class BillingLifecycleService {
       return;
     }
     const completed = paymentSetupCompleted(row);
-    // An expired window keeps its record (and the suspension it caused)
-    // until setup is verified — a first invoice still being retried (past
-    // due) or unpaid is not setup. Only an ended subscription (a restart
-    // lifts its own) lets go of it.
+    // Not set up (yet): the episode — and an expired window's suspension —
+    // stays until setup is verified. Only an ended subscription (a restart
+    // lifts its own suspension) lets go of it.
     if (
-      row.paymentSetupExpiredAt !== null &&
       !completed &&
       row.billingMode === 'BILLED' &&
       row.status !== 'CANCELED'
@@ -3251,9 +3254,11 @@ export class BillingLifecycleService {
     if (count === 1 && completed) await historyEntry('PAYMENT_SETUP_COMPLETED');
   }
 
-  // The current enforcement activation (persistent): continued while sweeps
-  // keep running; a NEW one after enforcement was off (no sweep for
-  // ACTIVATION_GAP_MS) — every eligible business then gets a fresh window.
+  // A persistent record of when enforcement ran: continued while sweeps keep
+  // running, a new one after a gap (no sweep for ACTIVATION_GAP_MS). It
+  // NEVER restarts or extends a window: a window is given once per episode
+  // (the first activation gives businesses that were already waiting their
+  // first window), and a persisted deadline survives outages and restarts.
   private async activation(
     now: Date,
   ): Promise<{ id: string; startedAt: Date }> {
@@ -3274,11 +3279,9 @@ export class BillingLifecycleService {
         return latest;
       }
       if (latest) {
-        // Enforcement was off (or no sweep ran) for longer than the gap:
-        // every open window starts afresh — never a deadline that ran
-        // while nothing was enforced. Logged so an outage is noticed.
+        // Logged so an outage is noticed. Deadlines are NOT reset by it.
         this.logger.warn(
-          'Billing enforcement activation restarted after a gap: open payment setup windows start afresh.',
+          'Billing enforcement sweep resumed after a gap: persisted payment setup deadlines still apply.',
         );
       }
       return tx.billingEnforcementActivation.create({
@@ -3299,7 +3302,7 @@ export class BillingLifecycleService {
   ): Promise<{ windows: number; expired: number; reminders: number }> {
     const result = { windows: 0, expired: 0, reminders: 0 };
     if (!billingEnforcementEnabled()) return result;
-    const activation = await this.activation(now);
+    await this.activation(now);
     const setUp = (id: string) =>
       runSerializable(this.prisma, (tx) => this.syncPaymentSetup(tx, id, now));
 
@@ -3323,16 +3326,17 @@ export class BillingLifecycleService {
     });
     for (const row of unrecorded) await setUp(row.id);
 
-    // 2. A fresh 14-day window in this activation.
+    // 2. A 14-day window — ONCE per episode (never restarted by an outage,
+    //    a gap, a Checkout or a state change).
     const unwindowed = await this.prisma.tenantSubscription.findMany({
       where: {
+        billingMode: 'BILLED',
+        status: 'ACTIVE',
         paymentSetupRequiredSince: { not: null },
         paymentSetupExpiredAt: null,
-        OR: [
-          { paymentSetupWindowStartedAt: null },
-          { paymentSetupWindowStartedAt: { lt: activation.startedAt } },
-        ],
+        paymentSetupWindowStartedAt: null,
       },
+      orderBy: { id: 'asc' },
       take: limit,
       select: { id: true },
     });
@@ -3352,7 +3356,7 @@ export class BillingLifecycleService {
           where: {
             id: current.id,
             paymentSetupExpiredAt: null,
-            paymentSetupWindowStartedAt: current.paymentSetupWindowStartedAt,
+            paymentSetupWindowStartedAt: null,
           },
           data: {
             paymentSetupWindowStartedAt: now,
@@ -3374,12 +3378,14 @@ export class BillingLifecycleService {
       if (started) result.windows++;
     }
 
-    // 3. Deadlines that passed in this activation: suspended for billing.
+    // 3. Persisted deadlines that passed (also during an outage): suspended
+    //    for billing.
     const passed = await this.prisma.tenantSubscription.findMany({
       where: {
+        billingMode: 'BILLED',
+        status: 'ACTIVE',
         paymentSetupDueAt: { lte: now },
         paymentSetupExpiredAt: null,
-        paymentSetupWindowStartedAt: { gte: activation.startedAt },
       },
       orderBy: { paymentSetupDueAt: 'asc' },
       take: limit,
@@ -3445,8 +3451,10 @@ export class BillingLifecycleService {
           lte: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
         },
         paymentSetupExpiredAt: null,
-        paymentSetupWindowStartedAt: { gte: activation.startedAt },
+        billingMode: 'BILLED',
+        status: 'ACTIVE',
       },
+      orderBy: { id: 'asc' },
       take: limit,
       select: { id: true, paymentSetupDueAt: true },
     });

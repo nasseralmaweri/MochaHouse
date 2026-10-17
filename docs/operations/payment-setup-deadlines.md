@@ -32,14 +32,26 @@ These are **never** covered:
 | **Off** | Only *since when* is recorded (history: `PAYMENT_SETUP_REQUIRED`). No deadline is shown or applied. |
 | **On** | The enforcement sweep gives each such business a **14-day window**: it records the window's start and deadline (history: `PAYMENT_SETUP_WINDOW_STARTED`). |
 
-**Activation.** Each period in which enforcement runs is recorded as a
-`BillingEnforcementActivation`. This is persistent, not a process flag.
-- If no sweep has run for **24 hours**, enforcement is treated as having been
-  off, and the next sweep starts a new activation.
-- Every eligible business whose window began before that activation, and
-  hasn't expired, gets a **fresh 14-day window**.
-- A deadline that ran out while enforcement was off is never enforced.
-- Already expired and paused businesses keep their state.
+**One window per episode.** An episode starts when a business begins
+needing payment setup. It ends only when setup is verified, the subscription
+ends, or the business becomes complimentary.
+- **First activation.** Businesses that were already waiting when
+  enforcement is first switched on get their first, fresh 14-day window then.
+- **Persisted deadlines.** A deadline is stored and is never reset or
+  extended by any of these:
+  - worker outages or restarts;
+  - sweep gaps, or enforcement being paused and resumed;
+  - Checkout retries;
+  - payment failures or other state changes, such as going past due and
+    back.
+- **Deadlines passed during an outage or pause.** A deadline that passed
+  while sweeps were down applies at the next sweep with enforcement on.
+  While enforcement is off, no deadline is shown and nobody is paused.
+- **Activation records.** Each period in which enforcement runs is recorded
+  as a `BillingEnforcementActivation`. A sweep after a gap of more than 24
+  hours records a new one and logs a warning. It never resets a window.
+- **New episodes.** Only a genuinely new episode, after setup was completed
+  or the subscription ended, gets a new 14-day window.
 
 **Extensions.** An operator with `billing.accounts.manage` can extend a
 deadline from the business's page in the console (**Payment setup → Extend
@@ -109,20 +121,22 @@ recovery that was waiting for an invoice to be recorded paid.
 
 ## Operating notes
 
-- **Sweep outages restart windows.** If no enforcement sweep runs for 24
-  hours, for example because enforcement was off or the worker was down,
-  the next sweep starts a new activation. Every open window then restarts
-  at 14 days, which is the safe direction: suspension is delayed, never
-  brought forward. The API logs a warning when this happens. Extensions
-  from an earlier window stay in the history but no longer apply.
+- **Sweep outages never reset deadlines.** If no enforcement sweep runs for
+  24 hours, for example because the worker was down, the API logs a warning
+  when sweeps resume. Every persisted deadline and extension still applies,
+  and a deadline that passed during the outage applies at the next sweep.
+  Before resuming enforcement after a deliberate pause, check the Awaiting
+  payment setup list for deadlines that have already passed.
 - **Turning enforcement off lifts nothing.** It doesn't lift a billing
   suspension that already happened, consistent with the other billing
   suspensions. The deadline is hidden, the business still sees it is paused,
   and recovery through payment works again once enforcement is on. To
   restore access with enforcement off, an operator reactivates the business.
-- **A new episode gets a new window.** A subscription that leaves the state
-  (a trial, past due, unpaid) and later returns to "needs payment setup"
-  starts a new 14-day window. Opening or abandoning Checkout never does this.
+- **Fluctuations keep the same episode.** If a payment fails (past due,
+  unpaid) or a trial starts and the business later needs setup again, it
+  keeps its original deadline and extensions. Opening or abandoning
+  Checkout never resets the deadline either. Only a completed setup or an
+  ended subscription closes the episode; a later need starts a new one.
 
 ## Rollback
 

@@ -19,8 +19,8 @@ export const PAYMENT_SETUP_WINDOW_DAYS = 14;
 export const PAYMENT_SETUP_MAX_DAYS = 30;
 // Reminders this many days before the deadline (largest first).
 export const PAYMENT_SETUP_REMINDER_DAYS = [7, 3, 1] as const;
-// An enforcement activation without a sweep for this long is over: the next
-// sweep starts a NEW activation (fresh windows for everyone eligible).
+// A sweep after this long a gap records a new enforcement activation (for
+// the record and an operator warning). It never resets a deadline.
 export const ACTIVATION_GAP_MS = 24 * 60 * 60 * 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
