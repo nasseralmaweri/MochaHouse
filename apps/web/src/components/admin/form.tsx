@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import { cloneElement, isValidElement, useId } from "react";
 
 // Small, plain Admin form primitives (Milestone 5D-3). Deliberately not a
 // form engine — just the label / hint / error scaffolding that the Admin
@@ -25,6 +25,21 @@ export function FormField({
   error?: string | null;
   children: React.ReactNode;
 }) {
+  // SC4d — the hint and the error describe the control (aria-describedby),
+  // so a screen reader reads them with the label, not only as an alert.
+  const hintId = `${htmlFor}-hint`;
+  const errorId = `${htmlFor}-error`;
+  const describedBy =
+    [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(" ") ||
+    undefined;
+  const control =
+    describedBy && isValidElement<{ "aria-describedby"?: string }>(children)
+      ? cloneElement(children, {
+          "aria-describedby": [children.props["aria-describedby"], describedBy]
+            .filter(Boolean)
+            .join(" "),
+        })
+      : children;
   return (
     <div className="flex flex-col gap-1.5">
       <label
@@ -33,10 +48,14 @@ export function FormField({
       >
         {label}
       </label>
-      {hint ? <p className="text-xs text-text-muted">{hint}</p> : null}
-      {children}
+      {hint ? (
+        <p id={hintId} className="text-xs text-text-muted">
+          {hint}
+        </p>
+      ) : null}
+      {control}
       {error ? (
-        <p role="alert" className="text-sm text-status-warning">
+        <p id={errorId} role="alert" className="text-sm text-status-warning">
           {error}
         </p>
       ) : null}

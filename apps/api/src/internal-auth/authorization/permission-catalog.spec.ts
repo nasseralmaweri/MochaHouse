@@ -17,6 +17,8 @@ describe('internal permission catalog', () => {
         // Milestone 5D-1
         'locations.view',
         'locations.edit',
+        // SC4d
+        'locations.create',
         'locations.manage_digital_ordering',
         'orders.manage_status',
         'orders.view',

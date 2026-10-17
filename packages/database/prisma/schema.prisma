@@ -68,6 +68,7 @@ model Tenant {
   productModifierGroups                ProductModifierGroup[]
   menuProducts                         MenuProduct[]
   locationMenus                        LocationMenu[]
+  locationOpeningPeriods               LocationOpeningPeriod[]
   locationProductPriceOverrides        LocationProductPriceOverride[]
   locationProductAvailabilityOverrides LocationProductAvailabilityOverride[]
   customers                            Customer[]
@@ -798,9 +799,26 @@ model Location {
   slug                             String
   isActive                         Boolean                               @default(true)
   isDigitalOrderingEnabled         Boolean                               @default(true)
+  // SC4d — the location's profile. Nullable so locations created before
+  // SC4d stay valid; a location an owner creates always has the address
+  // line, city, country, IANA time zone and phone (checked by the API).
+  addressLine1                     String?
+  addressLine2                     String?
+  city                             String?
+  region                           String?
+  postalCode                       String?
+  // ISO 3166-1 alpha-2, upper case.
+  countryCode                      String?
+  // IANA time zone (e.g. America/New_York); opening hours are local to it.
+  timeZone                         String?
+  phone                            String?
+  // When opening hours were last saved (null: never set). Distinguishes
+  // "not set up yet" from "closed every day".
+  openingHoursSetAt                DateTime?
   createdAt                        DateTime                              @default(now())
   updatedAt                        DateTime                              @updatedAt
   menus                            LocationMenu[]
+  openingPeriods                   LocationOpeningPeriod[]
   productPriceOverrides            LocationProductPriceOverride[]
   productAvailabilityOverrides     LocationProductAvailabilityOverride[]
   orders                           Order[]
@@ -1023,6 +1041,30 @@ model LocationMenu {
   @@id([locationId, menuId])
   @@index([menuId])
   @@index([tenantId])
+}
+
+// SC4d — a location's weekly opening hours: one row per opening period, in
+// the location's own time zone. dayOfWeek is ISO (1 = Monday … 7 = Sunday);
+// times are minutes after local midnight. A period whose closing time is
+// earlier than its opening time runs past midnight into the next day; 1440
+// (24:00) closes at the end of the day. A day without periods is closed.
+// Saved and displayed only: nothing enforces ordering hours yet.
+model LocationOpeningPeriod {
+  id             String   @id @default(uuid(7))
+  locationId     String
+  dayOfWeek      Int
+  opensAtMinute  Int
+  closesAtMinute Int
+  createdAt      DateTime @default(now())
+
+  location Location @relation(fields: [tenantId, locationId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([locationId, dayOfWeek, opensAtMinute])
+  @@unique([tenantId, id])
+  @@index([tenantId, locationId])
 }
 
 model LocationProductPriceOverride {

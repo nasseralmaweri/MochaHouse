@@ -74,6 +74,8 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     ProductModifierGroup: 'tenant',
     MenuProduct: 'tenant',
     LocationMenu: 'tenant',
+    // SC4d — a location's weekly opening hours.
+    LocationOpeningPeriod: 'tenant',
     LocationProductPriceOverride: 'tenant',
     LocationProductAvailabilityOverride: 'tenant',
 

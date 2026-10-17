@@ -199,6 +199,14 @@ export const IconSpinner = ({ className = "h-4 w-4" }: IconProps) => (
   </svg>
 );
 
+// SC4d — Getting started (a checklist).
+export const IconChecklist = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m4.5 7 1.5 1.5L8.5 6M4.5 13l1.5 1.5L8.5 12" />
+    <path d="M11.5 7.2h8M11.5 13.2h8M11.5 19h8M5 19h2" />
+  </Svg>
+);
+
 import type { ComponentType } from "react";
 
 // Navigation item key -> icon. Keys come from lib/admin/nav.ts.
@@ -220,6 +228,7 @@ export const NAV_ICONS: Record<string, ComponentType<IconProps>> = {
   franchising: IconFranchising,
   reports: IconReports,
   administration: IconAdministration,
+  "getting-started": IconChecklist,
 };
 
 export const IconAlert = (p: IconProps) => (

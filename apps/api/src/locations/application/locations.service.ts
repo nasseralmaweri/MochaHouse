@@ -1,17 +1,28 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type {
-  AdminLocationDetail,
-  AdminLocationSummary,
-  LocationMenuResponse,
-  LocationSummary,
+import {
+  LOCATION_ORDERING_NOT_READY,
+  openingHoursView,
+  type AdminLocationDetail,
+  type AdminLocationSummary,
+  type LocationMenuResponse,
+  type LocationOrderingNotReadyBody,
+  type LocationSummary,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { Prisma, TenantContext } from '@mocha-house/database';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
+import {
+  READINESS_LOCATION_SELECT,
+  isBillingAuthorized,
+  isSelfServiceBusiness,
+  locationReadiness,
+  missingForOrdering,
+} from './location-readiness';
 
 // Same shape PrismaService and a $transaction callback both satisfy, for
 // the query methods below that checkout re-runs inside a protected
@@ -274,7 +285,7 @@ export class LocationsService {
   // The row read + assigned-menu shaping, without any authorization — every
   // caller here has already asserted scope. Returns null when the id does
   // not exist so callers choose their own 404 message.
-  private async loadAdminLocationDetail(
+  async loadAdminLocationDetail(
     locationId: string,
     tenant: TenantContext,
   ): Promise<AdminLocationDetail | null> {
@@ -285,6 +296,14 @@ export class LocationsService {
           where: { isActive: true, menu: { isActive: true } },
           orderBy: { menuId: 'asc' },
           include: { menu: true },
+        },
+        openingPeriods: {
+          where: { tenantId: tenant.tenantId },
+          select: {
+            dayOfWeek: true,
+            opensAtMinute: true,
+            closesAtMinute: true,
+          },
         },
       },
     });
@@ -297,7 +316,11 @@ export class LocationsService {
     let assignedMenu: AdminLocationDetail['assignedMenu'] = null;
     if (activeAssignment) {
       const productCount = await this.prisma.menuProduct.count({
-        where: { menuId: activeAssignment.menuId, isActive: true },
+        where: {
+          tenantId: tenant.tenantId,
+          menuId: activeAssignment.menuId,
+          isActive: true,
+        },
       });
       assignedMenu = {
         id: activeAssignment.menu.id,
@@ -311,6 +334,20 @@ export class LocationsService {
     return {
       ...toAdminLocationSummary(location),
       assignedMenu,
+      profile: {
+        addressLine1: location.addressLine1,
+        addressLine2: location.addressLine2,
+        city: location.city,
+        region: location.region,
+        postalCode: location.postalCode,
+        countryCode: location.countryCode,
+        timeZone: location.timeZone,
+        phone: location.phone,
+      },
+      openingHours: openingHoursView(
+        location.openingHoursSetAt !== null,
+        location.openingPeriods,
+      ),
     };
   }
 
@@ -391,33 +428,62 @@ export class LocationsService {
       locationId,
     );
 
-    const existingLocation = await this.prisma.location.findFirst({
-      where: {
-        id: locationId,
-        tenantId: tenant.tenantId,
-      },
-      select: {
-        id: true,
-      },
-    });
+    // SC4d — the readiness check and the switch run under the location's row
+    // lock, the same lock the profile, opening-hours and menu-assignment
+    // writes take, so none of them can change the location between the
+    // check and the update.
+    return this.prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM "Location"
+         WHERE id = ${locationId} AND "tenantId" = ${tenant.tenantId}
+           FOR UPDATE`;
+      if (locked.length === 0) {
+        throw new NotFoundException('Location not found.');
+      }
+      const existingLocation = await tx.location.findUniqueOrThrow({
+        where: { id: locked[0].id },
+        select: READINESS_LOCATION_SELECT,
+      });
 
-    if (!existingLocation) {
-      throw new NotFoundException('Location not found.');
-    }
+      // SC4d (D4) — a self-service business turns online ordering ON only
+      // once its payment setup is authorized and this location has its
+      // address, time zone, opening hours and a sellable menu. Turning
+      // ordering OFF is always allowed, and operator-provisioned businesses
+      // are unaffected. Customer checkout keeps its own billing and sales
+      // checks regardless.
+      if (
+        isDigitalOrderingEnabled &&
+        (await isSelfServiceBusiness(tx, tenant.tenantId))
+      ) {
+        const missing = missingForOrdering(
+          await isBillingAuthorized(tx, tenant.tenantId),
+          await locationReadiness(tx, tenant.tenantId, existingLocation),
+        );
+        if (missing.length > 0) {
+          const body: LocationOrderingNotReadyBody = {
+            code: LOCATION_ORDERING_NOT_READY,
+            message:
+              'Finish setting up this location before turning on online ordering.',
+            missing,
+          };
+          throw new ConflictException(body);
+        }
+      }
 
-    return this.prisma.location.update({
-      where: {
-        id: locationId,
-      },
-      data: {
-        isDigitalOrderingEnabled,
-      },
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        isDigitalOrderingEnabled: true,
-      },
+      return tx.location.update({
+        where: {
+          id: existingLocation.id,
+        },
+        data: {
+          isDigitalOrderingEnabled,
+        },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          isDigitalOrderingEnabled: true,
+        },
+      });
     });
   }
 }

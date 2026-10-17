@@ -71,10 +71,139 @@ export interface AdminLocationAssignedMenu {
 }
 export interface AdminLocationDetail extends AdminLocationSummary {
     assignedMenu: AdminLocationAssignedMenu | null;
+    profile: AdminLocationProfile;
+    openingHours: AdminOpeningHours;
 }
 export interface AdminUpdateLocationRequest {
     name?: string;
     isActive?: boolean;
+}
+export interface AdminLocationProfile {
+    addressLine1: string | null;
+    addressLine2: string | null;
+    city: string | null;
+    region: string | null;
+    postalCode: string | null;
+    countryCode: string | null;
+    timeZone: string | null;
+    phone: string | null;
+}
+export interface OpeningPeriod {
+    opensAt: string;
+    closesAt: string;
+}
+export interface OpeningDay {
+    dayOfWeek: number;
+    periods: OpeningPeriod[];
+}
+export interface AdminOpeningHours {
+    isSet: boolean;
+    days: OpeningDay[];
+}
+export interface AdminSetOpeningHoursRequest {
+    days: OpeningDay[];
+}
+export interface AdminLocationProfileRequest {
+    name: string;
+    addressLine1: string;
+    addressLine2?: string | null;
+    city: string;
+    region?: string | null;
+    postalCode?: string | null;
+    countryCode: string;
+    timeZone: string;
+    phone: string;
+}
+export type AdminCreateLocationRequest = AdminLocationProfileRequest;
+export declare const LOCATION_LIMIT_REACHED = "LOCATION_LIMIT_REACHED";
+export interface LocationLimitReachedBody {
+    code: typeof LOCATION_LIMIT_REACHED;
+    message: string;
+    locationId: string | null;
+}
+export declare const LOCATION_NAME_MAX_LENGTH = 80;
+export declare const LOCATION_ADDRESS_LINE_MAX_LENGTH = 200;
+export declare const LOCATION_CITY_MAX_LENGTH = 100;
+export declare const LOCATION_REGION_MAX_LENGTH = 100;
+export declare const LOCATION_POSTAL_CODE_MAX_LENGTH = 20;
+export declare const LOCATION_PHONE_MAX_LENGTH = 30;
+export declare const OPENING_PERIODS_PER_DAY_MAX = 4;
+export declare const COUNTRY_CODES: readonly string[];
+export interface ValidLocationProfile {
+    name: string;
+    addressLine1: string;
+    addressLine2: string | null;
+    city: string;
+    region: string | null;
+    postalCode: string | null;
+    countryCode: string;
+    timeZone: string;
+    phone: string;
+}
+export type LocationProfileValidation = {
+    ok: true;
+    value: ValidLocationProfile;
+} | {
+    ok: false;
+    field: keyof AdminLocationProfileRequest;
+    message: string;
+};
+export declare function validateLocationProfile(input: Record<string, unknown>, isTimeZone?: (value: string) => boolean): LocationProfileValidation;
+export declare function supportedTimeZones(): readonly string[];
+export declare function isSupportedTimeZone(value: string): boolean;
+export declare function parseClockTime(value: unknown, closing: boolean): number | null;
+export declare function formatClockMinutes(minutes: number): string;
+export declare const WEEKDAY_NAMES: readonly ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+export interface StoredOpeningPeriod {
+    dayOfWeek: number;
+    opensAtMinute: number;
+    closesAtMinute: number;
+}
+export type OpeningHoursValidation = {
+    ok: true;
+    periods: StoredOpeningPeriod[];
+} | {
+    ok: false;
+    message: string;
+};
+export declare function validateOpeningHours(input: unknown): OpeningHoursValidation;
+export declare function openingHoursView(isSet: boolean, periods: readonly StoredOpeningPeriod[]): AdminOpeningHours;
+export interface AdminCreateMenuRequest {
+    name: string;
+    slug?: string | null;
+}
+export interface AdminCreateMenuResponse {
+    menu: AdminMenuSummary;
+    created: boolean;
+}
+export interface AdminAssignLocationMenuRequest {
+    menuId: string;
+}
+export interface AdminAssignLocationMenuResponse {
+    locationId: string;
+    menuId: string;
+    changed: boolean;
+}
+export declare const GETTING_STARTED_STEP_KEYS: readonly ["business", "billing", "location", "profile", "hours", "menu", "ordering"];
+export type GettingStartedStepKey = (typeof GETTING_STARTED_STEP_KEYS)[number];
+export interface GettingStartedStep {
+    key: GettingStartedStepKey;
+    done: boolean;
+}
+export interface AdminGettingStartedResponse {
+    steps: GettingStartedStep[];
+    completedCount: number;
+    totalCount: number;
+    setupComplete: boolean;
+    locationId: string | null;
+    menuId: string | null;
+    storefrontLive: boolean;
+}
+export declare const LOCATION_ORDERING_NOT_READY = "LOCATION_ORDERING_NOT_READY";
+export interface LocationOrderingNotReadyBody {
+    code: typeof LOCATION_ORDERING_NOT_READY;
+    message: string;
+    missing: GettingStartedStepKey[];
 }
 export interface AdminProductCategoryRef {
     id: string;
@@ -1718,7 +1847,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "orders.cancel", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "notifications.routing.view", "notifications.routing.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide", "reports.view", "billing.view", "billing.manage"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "orders.cancel", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.create", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "notifications.routing.view", "notifications.routing.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide", "reports.view", "billing.view", "billing.manage"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export interface BuiltInInternalRole {
     key: string;

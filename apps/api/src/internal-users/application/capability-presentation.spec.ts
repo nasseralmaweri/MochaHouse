@@ -136,6 +136,7 @@ describe('capability presentation (Milestone 5E)', () => {
       expect(groups.find((g) => g.group === 'Locations')?.items).toEqual([
         'View locations',
         'Edit location information',
+        'Add locations',
         'Turn online ordering on or off',
       ]);
       expect(groups.find((g) => g.group === 'Loyalty')?.items).toEqual([

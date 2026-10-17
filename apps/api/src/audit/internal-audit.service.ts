@@ -1400,6 +1400,125 @@ export class InternalAuditService {
       },
     });
   }
+
+  // --- SC4d — first location setup ----------------------------------
+  // Each change and its event commit in one transaction. Location details
+  // are business data an owner entered (an address and a business phone),
+  // recorded so the business can see who changed what.
+
+  async recordLocationCreated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      locationId: string;
+      after: Prisma.InputJsonObject;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'location.created',
+        targetType: 'location',
+        targetId: input.locationId,
+        beforeData: { location: null },
+        afterData: input.after,
+        reason: 'Location created.',
+      },
+    });
+  }
+
+  async recordLocationProfileUpdated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      locationId: string;
+      before: Prisma.InputJsonObject;
+      after: Prisma.InputJsonObject;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'location.profile_updated',
+        targetType: 'location',
+        targetId: input.locationId,
+        beforeData: input.before,
+        afterData: input.after,
+        reason: 'Location details updated.',
+      },
+    });
+  }
+
+  async recordLocationOpeningHoursUpdated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      locationId: string;
+      before: Prisma.InputJsonObject;
+      after: Prisma.InputJsonObject;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'location.opening_hours_updated',
+        targetType: 'location',
+        targetId: input.locationId,
+        beforeData: input.before,
+        afterData: input.after,
+        reason: 'Opening hours updated.',
+      },
+    });
+  }
+
+  async recordCatalogMenuCreated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      menuId: string;
+      name: string;
+      slug: string;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'catalog.menu_created',
+        targetType: 'menu',
+        targetId: input.menuId,
+        beforeData: { menu: null },
+        afterData: { name: input.name, slug: input.slug },
+        reason: 'Menu created.',
+      },
+    });
+  }
+
+  async recordLocationMenuAssigned(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      locationId: string;
+      previousMenuIds: string[];
+      menuId: string;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'location.menu_assigned',
+        targetType: 'location',
+        targetId: input.locationId,
+        beforeData: { menuIds: input.previousMenuIds },
+        afterData: { menuId: input.menuId },
+        reason: 'Location menu assigned.',
+      },
+    });
+  }
 }
 
 interface ChecklistExceptionAuditInput {

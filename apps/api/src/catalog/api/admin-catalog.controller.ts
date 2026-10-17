@@ -19,7 +19,9 @@ import { CatalogService } from '../application/catalog.service';
 import { CatalogCreationService } from '../application/catalog-creation.service';
 import {
   parseAddMenuProduct,
+  parseAssignLocationMenu,
   parseCreateCategory,
+  parseCreateMenu,
   parseCreateProduct,
 } from '../application/catalog-create-input';
 import { InternalAuthGuard } from '../../internal-auth/infrastructure/internal-auth.guard';
@@ -133,6 +135,45 @@ export class AdminCatalogController {
     return result;
   }
 
+  // --- SC4d — business menus and a location's menu ----------------
+  // Both change menu composition for the business, so both need the
+  // CORPORATE-only `catalog.menu.manage`. Creating a menu is idempotent by
+  // name (201 created, 200 when the business already had it).
+  @RequirePermission('catalog.menu.manage')
+  @Post('menus')
+  async createMenu(
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.catalogCreation.createMenu(
+      parseCreateMenu(body),
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+    response.status(result.created ? HttpStatus.CREATED : HttpStatus.OK);
+    return result;
+  }
+
+  @RequirePermission('catalog.menu.manage')
+  @Put('locations/:locationId/menu')
+  assignLocationMenu(
+    @Param('locationId') locationId: string,
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.catalogCreation.assignLocationMenu(
+      locationId,
+      parseAssignLocationMenu(body),
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+  }
+
   // --- Admin master-catalog reads (Milestone 5D-3) -----------------
   // `catalog.view` is CORPORATE-only. The list and detail both include
   // inactive products; the service asserts corporate scope before reading.
@@ -198,10 +239,12 @@ export class AdminCatalogController {
   getLocationMenu(
     @Param('locationId') locationId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.catalogService.getAdminLocationMenu(
       locationId,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -276,12 +319,14 @@ export class AdminCatalogController {
     @Param('menuId') menuId: string,
     @Param('productId') productId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.catalogService.removeProductPriceOverride(
       locationId,
       menuId,
       productId,
       request.authorization!,
+      tenant,
     );
   }
 
@@ -316,12 +361,14 @@ export class AdminCatalogController {
     @Param('menuId') menuId: string,
     @Param('productId') productId: string,
     @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.catalogService.removeProductAvailabilityOverride(
       locationId,
       menuId,
       productId,
       request.authorization!,
+      tenant,
     );
   }
 }

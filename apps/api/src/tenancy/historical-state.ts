@@ -61,6 +61,8 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'BillingEnforcementActivation',
   // SC4a — business owner self-service registrations.
   'OwnerRegistration',
+  // SC4d — a location's weekly opening hours.
+  'LocationOpeningPeriod',
 ]);
 
 // Columns added after the 4C-era migrations to tables that already existed.
@@ -70,6 +72,18 @@ export const COLUMNS_ADDED_AFTER_4C: Readonly<
   PaymentAttempt: ['paymentState', 'fulfilmentStatus'],
   // SC3c-3 — verified-email stamps (20261029090000).
   InternalUser: ['verifiedEmail', 'emailVerifiedAt'],
+  // SC4d — the location profile (20261108090000).
+  Location: [
+    'addressLine1',
+    'addressLine2',
+    'city',
+    'region',
+    'postalCode',
+    'countryCode',
+    'timeZone',
+    'phone',
+    'openingHoursSetAt',
+  ],
 };
 
 // A checksum of every row of every table that existed at the 4C-era migrations,

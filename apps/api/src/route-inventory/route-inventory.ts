@@ -54,6 +54,11 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'GET /api/v1/admin/careers/jobs/:jobId': { scope: 'tenant' },
   'GET /api/v1/admin/careers/jobs/options': { scope: 'tenant' },
   'GET /api/v1/admin/catalog/categories': { scope: 'tenant' },
+  // SC4d — first location setup: create the business's first location, a
+  // business menu, and the getting-started checklist (computed, read-only).
+  'POST /api/v1/admin/locations': { scope: 'tenant' },
+  'POST /api/v1/admin/catalog/menus': { scope: 'tenant' },
+  'GET /api/v1/admin/getting-started': { scope: 'tenant' },
   'GET /api/v1/admin/catalog/menus': { scope: 'tenant' },
   'GET /api/v1/admin/catalog/menus/:menuId': { scope: 'tenant' },
   'GET /api/v1/admin/catalog/products': { scope: 'tenant' },
@@ -244,6 +249,11 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'DELETE /api/v1/admin/catalog/locations/:locationId/menus/:menuId/products/:productId/price-override':
     { scope: 'location' },
   'GET /api/v1/admin/catalog/locations/:locationId/menu': { scope: 'location' },
+  // SC4d — a location's profile, opening hours and menu (corporate-only
+  // permissions; the location must belong to the active business).
+  'PUT /api/v1/admin/locations/:locationId/profile': { scope: 'location' },
+  'PUT /api/v1/admin/locations/:locationId/hours': { scope: 'location' },
+  'PUT /api/v1/admin/catalog/locations/:locationId/menu': { scope: 'location' },
   'GET /api/v1/admin/locations/:locationId': { scope: 'location' },
   'GET /api/v1/admin/operations/closing-checklist': { scope: 'location' },
   'GET /api/v1/admin/operations/opening-checklist': { scope: 'location' },
