@@ -221,6 +221,57 @@ model TenantProvisioningOperation {
   @@index([actorPlatformOperatorId])
 }
 
+// SC4a — a business owner's self-service registration (one per email).
+// Platform-plane (no tenantId): it creates no business, staff member or
+// role. It records the staff-pool login this registration created
+// (identitySubject, set only from the identity provider's own response) and,
+// once the owner proved the mailbox and set a password, their acceptance of
+// the Terms and Privacy Policy. A login recorded here is a SELF-REGISTERED
+// login: it is never bound to a staff row by email (unbound-email-match.ts).
+//   PENDING_VERIFICATION  waiting for the sign-up code;
+//   PASSWORD_SETUP        the code was confirmed but the password is not set
+//                         yet (an interrupted completion; a password-setup
+//                         code finishes it);
+//   VERIFIED              mailbox proven, password set, terms accepted.
+// The login binding never changes once recorded, a VERIFIED registration is
+// final, and a registration with a login is never deleted (database trigger).
+enum OwnerRegistrationStatus {
+  PENDING_VERIFICATION
+  PASSWORD_SETUP
+  VERIFIED
+}
+
+model OwnerRegistration {
+  id                    String                  @id @default(uuid(7))
+  // Trimmed and lowercased (CHECK).
+  email                 String                  @unique
+  status                OwnerRegistrationStatus @default(PENDING_VERIFICATION)
+  // The staff identity provider marker ('cognito-internal' / 'internal-dev').
+  identityProvider      String
+  identitySubject       String?
+  // Random, server-only input to the login's initial password (never sent
+  // to the browser): see owner-registration.service.ts.
+  initialPasswordNonce  String
+  // Codes sent in the current 24-hour window, and verification attempts
+  // against the current code.
+  codesSent             Int                     @default(0)
+  codeWindowStartedAt   DateTime                @default(now())
+  verificationAttempts  Int                     @default(0)
+  // A code is accepted only until then (renewed when a code is sent).
+  expiresAt             DateTime
+  // Set when VERIFIED (CHECK).
+  displayName           String?
+  termsVersion          String?
+  privacyVersion        String?
+  legalAcceptedAt       DateTime?
+  verifiedAt            DateTime?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  @@unique([identityProvider, identitySubject])
+  @@index([createdAt])
+}
+
 // --- CENTERIVO SaaS: plans and subscriptions (SC2a) -----------------------
 // Platform data (MODEL_TENANCY 'platform'), entirely separate from a
 // business's customer payments. A plan has versions; a PUBLISHED version is

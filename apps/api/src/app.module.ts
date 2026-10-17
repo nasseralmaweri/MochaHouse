@@ -33,6 +33,7 @@ import { PlatformTenantsModule } from './platform-tenants/platform-tenants.modul
 import { PlatformSubscriptionsModule } from './platform-subscriptions/platform-subscriptions.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { SaasBillingModule } from './saas-billing/saas-billing.module';
+import { OwnerRegistrationModule } from './owner-registration/owner-registration.module';
 
 @Module({
   imports: [
@@ -75,6 +76,8 @@ import { SaasBillingModule } from './saas-billing/saas-billing.module';
     PlatformTenantsModule,
     // SC2a — CENTERIVO SaaS plans and business subscriptions.
     PlatformSubscriptionsModule,
+    // SC4a — business owner self-service registration (off by default).
+    OwnerRegistrationModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -109,7 +109,7 @@ export class InternalUsersService {
     }
     const matches = await findUnboundEmailMatches(
       this.prisma,
-      identity.provider,
+      identity,
       identity.email,
       tenantId,
     );

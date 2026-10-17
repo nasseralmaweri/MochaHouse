@@ -52,6 +52,7 @@ export type TenantOwnedModel = Exclude<
   | 'BillingAdjustmentDecision'
   | 'BillingAdjustmentEvent'
   | 'BillingEnforcementActivation'
+  | 'OwnerRegistration'
   | 'BillingNotification'
 >;
 

@@ -741,6 +741,38 @@ export interface InternalSignInResponse {
     idToken: string;
     expiresInSeconds: number;
 }
+export type OwnerRegistrationAvailability = {
+    enabled: false;
+} | {
+    enabled: true;
+    termsVersion: string;
+    privacyVersion: string;
+    termsUrl: string | null;
+    privacyUrl: string | null;
+};
+export interface OwnerRegistrationStartRequest {
+    email: string;
+}
+export interface OwnerRegistrationStartResponse {
+    status: "CODE_SENT_IF_ELIGIBLE";
+}
+export interface OwnerRegistrationCompleteRequest {
+    email: string;
+    code: string;
+    password: string;
+    displayName: string;
+    termsVersion: string;
+    privacyVersion: string;
+    acceptLegal: boolean;
+}
+export interface OwnerRegistrationCompleteResponse {
+    status: "VERIFIED";
+}
+export declare const OWNER_REGISTRATION_CODE_INVALID = "REGISTRATION_CODE_INVALID";
+export declare const OWNER_REGISTRATION_INVALID_INPUT = "REGISTRATION_INVALID_INPUT";
+export declare const OWNER_REGISTRATION_WEAK_PASSWORD = "REGISTRATION_WEAK_PASSWORD";
+export declare const OWNER_REGISTRATION_LEGAL_OUTDATED = "REGISTRATION_LEGAL_OUTDATED";
+export declare const OWNER_REGISTRATION_UNAVAILABLE = "REGISTRATION_UNAVAILABLE";
 export interface InternalUserProfile {
     id: string;
     email: string;
