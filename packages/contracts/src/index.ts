@@ -1609,7 +1609,27 @@ export interface PlatformOperatorProfile {
 
 export interface PlatformMeResponse {
   operator: PlatformOperatorProfile;
+  // SC3e-2 — the operator's live permissions (what the console offers; the
+  // API enforces them on every request).
+  permissions: PlatformPermission[];
 }
+
+// SC3e-2 (owner decision D1) — platform-operator permissions, least
+// privilege: one per kind of billing action (reads need none). Granted and
+// revoked only by the provisioning CLI; an operator can never grant itself
+// one.
+export const PLATFORM_PERMISSIONS = [
+  "billing.prices.manage",
+  "billing.policy.manage",
+  "billing.accounts.manage",
+  "billing.reconciliation.run",
+  "billing.cases.manage",
+  "billing.schedules.release",
+  "billing.complimentary.manage",
+] as const;
+export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
+// 403 — the operator lacks the permission (or it was revoked).
+export const PLATFORM_PERMISSION_REQUIRED = "PLATFORM_PERMISSION_REQUIRED";
 
 // --- CENTERIVO platform-operator sign-in (SC1b) ------------------------
 // Server-to-server only: the web tier's server actions call these and keep
@@ -2393,6 +2413,14 @@ export interface PlatformGraceExtensionRequest {
 // GET /api/v1/platform/billing/overview — counts for the operator console
 // (no external paging).
 export interface PlatformBillingOverview {
+  // SC3e-2 — complimentary arrangements (active, waiting for the paid period
+  // to end, ending within 14 days, needing attention).
+  complimentary: {
+    active: number;
+    scheduled: number;
+    endingSoon: number;
+    attention: number;
+  };
   inGrace: number;
   unpaid: number;
   billingSuspended: number;
@@ -2416,6 +2444,145 @@ export interface PlatformReconciliationCase {
   status: PlatformReconciliationCaseStatus;
   createdAt: string;
   resolvedAt: string | null;
+  // SC3e-2 — how it was closed, and the note.
+  resolutionOutcome: PlatformCaseOutcome | null;
+  resolutionNote: string | null;
+}
+
+// --- SC3e-2: review-case actions (owner decision D5) ------------------------------
+// Closing outcomes. Nothing here moves money or adopts a provider price.
+export const PLATFORM_CASE_OUTCOMES = [
+  "FIXED_AT_PROVIDER",
+  "SCHEDULE_RELEASED",
+  "CONSISTENT_ON_RECHECK",
+  "NO_ACTION_NEEDED",
+  "DUPLICATE",
+  "NEEDS_FINANCIAL_ADJUSTMENT",
+] as const;
+export type PlatformCaseOutcome = (typeof PLATFORM_CASE_OUTCOMES)[number];
+
+export interface PlatformCaseActionView {
+  action: "RECHECKED" | "SCHEDULE_RELEASED" | "CLOSED";
+  result: string;
+  note: string | null;
+  externalScheduleId: string | null;
+  actor: { id: string; email: string };
+  at: string;
+}
+
+// GET /api/v1/platform/billing/reconciliation-cases/:caseId — the case, its
+// action history and, when it concerns a subscription, what the provider
+// holds now (read-only).
+export interface PlatformCaseDetailResponse {
+  case: PlatformReconciliationCase;
+  actions: PlatformCaseActionView[];
+  provider: {
+    // A schedule attached to the subscription right now (null: none).
+    schedule: { externalScheduleId: string; status: string } | null;
+    // Our records hold an open scheduled plan change on it (not releasable
+    // here: the business cancels that one).
+    scheduleIsOpenPlanChange: boolean;
+  } | null;
+  // Why the provider could not be read (null: read, or not applicable).
+  providerUnavailable: boolean;
+}
+
+// POST .../reconciliation-cases/:caseId/recheck (billing.cases.manage) — the
+// provider is read again and our settlement re-run for that subscription
+// (no provider write). Body: none.
+export interface PlatformCaseRecheckResponse {
+  result: "CONSISTENT" | "MISMATCH_FOUND" | "PROVIDER_UNAVAILABLE";
+  openCases: string[];
+}
+
+// POST .../reconciliation-cases/:caseId/release-schedule — body exactly
+// { externalScheduleId, reason } (billing.schedules.release, recent
+// sign-in): releases THE schedule attached to the case's subscription (it
+// must match what the provider holds now; never cancelled).
+//   409 BILLING_CASE_SCHEDULE_MISMATCH / BILLING_CASE_NOT_RELEASABLE
+export interface PlatformCaseReleaseRequest {
+  externalScheduleId: string;
+  reason: string;
+}
+
+// POST .../reconciliation-cases/:caseId/resolve — body exactly
+// { outcome, note } (billing.cases.manage).
+export interface PlatformCaseCloseRequest {
+  outcome: PlatformCaseOutcome;
+  note: string;
+}
+export const BILLING_CASE_SCHEDULE_MISMATCH = "BILLING_CASE_SCHEDULE_MISMATCH";
+export const BILLING_CASE_NOT_RELEASABLE = "BILLING_CASE_NOT_RELEASABLE";
+
+// --- SC3e-2: complimentary arrangements (owner decisions D2–D4) --------------------
+export type PlatformComplimentaryStatus =
+  | "SCHEDULED"
+  | "ACTIVE"
+  | "WITHDRAWN"
+  | "ENDED";
+
+export interface PlatformComplimentaryGrantView {
+  id: string;
+  status: PlatformComplimentaryStatus;
+  plan: { planName: string; versionId: string; version: number; moduleKeys: string[] };
+  // null: indefinite.
+  endsAt: string | null;
+  reason: string;
+  grantedBy: { id: string; email: string };
+  createdAt: string;
+  previousStatus: string;
+  previousPlanName: string;
+  previousPrice: { amountMinorUnits: number; currency: string; interval: "MONTH" | "YEAR" };
+  // SCHEDULED: when the paid period ends (the provider ends the subscription).
+  effectiveAt: string | null;
+  cancellationVerified: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  // EXPIRED | REVOKED | WITHDRAWN | PROVIDER_UNDONE | NOT_SUBMITTED
+  finishCode: string | null;
+  finishReason: string | null;
+  finishedBy: { id: string; email: string } | null;
+  // What needs an operator (null: nothing).
+  attention: "CANCELLATION_UNVERIFIED" | "ENDS_SOON" | null;
+}
+
+// GET /api/v1/platform/tenants/:tenantId/billing/complimentary
+export interface PlatformComplimentaryView {
+  billingMode: "BILLED" | "COMPLIMENTARY";
+  // COMPLIMENTARY with no grant on record (Founding, or never billed).
+  legacyComplimentary: boolean;
+  current: PlatformComplimentaryGrantView | null;
+  history: PlatformComplimentaryGrantView[];
+  // From our records only (the provider is checked when granting).
+  eligibility: { eligible: boolean; reason: string | null };
+}
+
+// POST /api/v1/platform/tenants/:tenantId/billing/complimentary — body
+// exactly { planVersionId, endsAt, reason } (billing.complimentary.manage,
+// recent sign-in). endsAt: an ISO time (time-limited) or null (indefinite).
+//   409 BILLING_COMPLIMENTARY_NOT_ELIGIBLE / _UNPAID_INVOICES / _IN_PROGRESS
+export interface PlatformComplimentaryGrantRequest {
+  planVersionId: string;
+  endsAt: string | null;
+  reason: string;
+}
+// POST .../complimentary/:grantId/withdraw | /revoke — body exactly { reason }.
+//   409 BILLING_COMPLIMENTARY_NOT_WITHDRAWABLE / _NOT_REVOCABLE
+export interface PlatformComplimentaryReasonRequest {
+  reason: string;
+}
+export const BILLING_COMPLIMENTARY_NOT_ELIGIBLE = "BILLING_COMPLIMENTARY_NOT_ELIGIBLE";
+export const BILLING_COMPLIMENTARY_UNPAID_INVOICES = "BILLING_COMPLIMENTARY_UNPAID_INVOICES";
+export const BILLING_COMPLIMENTARY_IN_PROGRESS = "BILLING_COMPLIMENTARY_IN_PROGRESS";
+export const BILLING_COMPLIMENTARY_NOT_WITHDRAWABLE = "BILLING_COMPLIMENTARY_NOT_WITHDRAWABLE";
+export const BILLING_COMPLIMENTARY_NOT_REVOCABLE = "BILLING_COMPLIMENTARY_NOT_REVOCABLE";
+
+// GET /api/v1/platform/billing/complimentary — every open arrangement (and
+// those finished in the last 30 days), for the console.
+export interface PlatformComplimentaryListResponse {
+  grants: (PlatformComplimentaryGrantView & { tenantId: string; businessName: string })[];
+  // COMPLIMENTARY businesses with no grant on record.
+  legacyComplimentary: number;
 }
 
 // GET  /api/v1/platform/billing/reconciliation-cases?status=OPEN|RESOLVED
@@ -2498,7 +2665,12 @@ export type PlatformSubscriptionEventType =
   // SC3c-3 — operator grace extensions / exceptions.
   | "GRACE_EXTENDED"
   | "GRACE_EXCEPTION_GRANTED"
-  | "GRACE_EXCEPTION_EXPIRED";
+  | "GRACE_EXCEPTION_EXPIRED"
+  // SC3e-2 — complimentary grants.
+  | "COMPLIMENTARY_SCHEDULED"
+  | "COMPLIMENTARY_STARTED"
+  | "COMPLIMENTARY_WITHDRAWN"
+  | "COMPLIMENTARY_ENDED";
 
 // SC3a — the subscription's billing state (separate from a business's
 // administrative/security suspension). A COMPLIMENTARY subscription is never

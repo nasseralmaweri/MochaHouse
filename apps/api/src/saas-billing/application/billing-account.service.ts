@@ -24,6 +24,7 @@ import {
   PLATFORM_ADMINISTRATOR_ROLE,
   type BusinessBillingSummary,
   type PlatformTenantBillingResponse,
+  BILLING_COMPLIMENTARY_IN_PROGRESS,
 } from '@mocha-house/contracts';
 import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -461,6 +462,21 @@ export class BillingAccountService {
   }
 
   private async startBillingChecks(tenantId: string, planPriceId: string) {
+    // SC3e-2 — a business under a complimentary arrangement returns to
+    // billing only by ending that arrangement (billing.complimentary.manage).
+    if (
+      (await this.prisma.billingComplimentaryGrant.count({
+        where: {
+          subscription: { subscriberTenantId: tenantId },
+          status: { in: ['SCHEDULED', 'ACTIVE'] },
+        },
+      })) > 0
+    ) {
+      throw conflict(
+        BILLING_COMPLIMENTARY_IN_PROGRESS,
+        'This business has an open complimentary arrangement; end it first.',
+      );
+    }
     const subscription = await this.prisma.tenantSubscription.findUnique({
       where: { subscriberTenantId: tenantId },
       include: SUBSCRIPTION_INCLUDE,
@@ -869,7 +885,14 @@ export class BillingAccountService {
     });
     const secret = process.env[TRIAL_CLAIM_SECRET_ENV];
     const none = { trialDays: 0, requiresPaymentMethod: true, claimKey: null };
+    // SC3e-2 — a business that has had a complimentary arrangement is never
+    // offered a trial afterwards (its free period was the arrangement).
+    const hadComplimentary =
+      (await this.prisma.billingComplimentaryGrant.count({
+        where: { subscriptionId: subscription.id, status: 'ENDED' },
+      })) > 0;
     if (
+      hadComplimentary ||
       policy.trialDays === 0 ||
       subscription.trialStartedAt !== null ||
       typeof secret !== 'string' ||

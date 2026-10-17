@@ -542,7 +542,16 @@ export class BillingLifecycleService {
       // SC3e-1 — an invoice (or a credit note on it) of one of OUR
       // subscriptions or customers: its live record.
       case 'INVOICE_CHANGED': {
+        const replaced =
+          verified.externalSubscriptionId !== null &&
+          (await this.prisma.billingCheckoutSession.count({
+            where: {
+              replacesExternalSubscriptionId: verified.externalSubscriptionId,
+              status: 'COMPLETED',
+            },
+          })) > 0;
         if (
+          !replaced &&
           !(await this.isLinked(verified)) &&
           (verified.externalSubscriptionId !== null ||
             verified.externalCustomerId === null ||
@@ -1847,7 +1856,7 @@ export class BillingLifecycleService {
       // Not a subscription invoice, or not readable faithfully.
       return finish('IGNORED', 'INVOICE_NOT_RECORDED', null);
     }
-    const subscription = await tx.tenantSubscription.findUnique({
+    let subscription = await tx.tenantSubscription.findUnique({
       where: {
         billingProvider_externalSubscriptionId: {
           billingProvider: verified.provider,
@@ -1855,10 +1864,30 @@ export class BillingLifecycleService {
         },
       },
     });
+    // SC3e-2 (owner decision D6) — an earlier subscription a completed
+    // restart Checkout of ours replaced: still that business's history.
+    if (!subscription) {
+      const replaced = await tx.billingCheckoutSession.findFirst({
+        where: {
+          replacesExternalSubscriptionId: record.externalSubscriptionId,
+          status: 'COMPLETED',
+        },
+        select: { subscriptionId: true },
+      });
+      subscription = replaced
+        ? await tx.tenantSubscription.findUnique({
+            where: { id: replaced.subscriptionId },
+          })
+        : null;
+      if (subscription && subscription.billingProvider !== verified.provider) {
+        subscription = null;
+      }
+    }
     if (!subscription) return finish('IGNORED', 'NOT_OURS', null);
     if (
       (verified.externalSubscriptionId !== null &&
         verified.externalSubscriptionId !== record.externalSubscriptionId) ||
+      subscription.billingMode !== 'BILLED' ||
       (verified.externalCustomerId !== null &&
         verified.externalCustomerId !== subscription.externalCustomerId) ||
       record.externalCustomerId !== subscription.externalCustomerId
@@ -1988,6 +2017,222 @@ export class BillingLifecycleService {
       select: { externalScheduleId: true },
     });
     return scheduled?.externalScheduleId ?? null;
+  }
+
+  // --- SC3e-2: complimentary grants (owner decisions D2–D4) ---------------------
+  // The subscription side of a grant. The caller (BillingComplimentaryService)
+  // verifies the provider first; these only write our records, in the
+  // caller's transaction, with their history.
+
+  // A business becomes COMPLIMENTARY on the grant's plan version: no billing
+  // state at all (the COMPLIMENTARY invariant — its provider identity and
+  // trial are kept on the grant, to be restored). A BILLING suspension is
+  // lifted (with enforcement on); nothing else ever is.
+  async startComplimentary(
+    tx: Tx,
+    grant: { id: string; subscriptionId: string; planVersionId: string },
+    origin: {
+      source: 'OPERATOR' | 'BILLING_PROVIDER' | 'SYSTEM';
+      billingProviderEventId: string | null;
+      actorPlatformOperatorId: string | null;
+    },
+  ): Promise<void> {
+    const subscription = await this.load(tx, grant.subscriptionId);
+    if (subscription.billingMode !== 'BILLED') {
+      throw new ConcurrentBillingChange('NOT_BILLED');
+    }
+    const { count } = await tx.tenantSubscription.updateMany({
+      where: {
+        id: subscription.id,
+        billingStateVersion: subscription.billingStateVersion,
+      },
+      data: {
+        billingMode: 'COMPLIMENTARY',
+        billingProvider: null,
+        externalCustomerId: null,
+        externalSubscriptionId: null,
+        status: 'ACTIVE',
+        planVersionId: grant.planVersionId,
+        planPriceId: null,
+        recurringPaymentAuthorizedAt: null,
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialRequiresPaymentMethod: null,
+        currentPeriodStart: null,
+        currentPeriodEnd: null,
+        pastDueAt: null,
+        graceEndsAt: null,
+        recoveryEndsAt: null,
+        graceExceptionEndsAt: null,
+        cancelAtPeriodEnd: false,
+        canceledAt: null,
+        pendingChangeKind: null,
+        pendingPlanVersionId: null,
+        pendingPlanPriceId: null,
+        pendingChangeReference: null,
+        pendingEffectiveAt: null,
+        billingStateVersion: { increment: 1 },
+      },
+    });
+    if (count !== 1) throw new ConcurrentBillingChange('CONCURRENT_CHANGE');
+    await tx.tenantSubscriptionEvent.create({
+      data: {
+        subscriptionId: subscription.id,
+        type: 'COMPLIMENTARY_STARTED',
+        fromStatus: subscription.status,
+        toStatus: 'ACTIVE',
+        fromPlanVersionId: subscription.planVersionId,
+        toPlanVersionId: grant.planVersionId,
+        source: origin.source,
+        billingProviderEventId: origin.billingProviderEventId,
+        actorPlatformOperatorId: origin.actorPlatformOperatorId,
+      },
+    });
+    const next = await this.load(tx, subscription.id);
+    await this.enforce(
+      tx,
+      next,
+      toBillingState(next),
+      'LIFT_BILLING_SUSPENSION',
+      origin,
+    );
+  }
+
+  // The grant ended (expired or revoked): the business returns to billing
+  // exactly as it was billed before — its provider customer, plan and price,
+  // and its trial record (one trial, ever). An ended provider subscription
+  // comes back CANCELED (restart through a new Checkout); none yet, back to
+  // payment setup. Nothing is charged and no provider subscription is
+  // reactivated or created.
+  async endComplimentary(
+    tx: Tx,
+    grant: {
+      subscriptionId: string;
+      previousPlanVersionId: string;
+      previousPlanPriceId: string;
+      previousBillingProvider: string;
+      previousExternalCustomerId: string;
+      previousExternalSubscriptionId: string | null;
+      previousTrialStartedAt: Date | null;
+      previousTrialEndsAt: Date | null;
+      previousTrialRequiresPaymentMethod: boolean | null;
+    },
+    now: Date,
+    origin: {
+      source: 'OPERATOR' | 'BILLING_PROVIDER' | 'SYSTEM';
+      billingProviderEventId: string | null;
+      actorPlatformOperatorId: string | null;
+    },
+  ): Promise<void> {
+    const subscription = await this.load(tx, grant.subscriptionId);
+    if (subscription.billingMode !== 'COMPLIMENTARY') {
+      throw new ConcurrentBillingChange('NOT_COMPLIMENTARY');
+    }
+    const ended = grant.previousExternalSubscriptionId !== null;
+    const { count } = await tx.tenantSubscription.updateMany({
+      where: {
+        id: subscription.id,
+        billingStateVersion: subscription.billingStateVersion,
+      },
+      data: {
+        billingMode: 'BILLED',
+        billingProvider: grant.previousBillingProvider,
+        externalCustomerId: grant.previousExternalCustomerId,
+        externalSubscriptionId: grant.previousExternalSubscriptionId,
+        planVersionId: grant.previousPlanVersionId,
+        planPriceId: grant.previousPlanPriceId,
+        status: ended ? 'CANCELED' : 'ACTIVE',
+        canceledAt: ended ? now : null,
+        trialStartedAt: grant.previousTrialStartedAt,
+        trialEndsAt: grant.previousTrialEndsAt,
+        trialRequiresPaymentMethod: grant.previousTrialRequiresPaymentMethod,
+        billingStateVersion: { increment: 1 },
+      },
+    });
+    if (count !== 1) throw new ConcurrentBillingChange('CONCURRENT_CHANGE');
+    await tx.tenantSubscriptionEvent.create({
+      data: {
+        subscriptionId: subscription.id,
+        type: 'COMPLIMENTARY_ENDED',
+        fromStatus: subscription.status,
+        toStatus: ended ? 'CANCELED' : 'ACTIVE',
+        fromPlanVersionId: subscription.planVersionId,
+        toPlanVersionId: grant.previousPlanVersionId,
+        planPriceId: grant.previousPlanPriceId,
+        source: origin.source,
+        billingProviderEventId: origin.billingProviderEventId,
+        actorPlatformOperatorId: origin.actorPlatformOperatorId,
+      },
+    });
+  }
+
+  // A complimentary grant was scheduled (the provider cancels the paid
+  // subscription at its period end) or withdrawn before it started: the
+  // subscription's cancel-at-period-end follows the provider (verified by
+  // the caller), with the history.
+  async recordComplimentarySchedule(
+    tx: Tx,
+    subscriptionId: string,
+    kind: 'COMPLIMENTARY_SCHEDULED' | 'COMPLIMENTARY_WITHDRAWN',
+    cancelAtPeriodEnd: boolean,
+    origin: {
+      source: 'OPERATOR' | 'BILLING_PROVIDER' | 'SYSTEM';
+      billingProviderEventId: string | null;
+      actorPlatformOperatorId: string | null;
+    },
+  ): Promise<void> {
+    await this.syncCancelAtPeriodEnd(
+      tx,
+      subscriptionId,
+      cancelAtPeriodEnd,
+      origin,
+    );
+    const current = await this.load(tx, subscriptionId);
+    await tx.tenantSubscriptionEvent.create({
+      data: {
+        subscriptionId,
+        type: kind,
+        fromStatus: current.status,
+        toStatus: current.status,
+        source: origin.source,
+        billingProviderEventId: origin.billingProviderEventId,
+        actorPlatformOperatorId: origin.actorPlatformOperatorId,
+      },
+    });
+  }
+
+  // The subscription's cancel-at-period-end brought in line with what the
+  // provider was verified to hold (CANCEL_SCHEDULED / CANCEL_UNDONE).
+  async syncCancelAtPeriodEnd(
+    tx: Tx,
+    subscriptionId: string,
+    cancelAtPeriodEnd: boolean,
+    origin: {
+      source: 'OPERATOR' | 'BILLING_PROVIDER' | 'SYSTEM';
+      billingProviderEventId: string | null;
+      actorPlatformOperatorId: string | null;
+    },
+  ): Promise<void> {
+    const subscription = await this.load(tx, subscriptionId);
+    if (
+      subscription.billingMode === 'BILLED' &&
+      subscription.cancelAtPeriodEnd !== cancelAtPeriodEnd &&
+      subscription.status !== 'CANCELED'
+    ) {
+      const result = transition(toBillingState(subscription), {
+        type: cancelAtPeriodEnd ? 'CANCEL_SCHEDULED' : 'CANCEL_UNDONE',
+        at: new Date(),
+      });
+      if (result.ok && result.changed) {
+        await this.write(
+          tx,
+          subscription,
+          result.next,
+          subscription.lastBillingEventAt,
+        );
+        await this.history(tx, subscription.id, result.history, origin);
+      }
+    }
   }
 
   // SC3d-3 — a confirmed scheduled change now has its provider schedule

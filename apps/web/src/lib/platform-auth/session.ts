@@ -74,7 +74,12 @@ export async function getPlatformEnrolment(
 }
 
 export type PlatformSession =
-  | { state: "signed-in"; operator: PlatformMeResponse["operator"] }
+  | {
+      state: "signed-in";
+      operator: PlatformMeResponse["operator"];
+      // SC3e-2 — what the console offers (the API enforces every action).
+      permissions: PlatformMeResponse["permissions"];
+    }
   | { state: Exclude<PlatformSessionState, "signed-in"> };
 
 // Resolved once per render (React cache) by asking the API's authoritative
@@ -100,7 +105,11 @@ export const getPlatformSession = cache(
     }
     try {
       const body = (await response.json()) as PlatformMeResponse;
-      return { state: "signed-in", operator: body.operator };
+      return {
+        state: "signed-in",
+        operator: body.operator,
+        permissions: Array.isArray(body.permissions) ? body.permissions : [],
+      };
     } catch {
       return { state: "unavailable" };
     }

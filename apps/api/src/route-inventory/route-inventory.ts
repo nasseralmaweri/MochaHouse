@@ -388,6 +388,42 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     scope: 'platform',
     note: "SC3b — a business's billing state.",
   },
+  // SC3e-2 — complimentary arrangements and review-case actions.
+  'GET /api/v1/platform/billing/complimentary': {
+    scope: 'platform',
+    note: 'SC3e-2 — every open complimentary arrangement (read-only).',
+  },
+  'GET /api/v1/platform/tenants/:tenantId/billing/complimentary': {
+    scope: 'platform',
+    note: "SC3e-2 — a business's complimentary arrangements (read-only).",
+  },
+  'POST /api/v1/platform/tenants/:tenantId/billing/complimentary': {
+    scope: 'platform',
+    note: 'SC3e-2 — grant (billing.complimentary.manage, recent sign-in).',
+  },
+  'POST /api/v1/platform/tenants/:tenantId/billing/complimentary/:grantId/withdraw':
+    {
+      scope: 'platform',
+      note: 'SC3e-2 — withdraw a scheduled grant (billing.complimentary.manage).',
+    },
+  'POST /api/v1/platform/tenants/:tenantId/billing/complimentary/:grantId/revoke':
+    {
+      scope: 'platform',
+      note: 'SC3e-2 — revoke an active grant (billing.complimentary.manage).',
+    },
+  'GET /api/v1/platform/billing/reconciliation-cases/:caseId': {
+    scope: 'platform',
+    note: 'SC3e-2 — a review case, its actions and the live schedule.',
+  },
+  'POST /api/v1/platform/billing/reconciliation-cases/:caseId/recheck': {
+    scope: 'platform',
+    note: 'SC3e-2 — re-read the provider (billing.cases.manage; no write).',
+  },
+  'POST /api/v1/platform/billing/reconciliation-cases/:caseId/release-schedule':
+    {
+      scope: 'platform',
+      note: 'SC3e-2 — release the leftover schedule (billing.schedules.release).',
+    },
   'GET /api/v1/platform/tenants/:tenantId/billing/invoices': {
     scope: 'platform',
     note: "SC3e-1 — a business's invoice history (read-only).",

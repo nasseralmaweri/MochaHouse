@@ -2,10 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PlatformPageHeader } from "@/components/platform/PlatformCards";
 import { RegistryStatePanel } from "@/components/platform/TenantRegistry";
-import {
-  ResolveCase,
-  RunReconciliation,
-} from "@/components/platform/ReconciliationControls";
+import { RunReconciliation } from "@/components/platform/ReconciliationControls";
+import { CASE_LABELS } from "@/lib/platform/billing-case-labels";
 import {
   getPlatformBillingOverview,
   listPlatformReconciliationCases,
@@ -17,49 +15,9 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-// What each case kind means, in plain words.
-const CASE_LABELS: Record<string, string> = {
-  STATE_MISMATCH: "Billing status differs from the payment provider",
-  PAYMENT_METHOD_NOT_RECORDED: "Payment provider has a payment method we haven't recorded",
-  PAYMENT_METHOD_MISSING: "Payment method removed at the payment provider",
-  CANCELLATION_MISMATCH: "Scheduled cancellation differs from the payment provider",
-  CUSTOMER_MISMATCH: "Provider subscription belongs to another customer",
-  CHECKOUT_CUSTOMER_MISMATCH: "Payment setup completed for another customer",
-  CHECKOUT_LINKED_ELSEWHERE: "Payment setup completed after another subscription was linked",
-  CHECKOUT_NOT_LINKED: "Payment setup completed but was never linked",
-  UNEXPECTED_TRIAL: "Provider started a trial we did not offer, or one already used",
-  INVOICE_MISMATCH: "Invoice does not belong to this business",
-  INVOICE_NOT_PAID: "Payment reported but the invoice is not paid",
-  SUBSCRIPTION_MISMATCH: "Provider subscription does not match our records",
-  EVENT_NOT_APPLIED: "A billing event could not be applied",
-  EVENT_RETRIES_EXHAUSTED: "A billing event kept failing and was set aside",
-  UNLINKED_REPLACEMENT: "A restart was created at the payment provider but not linked (see the recovery runbook)",
-  CHECKOUT_NOT_RECORDED: "A payment page was created but could not be recorded",
-  PROVIDER_UNREADABLE: "The payment provider could not be read",
-  SUSPENSION_EXEMPT: "Billing would have suspended a business that is exempt",
-  // SC3c-3
-  BILLING_CONTACT_MISSING: "No one eligible to receive billing email",
-  BILLING_CONTACT_UNVERIFIED:
-    "The designated billing contact's email isn't verified (or the verification expired); they need to sign in again",
-  BILLING_NOTIFICATION_FAILED: "A billing email could not be sent",
-  // SC3d
-  PRICE_MISMATCH: "The payment provider bills a different price than our records",
-  PLAN_CHANGE_AMOUNT_MISMATCH:
-    "A plan change was paid, but the amount differs from the price the business confirmed",
-  UPGRADE_PAID_NOT_APPLIED: "A plan change was paid but not applied",
-  PLAN_CHANGE_UNCERTAIN: "A plan change needs checking against the payment provider",
-  // SC3d-3
-  // SC3e-1
-  INVOICE_HISTORY_CONFLICT:
-    "The payment provider reported an invoice differently from the recorded billing history (nothing was overwritten)",
-  SCHEDULED_CHANGE_DISRUPTED:
-    "A scheduled plan change was removed or altered at the payment provider, or didn't take effect (never recreated)",
-  EXTENSION_ENDED_BY_PROVIDER:
-    "The payment provider ended a subscription during extra time an operator gave",
-};
-
 // SC3b — review-only billing reconciliation (Stripe test mode). Running it,
-// or marking a case reviewed, never moves money or changes a subscription.
+// or acting on a case, never moves money. SC3e-2 — each case opens its own
+// page (recheck, schedule release, close with an outcome).
 export default async function PlatformBillingPage({
   searchParams,
 }: {
@@ -82,6 +40,12 @@ export default async function PlatformBillingPage({
         <RegistryStatePanel state={overview.state} retryHref="/platform/billing" />
       )}
       <RunReconciliation />
+      <Link
+        href="/platform/billing/complimentary"
+        className="inline-flex min-h-11 items-center self-start text-sm font-medium text-text-primary underline underline-offset-2"
+      >
+        Complimentary arrangements
+      </Link>
       <nav aria-label="Case status" className="flex gap-4 text-sm">
         <Link
           href="/platform/billing"
@@ -95,7 +59,7 @@ export default async function PlatformBillingPage({
           aria-current={status === "RESOLVED" ? "page" : undefined}
           className="font-medium text-text-primary underline-offset-4 aria-[current=page]:underline"
         >
-          Reviewed
+          Closed
         </Link>
       </nav>
       {cases.state !== "ok" ? (
@@ -105,7 +69,7 @@ export default async function PlatformBillingPage({
         />
       ) : cases.data.cases.length === 0 ? (
         <p className="rounded-2xl border border-border-default bg-surface-card p-5 text-sm text-text-secondary">
-          {status === "OPEN" ? "Nothing to review." : "No reviewed cases yet."}
+          {status === "OPEN" ? "Nothing to review." : "No closed cases yet."}
         </p>
       ) : (
         <ul className="flex flex-col gap-3">
@@ -130,11 +94,17 @@ export default async function PlatformBillingPage({
                 <p className="text-xs text-text-secondary">
                   Opened {new Date(item.createdAt).toLocaleString("en-US")}
                   {item.resolvedAt
-                    ? ` · Reviewed ${new Date(item.resolvedAt).toLocaleString("en-US")}`
+                    ? ` · Closed ${new Date(item.resolvedAt).toLocaleString("en-US")}`
                     : ""}
                 </p>
               </div>
-              {item.status === "OPEN" ? <ResolveCase caseId={item.id} /> : null}
+              <Link
+                href={`/platform/billing/cases/${item.id}`}
+                className="inline-flex min-h-11 items-center self-start text-sm font-medium text-text-primary underline underline-offset-2"
+                aria-label={`${item.status === "OPEN" ? "Review" : "View"} case: ${CASE_LABELS[item.kind] ?? item.kind}`}
+              >
+                {item.status === "OPEN" ? "Review case" : "View case"}
+              </Link>
             </li>
           ))}
         </ul>

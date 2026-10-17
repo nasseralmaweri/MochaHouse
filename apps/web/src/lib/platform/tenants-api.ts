@@ -4,6 +4,9 @@ import type {
   PlatformReconciliationCaseListResponse,
   PlatformTenantBillingResponse,
   PlatformBillingOverview,
+  PlatformCaseDetailResponse,
+  PlatformComplimentaryListResponse,
+  PlatformComplimentaryView,
   BillingInvoiceListResponse,
   PlatformTenantSubscriptionResponse,
   PlatformTenantDetailResponse,
@@ -107,6 +110,25 @@ export function getPlatformTenantInvoices(
       cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""
     }`,
   );
+}
+
+// SC3e-2 — complimentary arrangements and a review case's detail.
+export function getPlatformTenantComplimentary(
+  tenantId: string,
+): Promise<RegistryResult<PlatformComplimentaryView>> {
+  return readRegistry(`/tenants/${encodeURIComponent(tenantId)}/billing/complimentary`);
+}
+
+export function listPlatformComplimentary(): Promise<
+  RegistryResult<PlatformComplimentaryListResponse>
+> {
+  return readRegistry("/billing/complimentary");
+}
+
+export function getPlatformCase(
+  caseId: string,
+): Promise<RegistryResult<PlatformCaseDetailResponse>> {
+  return readRegistry(`/billing/reconciliation-cases/${encodeURIComponent(caseId)}`);
 }
 
 // SC3c-3 — the console's billing attention counts.

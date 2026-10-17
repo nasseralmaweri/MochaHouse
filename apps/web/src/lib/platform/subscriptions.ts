@@ -84,7 +84,7 @@ export const SUBSCRIPTION_MESSAGES = {
   priceNotForPlan: "That price isn't one of this business's plan's prices.",
   priceNotActive: "That price is no longer offered. Choose a current price.",
   noOwner: "This business has no owner to bill yet.",
-  caseResolved: "This case was already resolved.",
+  caseResolved: "This case was already closed.",
   billingUnavailable: "Billing isn't available right now. Nothing was changed. Try again in a moment.",
   tooMany: "Too many changes. Wait a few minutes, then try again.",
   unavailable: "The change could not be made right now. Nothing was changed. Try again in a moment.",
@@ -113,6 +113,21 @@ const CONFLICTS: Record<string, string> = {
     "The payment provider has ended this subscription, so it can't be given more time. Nothing was changed.",
   BILLING_CONTACT_NOT_ELIGIBLE:
     "Choose an active staff member of this business who can manage billing.",
+  // SC3e-2 — complimentary arrangements and review cases.
+  BILLING_COMPLIMENTARY_NOT_ELIGIBLE:
+    "This business can't be made complimentary right now (a plan change, schedule, cancellation or payment page is open, or the payment provider's subscription doesn't allow it). Nothing was changed.",
+  BILLING_COMPLIMENTARY_UNPAID_INVOICES:
+    "This business has unpaid invoices. They must be settled first; debt is never waived here. Nothing was changed.",
+  BILLING_COMPLIMENTARY_IN_PROGRESS:
+    "A complimentary arrangement is already open for this business. Reload to see it.",
+  BILLING_COMPLIMENTARY_NOT_WITHDRAWABLE:
+    "Only a scheduled arrangement can be withdrawn, and only before the paid period ends.",
+  BILLING_COMPLIMENTARY_NOT_REVOCABLE:
+    "Only an active arrangement can be revoked. A scheduled one is withdrawn instead.",
+  BILLING_CASE_SCHEDULE_MISMATCH:
+    "That schedule is no longer the one attached to this business's subscription. Reload the case. Nothing was released.",
+  BILLING_CASE_NOT_RELEASABLE:
+    "This schedule can't be released here (the case is closed, the schedule isn't active, or a scheduled plan change holds it). Nothing was released.",
 };
 
 export type ChangeOutcome<T> =
@@ -144,7 +159,14 @@ export function interpretChange<T>(status: number | null, body: unknown): Change
         ? { kind: "reauth" }
         : { kind: "error", message: SUBSCRIPTION_MESSAGES.sessionEnded };
     case 403:
-      return { kind: "error", message: SUBSCRIPTION_MESSAGES.denied };
+      // SC3e-2 — an operator permission missing (or revoked).
+      return field(body, "code") === "PLATFORM_PERMISSION_REQUIRED"
+        ? {
+            kind: "error",
+            message:
+              "Your operator account doesn't have permission for this action. Ask a CENTERIVO administrator to grant it.",
+          }
+        : { kind: "error", message: SUBSCRIPTION_MESSAGES.denied };
     case 404:
       return { kind: "error", message: SUBSCRIPTION_MESSAGES.notFound };
     case 409: {

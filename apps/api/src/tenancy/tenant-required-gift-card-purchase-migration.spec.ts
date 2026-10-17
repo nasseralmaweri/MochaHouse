@@ -217,7 +217,9 @@ describe('S0D-2C-1B GiftCardPurchase NOT NULL migration (scratch databases)', ()
     // comment explains why in prose, which is fine — this checks there is
     // no actual RAISE EXCEPTION / tenant-count guard like S0D-2C-1/S0D-2D
     // have).
-    expect(target.sql).not.toMatch(/other_tenants|RAISE EXCEPTION[^;]*other than Tenant/);
+    expect(target.sql).not.toMatch(
+      /other_tenants|RAISE EXCEPTION[^;]*other than Tenant/,
+    );
 
     const at = (needle: string) => target.sql.indexOf(needle);
     const backfill = at('FROM "PaymentAttempt" AS pa');
@@ -238,13 +240,21 @@ describe('S0D-2C-1B GiftCardPurchase NOT NULL migration (scratch databases)', ()
     try {
       // A second tenant existing must NOT abort this migration (unlike
       // S0D-2C-1 / S0D-2D, which guard against exactly this).
-      await expect(applyMigrationSql(scratch.url, target.sql)).resolves.toBeUndefined();
+      await expect(
+        applyMigrationSql(scratch.url, target.sql),
+      ).resolves.toBeUndefined();
     } finally {
       // Roll the scratch DB back to the pre-migration nullable state for
       // the remaining tests: undo the NOT NULL, null the backfilled value,
       // and remove the extra tenant.
-      await query(scratch.url, `ALTER TABLE "GiftCardPurchase" ALTER COLUMN "tenantId" DROP NOT NULL`);
-      await query(scratch.url, `UPDATE "GiftCardPurchase" SET "tenantId" = NULL WHERE id = 'gcp-w'`);
+      await query(
+        scratch.url,
+        `ALTER TABLE "GiftCardPurchase" ALTER COLUMN "tenantId" DROP NOT NULL`,
+      );
+      await query(
+        scratch.url,
+        `UPDATE "GiftCardPurchase" SET "tenantId" = NULL WHERE id = 'gcp-w'`,
+      );
       await query(scratch.url, `DELETE FROM "Tenant" WHERE id = $1`, [
         TEST_TENANT_B_ID,
       ]);
@@ -280,9 +290,9 @@ describe('S0D-2C-1B GiftCardPurchase NOT NULL migration (scratch databases)', ()
       await client.query(target.sql);
     });
 
-    expect(
-      notices.find((n) => n.includes('GiftCardPurchase -> ')),
-    ).toMatch(/-> 1 row\(s\) from PaymentAttempt/);
+    expect(notices.find((n) => n.includes('GiftCardPurchase -> '))).toMatch(
+      /-> 1 row\(s\) from PaymentAttempt/,
+    );
 
     const ids = await tenantIds(scratch.url, 'GiftCardPurchase');
     expect(ids).toEqual({ 'gcp-w': T1 });

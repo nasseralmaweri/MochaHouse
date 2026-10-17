@@ -15,6 +15,8 @@ import { BillingEnforcementService } from './application/billing-enforcement.ser
 import { BillingOperationsService } from './application/billing-operations.service';
 import { BillingPlanChangeService } from './application/billing-plan-change.service';
 import { BillingHistoryService } from './application/billing-history.service';
+import { BillingComplimentaryService } from './application/billing-complimentary.service';
+import { BillingCaseActionsService } from './application/billing-case-actions.service';
 import { PlanChangeMaintenanceService } from './application/plan-change-maintenance.service';
 import { createSaasBillingProvider } from './provider/saas-billing-provider-mode';
 import { SAAS_BILLING_PROVIDER } from './provider/saas-billing-provider';
@@ -47,6 +49,8 @@ import { SAAS_BILLING_PROVIDER } from './provider/saas-billing-provider';
     BillingOperationsService,
     BillingPlanChangeService,
     BillingHistoryService,
+    BillingComplimentaryService,
+    BillingCaseActionsService,
     PlanChangeMaintenanceService,
     {
       provide: SAAS_BILLING_PROVIDER,

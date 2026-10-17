@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import type { PlatformMeResponse } from '@mocha-house/contracts';
+import {
+  PLATFORM_PERMISSIONS,
+  type PlatformMeResponse,
+  type PlatformPermission,
+} from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
 import type {
   PlatformIdentity,
@@ -58,6 +62,14 @@ export const PLATFORM_AUDIT_ACTIONS = {
   // SC3d-1 — an operator previewed a plan change for a business (target:
   // the tenant; nothing charged or changed).
   billingPlanChangePreviewed: 'platform.billing.plan_change_previewed',
+  // SC3e-2 — complimentary grants (target: the tenant) and review-case
+  // actions (target: the case).
+  billingComplimentaryGranted: 'platform.billing.complimentary_granted',
+  billingComplimentaryWithdrawn: 'platform.billing.complimentary_withdrawn',
+  billingComplimentaryStarted: 'platform.billing.complimentary_started',
+  billingComplimentaryEnded: 'platform.billing.complimentary_ended',
+  billingCaseRechecked: 'platform.billing.case_rechecked',
+  billingScheduleReleased: 'platform.billing.schedule_released',
 } as const;
 
 @Injectable()
@@ -127,7 +139,13 @@ export class PlatformOperatorsService {
   // claims). SC1b: READ-ONLY. The portal calls it on every page, so it
   // writes nothing; the privileged access is audited once per sign-in
   // (platform.session.established) instead, when lastAuthenticatedAt is set.
-  profile(operator: PlatformOperatorRow): PlatformMeResponse {
+  async profile(operator: PlatformOperatorRow): Promise<PlatformMeResponse> {
+    // SC3e-2 — the live grants (the API re-checks them on every action).
+    const grants = await this.prisma.platformOperatorPermission.findMany({
+      where: { operatorId: operator.id, revokedAt: null },
+      orderBy: { permission: 'asc' },
+      select: { permission: true },
+    });
     return {
       operator: {
         id: operator.id,
@@ -135,6 +153,11 @@ export class PlatformOperatorsService {
         displayName: operator.displayName,
         status: 'ACTIVE',
       },
+      permissions: grants
+        .map((grant) => grant.permission)
+        .filter((permission): permission is PlatformPermission =>
+          (PLATFORM_PERMISSIONS as readonly string[]).includes(permission),
+        ),
     };
   }
 }

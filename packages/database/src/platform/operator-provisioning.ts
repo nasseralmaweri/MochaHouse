@@ -216,3 +216,153 @@ export function assertConfirmedDatabase(
     );
   }
 }
+
+// --- SC3e-2: operator permissions (owner decision D1) ---------------------------
+// Database-backed permissions, granted and revoked ONLY here (the CLI): no API
+// can grant one, so an operator can never grant itself anything. Least
+// privilege — one permission per kind of billing action; reads need none. A
+// grant or revocation always has a reason and writes a PlatformAuditEvent in
+// the same transaction. A revoked grant is kept (revokedAt): the history of
+// who could do what is never lost.
+
+export const PLATFORM_PERMISSIONS = [
+  "billing.prices.manage",
+  "billing.policy.manage",
+  "billing.accounts.manage",
+  "billing.reconciliation.run",
+  "billing.cases.manage",
+  "billing.schedules.release",
+  "billing.complimentary.manage",
+] as const;
+export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
+
+// The audit reason code of a permission (e.g. BILLING_COMPLIMENTARY_MANAGE).
+export function permissionCode(permission: PlatformPermission): string {
+  return permission.toUpperCase().replace(/\./g, "_");
+}
+
+function parsePermission(raw: string): PlatformPermission {
+  if (!PLATFORM_PERMISSIONS.includes(raw as PlatformPermission)) {
+    throw new OperatorProvisioningError(
+      `--permission must be one of: ${PLATFORM_PERMISSIONS.join(", ")}.`,
+    );
+  }
+  return raw as PlatformPermission;
+}
+
+function parseReason(raw: string | undefined): string {
+  const reason = (raw ?? "").trim();
+  if (
+    reason.length < 10 ||
+    reason.length > 500 ||
+    /[\u0000-\u001f\u007f]/.test(reason)
+  ) {
+    throw new OperatorProvisioningError(
+      "--reason is required (10 to 500 characters, one line).",
+    );
+  }
+  return reason;
+}
+
+// Idempotent: a permission the operator already holds changes nothing and
+// writes no audit event. Only an ACTIVE operator can be granted one.
+export async function grantPlatformPermission(
+  prisma: PrismaClient,
+  input: { email: string; permission: string; reason: string | undefined },
+): Promise<{ operatorId: string; permission: PlatformPermission; changed: boolean }> {
+  const email = normalizeOperatorEmail(input.email);
+  const permission = parsePermission(input.permission);
+  const reason = parseReason(input.reason);
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const operator = await tx.platformOperator.findUnique({
+        where: { email },
+        select: { id: true, status: true },
+      });
+      if (!operator) {
+        throw new OperatorProvisioningError("No operator has that email.");
+      }
+      if (operator.status !== "ACTIVE") {
+        throw new OperatorProvisioningError(
+          "Only an ACTIVE operator can be granted a permission.",
+        );
+      }
+      const live = await tx.platformOperatorPermission.findFirst({
+        where: { operatorId: operator.id, permission, revokedAt: null },
+        select: { id: true },
+      });
+      if (live) return { operatorId: operator.id, permission, changed: false };
+      await tx.platformOperatorPermission.create({
+        data: { operatorId: operator.id, permission, grantReason: reason },
+      });
+      await tx.platformAuditEvent.create({
+        data: {
+          action: "platform.operator.permission_granted",
+          outcome: "SUCCEEDED",
+          reasonCode: permissionCode(permission),
+          targetType: "platform_operator",
+          targetId: operator.id,
+        },
+      });
+      return { operatorId: operator.id, permission, changed: true };
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new OperatorProvisioningError(
+        "That permission was granted concurrently; run permissions to check.",
+      );
+    }
+    throw error;
+  }
+}
+
+// Idempotent: a permission the operator does not hold changes nothing.
+export async function revokePlatformPermission(
+  prisma: PrismaClient,
+  input: { email: string; permission: string; reason: string | undefined },
+): Promise<{ operatorId: string; permission: PlatformPermission; changed: boolean }> {
+  const email = normalizeOperatorEmail(input.email);
+  const permission = parsePermission(input.permission);
+  const reason = parseReason(input.reason);
+  return prisma.$transaction(async (tx) => {
+    const operator = await tx.platformOperator.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+    if (!operator) {
+      throw new OperatorProvisioningError("No operator has that email.");
+    }
+    const { count } = await tx.platformOperatorPermission.updateMany({
+      where: { operatorId: operator.id, permission, revokedAt: null },
+      data: { revokedAt: new Date(), revokeReason: reason },
+    });
+    if (count === 0) return { operatorId: operator.id, permission, changed: false };
+    await tx.platformAuditEvent.create({
+      data: {
+        action: "platform.operator.permission_revoked",
+        outcome: "SUCCEEDED",
+        reasonCode: permissionCode(permission),
+        targetType: "platform_operator",
+        targetId: operator.id,
+      },
+    });
+    return { operatorId: operator.id, permission, changed: true };
+  });
+}
+
+// The live permissions of every operator (or one, by email).
+export async function listPlatformPermissions(
+  prisma: PrismaClient,
+  rawEmail?: string,
+) {
+  const email = rawEmail ? normalizeOperatorEmail(rawEmail) : undefined;
+  return prisma.platformOperatorPermission.findMany({
+    where: { revokedAt: null, ...(email ? { operator: { email } } : {}) },
+    orderBy: [{ operator: { email: "asc" } }, { permission: "asc" }],
+    select: {
+      permission: true,
+      grantedAt: true,
+      operator: { select: { id: true, email: true, status: true } },
+    },
+  });
+}

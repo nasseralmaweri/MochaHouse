@@ -17,6 +17,11 @@ export function BillingOverviewCards({
     { label: "Trial recovery", value: overview.trialRecoveryWindows, hint: "Trial ended; short window to subscribe" },
     { label: "Billing contact problems", value: overview.missingContacts, hint: "No one eligible, or the designated contact's email not verified" },
     { label: "Failed billing emails", value: overview.failedNotifications, hint: "Could not be sent after two attempts" },
+    // SC3e-2
+    { label: "Complimentary", value: overview.complimentary.active, hint: "Active complimentary arrangements" },
+    { label: "Complimentary scheduled", value: overview.complimentary.scheduled, hint: "Start when the paid period ends" },
+    { label: "Complimentary ending soon", value: overview.complimentary.endingSoon, hint: "End within 14 days; then back to billing" },
+    { label: "Complimentary unconfirmed", value: overview.complimentary.attention, hint: "Payment provider cancellation not confirmed yet" },
   ];
   return (
     <section aria-labelledby="billing-overview" className="flex flex-col gap-3">

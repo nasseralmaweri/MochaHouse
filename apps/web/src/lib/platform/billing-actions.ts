@@ -1,10 +1,16 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type {
-  PlatformReconciliationRunResponse,
-  PlatformTenantBillingResponse,
+import {
+  PLATFORM_CASE_OUTCOMES,
+  type PlatformCaseDetailResponse,
+  type PlatformCaseOutcome,
+  type PlatformCaseRecheckResponse,
+  type PlatformComplimentaryView,
+  type PlatformReconciliationRunResponse,
+  type PlatformTenantBillingResponse,
 } from "@mocha-house/contracts";
+import { parseEndDate, validReason } from "./complimentary";
 import { getPlatformSessionToken, platformApiUrl } from "@/lib/platform-auth/session";
 import { isTenantId } from "./tenant-registry";
 import { SUBSCRIPTION_MESSAGES, interpretChange, type ChangeOutcome } from "./subscriptions";
@@ -128,17 +134,127 @@ export async function runReconciliationAction(): Promise<
   return { outcome };
 }
 
-export async function resolveCaseAction(
+const REASON_MESSAGE = "Give a reason of 10 to 500 characters (one line).";
+
+// SC3e-2 — close a case with an outcome and a note (billing.cases.manage).
+export async function closeCaseAction(
   _previous: BillingActionState<{ resolved: true }>,
   form: FormData,
 ): Promise<BillingActionState<{ resolved: true }>> {
   const caseId = form.get("caseId");
+  const outcome = form.get("outcome");
+  const note = validReason(form.get("note"));
   if (typeof caseId !== "string" || !UUID.test(caseId)) {
     return { outcome: { kind: "error", message: SUBSCRIPTION_MESSAGES.notFound } };
   }
-  const outcome = await call<{ resolved: true }>(
+  if (!PLATFORM_CASE_OUTCOMES.includes(outcome as PlatformCaseOutcome)) {
+    return { outcome: { kind: "error", message: "Choose an outcome." } };
+  }
+  if (!note) return { outcome: { kind: "error", message: REASON_MESSAGE } };
+  const result = await call<{ resolved: true }>(
     `/billing/reconciliation-cases/${caseId}/resolve`,
+    { outcome, note },
   );
-  if (outcome.kind === "ok") revalidatePath("/platform/billing");
+  if (result.kind === "ok") {
+    revalidatePath("/platform/billing");
+    revalidatePath(`/platform/billing/cases/${caseId}`);
+  }
+  return { outcome: result };
+}
+
+// SC3e-2 — re-read the payment provider for the case (no provider write).
+export async function recheckCaseAction(
+  _previous: BillingActionState<PlatformCaseRecheckResponse>,
+  form: FormData,
+): Promise<BillingActionState<PlatformCaseRecheckResponse>> {
+  const caseId = form.get("caseId");
+  if (typeof caseId !== "string" || !UUID.test(caseId)) {
+    return { outcome: { kind: "error", message: SUBSCRIPTION_MESSAGES.notFound } };
+  }
+  const outcome = await call<PlatformCaseRecheckResponse>(
+    `/billing/reconciliation-cases/${caseId}/recheck`,
+  );
+  if (outcome.kind === "ok") revalidatePath(`/platform/billing/cases/${caseId}`);
+  return { outcome };
+}
+
+// SC3e-2 — release THE leftover schedule the case shows (never cancelled;
+// billing.schedules.release, a recent sign-in, a reason).
+export async function releaseScheduleAction(
+  _previous: BillingActionState<PlatformCaseDetailResponse>,
+  form: FormData,
+): Promise<BillingActionState<PlatformCaseDetailResponse>> {
+  const caseId = form.get("caseId");
+  const externalScheduleId = form.get("externalScheduleId");
+  const reason = validReason(form.get("reason"));
+  if (typeof caseId !== "string" || !UUID.test(caseId)) {
+    return { outcome: { kind: "error", message: SUBSCRIPTION_MESSAGES.notFound } };
+  }
+  if (typeof externalScheduleId !== "string" || !/^[A-Za-z0-9_]{1,255}$/.test(externalScheduleId)) {
+    return { outcome: { kind: "error", message: "Reload the case to see its schedule." } };
+  }
+  if (!reason) return { outcome: { kind: "error", message: REASON_MESSAGE } };
+  const outcome = await call<PlatformCaseDetailResponse>(
+    `/billing/reconciliation-cases/${caseId}/release-schedule`,
+    { externalScheduleId, reason },
+  );
+  if (outcome.kind === "ok") revalidatePath(`/platform/billing/cases/${caseId}`);
+  return { outcome };
+}
+
+// SC3e-2 — complimentary arrangements (billing.complimentary.manage).
+export async function grantComplimentaryAction(
+  _previous: BillingActionState<PlatformComplimentaryView>,
+  form: FormData,
+): Promise<BillingActionState<PlatformComplimentaryView>> {
+  const tenantId = form.get("tenantId");
+  const planVersionId = form.get("planVersionId");
+  const duration = form.get("duration");
+  const reason = validReason(form.get("reason"));
+  if (typeof tenantId !== "string" || !isTenantId(tenantId)) {
+    return { outcome: { kind: "error", message: SUBSCRIPTION_MESSAGES.notFound } };
+  }
+  if (typeof planVersionId !== "string" || !UUID.test(planVersionId)) {
+    return { outcome: { kind: "error", message: "Choose the plan it gets." } };
+  }
+  const end =
+    duration === "indefinite"
+      ? ({ ok: true, endsAt: null } as const)
+      : duration === "until"
+        ? parseEndDate(form.get("endDate"))
+        : ({ ok: false, message: "Choose indefinite or an end date." } as const);
+  if (!end.ok) return { outcome: { kind: "error", message: end.message } };
+  if (!reason) return { outcome: { kind: "error", message: REASON_MESSAGE } };
+  const outcome = await call<PlatformComplimentaryView>(
+    `/tenants/${encodeURIComponent(tenantId)}/billing/complimentary`,
+    { planVersionId, endsAt: end.endsAt, reason },
+  );
+  if (outcome.kind === "ok") revalidatePath(`/platform/tenants/${tenantId}`);
+  return { outcome };
+}
+
+export async function endComplimentaryAction(
+  _previous: BillingActionState<PlatformComplimentaryView>,
+  form: FormData,
+): Promise<BillingActionState<PlatformComplimentaryView>> {
+  const tenantId = form.get("tenantId");
+  const grantId = form.get("grantId");
+  const step = form.get("step");
+  const reason = validReason(form.get("reason"));
+  if (
+    typeof tenantId !== "string" ||
+    !isTenantId(tenantId) ||
+    typeof grantId !== "string" ||
+    !UUID.test(grantId) ||
+    (step !== "withdraw" && step !== "revoke")
+  ) {
+    return { outcome: { kind: "error", message: SUBSCRIPTION_MESSAGES.notFound } };
+  }
+  if (!reason) return { outcome: { kind: "error", message: REASON_MESSAGE } };
+  const outcome = await call<PlatformComplimentaryView>(
+    `/tenants/${encodeURIComponent(tenantId)}/billing/complimentary/${grantId}/${step}`,
+    { reason },
+  );
+  if (outcome.kind === "ok") revalidatePath(`/platform/tenants/${tenantId}`);
   return { outcome };
 }

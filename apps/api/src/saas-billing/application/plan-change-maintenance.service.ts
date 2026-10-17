@@ -24,6 +24,7 @@ const SYSTEM_ORIGIN = {
   actorPlatformOperatorId: null,
 };
 import { BillingPlanChangeService } from './billing-plan-change.service';
+import { BillingComplimentaryService } from './billing-complimentary.service';
 
 // SC3d-2 — plan change bookkeeping (owner decision D5). Runs whatever the
 // billing enforcement and notification switches are: it never suspends,
@@ -67,6 +68,8 @@ export interface PlanChangeSweepResult {
   reviewed: number;
   // SC3d-3 — scheduled changes applied or closed by the sweep.
   scheduledSettled: number;
+  // SC3e-2 — complimentary grants verified, started, withdrawn or expired.
+  complimentarySettled: number;
 }
 
 @Injectable()
@@ -83,6 +86,7 @@ export class PlanChangeMaintenanceService
     private readonly provider: SaasBillingProvider,
     private readonly lifecycle: BillingLifecycleService,
     private readonly planChanges: BillingPlanChangeService,
+    private readonly complimentary: BillingComplimentaryService,
   ) {}
 
   onModuleInit(): void {
@@ -109,6 +113,7 @@ export class PlanChangeMaintenanceService
       settled: 0,
       reviewed: 0,
       scheduledSettled: 0,
+      complimentarySettled: 0,
     };
     if (this.running) return result;
     this.running = true;
@@ -241,6 +246,12 @@ export class PlanChangeMaintenanceService
           this.logError(change.id, error);
         }
       }
+      // 5. SC3e-2 — complimentary grants: scheduled ones against the
+      //    provider (verified / started / withdrawn), active ones past
+      //    their end (expired).
+      result.complimentarySettled = (
+        await this.complimentary.sweep(now)
+      ).settled;
     } finally {
       this.running = false;
     }

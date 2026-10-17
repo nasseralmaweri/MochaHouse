@@ -45,6 +45,9 @@ export type TenantOwnedModel = Exclude<
   | 'BillingGraceExtension'
   | 'BillingPlanChange'
   | 'BillingInvoice'
+  | 'PlatformOperatorPermission'
+  | 'BillingComplimentaryGrant'
+  | 'BillingReconciliationCaseAction'
   | 'BillingNotification'
 >;
 

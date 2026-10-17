@@ -431,7 +431,29 @@ export class BillingOperationsService {
         orderBy: { kind: 'asc' },
       }),
     ]);
+    const soon = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+    const [compActive, compScheduled, compEndingSoon, compUnverified] =
+      await Promise.all([
+        this.prisma.billingComplimentaryGrant.count({
+          where: { status: 'ACTIVE' },
+        }),
+        this.prisma.billingComplimentaryGrant.count({
+          where: { status: 'SCHEDULED' },
+        }),
+        this.prisma.billingComplimentaryGrant.count({
+          where: { status: 'ACTIVE', endsAt: { lte: soon } },
+        }),
+        this.prisma.billingComplimentaryGrant.count({
+          where: { status: 'SCHEDULED', cancelVerifiedAt: null },
+        }),
+      ]);
     return {
+      complimentary: {
+        active: compActive,
+        scheduled: compScheduled,
+        endingSoon: compEndingSoon,
+        attention: compUnverified,
+      },
       inGrace,
       unpaid,
       billingSuspended,

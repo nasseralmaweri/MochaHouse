@@ -3,14 +3,12 @@
 import { useActionState, useEffect, useRef } from "react";
 import type { PlatformReconciliationRunResponse } from "@mocha-house/contracts";
 import {
-  resolveCaseAction,
   runReconciliationAction,
   type BillingActionState,
 } from "@/lib/platform/billing-actions";
-import { PRIMARY, Refusal, SECONDARY } from "./SubscriptionPanel";
+import { PRIMARY, Refusal } from "./SubscriptionPanel";
 
 const RUN_INITIAL: BillingActionState<PlatformReconciliationRunResponse> = { outcome: null };
-const RESOLVE_INITIAL: BillingActionState<{ resolved: true }> = { outcome: null };
 
 // SC3b — run the review-only reconciliation. It compares our records with the
 // billing provider and opens cases; it never moves money or changes a
@@ -47,25 +45,6 @@ export function RunReconciliation() {
           <Refusal outcome={state.outcome} standalone />
         )}
       </div>
-    </form>
-  );
-}
-
-export function ResolveCase({ caseId }: { caseId: string }) {
-  const [state, formAction, pending] = useActionState(resolveCaseAction, RESOLVE_INITIAL);
-  return (
-    <form
-      action={formAction}
-      onSubmit={(event) => {
-        if (pending) event.preventDefault();
-      }}
-      className="flex flex-col items-start gap-2"
-    >
-      <input type="hidden" name="caseId" value={caseId} />
-      <button type="submit" aria-disabled={pending} aria-busy={pending} className={SECONDARY}>
-        {pending ? "Saving…" : "Mark reviewed"}
-      </button>
-      <Refusal outcome={state.outcome} standalone />
     </form>
   );
 }

@@ -19,6 +19,7 @@ import {
   type ScratchDatabase,
 } from '@mocha-house/testing';
 import { AppModule } from '../app.module';
+import { grantPlatformPermissions } from '../../test/platform-permissions';
 import { PrismaService } from '../prisma/prisma.service';
 import { signInternalDevJwt } from '../internal-auth/infrastructure/internal-dev-jwt';
 import { signPlatformDevJwt } from '../platform-auth/infrastructure/platform-dev-jwt';
@@ -359,6 +360,7 @@ describe('SC3c-3 billing operations (integration, scratch database)', () => {
         },
       })
     ).id;
+    await grantPlatformPermissions(prisma, operatorId);
     const plan = await prisma.subscriptionPlan.create({
       data: { key: `growth-${run}`, name: 'Growth' },
     });
@@ -936,6 +938,7 @@ describe('SC3c-3 billing operations (integration, scratch database)', () => {
     );
     expect(Object.keys(overview).sort()).toEqual([
       'billingSuspended',
+      'complimentary',
       'failedNotifications',
       'graceExceptions',
       'inGrace',

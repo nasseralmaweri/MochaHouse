@@ -50,6 +50,10 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     BillingPlanChange: 'platform',
     // SC3e-1 — the subscription invoice history.
     BillingInvoice: 'platform',
+    // SC3e-2 — operator permissions, complimentary grants, case actions.
+    PlatformOperatorPermission: 'platform',
+    BillingComplimentaryGrant: 'platform',
+    BillingReconciliationCaseAction: 'platform',
     BillingNotification: 'platform',
 
     // Catalog & locations

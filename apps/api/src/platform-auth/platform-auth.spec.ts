@@ -132,6 +132,8 @@ describe('Platform operator authentication (integration)', () => {
         displayName: 'SC1a active',
         status: 'ACTIVE',
       },
+      // SC3e-2 — no permission unless granted (CLI only).
+      permissions: [],
     });
     expect(res.headers['cache-control']).toBe('no-store');
     expect(JSON.stringify(res.body)).not.toContain(row.externalSubject);

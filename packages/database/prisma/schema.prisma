@@ -171,19 +171,24 @@ model PlatformOperator {
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @updatedAt
 
-  auditEventsActed             PlatformAuditEvent[]          @relation("PlatformAuditEventActor")
+  auditEventsActed             PlatformAuditEvent[]              @relation("PlatformAuditEventActor")
   // SC1d — the businesses this operator provisioned.
-  tenantProvisioningOperations TenantProvisioningOperation[] @relation("TenantProvisioningOperationActor")
+  tenantProvisioningOperations TenantProvisioningOperation[]     @relation("TenantProvisioningOperationActor")
   // SC2a — subscription changes this operator made.
-  tenantModuleGrants           TenantModuleGrant[]           @relation("TenantModuleGrantActor")
-  tenantSubscriptionEvents     TenantSubscriptionEvent[]     @relation("TenantSubscriptionEventActor")
+  tenantModuleGrants           TenantModuleGrant[]               @relation("TenantModuleGrantActor")
+  tenantSubscriptionEvents     TenantSubscriptionEvent[]         @relation("TenantSubscriptionEventActor")
   // SC3a — prices and billing-policy changes this operator made.
-  subscriptionPlanPrices       SubscriptionPlanPrice[]       @relation("SubscriptionPlanPriceActor")
-  billingPolicies              BillingPolicy[]               @relation("BillingPolicyActor")
+  subscriptionPlanPrices       SubscriptionPlanPrice[]           @relation("SubscriptionPlanPriceActor")
+  billingPolicies              BillingPolicy[]                   @relation("BillingPolicyActor")
   // SC3b — reconciliation cases this operator resolved.
-  billingReconciliationCases   BillingReconciliationCase[]   @relation("BillingReconciliationCaseResolver")
-  billingGraceExtensions       BillingGraceExtension[]       @relation("BillingGraceExtensionActor")
-  billingPlanChanges           BillingPlanChange[]           @relation("BillingPlanChangeActor")
+  billingReconciliationCases   BillingReconciliationCase[]       @relation("BillingReconciliationCaseResolver")
+  billingGraceExtensions       BillingGraceExtension[]           @relation("BillingGraceExtensionActor")
+  billingPlanChanges           BillingPlanChange[]               @relation("BillingPlanChangeActor")
+  // SC3e-2 — permissions, complimentary grants and review-case actions.
+  permissions                  PlatformOperatorPermission[]      @relation("PlatformOperatorPermissionHolder")
+  complimentaryGranted         BillingComplimentaryGrant[]       @relation("BillingComplimentaryGrantGrantedBy")
+  complimentaryFinished        BillingComplimentaryGrant[]       @relation("BillingComplimentaryGrantFinishedBy")
+  billingCaseActions           BillingReconciliationCaseAction[] @relation("BillingCaseActionActor")
 
   @@unique([externalProvider, externalSubject])
 }
@@ -275,6 +280,12 @@ enum TenantSubscriptionEventType {
   GRACE_EXTENDED
   GRACE_EXCEPTION_GRANTED
   GRACE_EXCEPTION_EXPIRED
+  // SC3e-2 — a complimentary grant was scheduled (the paid period ends
+  // first), started, withdrawn before it started, or ended.
+  COMPLIMENTARY_SCHEDULED
+  COMPLIMENTARY_STARTED
+  COMPLIMENTARY_WITHDRAWN
+  COMPLIMENTARY_ENDED
 }
 
 // SC3a — who caused a subscription history entry.
@@ -345,13 +356,16 @@ model SubscriptionPlanVersion {
   createdAt   DateTime                      @default(now())
   updatedAt   DateTime                      @updatedAt
 
-  plan                 SubscriptionPlan          @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  plan                 SubscriptionPlan            @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   subscriptions        TenantSubscription[]
-  pendingSubscriptions TenantSubscription[]      @relation("TenantSubscriptionPendingPlanVersion")
-  planChangesFrom      BillingPlanChange[]       @relation("BillingPlanChangeFromVersion")
-  planChangesTo        BillingPlanChange[]       @relation("BillingPlanChangeToVersion")
-  eventsFrom           TenantSubscriptionEvent[] @relation("TenantSubscriptionEventFrom")
-  eventsTo             TenantSubscriptionEvent[] @relation("TenantSubscriptionEventTo")
+  pendingSubscriptions TenantSubscription[]        @relation("TenantSubscriptionPendingPlanVersion")
+  planChangesFrom      BillingPlanChange[]         @relation("BillingPlanChangeFromVersion")
+  planChangesTo        BillingPlanChange[]         @relation("BillingPlanChangeToVersion")
+  eventsFrom           TenantSubscriptionEvent[]   @relation("TenantSubscriptionEventFrom")
+  eventsTo             TenantSubscriptionEvent[]   @relation("TenantSubscriptionEventTo")
+  // SC3e-2 — complimentary grants on this version / restoring from it.
+  complimentaryGrants  BillingComplimentaryGrant[] @relation("BillingComplimentaryGrantPlan")
+  complimentaryRestore BillingComplimentaryGrant[] @relation("BillingComplimentaryGrantPreviousPlan")
 
   @@unique([planId, version])
   @@index([status])
@@ -424,6 +438,8 @@ model TenantSubscription {
   planChanges          BillingPlanChange[]
   // SC3e-1 — the provider invoices of this subscription (history).
   invoices             BillingInvoice[]
+  // SC3e-2 — complimentary grants (current and past).
+  complimentaryGrants  BillingComplimentaryGrant[]
   billingEvents        BillingProviderEvent[]
   checkoutSessions     BillingCheckoutSession[]
   reconciliationCases  BillingReconciliationCase[]
@@ -455,14 +471,16 @@ model SubscriptionPlanPrice {
   createdAt               DateTime                    @default(now())
   archivedAt              DateTime?
 
-  plan                  SubscriptionPlan          @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  actorPlatformOperator PlatformOperator?         @relation("SubscriptionPlanPriceActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  subscriptions         TenantSubscription[]      @relation("TenantSubscriptionPlanPrice")
-  pendingSubscriptions  TenantSubscription[]      @relation("TenantSubscriptionPendingPlanPrice")
-  planChangesFrom       BillingPlanChange[]       @relation("BillingPlanChangeFromPrice")
-  planChangesTo         BillingPlanChange[]       @relation("BillingPlanChangeToPrice")
+  plan                  SubscriptionPlan            @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actorPlatformOperator PlatformOperator?           @relation("SubscriptionPlanPriceActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subscriptions         TenantSubscription[]        @relation("TenantSubscriptionPlanPrice")
+  pendingSubscriptions  TenantSubscription[]        @relation("TenantSubscriptionPendingPlanPrice")
+  planChangesFrom       BillingPlanChange[]         @relation("BillingPlanChangeFromPrice")
+  planChangesTo         BillingPlanChange[]         @relation("BillingPlanChangeToPrice")
   events                TenantSubscriptionEvent[]
   checkoutSessions      BillingCheckoutSession[]
+  // SC3e-2 — complimentary grants restoring to this price.
+  complimentaryRestore  BillingComplimentaryGrant[] @relation("BillingComplimentaryGrantPreviousPrice")
 
   @@index([planId, status])
 }
@@ -591,10 +609,14 @@ model BillingReconciliationCase {
   createdAt                    DateTime                        @default(now())
   resolvedAt                   DateTime?
   resolvedByPlatformOperatorId String?
+  // SC3e-2 — how it was closed (an outcome code) and the operator's note.
+  resolutionOutcome            String?
+  resolutionNote               String?
 
-  subscription         TenantSubscription?   @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  billingProviderEvent BillingProviderEvent? @relation(fields: [billingProviderEventId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  resolvedBy           PlatformOperator?     @relation("BillingReconciliationCaseResolver", fields: [resolvedByPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subscription         TenantSubscription?               @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  billingProviderEvent BillingProviderEvent?             @relation(fields: [billingProviderEventId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  resolvedBy           PlatformOperator?                 @relation("BillingReconciliationCaseResolver", fields: [resolvedByPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actions              BillingReconciliationCaseAction[]
 
   @@index([status, createdAt])
   @@index([subscriptionId])
@@ -4015,4 +4037,109 @@ model BillingInvoice {
 
   @@unique([provider, externalInvoiceId])
   @@index([subscriptionId, issuedAt(sort: Desc), id(sort: Desc)])
+}
+
+// SC3e-2 — a permission held by a CENTERIVO platform operator (owner
+// decision D1). Database-backed, re-read on every request. Granted and
+// revoked ONLY by the human-run provisioning CLI (never by an API, so an
+// operator can never grant itself anything), each with a reason and a
+// platform audit event. A revoked grant stays (revokedAt): the history of
+// who could do what is never lost. At most one live grant per operator and
+// permission (partial unique index); never deleted (database trigger).
+model PlatformOperatorPermission {
+  id           String    @id @default(uuid(7))
+  operatorId   String
+  permission   String
+  grantReason  String
+  grantedAt    DateTime  @default(now())
+  revokedAt    DateTime?
+  revokeReason String?
+
+  operator PlatformOperator @relation("PlatformOperatorPermissionHolder", fields: [operatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([operatorId])
+}
+
+// SC3e-2 — a complimentary arrangement for a business (owner decisions
+// D2–D4): an explicitly chosen plan version, indefinite or until `endsAt`.
+//   SCHEDULED  a paying business: its provider subscription is set to cancel
+//              at the end of the period already paid (verified), and the
+//              grant starts only once the provider confirms it ended;
+//   ACTIVE     the business is COMPLIMENTARY on `planVersionId`;
+//   WITHDRAWN  ended before it started (the cancellation undone);
+//   ENDED      expired or revoked: the business returned to billing.
+// What the business was billed as before (`previous*`) is kept so that
+// ending the grant restores it exactly — into payment setup / restart, never
+// a new trial and never an automatic charge. Platform billing data (no
+// tenantId). At most one SCHEDULED or ACTIVE grant per subscription; never
+// deleted; forward-only (database trigger).
+model BillingComplimentaryGrant {
+  id                                 String    @id @default(uuid(7))
+  subscriptionId                     String
+  status                             String
+  planVersionId                      String
+  // null: indefinite.
+  endsAt                             DateTime?
+  reason                             String
+  grantedByOperatorId                String
+  previousStatus                     String
+  previousPlanVersionId              String
+  previousPlanPriceId                String
+  previousBillingProvider            String
+  previousExternalCustomerId         String
+  previousExternalSubscriptionId     String?
+  previousTrialStartedAt             DateTime?
+  previousTrialEndsAt                DateTime?
+  previousTrialRequiresPaymentMethod Boolean?
+  // SCHEDULED: the end of the paid period (when the provider ends it).
+  effectiveAt                        DateTime?
+  // When the provider's scheduled cancellation was verified.
+  cancelVerifiedAt                   DateTime?
+  startedAt                          DateTime?
+  finishedAt                         DateTime?
+  // WITHDRAWN / ENDED: a short code (EXPIRED, REVOKED, WITHDRAWN, …) and
+  // the operator's reason, when an operator did it.
+  finishCode                         String?
+  finishReason                       String?
+  finishedByOperatorId               String?
+  createdAt                          DateTime  @default(now())
+  updatedAt                          DateTime  @updatedAt
+
+  subscription        TenantSubscription      @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  planVersion         SubscriptionPlanVersion @relation("BillingComplimentaryGrantPlan", fields: [planVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  previousPlanVersion SubscriptionPlanVersion @relation("BillingComplimentaryGrantPreviousPlan", fields: [previousPlanVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  previousPlanPrice   SubscriptionPlanPrice   @relation("BillingComplimentaryGrantPreviousPrice", fields: [previousPlanPriceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  grantedBy           PlatformOperator        @relation("BillingComplimentaryGrantGrantedBy", fields: [grantedByOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  finishedBy          PlatformOperator?       @relation("BillingComplimentaryGrantFinishedBy", fields: [finishedByOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([subscriptionId, createdAt])
+  @@index([status, endsAt])
+  @@index([planVersionId])
+  @@index([previousPlanVersionId])
+  @@index([previousPlanPriceId])
+  @@index([grantedByOperatorId])
+  @@index([finishedByOperatorId])
+}
+
+// SC3e-2 — what an operator did on a billing review case (owner decision
+// D5): a Stripe recheck, a verified schedule release, or closing it with an
+// outcome. Append-only (database trigger): never changed or deleted.
+model BillingReconciliationCaseAction {
+  id                      String   @id @default(uuid(7))
+  caseId                  String
+  // RECHECKED | SCHEDULE_RELEASED | CLOSED
+  action                  String
+  // A short result code (e.g. CONSISTENT, RELEASED, FIXED_AT_PROVIDER).
+  result                  String
+  note                    String?
+  // SCHEDULE_RELEASED: the provider schedule that was released.
+  externalScheduleId      String?
+  actorPlatformOperatorId String
+  createdAt               DateTime @default(now())
+
+  case  BillingReconciliationCase @relation(fields: [caseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor PlatformOperator          @relation("BillingCaseActionActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([caseId, createdAt])
+  @@index([actorPlatformOperatorId])
 }
