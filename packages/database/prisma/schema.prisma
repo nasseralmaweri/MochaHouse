@@ -242,31 +242,36 @@ enum OwnerRegistrationStatus {
 }
 
 model OwnerRegistration {
-  id                    String                  @id @default(uuid(7))
+  id                   String                  @id @default(uuid(7))
   // Trimmed and lowercased (CHECK).
-  email                 String                  @unique
-  status                OwnerRegistrationStatus @default(PENDING_VERIFICATION)
+  email                String                  @unique
+  status               OwnerRegistrationStatus @default(PENDING_VERIFICATION)
   // The staff identity provider marker ('cognito-internal' / 'internal-dev').
-  identityProvider      String
-  identitySubject       String?
+  identityProvider     String
+  identitySubject      String?
   // Random, server-only input to the login's initial password (never sent
   // to the browser): see owner-registration.service.ts.
-  initialPasswordNonce  String
+  initialPasswordNonce String
   // Codes sent in the current 24-hour window, and verification attempts
   // against the current code.
-  codesSent             Int                     @default(0)
-  codeWindowStartedAt   DateTime                @default(now())
-  verificationAttempts  Int                     @default(0)
+  codesSent            Int                     @default(0)
+  codeWindowStartedAt  DateTime                @default(now())
+  verificationAttempts Int                     @default(0)
   // A code is accepted only until then (renewed when a code is sent).
-  expiresAt             DateTime
+  expiresAt            DateTime
   // Set when VERIFIED (CHECK).
-  displayName           String?
-  termsVersion          String?
-  privacyVersion        String?
-  legalAcceptedAt       DateTime?
-  verifiedAt            DateTime?
-  createdAt             DateTime                @default(now())
-  updatedAt             DateTime                @updatedAt
+  displayName          String?
+  termsVersion         String?
+  privacyVersion       String?
+  legalAcceptedAt      DateTime?
+  verifiedAt           DateTime?
+  // SC4b — the ONE business this owner created themselves (a plain value,
+  // never a foreign key, like TenantProvisioningOperation). Set once, with
+  // the business, in its provisioning transaction; never changes.
+  provisionedTenantId  String?                 @unique
+  provisionedAt        DateTime?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
 
   @@unique([identityProvider, identitySubject])
   @@index([createdAt])
@@ -358,6 +363,8 @@ enum TenantSubscriptionEventSource {
   OPERATOR
   BILLING_PROVIDER
   SYSTEM
+  // SC4b — the business owner, through self-service provisioning.
+  OWNER
 }
 
 // SC3a — COMPLIMENTARY: never billed (Founding businesses, owner decision
@@ -394,16 +401,19 @@ enum BillingProviderEventStatus {
 }
 
 model SubscriptionPlan {
-  id                String   @id @default(uuid(7))
+  id                   String   @id @default(uuid(7))
   // Stable identifier, e.g. "founding" (lowercase words, single hyphens).
-  key               String   @unique
-  name              String
-  description       String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  key                  String   @unique
+  name                 String
+  description          String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
   // SC3b — the billing provider's product for this plan (set once, when the
   // plan's first price is synced).
-  externalProductId String?  @unique
+  externalProductId    String?  @unique
+  // SC4b — offered to business owners creating a business themselves
+  // (owner decision D3). Never the Founding plan (CHECK).
+  selfServiceAvailable Boolean  @default(false)
 
   versions SubscriptionPlanVersion[]
   prices   SubscriptionPlanPrice[]

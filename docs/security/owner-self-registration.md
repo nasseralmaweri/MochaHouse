@@ -110,12 +110,57 @@ Until all of this is in place, keep `SELF_SERVICE_REGISTRATION_ENABLED` off.
   still requires that mailbox's code. This is why the trigger is mandatory.
 - **Quota exhaustion.** The global daily quota is a circuit breaker: starts for made-up addresses from several IPs (20 per IP per day) can use it up and pause registration for everyone for up to 24 h. Five starts for one address use up that address's code allowance for 24 h. A CAPTCHA on `start` (deferred, D6) is the fix if this is abused.
 - Response timing differs slightly between email states (for example, `complete` for an address whose login already existed answers faster), which can reveal whether a staff login exists for an address.
-- If the API stops between creating the login and recording its subject (a
-  few milliseconds), that email cannot finish registering until an operator
-  clears it.
 - Staff-pool password reset for owners is not part of SC4a.
+
+Resolved in SC4b: an interruption between creating the login and recording
+its subject no longer leaves the email stuck. The next start or completion
+recognises the login as ours only by signing in with the server-only initial
+password, and records its subject from that real sign-in; anyone else's
+login is never touched.
+
+## SC4b — the owner creates their business
+
+After registering, the owner signs in. A verified self-registered owner with
+no business gets a **restricted onboarding session** (B2): its own HttpOnly
+cookie, never read by `/admin`, admitted by the API only to
+`GET /api/v1/internal/onboarding` and `POST /api/v1/internal/onboarding/business`
+(`InternalIdentityGuard`: a verified login, no business, no staff row, no
+permissions). Operator-created staff logins have no registration and are
+never eligible (B4). The routes are 404 while registration is off.
+
+Creating the business (one `TenantProvisioningService` transaction, B3):
+the business (ACTIVE, automatic slug), its built-in roles, the owner bound
+to **their own login by subject** (never by email), the billing contact,
+history with source `OWNER`, a `platform.tenant.self_provisioned` audit event
+naming the login (no operator anywhere), and `OwnerRegistration.provisionedTenantId`
+— unique and immutable, so one business per owner; retries and concurrent
+requests return the same business.
+
+**Plan and price (B1).** Only plans an operator marked "offered for
+self-service" (never Founding), at their newest published version and ACTIVE
+prices. The owner's request carries the plan version, price, interval,
+currency and amount they saw; any difference is refused (409) — never
+substituted.
+
+**Payment setup pending (B1).** The subscription is `BILLED` at that price
+with no billing-provider customer yet (the narrowest relaxation of
+`TenantSubscription_billed_check`: exactly this state, nothing authorized,
+started or owed). Until the provider verifies billing or a trial, the
+business has **core only** — no plan modules and no operator add-ons (kept, not
+deleted; they apply again once billing is verified) — and **no customer
+sales** (checkout refuses with `SALES_NOT_AVAILABLE`), whatever the billing
+enforcement switch says. After provisioning, the web app moves the owner to
+a normal session only once the API admits the login to that business
+(`GET /internal/me`). Operator-created or operator-billed businesses keep the
+existing rules. Payment setup itself opens with SC4c.
+
+Operators offer or withdraw a plan for self-service in the Platform Console
+(Plans), audited as `platform.plan.self_service_changed`.
 
 ## Rollback
 
 `packages/database/prisma/rollbacks/20261106090000_owner_registration.down.sql`
 (manual, refuses while any registration exists).
+`packages/database/prisma/rollbacks/20261107090000_self_service_provisioning.down.sql`
+(manual, SC4b; refuses while any self-service business, pending subscription,
+owner history or offered plan exists; run before the SC4a rollback).

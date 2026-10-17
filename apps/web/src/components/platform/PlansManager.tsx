@@ -10,6 +10,7 @@ import {
 import { platformSignOutAction } from "@/lib/platform-auth/actions";
 import {
   createPlanAction,
+  planSelfServiceAction,
   planVersionAction,
   type ActionState,
 } from "@/lib/platform/subscription-actions";
@@ -360,6 +361,65 @@ function NewVersion({ plan }: { plan: PlatformPlan }) {
   );
 }
 
+// SC4b — whether owners creating a business themselves may choose this plan
+// (its newest published version, at its active prices). Never Founding.
+function SelfService({ plan }: { plan: PlatformPlan }) {
+  const [state, formAction, pending] = useActionState(planSelfServiceAction, INITIAL);
+  // Offering needs a confirmation: owners will see and choose the plan.
+  const [confirming, setConfirming] = useState(false);
+  const statusId = useId();
+  if (plan.key === "founding") return null;
+  const offering = !plan.selfServiceAvailable;
+  return (
+    <form
+      action={formAction}
+      onSubmit={(event) => {
+        if (pending) event.preventDefault();
+        setConfirming(false);
+      }}
+      className="flex flex-col items-start gap-2"
+    >
+      <input type="hidden" name="planId" value={plan.id} />
+      <input type="hidden" name="available" value={offering ? "true" : "false"} />
+      <p id={statusId} className="text-sm text-text-secondary">
+        {plan.selfServiceAvailable
+          ? "Offered to owners creating a business themselves."
+          : "Not offered to owners creating a business themselves."}
+      </p>
+      <Outcome state={state} />
+      {offering && confirming ? (
+        <div role="group" aria-label="Confirm offering" className="flex flex-col items-start gap-2">
+          <p className="text-sm text-text-primary">
+            Owners creating a business will see this plan&apos;s newest published version and its
+            active prices, and can choose it.
+          </p>
+          <div className="flex gap-2">
+            <button type="submit" aria-disabled={pending} className={SECONDARY}>
+              {pending ? "Saving…" : "Yes, offer it"}
+            </button>
+            <button type="button" onClick={() => setConfirming(false)} className={SECONDARY}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : offering ? (
+        <button
+          type="button"
+          aria-describedby={statusId}
+          onClick={() => setConfirming(true)}
+          className={SECONDARY}
+        >
+          Offer for self-service
+        </button>
+      ) : (
+        <button type="submit" aria-describedby={statusId} aria-disabled={pending} className={SECONDARY}>
+          {pending ? "Saving…" : "Stop offering for self-service"}
+        </button>
+      )}
+    </form>
+  );
+}
+
 export function PlansManager({ plans }: { plans: readonly PlatformPlan[] }) {
   return (
     <div className="flex flex-col gap-6">
@@ -384,6 +444,7 @@ export function PlansManager({ plans }: { plans: readonly PlatformPlan[] }) {
             ))}
           </ul>
           {plan.versions.some((v) => v.status === "DRAFT") ? null : <NewVersion plan={plan} />}
+          <SelfService plan={plan} />
         </section>
       ))}
     </div>

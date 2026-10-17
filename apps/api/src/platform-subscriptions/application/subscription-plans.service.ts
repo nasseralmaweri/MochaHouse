@@ -6,6 +6,7 @@ import {
 import {
   PLATFORM_PLAN_DRAFT_EXISTS,
   PLATFORM_PLAN_KEY_TAKEN,
+  PLATFORM_PLAN_NOT_SELF_SERVICE,
   PLATFORM_PLAN_VERSION_NOT_DRAFT,
   PLATFORM_PLAN_VERSION_NOT_PUBLISHED,
   isOptionalModuleKey,
@@ -77,6 +78,7 @@ export function toPlan(row: PlanRow): PlatformPlan {
     key: row.key,
     name: row.name,
     description: row.description,
+    selfServiceAvailable: row.selfServiceAvailable,
     versions: row.versions.map((version) => ({
       id: version.id,
       version: version.version,
@@ -278,6 +280,39 @@ export class SubscriptionPlansService {
         requestReference,
       );
       return toPlan(await this.load(tx, planId));
+    });
+  }
+
+  // SC4b — offer (or stop offering) the plan to owners creating a business
+  // themselves (D3). Never the Founding plan (also a database CHECK).
+  // Businesses already on the plan are unaffected either way.
+  async setSelfService(
+    planId: string,
+    available: boolean,
+    operator: PlatformOperatorRow,
+    requestReference: string | undefined,
+  ): Promise<PlatformPlan> {
+    return runSerializable(this.prisma, async (tx) => {
+      const plan = await this.load(tx, planId);
+      if (available && plan.key === 'founding') {
+        throw conflict(
+          PLATFORM_PLAN_NOT_SELF_SERVICE,
+          'The Founding plan cannot be offered to new businesses.',
+        );
+      }
+      if (plan.selfServiceAvailable === available) return toPlan(plan);
+      await tx.subscriptionPlan.update({
+        where: { id: plan.id },
+        data: { selfServiceAvailable: available },
+      });
+      await this.audit(
+        tx,
+        PLATFORM_AUDIT_ACTIONS.planSelfServiceChanged,
+        operator,
+        plan.id,
+        requestReference,
+      );
+      return toPlan(await this.load(tx, plan.id));
     });
   }
 

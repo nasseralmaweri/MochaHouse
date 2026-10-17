@@ -270,12 +270,15 @@ const APPROVED_PLATFORM_TENANT_RELATIONS: Readonly<
 //   - PlatformAuditEvent.targetId: which business an operator's action was
 //     about (targetType 'tenant');
 //   - TenantProvisioningOperation.provisionedTenantId: the business one
-//     provisioning operation created (idempotent replay).
+//     provisioning operation created (idempotent replay);
+//   - OwnerRegistration.provisionedTenantId (SC4b): the ONE business its
+//     owner created (unique, immutable; one business per owner).
 const APPROVED_PLATFORM_BUSINESS_POINTERS: Readonly<
   Record<string, readonly string[]>
 > = {
   PlatformAuditEvent: ['targetId'],
   TenantProvisioningOperation: ['provisionedTenantId'],
+  OwnerRegistration: ['provisionedTenantId'],
 };
 // SC1d — PlatformAuditEvent target types (platform audit; distinct from the
 // tenant audit's InternalAuditEvent targets classified below).

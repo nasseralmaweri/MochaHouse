@@ -174,6 +174,8 @@ export function billingSummary(row: SubscriptionView): BusinessBillingSummary {
       row.subscriberTenant.suspensionReason === 'BILLING',
     cancelAtPeriodEnd: row.cancelAtPeriodEnd,
     paymentMethodOnFile: row.recurringPaymentAuthorizedAt !== null,
+    paymentSetupOpensSoon:
+      row.billingMode === 'BILLED' && row.billingProvider === null,
     paymentSetup: paymentSetupSummary(
       row,
       row.planVersion.plan.key,

@@ -18,6 +18,7 @@ const plan = (overrides: Partial<PlatformPlan> = {}): PlatformPlan => ({
   key: "growth",
   name: "Growth",
   description: null,
+  selfServiceAvailable: false,
   versions: [
     { id: "v3", version: 3, status: "DRAFT", moduleKeys: ["crm"], publishedAt: null, retiredAt: null, subscriberCount: 0 },
     { id: "v2", version: 2, status: "PUBLISHED", moduleKeys: ["crm", "loyalty"], publishedAt: "x", retiredAt: null, subscriberCount: 4 },

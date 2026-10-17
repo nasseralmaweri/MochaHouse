@@ -22,5 +22,7 @@ import { RateLimitModule } from '../rate-limit/rate-limit.module';
     TenantProvisioningService,
     TenantLifecycleService,
   ],
+  // SC4b — owner self-service provisioning goes through the same ONE writer.
+  exports: [TenantProvisioningService],
 })
 export class PlatformTenantsModule {}

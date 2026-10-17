@@ -268,7 +268,11 @@ describe('SC2a plans, subscriptions and entitlements (integration, scratch datab
 
   it('a business with NO subscription has core only — the admin API refuses other modules with MODULE_NOT_ENTITLED, retained permissions excepted', async () => {
     const view = await me('biz', BIZ);
-    expect(view.entitlements).toEqual({ modules: ['core'], planName: null });
+    expect(view.entitlements).toEqual({
+      modules: ['core'],
+      planName: null,
+      paymentSetupPending: false,
+    });
     expect(view.authorization.permissions).not.toContain('customers.view');
     expect(view.authorization.permissions).toEqual(
       expect.arrayContaining([

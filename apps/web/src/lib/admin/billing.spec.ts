@@ -33,6 +33,7 @@ const summary = (over: Partial<BusinessBillingSummary> = {}): BusinessBillingSum
   suspendedForBilling: false,
   cancelAtPeriodEnd: false,
   paymentMethodOnFile: false,
+  paymentSetupOpensSoon: false,
   paymentSetup: { required: true, since: "2026-10-01T00:00:00.000Z", deadline: null, expired: false },
   ...over,
 });

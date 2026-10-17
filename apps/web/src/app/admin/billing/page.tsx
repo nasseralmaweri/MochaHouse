@@ -138,7 +138,9 @@ export default async function AdminBillingPage({
           </div>
           {billing.price ? (
             <div>
-              <dt className="text-text-secondary">Price</dt>
+              <dt className="text-text-secondary">
+                {billing.state === "AWAITING_SETUP" ? "Price after payment setup" : "Price"}
+              </dt>
               <dd className="font-medium text-text-primary">
                 {formatMinorUnits(billing.price.amountMinorUnits, billing.price.currency)}
                 {billing.price.interval === "MONTH" ? " per month" : " per year"}
@@ -180,7 +182,7 @@ export default async function AdminBillingPage({
         ) : null}
         {canSetUpPayment && !confirming ? (
           <SetUpPaymentForm />
-        ) : billing.state === "AWAITING_SETUP" && !confirming ? (
+        ) : billing.paymentSetupOpensSoon ? null : billing.state === "AWAITING_SETUP" && !confirming ? (
           <p className="text-sm text-text-secondary">{BILLING_MESSAGES.forbidden}</p>
         ) : null}
         {canRestartSubscription && !confirming ? <BillingActionForm kind="restart" /> : null}

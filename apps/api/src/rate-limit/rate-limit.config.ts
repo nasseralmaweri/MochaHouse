@@ -74,7 +74,9 @@ export type PolicyName =
   // SC4a — business owner self-service registration (no tenant: the tenant
   // part of the key is the fixed "none").
   | 'owner-registration'
-  | 'owner-registration-verification';
+  | 'owner-registration-verification'
+  // SC4b — a verified owner creating their business.
+  | 'owner-onboarding';
 
 interface ScopeDefault {
   name: string;
@@ -432,6 +434,14 @@ const DEFAULTS: Record<PolicyName, PolicyDefault> = {
         limit: 30,
         windowSeconds: HOUR,
       },
+    ],
+  },
+  // SC4b — creating a business (after InternalIdentityGuard: a verified
+  // owner, at most one business each). Far above real use; caps a runaway
+  // client.
+  'owner-onboarding': {
+    scopes: [
+      { name: 'ip', key: ['tenant', 'ip'], limit: 20, windowSeconds: HOUR },
     ],
   },
 };

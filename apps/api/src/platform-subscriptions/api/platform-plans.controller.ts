@@ -142,4 +142,27 @@ export class PlatformPlansController {
       request.requestId,
     );
   }
+
+  // SC4b — offer the plan to owners creating a business themselves.
+  @UseGuards(RateLimitGuard)
+  @RateLimit('platform-lifecycle')
+  @Header('Cache-Control', 'no-store')
+  @Put(':planId/self-service')
+  setSelfService(
+    @Param('planId') planId: string,
+    @Body() body: unknown,
+    @Req() request: PlatformAuthenticatedRequest,
+  ): Promise<PlatformPlan> {
+    assertRecentSignIn(request.platformIdentity);
+    const available = (body as { available?: unknown } | null)?.available;
+    if (typeof available !== 'boolean') {
+      throw new BadRequestException('available must be true or false.');
+    }
+    return this.plans.setSelfService(
+      planId,
+      available,
+      request.platformOperator!,
+      request.requestId,
+    );
+  }
 }

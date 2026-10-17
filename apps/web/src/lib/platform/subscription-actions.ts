@@ -106,6 +106,25 @@ export async function planVersionAction(
   return refresh(outcome, "/platform/plans");
 }
 
+// SC4b — offer (or stop offering) a plan to owners creating a business
+// themselves. The API refuses the Founding plan.
+export async function planSelfServiceAction(
+  _previous: ActionState<PlatformPlan>,
+  form: FormData,
+): Promise<ActionState<PlatformPlan>> {
+  const planId = text(form, "planId");
+  const available = text(form, "available");
+  if (!UUID.test(planId) || (available !== "true" && available !== "false")) {
+    return { outcome: { kind: "error", message: SUBSCRIPTION_MESSAGES.notFound } };
+  }
+  return refresh(
+    await call<PlatformPlan>("PUT", `/plans/${planId}/self-service`, {
+      available: available === "true",
+    }),
+    "/platform/plans",
+  );
+}
+
 // --- a business's subscription --------------------------------------------
 
 function change(form: FormData): { planVersionId?: string; grant?: OptionalModuleKey; revoke?: OptionalModuleKey } | null {

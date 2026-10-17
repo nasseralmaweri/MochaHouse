@@ -773,6 +773,53 @@ export declare const OWNER_REGISTRATION_INVALID_INPUT = "REGISTRATION_INVALID_IN
 export declare const OWNER_REGISTRATION_WEAK_PASSWORD = "REGISTRATION_WEAK_PASSWORD";
 export declare const OWNER_REGISTRATION_LEGAL_OUTDATED = "REGISTRATION_LEGAL_OUTDATED";
 export declare const OWNER_REGISTRATION_UNAVAILABLE = "REGISTRATION_UNAVAILABLE";
+export interface OwnerOnboardingPlanPrice {
+    planPriceId: string;
+    interval: PlatformBillingInterval;
+    currency: string;
+    amountMinorUnits: number;
+}
+export interface OwnerOnboardingPlanOption {
+    planId: string;
+    planVersionId: string;
+    name: string;
+    description: string | null;
+    modules: SubscriptionModuleKey[];
+    prices: OwnerOnboardingPlanPrice[];
+}
+export type OwnerOnboardingStatus = {
+    status: "BUSINESS_REQUIRED";
+    ownerName: string;
+    email: string;
+    plans: OwnerOnboardingPlanOption[];
+} | {
+    status: "BUSINESS_CREATED";
+    business: {
+        id: string;
+        name: string;
+    };
+};
+export interface OwnerBusinessCreateRequest {
+    businessName: string;
+    planVersionId: string;
+    planPriceId: string;
+    expectedPrice: {
+        interval: PlatformBillingInterval;
+        currency: string;
+        amountMinorUnits: number;
+    };
+}
+export interface OwnerBusinessCreateResponse {
+    business: {
+        id: string;
+        name: string;
+        slug: string;
+    };
+    replayed: boolean;
+}
+export declare const ONBOARDING_NOT_ELIGIBLE = "ONBOARDING_NOT_ELIGIBLE";
+export declare const ONBOARDING_PLAN_UNAVAILABLE = "ONBOARDING_PLAN_UNAVAILABLE";
+export declare const ONBOARDING_PRICE_CHANGED = "ONBOARDING_PRICE_CHANGED";
 export interface InternalUserProfile {
     id: string;
     email: string;
@@ -1017,9 +1064,14 @@ export interface PlatformPlan {
     key: string;
     name: string;
     description: string | null;
+    selfServiceAvailable: boolean;
     versions: PlatformPlanVersion[];
     prices: PlatformPlanPrice[];
 }
+export interface PlatformPlanSelfServiceRequest {
+    available: boolean;
+}
+export declare const PLATFORM_PLAN_NOT_SELF_SERVICE = "PLAN_NOT_SELF_SERVICE";
 export declare const PLATFORM_PRICE_NOT_ACTIVE = "PRICE_NOT_ACTIVE";
 export declare const PLATFORM_NO_MONTHLY_PRICE = "NO_MONTHLY_PRICE";
 export interface PlatformPlanPriceCreateRequest {
@@ -1058,6 +1110,7 @@ export interface BusinessBillingSummary {
     suspendedForBilling: boolean;
     cancelAtPeriodEnd: boolean;
     paymentMethodOnFile: boolean;
+    paymentSetupOpensSoon: boolean;
     paymentSetup: {
         required: boolean;
         since: string | null;
@@ -1679,7 +1732,9 @@ export interface StorefrontFeaturesResponse {
 export interface InternalEntitlementsSummary {
     modules: SubscriptionModuleKey[];
     planName: string | null;
+    paymentSetupPending: boolean;
 }
+export declare const SALES_NOT_AVAILABLE = "SALES_NOT_AVAILABLE";
 export declare const INTERNAL_SCOPE_TYPES: readonly ["CORPORATE", "LOCATION"];
 export type InternalScopeType = (typeof INTERNAL_SCOPE_TYPES)[number];
 export interface InternalPermissionMetadata {

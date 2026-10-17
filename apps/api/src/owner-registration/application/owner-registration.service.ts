@@ -232,17 +232,38 @@ export class OwnerRegistrationService {
     const { email } = registration;
     if (registration.status === 'PENDING_VERIFICATION') {
       if (registration.identitySubject === null) {
-        const created = await provider.createLogin(
-          email,
-          initialLoginPassword(config.secret, registration),
+        const initialPassword = initialLoginPassword(
+          config.secret,
+          registration,
         );
-        // An existing login is never ours to touch.
-        if (created.outcome === 'exists') return false;
-        await this.prisma.ownerRegistration.updateMany({
-          where: { id: registration.id, identitySubject: null },
-          data: { identitySubject: created.subject },
-        });
-        return true;
+        const created = await provider.createLogin(email, initialPassword);
+        if (created.outcome === 'created') {
+          await this.prisma.ownerRegistration.updateMany({
+            where: { id: registration.id, identitySubject: null },
+            data: { identitySubject: created.subject },
+          });
+          return true;
+        }
+        // SC4b — a login with this email exists. Ours only if it still has
+        // our server-only initial password (an earlier attempt created it and
+        // was interrupted before recording its subject); anyone else's is
+        // never touched.
+        const probe = await provider.probeInitialLogin(email, initialPassword);
+        if (probe === 'not-ours') return false;
+        if (probe === 'ours-unconfirmed') {
+          return (await provider.resendSignUpCode(email)).outcome === 'sent';
+        }
+        if (
+          !(await this.recordRecoveredLogin(
+            provider,
+            registration,
+            initialPassword,
+          ))
+        ) {
+          return false;
+        }
+        await this.toPasswordSetup(registration.id);
+        return (await provider.sendPasswordSetupCode(email)).outcome === 'sent';
       }
       const resent = await provider.resendSignUpCode(email);
       if (resent.outcome === 'sent') return true;
@@ -253,6 +274,40 @@ export class OwnerRegistrationService {
     }
     const setup = await provider.sendPasswordSetupCode(email);
     return setup.outcome === 'sent';
+  }
+
+  // SC4b — records the subject of a login this API created but never
+  // recorded: only from a real sign-in with the server-only initial password
+  // (proof the login is ours), with a provider-verified email equal to the
+  // registration's. True when recorded.
+  private async recordRecoveredLogin(
+    provider: OwnerRegistrationProvider,
+    registration: OwnerRegistration,
+    initialPassword: string,
+  ): Promise<boolean> {
+    const login = await provider.loginWithInitialPassword(
+      registration.email,
+      initialPassword,
+    );
+    if (
+      !login ||
+      login.provider !== registration.identityProvider ||
+      !login.emailVerified ||
+      login.email?.trim().toLowerCase() !== registration.email
+    ) {
+      return false;
+    }
+    try {
+      const recorded = await this.prisma.ownerRegistration.updateMany({
+        where: { id: registration.id, identitySubject: null },
+        data: { identitySubject: login.subject },
+      });
+      return recorded.count === 1;
+    } catch (error) {
+      // That login is already another registration's (unique): never ours.
+      if (isUniqueViolation(error)) return false;
+      throw error;
+    }
   }
 
   private async toPasswordSetup(id: string): Promise<void> {
@@ -293,7 +348,6 @@ export class OwnerRegistrationService {
     if (
       !registration ||
       registration.status === 'VERIFIED' ||
-      registration.identitySubject === null ||
       registration.identityProvider !== provider.providerName
     ) {
       throw codeInvalid();
@@ -301,7 +355,42 @@ export class OwnerRegistrationService {
     const status = await this.countAttempt(registration.id);
     if (status === null) throw codeInvalid();
 
-    if (status === 'PENDING_VERIFICATION') {
+    const initialPassword = initialLoginPassword(config.secret, registration);
+    if (registration.identitySubject === null) {
+      // SC4b — recovery: a login created by an interrupted attempt whose
+      // subject was never recorded. Anyone else's login: refused alike.
+      const probe = await provider.probeInitialLogin(
+        input.email,
+        initialPassword,
+      );
+      if (probe === 'not-ours') throw codeInvalid();
+      if (probe === 'ours-confirmed') {
+        // Confirmed earlier: never proof for THIS request.
+        if (
+          await this.recordRecoveredLogin(
+            provider,
+            registration,
+            initialPassword,
+          )
+        ) {
+          await this.toPasswordSetup(registration.id);
+        }
+        throw codeInvalid();
+      }
+      const confirmed = await provider.confirmSignUp(input.email, input.code);
+      if (confirmed.outcome !== 'confirmed') throw codeInvalid();
+      if (
+        !(await this.recordRecoveredLogin(
+          provider,
+          registration,
+          initialPassword,
+        ))
+      ) {
+        throw unavailable();
+      }
+      await this.toPasswordSetup(registration.id);
+      await this.setOwnPassword(provider, input, initialPassword);
+    } else if (status === 'PENDING_VERIFICATION') {
       const confirmed = await provider.confirmSignUp(input.email, input.code);
       if (confirmed.outcome === 'already-confirmed') {
         // Never proof for THIS request: a password-setup code is needed.
@@ -312,17 +401,7 @@ export class OwnerRegistrationService {
       // The mailbox is proven. Recorded first, so an interruption from here
       // on is finished with a password-setup code, never with this one.
       await this.toPasswordSetup(registration.id);
-      const set = await provider.setPassword(
-        input.email,
-        initialLoginPassword(config.secret, registration),
-        input.password,
-      );
-      if (set.outcome === 'invalid-password') {
-        throw weakPassword(
-          'The password was not accepted. Request a new code and choose a stronger password.',
-        );
-      }
-      if (set.outcome !== 'set') throw codeInvalid();
+      await this.setOwnPassword(provider, input, initialPassword);
     } else {
       const set = await provider.confirmPasswordSetup(
         input.email,
@@ -337,7 +416,31 @@ export class OwnerRegistrationService {
       if (set.outcome !== 'set') throw codeInvalid();
     }
 
-    await this.finish(provider, registration, input, requestReference);
+    // Re-read: a recovered login's subject was recorded just now.
+    const current = await this.prisma.ownerRegistration.findUniqueOrThrow({
+      where: { id: registration.id },
+    });
+    await this.finish(provider, current, input, requestReference);
+  }
+
+  // Replaces the initial password with the owner's own, right after the
+  // sign-up code was confirmed in this same request.
+  private async setOwnPassword(
+    provider: OwnerRegistrationProvider,
+    input: CompleteRegistrationInput,
+    initialPassword: string,
+  ): Promise<void> {
+    const set = await provider.setPassword(
+      input.email,
+      initialPassword,
+      input.password,
+    );
+    if (set.outcome === 'invalid-password') {
+      throw weakPassword(
+        'The password was not accepted. Request a new code and choose a stronger password.',
+      );
+    }
+    if (set.outcome !== 'set') throw codeInvalid();
   }
 
   // Counts one completion attempt against the current code, atomically.
@@ -351,7 +454,6 @@ export class OwnerRegistrationService {
       SET "verificationAttempts" = "verificationAttempts" + 1, "updatedAt" = now()
       WHERE "id" = ${id}
         AND "status" <> 'VERIFIED'
-        AND "identitySubject" IS NOT NULL
         AND "verificationAttempts" < ${MAX_VERIFICATION_ATTEMPTS}
         AND "expiresAt" > now()
       RETURNING "status"::text AS status
