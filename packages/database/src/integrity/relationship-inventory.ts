@@ -166,6 +166,7 @@ export const TENANT_MODEL_KEYS: Readonly<
   JobOpening: ['id'],
   Location: ['id'],
   LocationMenu: ['locationId', 'menuId'],
+  LocationOpeningPeriod: ['id'],
   LocationProductAvailabilityOverride: ['locationId', 'menuId', 'productId'],
   LocationProductPriceOverride: ['locationId', 'menuId', 'productId'],
   LoyaltyBonusPromotion: ['id'],
@@ -292,6 +293,19 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     model: 'LocationMenu',
     column: 'menuId',
     target: 'Menu',
+    nullable: false,
+    hasForeignKey: true,
+    onDelete: 'Restrict',
+    tenantEnforced: true,
+  },
+  // SC4d — an opening period belongs to a location of the SAME business
+  // (composite foreign key).
+  {
+    id: 'LocationOpeningPeriod.locationId',
+    kind: 'composite-fk-candidate',
+    model: 'LocationOpeningPeriod',
+    column: 'locationId',
+    target: 'Location',
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
@@ -1378,6 +1392,8 @@ const AUDIT_TARGETS = {
   internal_user: 'InternalUser',
   job_application: 'JobApplication',
   job_opening: 'JobOpening',
+  // SC4d — location.created / profile, opening hours and menu changes.
+  location: 'Location',
   loyalty_bonus_promotion: 'LoyaltyBonusPromotion',
   loyalty_reward: 'LoyaltyReward',
   media_asset: 'MediaAsset',

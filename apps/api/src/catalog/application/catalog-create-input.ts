@@ -32,6 +32,31 @@ export interface AddMenuProductInput {
   isActive: boolean;
 }
 
+// SC4d
+export interface CreateMenuInput {
+  name: string;
+  slug: string | null;
+}
+
+export interface AssignLocationMenuInput {
+  menuId: string;
+}
+
+export function parseCreateMenu(body: unknown): CreateMenuInput {
+  const record = requireObject(body);
+  return {
+    name: parseName(record.name, 'Menu'),
+    slug: parseOptionalSlug(record.slug),
+  };
+}
+
+export function parseAssignLocationMenu(
+  body: unknown,
+): AssignLocationMenuInput {
+  const record = requireObject(body);
+  return { menuId: parseId(record.menuId, 'Choose a menu.') };
+}
+
 export function parseCreateCategory(body: unknown): CreateCategoryInput {
   const record = requireObject(body);
   return {

@@ -65,6 +65,9 @@ export const TENANT_ID_REQUIRED_MODELS: readonly string[] = [
   // SC3c-3 — the business's billing contact: a brand-new model, tenantId
   // required from inception.
   'TenantBillingContact',
+  // SC4d — a location's opening hours: a brand-new model, tenantId
+  // required from inception.
+  'LocationOpeningPeriod',
   // S0D-2E — the internal admin identity/authorization chain. InternalUser
   // and InternalRole have no owning parent (backfilled straight to
   // Tenant #1, like Customer in S0D-2B-1); InternalRolePermission and

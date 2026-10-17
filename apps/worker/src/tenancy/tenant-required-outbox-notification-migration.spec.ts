@@ -88,7 +88,9 @@ const tenantTables = Object.entries(MODEL_TENANCY)
       model !== 'OrderClosure' &&
       model !== 'OrderRefundObligation' &&
       // SC3c-3 added the billing contact after this migration.
-      model !== 'TenantBillingContact',
+      model !== 'TenantBillingContact' &&
+      // SC4d added location opening hours after this migration.
+      model !== 'LocationOpeningPeriod',
   );
 
 const baseUrl = process.env.DATABASE_URL!;

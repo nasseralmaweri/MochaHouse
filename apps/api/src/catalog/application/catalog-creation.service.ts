@@ -8,6 +8,9 @@ import {
   CATALOG_SLUG_MAX_LENGTH,
   slugifyCatalogName,
   type AdminAddMenuProductResponse,
+  type AdminAssignLocationMenuResponse,
+  type AdminCreateMenuResponse,
+  type AdminMenuSummary,
   type AdminCategorySummary,
   type AdminMenuPlacement,
   type AdminProductDetail,
@@ -19,7 +22,9 @@ import type { AuthorizationContext } from '../../internal-auth/authorization/aut
 import { hasNulCharacter } from './catalog-create-input';
 import type {
   AddMenuProductInput,
+  AssignLocationMenuInput,
   CreateCategoryInput,
+  CreateMenuInput,
   CreateProductInput,
 } from './catalog-create-input';
 
@@ -232,6 +237,158 @@ export class CatalogCreationService {
     }
   }
 
+  // SC4d — a business-owned menu. Idempotent by name (case-insensitive): a
+  // menu the business already has with this name is returned unchanged
+  // (`created: false`), so a repeated or double-clicked submission — even
+  // two at once — never makes a second menu. A new menu is active and empty.
+  async createMenu(
+    input: CreateMenuInput,
+    actorInternalUserId: string,
+    authorization: AuthorizationContext,
+    tenant: TenantContext,
+  ): Promise<AdminCreateMenuResponse> {
+    authorization.assertCorporate('catalog.menu.manage');
+    const tenantId = tenant.tenantId;
+
+    const existing = await this.findMenuByName(
+      this.prisma,
+      tenantId,
+      input.name,
+    );
+    if (existing) {
+      return { menu: existing, created: false };
+    }
+
+    try {
+      return await this.withUniqueSlug(
+        input.slug,
+        input.name,
+        'menu',
+        (prefix) => this.takenSlugs('menu', tenantId, prefix),
+        (slug) =>
+          this.prisma.$transaction(async (tx) => {
+            // A concurrent request may have created it since the check
+            // above; its slug then collides and this runs again.
+            const winner = await this.findMenuByName(tx, tenantId, input.name);
+            if (winner) {
+              return { menu: winner, created: false };
+            }
+            const created = await tx.menu.create({
+              data: { tenantId, name: input.name, slug, isActive: true },
+              select: MENU_SUMMARY_SELECT,
+            });
+            await this.audit.recordCatalogMenuCreated(tx, {
+              actorInternalUserId,
+              menuId: created.id,
+              name: created.name,
+              slug: created.slug,
+            });
+            return { menu: created, created: true };
+          }),
+        'A menu already uses that web address.',
+      );
+    } catch (error) {
+      // The slug was taken by a concurrent submission of this same menu.
+      if (error instanceof ConflictException) {
+        const winner = await this.findMenuByName(
+          this.prisma,
+          tenantId,
+          input.name,
+        );
+        if (winner) {
+          return { menu: winner, created: false };
+        }
+      }
+      throw error;
+    }
+  }
+
+  // SC4d — the menu a location sells from. The location and the menu must
+  // both belong to the request's business (another business's id reads as a
+  // missing one; the composite foreign keys are the database backstop). Any
+  // other active menu of the location is turned off for it, so the location
+  // has exactly one — the same single-menu rule the storefront and the Admin
+  // location menu already assume. Repeating the request changes nothing.
+  async assignLocationMenu(
+    locationId: string,
+    input: AssignLocationMenuInput,
+    actorInternalUserId: string,
+    authorization: AuthorizationContext,
+    tenant: TenantContext,
+  ): Promise<AdminAssignLocationMenuResponse> {
+    authorization.assertCorporate('catalog.menu.manage');
+    const tenantId = tenant.tenantId;
+    if (hasNulCharacter(locationId)) {
+      throw new NotFoundException('Location not found.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // Serializes concurrent assignments for this location.
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM "Location"
+         WHERE id = ${locationId} AND "tenantId" = ${tenantId}
+           FOR UPDATE`;
+      if (locked.length === 0) {
+        throw new NotFoundException('Location not found.');
+      }
+      const menu = await tx.menu.findFirst({
+        where: { id: input.menuId, tenantId },
+        select: { id: true, isActive: true },
+      });
+      if (!menu) {
+        throw new BadRequestException('Choose an existing menu.');
+      }
+      if (!menu.isActive) {
+        throw new BadRequestException(
+          'That menu is turned off. Choose an active menu.',
+        );
+      }
+
+      const active = await tx.locationMenu.findMany({
+        where: { tenantId, locationId, isActive: true },
+        select: { menuId: true },
+      });
+      const previousMenuIds = active.map((row) => row.menuId).sort();
+      if (previousMenuIds.length === 1 && previousMenuIds[0] === menu.id) {
+        return { locationId, menuId: menu.id, changed: false };
+      }
+
+      await tx.locationMenu.updateMany({
+        where: {
+          tenantId,
+          locationId,
+          isActive: true,
+          menuId: { not: menu.id },
+        },
+        data: { isActive: false },
+      });
+      await tx.locationMenu.upsert({
+        where: { locationId_menuId: { locationId, menuId: menu.id } },
+        update: { isActive: true },
+        create: { tenantId, locationId, menuId: menu.id, isActive: true },
+      });
+      await this.audit.recordLocationMenuAssigned(tx, {
+        actorInternalUserId,
+        locationId,
+        previousMenuIds,
+        menuId: menu.id,
+      });
+      return { locationId, menuId: menu.id, changed: true };
+    });
+  }
+
+  private findMenuByName(
+    client: Prisma.TransactionClient | PrismaService,
+    tenantId: string,
+    name: string,
+  ): Promise<AdminMenuSummary | null> {
+    return client.menu.findFirst({
+      where: { tenantId, name: { equals: name, mode: 'insensitive' } },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: MENU_SUMMARY_SELECT,
+    });
+  }
+
   private findPlacement(
     menuId: string,
     productId: string,
@@ -257,7 +414,7 @@ export class CatalogCreationService {
   }
 
   private async takenSlugs(
-    model: 'category' | 'product',
+    model: 'category' | 'product' | 'menu',
     tenantId: string,
     prefix: string,
   ): Promise<Set<string>> {
@@ -265,7 +422,12 @@ export class CatalogCreationService {
     const rows =
       model === 'category'
         ? await this.prisma.category.findMany({ where, select: { slug: true } })
-        : await this.prisma.product.findMany({ where, select: { slug: true } });
+        : model === 'product'
+          ? await this.prisma.product.findMany({
+              where,
+              select: { slug: true },
+            })
+          : await this.prisma.menu.findMany({ where, select: { slug: true } });
     return new Set(rows.map((row) => row.slug));
   }
 
@@ -309,6 +471,13 @@ export class CatalogCreationService {
     );
   }
 }
+
+const MENU_SUMMARY_SELECT = {
+  id: true,
+  name: true,
+  slug: true,
+  isActive: true,
+} as const;
 
 const PLACEMENT_SELECT = {
   menuId: true,

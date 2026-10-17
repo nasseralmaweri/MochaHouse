@@ -411,6 +411,7 @@ export class CatalogService {
   async getAdminLocationMenu(
     locationId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ): Promise<AdminLocationMenuResponse> {
     // Resource-level check BEFORE any read — a caller not authorized for
     // this location gets 403, never a 404 that would leak its existence.
@@ -419,12 +420,17 @@ export class CatalogService {
       locationId,
     );
 
+    // SC4d — confined to the request's business: a CORPORATE grant covers
+    // every location of THIS business only, so another business's location
+    // reads exactly like one without a menu.
+    const tenantId = tenant.tenantId;
     const locationMenu = await this.prisma.locationMenu.findFirst({
       where: {
+        tenantId,
         locationId,
         isActive: true,
-        location: { isActive: true },
-        menu: { isActive: true },
+        location: { tenantId, isActive: true },
+        menu: { tenantId, isActive: true },
       },
       orderBy: { menuId: 'asc' },
       include: {
@@ -432,6 +438,7 @@ export class CatalogService {
         menu: {
           include: {
             products: {
+              where: { tenantId },
               include: { product: { include: { category: true } } },
               orderBy: [{ displayOrder: 'asc' }, { productId: 'asc' }],
             },
@@ -449,11 +456,11 @@ export class CatalogService {
     const menuId = locationMenu.menu.id;
     const [priceRows, availabilityRows] = await Promise.all([
       this.prisma.locationProductPriceOverride.findMany({
-        where: { locationId, menuId },
+        where: { tenantId, locationId, menuId },
         select: { productId: true, price: true },
       }),
       this.prisma.locationProductAvailabilityOverride.findMany({
-        where: { locationId, menuId },
+        where: { tenantId, locationId, menuId },
         select: { productId: true, isAvailable: true },
       }),
     ]);
@@ -655,18 +662,15 @@ export class CatalogService {
     menuId: string,
     productId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ) {
     authorization.assertCanActOnLocation('catalog.overrides.manage', locationId);
 
+    // SC4d — only an override of the request's business; another business's
+    // reads as not found and is never deleted.
     const existingOverride =
-      await this.prisma.locationProductPriceOverride.findUnique({
-        where: {
-          locationId_menuId_productId: {
-            locationId,
-            menuId,
-            productId,
-          },
-        },
+      await this.prisma.locationProductPriceOverride.findFirst({
+        where: { tenantId: tenant.tenantId, locationId, menuId, productId },
         select: {
           locationId: true,
           menuId: true,
@@ -795,18 +799,15 @@ export class CatalogService {
     menuId: string,
     productId: string,
     authorization: AuthorizationContext,
+    tenant: TenantContext,
   ) {
     authorization.assertCanActOnLocation('catalog.overrides.manage', locationId);
 
+    // SC4d — only an override of the request's business; another business's
+    // reads as not found and is never deleted.
     const existingOverride =
-      await this.prisma.locationProductAvailabilityOverride.findUnique({
-        where: {
-          locationId_menuId_productId: {
-            locationId,
-            menuId,
-            productId,
-          },
-        },
+      await this.prisma.locationProductAvailabilityOverride.findFirst({
+        where: { tenantId: tenant.tenantId, locationId, menuId, productId },
         select: {
           locationId: true,
           menuId: true,

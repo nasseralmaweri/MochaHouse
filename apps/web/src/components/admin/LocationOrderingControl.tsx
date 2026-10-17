@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { updateLocationDigitalOrderingFromBrowser } from "@/lib/api-client";
+import { orderingNotReadyMessage } from "@/lib/admin/getting-started";
 import { Button } from "./Button";
 import { StatusBadge } from "./StatusBadge";
 
@@ -28,6 +30,8 @@ export function LocationOrderingControl({
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
     text: string;
+    // SC4d — setup steps are still open: link to the checklist.
+    setupLink?: boolean;
   } | null>(null);
 
   // Re-sync if the server sends a new value (e.g. after router.refresh, or
@@ -68,6 +72,14 @@ export function LocationOrderingControl({
       setFeedback({ tone: "error", text: "This location no longer exists." });
       return;
     }
+    if (result.outcome === "not-ready") {
+      setFeedback({
+        tone: "error",
+        text: orderingNotReadyMessage(result.missing),
+        setupLink: true,
+      });
+      return;
+    }
     setFeedback({ tone: "error", text: result.message });
   }
 
@@ -99,6 +111,9 @@ export function LocationOrderingControl({
               variant="secondary"
               onClick={() => setConfirmingOff(false)}
               disabled={pending}
+              // The "Turn off" trigger is replaced by this panel: focus moves
+              // to the safe choice instead of being lost.
+              autoFocus
             >
               Keep it on
             </Button>
@@ -127,7 +142,7 @@ export function LocationOrderingControl({
 
       {feedback ? (
         <p
-          role="status"
+          role={feedback.tone === "error" ? "alert" : "status"}
           className={`text-sm ${
             feedback.tone === "success"
               ? "text-status-success"
@@ -135,6 +150,17 @@ export function LocationOrderingControl({
           }`}
         >
           {feedback.text}
+          {feedback.setupLink ? (
+            <>
+              {" "}
+              <Link
+                href="/admin/getting-started"
+                className="font-medium underline underline-offset-2"
+              >
+                See your setup steps
+              </Link>
+            </>
+          ) : null}
         </p>
       ) : null}
     </div>

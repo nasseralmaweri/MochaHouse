@@ -193,6 +193,63 @@ rules, activation only from verified provider events.
   core only, no add-ons and no sales indefinitely; the existing payment setup
   deadline applies only when enforcement is on.
 
+## SC4d — the first location and getting started
+
+After payment setup (or while it is pending) the owner sets up the business
+from **Getting started** (`/admin/getting-started`, also summarised on the
+Overview page). The checklist is computed from real data on every request —
+there is no progress table: business created; subscription or trial
+authorized (the SC4b/SC4c test); first location; address, time zone and
+phone; opening hours; a menu with at least one product a customer could buy
+(active, shown, available at the location and priced above zero); online
+ordering on. **"Setup complete" is not "publicly live"**: it publishes
+nothing, and the business storefront (SC4f) and the other launch
+requirements are separate.
+
+| Route | Permission | |
+|---|---|---|
+| `POST /api/v1/admin/locations` | `locations.create` (C) | the first location; 409 `LOCATION_LIMIT_REACHED` afterwards |
+| `PUT /api/v1/admin/locations/:id/profile` | `locations.edit` (C) | name, address, ISO country, IANA time zone, phone |
+| `PUT /api/v1/admin/locations/:id/hours` | `locations.edit` (C) | the whole week; needs the time zone first |
+| `POST /api/v1/admin/catalog/menus` | `catalog.menu.manage` (C) | idempotent by name (case-insensitive) |
+| `PUT /api/v1/admin/catalog/locations/:id/menu` | `catalog.menu.manage` (C) | the location's single active menu; idempotent |
+| `GET /api/v1/admin/getting-started` | `locations.view` (C) | the checklist |
+
+- **First location only, race-safe.** Creation locks the business row, so
+  concurrent or repeated submissions create exactly one location. The limit
+  (`SELF_SERVICE_LOCATION_LIMIT`) is a service policy, not a data-model or API
+  restriction: multi-location businesses need no schema change.
+  Operator-provisioned and seeded locations are untouched.
+- **`locations.create`** is new: the built-in administrator (owner) role of
+  every business receives it (migration backfill; new businesses at
+  provisioning). Store managers never hold it.
+- **Online ordering stays OFF** for a new location, set explicitly whatever
+  the column default. For a self-service business, turning it **on** is
+  refused (409 `LOCATION_ORDERING_NOT_READY`, listing the missing steps) until
+  billing is authorized and the location has its profile, opening hours and a
+  sellable menu. Turning it off is always allowed. Operator-provisioned
+  businesses keep the existing behaviour. Customer checkout keeps its own
+  billing and sales checks regardless — no setup action bypasses them.
+- **Opening hours** are saved and shown only. ISO weekdays, minutes after
+  local midnight, closing 24:00 allowed, a closing time earlier than the
+  opening time runs into the next day; overlaps — across midnight and from
+  Sunday night into Monday — are refused by the shared rule (contracts) and
+  the API. Future ordering-hours enforcement must handle time zones and
+  daylight-saving transitions.
+- **Tenant isolation.** Every write takes the business from the
+  authenticated request; another business's location or menu reads as
+  missing (location-scoped checks refuse it up front with 403). Opening
+  periods carry a composite `(tenantId, locationId)` foreign key and the
+  standard tenant-reassignment guard. The Admin location-menu read and the
+  two override deletions now also filter by business in the service
+  (defence in depth; they were already refused by the authorization context).
+- **Audit:** `location.created`, `location.profile_updated`,
+  `location.opening_hours_updated`, `catalog.menu_created`,
+  `location.menu_assigned`.
+- **Not in SC4d:** modifier management — a **first-launch requirement**
+  (restaurants need customizable products); ordering-hours enforcement; more
+  than one location; the business storefront (SC4f).
+
 ## Rollback
 
 `packages/database/prisma/rollbacks/20261106090000_owner_registration.down.sql`
@@ -200,3 +257,8 @@ rules, activation only from verified provider events.
 `packages/database/prisma/rollbacks/20261107090000_self_service_provisioning.down.sql`
 (manual, SC4b; refuses while any self-service business, pending subscription,
 owner history or offered plan exists; run before the SC4a rollback).
+`packages/database/prisma/rollbacks/20261108090000_first_location_setup.down.sql`
+(manual, SC4d; refuses while any location profile detail or opening hours
+exist — so in practice only before any location was created or completed
+through SC4d; removes the `locations.create` grants; run before the SC4b
+rollback).

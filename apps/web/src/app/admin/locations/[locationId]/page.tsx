@@ -1,7 +1,11 @@
 import { redirect } from "next/navigation";
 import { getInternalSession } from "@/lib/internal-auth/session";
-import { getAdminLocation } from "@/lib/internal-auth/admin-locations";
-import { can, canAtLocation } from "@/lib/admin/capabilities";
+import {
+  getAdminGettingStarted,
+  getAdminLocation,
+} from "@/lib/internal-auth/admin-locations";
+import { can, canAtLocation, isCorporateFor } from "@/lib/admin/capabilities";
+import { ORDERING_ON_NOT_LIVE } from "@/lib/admin/getting-started";
 import { AdminPage, AdminSection } from "@/components/admin/AdminPage";
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import {
@@ -15,6 +19,8 @@ import { LocationOrderingControl } from "@/components/admin/LocationOrderingCont
 import { ButtonLink } from "@/components/admin/Button";
 import { BackLink } from "@/components/BackLink";
 import { Card } from "@/components/Card";
+import { addressLines, timeZoneLabel } from "@/lib/admin/location-profile";
+import { openingHoursSummary } from "@/lib/admin/opening-hours";
 
 // Admin Location detail (Milestone 5D-1 read; 5D-2 adds the Online Ordering
 // control and the Edit location action). Server component. Authorization is
@@ -103,6 +109,16 @@ export default async function AdminLocationDetailPage({
     "catalog.overrides.manage",
     location.id,
   );
+  // SC4d — choosing the location's menu changes menu composition, a
+  // corporate task (`catalog.menu.manage`, plus `catalog.view` to list menus).
+  const canChooseMenu =
+    can(capabilities, "catalog.menu.manage") && can(capabilities, "catalog.view");
+  const address = addressLines(location.profile);
+  // SC4d — whether customers can reach this business online yet (corporate
+  // viewers; for anyone else the note is simply not shown).
+  const setup = isCorporateFor(capabilities, "locations.view")
+    ? await getAdminGettingStarted()
+    : null;
 
   return (
     <AdminPage>
@@ -135,12 +151,15 @@ export default async function AdminLocationDetailPage({
             </div>
             <p className="text-sm text-text-secondary">
               {location.isActive
-                ? "Customers can find this location in the Mocha House app."
-                : "This location is hidden from customers in the Mocha House app."}
+                ? "Customers can find this location when they order online."
+                : "This location is hidden from customers."}
             </p>
           </div>
 
-          <div className="border-t border-border-default pt-4">
+          <div
+            id="online-ordering"
+            className="scroll-mt-24 border-t border-border-default pt-4"
+          >
             <div className="mb-1.5 text-sm font-medium text-text-primary">
               Online ordering
             </div>
@@ -164,7 +183,81 @@ export default async function AdminLocationDetailPage({
                 </span>
               </div>
             )}
+            {location.isDigitalOrderingEnabled && setup && !setup.storefrontLive ? (
+              <p className="mt-2 text-sm text-text-secondary">
+                {ORDERING_ON_NOT_LIVE}
+              </p>
+            ) : null}
           </div>
+        </Card>
+      </AdminSection>
+
+      <AdminSection
+        title="Details"
+        description="Address, time zone and how customers can reach this location."
+      >
+        <Card className="flex flex-col gap-3">
+          {address.length > 0 || location.profile.phone || location.profile.timeZone ? (
+            <dl className="grid gap-3 text-sm sm:grid-cols-[10rem_1fr]">
+              <dt className="text-text-secondary">Address</dt>
+              <dd className="text-text-primary">
+                {address.length > 0
+                  ? address.map((line) => <div key={line}>{line}</div>)
+                  : "Not set"}
+              </dd>
+              <dt className="text-text-secondary">Phone</dt>
+              <dd className="text-text-primary">
+                {location.profile.phone ?? "Not set"}
+              </dd>
+              <dt className="text-text-secondary">Time zone</dt>
+              <dd className="text-text-primary">
+                {location.profile.timeZone
+                  ? timeZoneLabel(location.profile.timeZone)
+                  : "Not set"}
+              </dd>
+            </dl>
+          ) : (
+            <p className="text-sm text-text-secondary">
+              No address, phone or time zone yet.
+            </p>
+          )}
+          {canEdit ? (
+            <div>
+              <ButtonLink href={`/admin/locations/${location.id}/profile`}>
+                {address.length > 0 ? "Edit details" : "Add details"}
+              </ButtonLink>
+            </div>
+          ) : null}
+        </Card>
+      </AdminSection>
+
+      <AdminSection
+        title="Opening hours"
+        description={
+          location.profile.timeZone
+            ? `In ${timeZoneLabel(location.profile.timeZone)} time. Shown for information — online ordering doesn't follow these hours yet.`
+            : "Shown for information — online ordering doesn't follow these hours yet."
+        }
+      >
+        <Card className="flex flex-col gap-3">
+          {location.openingHours.isSet ? (
+            <ul className="flex flex-col gap-1 text-sm text-text-primary">
+              {openingHoursSummary(location.openingHours).map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-text-secondary">
+              Opening hours aren&apos;t set yet.
+            </p>
+          )}
+          {canEdit ? (
+            <div>
+              <ButtonLink href={`/admin/locations/${location.id}/hours`}>
+                {location.openingHours.isSet ? "Edit hours" : "Set hours"}
+              </ButtonLink>
+            </div>
+          ) : null}
         </Card>
       </AdminSection>
 
@@ -183,19 +276,36 @@ export default async function AdminLocationDetailPage({
                 {location.assignedMenu.productCount === 1 ? "item" : "items"}
               </span>
             </div>
-            {canManagePricing ? (
-              <ButtonLink
-                href={`/admin/locations/${location.id}/menu`}
-                variant="secondary"
-              >
-                Manage menu &amp; pricing
-              </ButtonLink>
-            ) : null}
+            <div className="flex flex-wrap gap-2">
+              {canManagePricing ? (
+                <ButtonLink
+                  href={`/admin/locations/${location.id}/menu`}
+                  variant="secondary"
+                >
+                  Manage menu &amp; pricing
+                </ButtonLink>
+              ) : null}
+              {canChooseMenu ? (
+                <ButtonLink
+                  href={`/admin/locations/${location.id}/choose-menu`}
+                  variant="secondary"
+                >
+                  Change menu
+                </ButtonLink>
+              ) : null}
+            </div>
           </Card>
         ) : (
           <AdminEmptyState
             title="No menu assigned"
             description="This location has no menu yet, so customers can't order from it online."
+            action={
+              canChooseMenu ? (
+                <ButtonLink href={`/admin/locations/${location.id}/choose-menu`}>
+                  Choose a menu
+                </ButtonLink>
+              ) : undefined
+            }
           />
         )}
       </AdminSection>

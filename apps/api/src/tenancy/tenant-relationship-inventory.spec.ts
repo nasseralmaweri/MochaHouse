@@ -465,7 +465,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(relationsBetweenBusinessRecords).toHaveLength(97);
+    expect(relationsBetweenBusinessRecords).toHaveLength(98);
     expect(
       relationsBetweenBusinessRecords
         .filter((r) => !isTenantEnforced(r))
@@ -522,6 +522,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'JobOpening.locationId',
       'LocationMenu.locationId',
       'LocationMenu.menuId',
+      'LocationOpeningPeriod.locationId',
       'LocationProductAvailabilityOverride.locationId',
       'LocationProductAvailabilityOverride.menuId',
       'LocationProductAvailabilityOverride.productId',
@@ -709,13 +710,13 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       external: count((r) => r.kind === 'external-identifier'),
       total: TENANT_RELATIONSHIPS.length,
     }).toEqual({
-      compositeWithForeignKey: 97,
+      compositeWithForeignKey: 98,
       compositeWithoutForeignKey: 0,
       historicalSnapshot: 8,
       polymorphic: 4,
       json: 7,
       external: 2,
-      total: 118,
+      total: 119,
     });
     // Optional relationships are present and marked optional.
     const optionalForeignKeys = relationsBetweenBusinessRecords.filter(

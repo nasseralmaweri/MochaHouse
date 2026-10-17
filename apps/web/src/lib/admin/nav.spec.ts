@@ -111,6 +111,7 @@ describe("adminNavItems (permission-aware navigation)", () => {
       "orders",
       "loyalty",
       "locations",
+      "getting-started",
     ]);
   });
 
@@ -138,6 +139,7 @@ describe("adminNavItems (permission-aware navigation)", () => {
       "loyalty",
       "promotions",
       "locations",
+      "getting-started",
     ]);
   });
 
@@ -173,6 +175,7 @@ describe("adminNavItems (permission-aware navigation)", () => {
       "promotions",
       "gift-cards",
       "locations",
+      "getting-started",
     ]);
   });
 
@@ -202,6 +205,7 @@ describe("adminNavItems (permission-aware navigation)", () => {
       "gift-cards",
       "customers",
       "locations",
+      "getting-started",
     ]);
   });
 
@@ -281,6 +285,7 @@ describe("adminNavItems (permission-aware navigation)", () => {
       "careers",
       "franchising",
       "locations",
+      "getting-started",
     ]);
   });
 
@@ -312,6 +317,7 @@ describe("adminNavItems (permission-aware navigation)", () => {
       "content",
       "media",
       "locations",
+      "getting-started",
     ]);
   });
 
@@ -354,6 +360,7 @@ describe("adminNavItems (permission-aware navigation)", () => {
       "customers",
       "careers",
       "locations",
+      "getting-started",
     ]);
   });
 
@@ -365,6 +372,25 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(items.find((i) => i.key === "locations")?.href).toBe(
       "/admin/locations",
     );
+  });
+
+  it("shows Getting started only for corporate locations.view (SC4d)", () => {
+    const corporate = adminNavItems({
+      "locations.view": { corporate: true, locationIds: [] },
+    });
+    expect(corporate.find((i) => i.key === "getting-started")?.href).toBe(
+      "/admin/getting-started",
+    );
+    expect(
+      groupAdminNavItems(corporate)
+        .find((g) => g.key === "admin")
+        ?.items.map((i) => i.key),
+    ).toEqual(["getting-started"]);
+
+    const scoped = adminNavItems({
+      "locations.view": { corporate: false, locationIds: ["loc-a"] },
+    });
+    expect(scoped.map((i) => i.key)).not.toContain("getting-started");
   });
 
   it("hides Locations without locations.view even with adjacent location permissions", () => {
@@ -487,6 +513,7 @@ describe("adminNavItems (permission-aware navigation)", () => {
     expect(adminNavItems(caps).map((i) => i.key).sort()).toEqual([
       "administration",
       "dashboard",
+      "getting-started",
       "locations",
       "menu",
       "operations",
