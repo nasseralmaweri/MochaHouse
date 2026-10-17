@@ -3939,6 +3939,10 @@ model BillingPlanChange {
   externalScheduleId         String?
   amountPaidMinorUnits       Int?
   failureCode                String?
+  // SC3d-2 — when a business user confirmed the change (and its charge);
+  // an operator preview's mandatory written reason (operators never confirm).
+  confirmedAt                DateTime?
+  operatorReason             String?
   actorKind                  String
   actorPlatformOperatorId    String?
   createdAt                  DateTime  @default(now())

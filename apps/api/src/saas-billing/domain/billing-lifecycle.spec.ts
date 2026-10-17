@@ -449,7 +449,10 @@ describe('SC3a billing lifecycle', () => {
       ]);
     });
 
-    it('an upgrade whose payment fails is abandoned; the business keeps its plan and standing', () => {
+    // SC3d-2 (owner decision D2) — a failed ATTEMPT keeps the upgrade
+    // waiting (the provider still holds it); only the provider discarding it
+    // abandons it. Never a delinquency either way.
+    it('a failed attempt on the upgrade keeps it waiting; only its expiry abandons it', () => {
       const pending = ok(
         transition(active, {
           type: 'UPGRADE_REQUESTED',
@@ -459,7 +462,23 @@ describe('SC3a billing lifecycle', () => {
           reference: 'inv-up',
         }),
       );
-      const r = ok(transition(pending.next, failed(day(3), 'inv-up')));
+      const attempt = ok(transition(pending.next, failed(day(3), 'inv-up')));
+      expect(attempt.changed).toBe(false);
+      expect(attempt.next).toEqual(pending.next);
+      expect(
+        transition(pending.next, {
+          type: 'UPGRADE_ABANDONED',
+          at: day(3),
+          reference: 'other',
+        }),
+      ).toEqual({ ok: false, reason: 'NOT_CHANGEABLE' });
+      const r = ok(
+        transition(pending.next, {
+          type: 'UPGRADE_ABANDONED',
+          at: day(4),
+          reference: 'inv-up',
+        }),
+      );
       expect(r.next).toMatchObject({
         status: 'ACTIVE',
         planVersionId: 'plan-v1',
@@ -467,6 +486,34 @@ describe('SC3a billing lifecycle', () => {
         pastDueAt: null,
       });
       expect(r.history.map((h) => h.type)).toEqual(['PLAN_CHANGE_ABANDONED']);
+      expect(r.suspension).toBe('NONE');
+    });
+
+    it('a paid monthly -> annual upgrade starts the new period the provider reports', () => {
+      const pending = ok(
+        transition(
+          authorized({ currentPeriodStart: day(0), currentPeriodEnd: day(30) }),
+          {
+            type: 'UPGRADE_REQUESTED',
+            at: day(10),
+            planVersionId: 'plan-v1',
+            planPriceId: 'price-annual',
+            reference: 'inv-annual',
+          },
+        ),
+      );
+      const r = ok(
+        transition(
+          pending.next,
+          paid(day(10), 'inv-annual', day(10), day(375)),
+        ),
+      );
+      expect(r.next).toMatchObject({
+        planPriceId: 'price-annual',
+        currentPeriodStart: day(10),
+        currentPeriodEnd: day(375),
+        pending: null,
+      });
     });
 
     it('a downgrade applies at the period boundary, not before', () => {
@@ -524,7 +571,8 @@ describe('SC3a billing lifecycle', () => {
           type: 'UPGRADE_REQUESTED',
           at: day(2),
           planVersionId: 'plan-v1',
-          planPriceId: null,
+          // SC3d-2 — the same plan AND the same price.
+          planPriceId: 'price-1',
           reference: 'r',
         }),
       ).toEqual({ ok: false, reason: 'SAME_PLAN' });

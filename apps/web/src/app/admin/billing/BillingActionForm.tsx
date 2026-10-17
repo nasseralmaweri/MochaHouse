@@ -7,6 +7,7 @@ import {
   setUpPaymentAction,
   type SetUpPaymentState,
 } from "./actions";
+import { payPlanChangeAction } from "./plan-actions";
 
 const PRIMARY =
   "inline-flex min-h-11 items-center justify-center rounded-lg bg-accent px-4 text-sm font-semibold text-accent-contrast hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus aria-disabled:cursor-wait aria-disabled:opacity-70";
@@ -28,6 +29,14 @@ const ACTIONS = {
     label: "Pay outstanding invoice",
     pending: "Opening secure payment page…",
     help: "You'll pay your oldest outstanding invoice on our payment provider's secure page. That page can't bring you back here: return to this page and refresh afterwards. If more invoices are outstanding, pay each one; full access returns once none are left and the payment is confirmed.",
+    primary: true,
+  },
+  // SC3d-2 — the waiting plan change's own invoice.
+  planChange: {
+    action: payPlanChangeAction,
+    label: "Complete payment",
+    pending: "Opening secure payment page…",
+    help: "You'll complete the payment for your plan change on our payment provider's secure page (for example with another card or an extra security check). That page can't bring you back here: return to this page and refresh afterwards.",
     primary: true,
   },
   portal: {

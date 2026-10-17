@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import { getInternalSession } from "@/lib/internal-auth/session";
 import { can } from "@/lib/admin/capabilities";
-import { getAdminBilling } from "@/lib/internal-auth/admin-billing";
+import { getAdminBilling, getAdminPlanOptions } from "@/lib/internal-auth/admin-billing";
+import { planChangeStatusMessage } from "@/lib/admin/plan-change";
 import {
   BILLING_MESSAGES,
   BILLING_STATE_LABELS,
@@ -18,6 +19,7 @@ import { SetUpPaymentForm } from "./SetUpPaymentForm";
 import { BillingActionForm } from "./BillingActionForm";
 import { CheckoutConfirming } from "./CheckoutConfirming";
 import { ForgetCheckoutReturn } from "./ForgetCheckoutReturn";
+import { ChangePlanPanel } from "./ChangePlanPanel";
 
 // SC3b — the business's own CENTERIVO subscription: plan, price and billing
 // status, and (owner) payment setup through the provider's hosted Checkout.
@@ -67,7 +69,11 @@ export default async function AdminBillingPage({
     canRestartSubscription,
     canPayInvoice,
     canManagePaymentMethod,
+    canChangePlan,
+    planChange,
   } = result.data;
+  // SC3d-2 — the plans the business may move to (only when it may).
+  const planOptions = canChangePlan ? await getAdminPlanOptions() : null;
   const returned = checkoutReturn(params.checkout);
   const fromPortal = portalReturn(params.portal);
   // Back from the provider but not confirmed yet (a new setup, or a restart
@@ -162,6 +168,32 @@ export default async function AdminBillingPage({
           <p className="text-sm text-text-secondary">{BILLING_MESSAGES.recoveryForbidden}</p>
         ) : null}
       </Card>
+      {planChange || (canChangePlan && planOptions) ? (
+        <Card className="flex flex-col gap-4">
+          {planChange ? (
+            <div className="flex flex-col gap-2">
+              <p
+                role="status"
+                className="rounded-lg bg-surface-subtle px-3 py-2 text-sm text-text-primary"
+              >
+                {planChangeStatusMessage(planChange)}
+              </p>
+              {planChange.status === "PROCESSING" ? (
+                <a
+                  href="/admin/billing"
+                  className="self-start text-sm font-medium text-text-primary underline underline-offset-2"
+                >
+                  Refresh status
+                </a>
+              ) : null}
+              {planChange.status === "PAYMENT_NEEDED" && can(session.authorization.capabilities, "billing.manage") ? (
+                <BillingActionForm kind="planChange" />
+              ) : null}
+            </div>
+          ) : null}
+          {canChangePlan && planOptions ? <ChangePlanPanel options={planOptions} /> : null}
+        </Card>
+      ) : null}
     </AdminPage>
   );
 }

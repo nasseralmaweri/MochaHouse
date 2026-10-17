@@ -48,6 +48,9 @@ export interface ProviderSubscriptionSnapshot {
   scheduleId?: string | null;
   hasPendingUpdate?: boolean;
   currentPeriodEnd?: Date | null;
+  // SC3d-2 — when the current period started (a monthly -> annual change
+  // starts a new one).
+  currentPeriodStart?: Date | null;
 }
 
 export interface ProviderSubscriptionItem {

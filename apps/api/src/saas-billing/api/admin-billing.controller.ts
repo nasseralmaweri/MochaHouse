@@ -10,6 +10,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type {
+  AdminPlanOptionsResponse,
+  BillingPlanChangeConfirmResponse,
   BillingPlanChangePreview,
   AdminBillingCheckoutResponse,
   AdminBillingRecoveryResponse,
@@ -27,6 +29,7 @@ import { RateLimitGuard } from '../../rate-limit/rate-limit.guard';
 import { BillingAccountService } from '../application/billing-account.service';
 import {
   BillingPlanChangeService,
+  parsePlanChangeConfirm,
   parsePlanChangePreview,
 } from '../application/billing-plan-change.service';
 
@@ -40,6 +43,56 @@ export class AdminBillingController {
     private readonly accounts: BillingAccountService,
     private readonly planChanges: BillingPlanChangeService,
   ) {}
+
+  // SC3d-2 — the prices the business may move to.
+  @RequirePermission('billing.view')
+  @Header('Cache-Control', 'no-store')
+  @Get('plan-options')
+  async planOptions(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ): Promise<AdminPlanOptionsResponse> {
+    request.authorization!.assertCorporate('billing.view');
+    return { options: await this.planChanges.options(tenant.tenantId) };
+  }
+
+  // SC3d-2 — the business CONFIRMS the preview it was shown (the only way a
+  // plan change is charged). billing.manage, business-wide; FULL access only.
+  @RequirePermission('billing.manage')
+  @UseGuards(RateLimitGuard)
+  @RateLimit('billing-checkout')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @Post('plan-change/confirm')
+  async confirmPlanChange(
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ): Promise<BillingPlanChangeConfirmResponse> {
+    request.authorization!.assertCorporate('billing.manage');
+    return {
+      planChange: await this.planChanges.confirm(
+        tenant.tenantId,
+        parsePlanChangeConfirm(body),
+        request.internalUser!.id,
+      ),
+    };
+  }
+
+  // SC3d-2 — the provider's page for the waiting plan change's own invoice.
+  @RequirePermission('billing.manage')
+  @UseGuards(RateLimitGuard)
+  @RateLimit('billing-checkout')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @Post('plan-change/pay')
+  async payPlanChange(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ): Promise<AdminBillingRecoveryResponse> {
+    request.authorization!.assertCorporate('billing.manage');
+    return this.planChanges.payLink(tenant.tenantId, request.internalUser!.id);
+  }
 
   // SC3d-1 — a PREVIEW of changing the plan (nothing charged or changed).
   // billing.manage, business-wide; FULL access only (not during a billing
@@ -83,6 +136,12 @@ export class AdminBillingController {
       canRestartSubscription: actions.restart && manage,
       canPayInvoice: actions.payInvoice && manage,
       canManagePaymentMethod: actions.portal && manage,
+      // SC3d-2
+      canChangePlan:
+        manage &&
+        billing.state === 'ACTIVE' &&
+        (await this.planChanges.canChange(tenant.tenantId)),
+      planChange: await this.planChanges.latest(tenant.tenantId),
     };
   }
 

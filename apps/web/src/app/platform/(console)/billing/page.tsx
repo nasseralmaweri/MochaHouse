@@ -42,6 +42,12 @@ const CASE_LABELS: Record<string, string> = {
   BILLING_CONTACT_UNVERIFIED:
     "The designated billing contact's email isn't verified (or the verification expired); they need to sign in again",
   BILLING_NOTIFICATION_FAILED: "A billing email could not be sent",
+  // SC3d
+  PRICE_MISMATCH: "The payment provider bills a different price than our records",
+  PLAN_CHANGE_AMOUNT_MISMATCH:
+    "A plan change was paid, but the amount differs from the price the business confirmed",
+  UPGRADE_PAID_NOT_APPLIED: "A plan change was paid but not applied",
+  PLAN_CHANGE_UNCERTAIN: "A plan change needs checking against the payment provider",
   EXTENSION_ENDED_BY_PROVIDER:
     "The payment provider ended a subscription during extra time an operator gave",
 };

@@ -160,7 +160,14 @@ const PROTECTED: ReadonlyArray<{
     policy: 'platform-lifecycle' as const,
   })),
   ...(
-    ['checkout', 'payInvoice', 'openPortal', 'previewPlanChange'] as const
+    [
+      'checkout',
+      'payInvoice',
+      'openPortal',
+      'previewPlanChange',
+      'confirmPlanChange',
+      'payPlanChange',
+    ] as const
   ).map((method) => ({
     controller: AdminBillingController,
     method,

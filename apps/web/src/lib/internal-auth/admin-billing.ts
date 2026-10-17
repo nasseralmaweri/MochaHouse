@@ -1,6 +1,10 @@
 import "server-only";
 import { cache } from "react";
 import type {
+  AdminPlanOption,
+  AdminPlanOptionsResponse,
+  BillingPlanChangeConfirmResponse,
+  BillingPlanChangePreview,
   AdminBillingCheckoutResponse,
   AdminBillingRecoveryResponse,
   AdminBillingResponse,
@@ -13,6 +17,7 @@ import {
   BILLING_MESSAGES,
   isAllowedRecoveryUrl,
 } from "@/lib/admin/billing";
+import { planChangeRefusalMessage } from "@/lib/admin/plan-change";
 
 // SC3b — server-only calls to the business's own billing API. The API is the
 // sole authority (InternalAuthGuard + PermissionGuard + billing.view /
@@ -113,4 +118,80 @@ export async function openAdminBillingCheckout(): Promise<OpenCheckoutResult> {
     return { outcome: "refused", message: checkoutRefusalMessage(null, null) };
   }
   return { outcome: "redirect", url };
+}
+
+// --- SC3d-2: plan changes ------------------------------------------------------------
+// The request carries only OUR price id (preview) or OUR preview id
+// (confirm); the API decides the business, the provider ids and the charge.
+
+export async function getAdminPlanOptions(): Promise<AdminPlanOption[] | null> {
+  const token = await getInternalSessionToken();
+  if (!token) return null;
+  try {
+    const response = await fetch(`${getApiUrl()}/admin/billing/plan-options`, {
+      headers: await internalAuthHeaders(token),
+      cache: "no-store",
+    });
+    if (!response.ok) return null;
+    return ((await response.json()) as AdminPlanOptionsResponse).options;
+  } catch {
+    return null;
+  }
+}
+
+export type PlanChangeCallResult<T> =
+  | { outcome: "ok"; data: T }
+  | { outcome: "refused"; message: string; code?: string };
+
+async function postPlanChange<T>(path: string, body?: object): Promise<PlanChangeCallResult<T>> {
+  const token = await getInternalSessionToken();
+  if (!token) return { outcome: "refused", message: planChangeRefusalMessage(401, null) };
+  let response: Response;
+  try {
+    response = await fetch(`${getApiUrl()}/admin/billing/${path}`, {
+      method: "POST",
+      headers: {
+        ...(await internalAuthHeaders(token)),
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      cache: "no-store",
+    });
+  } catch {
+    return { outcome: "refused", message: planChangeRefusalMessage(null, null) };
+  }
+  const json = (await response.json().catch(() => null)) as unknown;
+  if (!response.ok || json === null) {
+    const code =
+      typeof json === "object" && json !== null ? (json as { code?: unknown }).code : undefined;
+    return {
+      outcome: "refused",
+      message: planChangeRefusalMessage(response.status, json),
+      code: typeof code === "string" ? code : undefined,
+    };
+  }
+  return { outcome: "ok", data: json as T };
+}
+
+export function previewAdminPlanChange(
+  planPriceId: string,
+): Promise<PlanChangeCallResult<BillingPlanChangePreview>> {
+  return postPlanChange("plan-change/preview", { planPriceId });
+}
+
+export function confirmAdminPlanChange(
+  previewId: string,
+): Promise<PlanChangeCallResult<BillingPlanChangeConfirmResponse>> {
+  return postPlanChange("plan-change/confirm", { previewId });
+}
+
+// The provider's own hosted page for the waiting change's invoice (checked
+// against the provider's host).
+export async function openAdminPlanChangePayment(): Promise<OpenCheckoutResult> {
+  const result = await postPlanChange<AdminBillingRecoveryResponse>("plan-change/pay");
+  if (result.outcome === "refused") return { outcome: "refused", message: result.message };
+  if (!isAllowedRecoveryUrl(result.data.url, "invoice")) {
+    return { outcome: "refused", message: planChangeRefusalMessage(null, null) };
+  }
+  return { outcome: "redirect", url: result.data.url };
 }

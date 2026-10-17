@@ -2017,6 +2017,11 @@ export interface AdminBillingResponse {
   canRestartSubscription: boolean;
   canPayInvoice: boolean;
   canManagePaymentMethod: boolean;
+  // SC3d-2 — plans can be changed now (billing.manage holders only; ACTIVE
+  // billed subscriptions, no change in progress), and the business's latest
+  // plan change (null: none worth showing).
+  canChangePlan: boolean;
+  planChange: AdminPlanChangeView | null;
 }
 
 // POST /api/v1/admin/billing/checkout (billing.manage) — no body: the
@@ -2066,6 +2071,16 @@ export const BILLING_PLAN_CHANGE_SAME_PRICE = "BILLING_PLAN_CHANGE_SAME_PRICE";
 export const BILLING_PLAN_CHANGE_CURRENCY = "BILLING_PLAN_CHANGE_CURRENCY";
 export const BILLING_PLAN_CHANGE_IN_PROGRESS = "BILLING_PLAN_CHANGE_IN_PROGRESS";
 export const BILLING_PLAN_CHANGE_UNVERIFIED = "BILLING_PLAN_CHANGE_UNVERIFIED";
+// SC3d-2 — confirming a preview:
+//   BILLING_PLAN_CHANGE_PREVIEW_EXPIRED — older than 10 minutes, already used,
+//       or no longer for this business's current plan: preview again;
+//   BILLING_PLAN_CHANGE_PREVIEW_CHANGED — the provider would now charge a
+//       different amount (or the plan / price changed): preview again and
+//       confirm the new charge;
+//   BILLING_PLAN_CHANGE_NOT_PAYABLE — no plan change payment is waiting.
+export const BILLING_PLAN_CHANGE_PREVIEW_EXPIRED = "BILLING_PLAN_CHANGE_PREVIEW_EXPIRED";
+export const BILLING_PLAN_CHANGE_PREVIEW_CHANGED = "BILLING_PLAN_CHANGE_PREVIEW_CHANGED";
+export const BILLING_PLAN_CHANGE_NOT_PAYABLE = "BILLING_PLAN_CHANGE_NOT_PAYABLE";
 
 // IMMEDIATE: an upgrade (or monthly -> annual), charged now with proration;
 // PERIOD_END: a downgrade (or annual -> monthly), at the end of the period;
@@ -2108,6 +2123,77 @@ export interface BillingPlanChangePreview {
     startsAt: string | null;
   };
   expiresAt: string;
+}
+
+// SC3d-2 — what the business sees about its plan change.
+//   PROCESSING      confirmed; the payment provider is being asked;
+//   PAYMENT_NEEDED  the charge did not go through yet (e.g. a declined card
+//                   or a 3-D Secure step): pay on the provider's page; the
+//                   current plan stays until then;
+//   APPLIED         paid and verified: the new plan is active;
+//   REVIEW          our team is checking it (nothing more to do);
+//   EXPIRED         the payment was not completed in time: nothing changed;
+//   FAILED          it could not be submitted: nothing changed.
+export type AdminPlanChangeStatus =
+  | "PROCESSING"
+  | "PAYMENT_NEEDED"
+  | "APPLIED"
+  | "REVIEW"
+  | "EXPIRED"
+  | "FAILED";
+
+export interface AdminPlanChangeView {
+  id: string;
+  status: AdminPlanChangeStatus;
+  target: BillingPlanChangeSide;
+  // The charge the business confirmed (minor units).
+  amountDueMinorUnits: number | null;
+  currency: string;
+  confirmedAt: string | null;
+  finishedAt: string | null;
+}
+
+// POST /api/v1/admin/billing/plan-change/confirm — body exactly
+// { previewId } (billing.manage, business-wide; FULL access only). The ONLY
+// way a plan change is charged: the business's own confirmation of the
+// preview it was shown (operators preview, never confirm).
+//   409 BILLING_PLAN_CHANGE_PREVIEW_EXPIRED / _PREVIEW_CHANGED / _IN_PROGRESS /
+//       _UNAVAILABLE / _UNVERIFIED
+//   503 BILLING_UNAVAILABLE
+export interface BillingPlanChangeConfirmRequest {
+  previewId: string;
+}
+
+export interface BillingPlanChangeConfirmResponse {
+  planChange: AdminPlanChangeView;
+}
+
+// POST /api/v1/admin/billing/plan-change/pay (billing.manage; no body): the
+// provider's hosted page for the WAITING plan change's own invoice (verified
+// from our records — never a client value).
+//   409 BILLING_PLAN_CHANGE_NOT_PAYABLE
+
+// GET /api/v1/admin/billing/plan-options (billing.view): the prices the
+// business may move to (offered plans, same currency).
+export interface AdminPlanOption {
+  planPriceId: string;
+  planName: string;
+  amountMinorUnits: number;
+  currency: string;
+  interval: PlatformBillingInterval;
+  current: boolean;
+}
+
+export interface AdminPlanOptionsResponse {
+  options: AdminPlanOption[];
+}
+
+// POST /api/v1/platform/tenants/:tenantId/billing/plan-change/preview —
+// SC3d-2: an operator's preview needs a recent sign-in and a written reason
+// (10–500 characters); body exactly { planPriceId, reason }.
+export interface PlatformPlanChangePreviewRequest {
+  planPriceId: string;
+  reason: string;
 }
 
 export const PLATFORM_ALREADY_BILLED = "ALREADY_BILLED";
