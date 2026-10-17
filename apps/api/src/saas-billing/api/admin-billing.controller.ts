@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   Header,
@@ -9,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type {
+  BillingPlanChangePreview,
   AdminBillingCheckoutResponse,
   AdminBillingRecoveryResponse,
   AdminBillingResponse,
@@ -23,6 +25,10 @@ import type { InternalAuthenticatedRequest } from '../../internal-auth/infrastru
 import { RateLimit } from '../../rate-limit/rate-limit.decorator';
 import { RateLimitGuard } from '../../rate-limit/rate-limit.guard';
 import { BillingAccountService } from '../application/billing-account.service';
+import {
+  BillingPlanChangeService,
+  parsePlanChangePreview,
+} from '../application/billing-plan-change.service';
 
 // SC3b — the business's OWN CENTERIVO subscription billing. The business is
 // always the authenticated staff member's business (trusted context); the
@@ -30,7 +36,32 @@ import { BillingAccountService } from '../application/billing-account.service';
 @UseGuards(InternalAuthGuard, PermissionGuard)
 @Controller('api/v1/admin/billing')
 export class AdminBillingController {
-  constructor(private readonly accounts: BillingAccountService) {}
+  constructor(
+    private readonly accounts: BillingAccountService,
+    private readonly planChanges: BillingPlanChangeService,
+  ) {}
+
+  // SC3d-1 — a PREVIEW of changing the plan (nothing charged or changed).
+  // billing.manage, business-wide; FULL access only (not during a billing
+  // wind-down: recover billing first).
+  @RequirePermission('billing.manage')
+  @UseGuards(RateLimitGuard)
+  @RateLimit('billing-checkout')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @Post('plan-change/preview')
+  async previewPlanChange(
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ): Promise<BillingPlanChangePreview> {
+    request.authorization!.assertCorporate('billing.manage');
+    return this.planChanges.preview(
+      tenant.tenantId,
+      parsePlanChangePreview(body),
+      { kind: 'STAFF', internalUserId: request.internalUser!.id },
+    );
+  }
 
   // SC3c-1 — the billing page stays readable during a billing wind-down.
   @AllowDuringBillingWindDown()

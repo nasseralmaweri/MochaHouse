@@ -194,6 +194,8 @@ const APPROVED_GLOBAL_MODELS = [
   // SC3c-3 — grace extensions and billing notices (platform data).
   'BillingGraceExtension',
   'BillingNotification',
+  // SC3d-1 — plan changes (platform data).
+  'BillingPlanChange',
 ];
 // SC2a review — identifiers issued by an OUTSIDE system (not a record of
 // ours): the SaaS billing provider's ids (SC3a).
@@ -212,6 +214,13 @@ const EXTERNAL_IDENTIFIER_COLUMNS: Readonly<Record<string, readonly string[]>> =
       'externalEventId',
       'externalSubscriptionId',
       'externalCustomerId',
+    ],
+    // SC3d-1 — the provider subscription item, invoice and schedule a plan
+    // change concerns.
+    BillingPlanChange: [
+      'externalItemId',
+      'externalInvoiceId',
+      'externalScheduleId',
     ],
   };
 // SC2a review (owner decision S3) — the ONLY relation from platform data to
@@ -264,6 +273,8 @@ const PLATFORM_OPERATOR_MODELS = [
   // SC3c-3 — grace extensions and billing notices (platform data).
   'BillingGraceExtension',
   'BillingNotification',
+  // SC3d-1 — plan changes (platform data).
+  'BillingPlanChange',
 ];
 
 describe('Tenant relationship inventory (Security 4C-1)', () => {

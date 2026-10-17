@@ -249,6 +249,8 @@ const GLOBAL_TABLES = [
   // SC3c-3
   'BillingGraceExtension',
   'BillingNotification',
+  // SC3d-1
+  'BillingPlanChange',
   '_prisma_migrations',
 ];
 

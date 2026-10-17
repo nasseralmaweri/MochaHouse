@@ -40,6 +40,20 @@ export interface ProviderSubscriptionSnapshot {
   // SC3c-2 — the subscription's most recent invoice (its first one, for a
   // just-created subscription), when the provider reports one.
   latestInvoiceId: string | null;
+  // SC3d-1 — what the provider actually bills: its subscription items, the
+  // subscription schedule attached (null: none), whether an update is waiting
+  // for payment, and when the current period ends. Optional: undefined means
+  // "not read", and anything that relies on them fails closed.
+  items?: ProviderSubscriptionItem[];
+  scheduleId?: string | null;
+  hasPendingUpdate?: boolean;
+  currentPeriodEnd?: Date | null;
+}
+
+export interface ProviderSubscriptionItem {
+  externalItemId: string;
+  externalPriceId: string | null;
+  quantity: number;
 }
 
 // What we offered when the business opened Checkout (fixed then): a trial is

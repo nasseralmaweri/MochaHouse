@@ -2043,6 +2043,73 @@ export interface AdminBillingRecoveryResponse {
   url: string;
 }
 
+// --- SC3d: plan changes ---------------------------------------------------------
+// SC3d-1 — a PREVIEW of changing the business's plan or price, with the
+// billing provider's own calculation. Nothing is charged or changed; the
+// preview is recorded (valid 10 minutes) so a later confirmation can only
+// ever be for exactly what was shown.
+//
+// POST /api/v1/admin/billing/plan-change/preview — body exactly
+// { planPriceId } (billing.manage, business-wide; FULL access only).
+// POST /api/v1/platform/tenants/:tenantId/billing/plan-change/preview — the
+// same, by a platform operator.
+//   409 BILLING_PLAN_CHANGE_UNAVAILABLE — not billed, not active or trialing
+//       (past due, unpaid, ended: recover billing first), cancellation
+//       scheduled, the business suspended, or the plan not offered;
+//   409 BILLING_PLAN_CHANGE_SAME_PRICE / BILLING_PLAN_CHANGE_CURRENCY;
+//   409 BILLING_PLAN_CHANGE_IN_PROGRESS — another change is open;
+//   409 BILLING_PLAN_CHANGE_UNVERIFIED — the provider bills something other
+//       than our records say (a review case is opened);
+//   503 BILLING_UNAVAILABLE
+export const BILLING_PLAN_CHANGE_UNAVAILABLE = "BILLING_PLAN_CHANGE_UNAVAILABLE";
+export const BILLING_PLAN_CHANGE_SAME_PRICE = "BILLING_PLAN_CHANGE_SAME_PRICE";
+export const BILLING_PLAN_CHANGE_CURRENCY = "BILLING_PLAN_CHANGE_CURRENCY";
+export const BILLING_PLAN_CHANGE_IN_PROGRESS = "BILLING_PLAN_CHANGE_IN_PROGRESS";
+export const BILLING_PLAN_CHANGE_UNVERIFIED = "BILLING_PLAN_CHANGE_UNVERIFIED";
+
+// IMMEDIATE: an upgrade (or monthly -> annual), charged now with proration;
+// PERIOD_END: a downgrade (or annual -> monthly), at the end of the period;
+// TRIAL_END: the plan the trial becomes (nothing charged now).
+export type BillingPlanChangeTiming = "IMMEDIATE" | "PERIOD_END" | "TRIAL_END";
+
+export interface BillingPlanChangePreviewRequest {
+  planPriceId: string;
+}
+
+export interface BillingPlanChangeSide {
+  planName: string;
+  price: {
+    amountMinorUnits: number;
+    currency: string;
+    interval: PlatformBillingInterval;
+  };
+}
+
+export interface BillingPlanChangePreview {
+  previewId: string;
+  timing: BillingPlanChangeTiming;
+  current: BillingPlanChangeSide;
+  target: BillingPlanChangeSide;
+  // IMMEDIATE only: what would be charged now (minor units), after credits
+  // for unused time, discounts and tax, as the provider calculated it.
+  chargeNow: {
+    amountDueMinorUnits: number;
+    totalMinorUnits: number;
+    taxMinorUnits: number;
+    discountMinorUnits: number;
+    prorationMinorUnits: number;
+    currency: string;
+  } | null;
+  // The recurring bill after the change, and from when (null: now).
+  nextRecurring: {
+    amountMinorUnits: number;
+    currency: string;
+    interval: PlatformBillingInterval;
+    startsAt: string | null;
+  };
+  expiresAt: string;
+}
+
 export const PLATFORM_ALREADY_BILLED = "ALREADY_BILLED";
 export const PLATFORM_FOUNDING_COMPLIMENTARY = "FOUNDING_COMPLIMENTARY";
 export const PLATFORM_PRICE_NOT_FOR_PLAN = "PRICE_NOT_FOR_PLAN";
