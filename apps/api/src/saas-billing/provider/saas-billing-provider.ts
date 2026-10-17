@@ -85,6 +85,10 @@ export interface ProviderInvoice {
   livemode: boolean;
   // SC3c-2 — what was actually collected (integer minor units).
   amountPaidMinorUnits: number;
+  // SC3d-2 — why the provider created it ("subscription_update" for a plan
+  // change) and its currency (lower-case). Optional: undefined = not read.
+  billingReason?: string | null;
+  currency?: string | null;
 }
 
 // SC3c-2 — an invoice that can be paid on the provider's hosted page.

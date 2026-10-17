@@ -52,6 +52,8 @@ type ProviderFacts =
       snapshot: ProviderSubscriptionSnapshot;
       // SC3c-2 — for an UNPAID business: its still-open invoices.
       openInvoices: ProviderPayableInvoice[] | null;
+      // SC3d-2 — the invoice of a plan change waiting for payment.
+      planChangeInvoice?: ProviderInvoice | null;
     }
   // null: the provider has no such invoice.
   | {
@@ -64,6 +66,8 @@ type ProviderFacts =
         snapshot: ProviderSubscriptionSnapshot;
         openInvoices: ProviderPayableInvoice[];
       } | null;
+      // SC3d-2 — the invoice is a plan change's: the live subscription.
+      planChangeSnapshot?: ProviderSubscriptionSnapshot | null;
     };
 
 // Applies lifecycle events in order to a state, skipping the ones it refuses
@@ -260,6 +264,44 @@ function retriesExhausted(ledger: { attempts: number; receivedAt: Date }) {
 // docs/operations/billing-recovery.md.
 export const UNLINKED_REPLACEMENT_CASE = 'UNLINKED_REPLACEMENT';
 
+// SC3d-2 — plan change review cases.
+export const PLAN_CHANGE_AMOUNT_MISMATCH_CASE = 'PLAN_CHANGE_AMOUNT_MISMATCH';
+export const UPGRADE_PAID_NOT_APPLIED_CASE = 'UPGRADE_PAID_NOT_APPLIED';
+export const PLAN_CHANGE_UNCERTAIN_CASE = 'PLAN_CHANGE_UNCERTAIN';
+const OPEN_PLAN_CHANGE = ['REQUESTED', 'AWAITING_PAYMENT', 'REVIEW'];
+
+export type PlanChangeSettlement =
+  'APPLIED' | 'ABANDONED' | 'NOT_YET' | 'REVIEW' | 'WAITING';
+
+// Safe references for a plan change review case: the expected and actual
+// amounts, our records and the provider's ids — never a URL.
+function planChangeDetail(
+  change: {
+    id: string;
+    currency: string;
+    previewAmountDueMinorUnits: number | null;
+  },
+  invoice: {
+    externalInvoiceId: string;
+    amountPaidMinorUnits: number;
+    currency?: string | null;
+    status: string;
+    externalSubscriptionId: string | null;
+  } | null,
+  reason: string,
+): string {
+  return [
+    reason,
+    `Plan change ${change.id}: expected ${change.previewAmountDueMinorUnits ?? '-'} ${change.currency} (minor units, the confirmed preview).`,
+    invoice
+      ? `Invoice ${invoice.externalInvoiceId} (${invoice.status}): paid ${invoice.amountPaidMinorUnits} ${(invoice.currency ?? '?').toUpperCase()}; subscription ${invoice.externalSubscriptionId ?? 'unknown'}.`
+      : 'Invoice: not available.',
+    'Nothing was refunded or changed at the provider.',
+  ]
+    .join(' ')
+    .slice(0, 500);
+}
+
 // SC3c-3 — the provider ended a subscription while an operator's grace
 // extension or exception was in force: nothing is presented as paid, the
 // extension's access ends, and an operator decides what next (complimentary
@@ -452,17 +494,24 @@ export class BillingLifecycleService {
         // provider (anything else is matched — and ignored or retried — in
         // the transaction without reading it).
         if (!(await this.isLinked(verified))) return { kind: 'none' };
-        return {
-          kind: 'snapshot',
-          snapshot: await this.provider.retrieveSubscription(
-            verified.externalSubscriptionId!,
-          ),
-          openInvoices: (await this.inRecovery(verified))
-            ? await this.provider.listOpenInvoices(
-                verified.externalSubscriptionId!,
-              )
-            : null,
-        };
+        {
+          const waiting = await this.waitingPlanChangeInvoice(verified);
+          return {
+            kind: 'snapshot',
+            snapshot: await this.provider.retrieveSubscription(
+              verified.externalSubscriptionId!,
+            ),
+            openInvoices: (await this.inRecovery(verified))
+              ? await this.provider.listOpenInvoices(
+                  verified.externalSubscriptionId!,
+                )
+              : null,
+            planChangeInvoice:
+              waiting === null
+                ? undefined
+                : await this.provider.retrieveInvoice(waiting),
+          };
+        }
       case 'PAYMENT_SUCCEEDED':
       case 'PAYMENT_FAILED': {
         if (!(await this.isLinked(verified))) return { kind: 'none' };
@@ -482,7 +531,21 @@ export class BillingLifecycleService {
             ),
           };
         }
-        return { kind: 'invoice', invoice, recovery };
+        // SC3d-2 — a plan change's invoice: the live subscription too.
+        const planChange = await this.prisma.billingPlanChange.findFirst({
+          where: { externalInvoiceId: event.reference },
+          select: { id: true },
+        });
+        return {
+          kind: 'invoice',
+          invoice,
+          recovery,
+          planChangeSnapshot: planChange
+            ? await this.provider.retrieveSubscription(
+                verified.externalSubscriptionId!,
+              )
+            : null,
+        };
       }
       default:
         return { kind: 'none' };
@@ -659,11 +722,38 @@ export class BillingLifecycleService {
           );
         }
       }
+      // SC3d-2 — a plan change waiting for payment (its pending update was
+      // applied or expired): settled first, then the usual sync on the
+      // refreshed row.
+      let current = subscription;
+      if (facts.planChangeInvoice !== undefined) {
+        const waiting = await tx.billingPlanChange.findFirst({
+          where: {
+            subscriptionId: subscription.id,
+            status: 'AWAITING_PAYMENT',
+          },
+          select: { id: true },
+        });
+        if (waiting) {
+          await this.settlePlanChange(
+            tx,
+            waiting.id,
+            facts.snapshot,
+            facts.planChangeInvoice,
+            {
+              source: 'BILLING_PROVIDER',
+              billingProviderEventId: ledgerId,
+              actorPlatformOperatorId: null,
+            },
+          );
+          current = await this.load(tx, subscription.id);
+        }
+      }
       return this.applySnapshot(
         tx,
         ledgerId,
         verified,
-        subscription,
+        current,
         facts.snapshot,
         finish,
       );
@@ -691,6 +781,115 @@ export class BillingLifecycleService {
       ) {
         await this.openCase(tx, 'INVOICE_MISMATCH', subscription.id, ledgerId);
         return finish('REJECTED', 'INVOICE_MISMATCH', subscription.id);
+      }
+      // SC3d-2 — the invoice of a plan change: settled against the live
+      // subscription, never treated as an ordinary payment or delinquency.
+      const planChange = await tx.billingPlanChange.findFirst({
+        where: { externalInvoiceId: invoice.externalInvoiceId },
+      });
+      // A plan change invoice seen before its change recorded it (the
+      // confirmation is still finishing): retried, never an ordinary payment.
+      if (
+        planChange === null &&
+        invoice.billingReason === 'subscription_update' &&
+        (await tx.billingPlanChange.count({
+          where: { subscriptionId: subscription.id, status: 'REQUESTED' },
+        })) > 0
+      ) {
+        return finish(
+          'FAILED',
+          'PLAN_CHANGE_NOT_RECORDED_YET',
+          subscription.id,
+        );
+      }
+      // A plan change invoice no recorded change matches (e.g. its change
+      // was closed for review before the invoice was recorded): never an
+      // ordinary payment and NEVER a delinquency — reviewed.
+      if (
+        planChange === null &&
+        invoice.billingReason === 'subscription_update'
+      ) {
+        await this.openCase(
+          tx,
+          PLAN_CHANGE_UNCERTAIN_CASE,
+          subscription.id,
+          ledgerId,
+          `A plan change invoice (${invoice.externalInvoiceId}, ${invoice.status}) matches no recorded plan change. Not applied as a payment or a failure.`,
+        );
+        return finish(
+          'IGNORED',
+          'PLAN_CHANGE_INVOICE_UNLINKED',
+          subscription.id,
+        );
+      }
+      if (planChange !== null) {
+        if (planChange.subscriptionId !== subscription.id) {
+          await this.openCase(
+            tx,
+            'INVOICE_MISMATCH',
+            subscription.id,
+            ledgerId,
+          );
+          return finish('REJECTED', 'INVOICE_MISMATCH', subscription.id);
+        }
+        // A failed attempt: the change keeps waiting (owner decision D2).
+        if (verified.event.kind === 'PAYMENT_FAILED') {
+          return finish(
+            'IGNORED',
+            'PLAN_CHANGE_PAYMENT_PENDING',
+            subscription.id,
+          );
+        }
+        if (!OPEN_PLAN_CHANGE.includes(planChange.status)) {
+          // Paid after we closed it: never adopted silently.
+          if (invoice.status === 'paid' && planChange.status !== 'APPLIED') {
+            await this.openCase(
+              tx,
+              UPGRADE_PAID_NOT_APPLIED_CASE,
+              subscription.id,
+              ledgerId,
+              planChangeDetail(
+                planChange,
+                invoice,
+                'Paid after the change was closed.',
+              ),
+            );
+          }
+          return finish('IGNORED', 'PLAN_CHANGE_CLOSED', subscription.id);
+        }
+        if (facts.planChangeSnapshot == null) {
+          return finish('FAILED', 'PROVIDER_READ_MISSING', subscription.id);
+        }
+        const settled = await this.settlePlanChange(
+          tx,
+          planChange.id,
+          facts.planChangeSnapshot,
+          invoice,
+          {
+            source: 'BILLING_PROVIDER',
+            billingProviderEventId: ledgerId,
+            actorPlatformOperatorId: null,
+          },
+        );
+        if (settled === 'APPLIED') {
+          return this.applied(
+            tx,
+            ledgerId,
+            subscription.id,
+            'PLAN_CHANGE_APPLIED',
+            'NONE',
+          );
+        }
+        if (settled === 'NOT_YET') {
+          // The provider has not applied it yet: retryable (and reviewed if it
+          // never completes).
+          return finish(
+            'FAILED',
+            'PLAN_CHANGE_NOT_APPLIED_YET',
+            subscription.id,
+          );
+        }
+        return finish('IGNORED', `PLAN_CHANGE_${settled}`, subscription.id);
       }
       if (
         verified.event.kind === 'PAYMENT_FAILED' &&
@@ -1493,6 +1692,339 @@ export class BillingLifecycleService {
       suspension,
       outcome,
     };
+  }
+
+  // SC3d-2 — the invoice id of a plan change waiting for payment on the
+  // event's subscription (null: none).
+  private async waitingPlanChangeInvoice(
+    verified: VerifiedBillingProviderEvent,
+  ): Promise<string | null> {
+    if (verified.externalSubscriptionId === null) return null;
+    const waiting = await this.prisma.billingPlanChange.findFirst({
+      where: {
+        status: 'AWAITING_PAYMENT',
+        externalInvoiceId: { not: null },
+        subscription: {
+          billingProvider: verified.provider,
+          externalSubscriptionId: verified.externalSubscriptionId,
+        },
+      },
+      select: { externalInvoiceId: true },
+    });
+    return waiting?.externalInvoiceId ?? null;
+  }
+
+  // SC3d-2 — a confirmed immediate change was sent to the provider: its
+  // invoice is recorded and the subscription's pending UPGRADE (waiting for
+  // THAT invoice) is set; then it is settled against what the provider says.
+  async recordPlanChangeSubmitted(
+    tx: Tx,
+    planChangeId: string,
+    externalInvoiceId: string,
+    snapshot: ProviderSubscriptionSnapshot,
+    invoice: ProviderInvoice | null,
+    origin: {
+      source: 'OPERATOR' | 'BILLING_PROVIDER' | 'SYSTEM';
+      billingProviderEventId: string | null;
+      actorPlatformOperatorId: string | null;
+    },
+  ): Promise<PlanChangeSettlement> {
+    const change = await tx.billingPlanChange.findUniqueOrThrow({
+      where: { id: planChangeId },
+    });
+    if (change.status !== 'REQUESTED') return 'WAITING';
+    const subscription = await this.load(tx, change.subscriptionId);
+    const result = transition(toBillingState(subscription), {
+      type: 'UPGRADE_REQUESTED',
+      at: new Date(),
+      planVersionId: change.toPlanVersionId,
+      planPriceId: change.toPlanPriceId,
+      reference: externalInvoiceId,
+    });
+    await tx.billingPlanChange.update({
+      where: { id: planChangeId },
+      data: { externalInvoiceId, status: 'AWAITING_PAYMENT' },
+    });
+    if (!result.ok || !result.changed) {
+      // Our record no longer allows the upgrade (another change landed): the
+      // provider may still charge for it — reviewed, never guessed.
+      await this.markPlanChangeReview(
+        tx,
+        planChangeId,
+        PLAN_CHANGE_UNCERTAIN_CASE,
+        `Submitted to the provider but our subscription refused the pending upgrade (${result.ok ? 'NO_CHANGE' : result.reason}).`,
+      );
+      return 'REVIEW';
+    }
+    await this.write(
+      tx,
+      subscription,
+      result.next,
+      subscription.lastBillingEventAt,
+    );
+    await this.history(tx, subscription.id, result.history, origin);
+    return this.settlePlanChange(tx, planChangeId, snapshot, invoice, origin);
+  }
+
+  // SC3d-2 — settles a confirmed immediate change against the provider's LIVE
+  // view (owner decisions D1/D2):
+  //   APPLIED  the invoice is ours, a subscription-update invoice, PAID, and
+  //            the provider now bills exactly the new price: the new plan
+  //            applies (a different amount than confirmed is applied AND
+  //            reviewed — the money was collected, nothing is pretended);
+  //   ABANDONED the provider discarded it (no pending update, the invoice
+  //            void / uncollectible, the price unchanged): the business keeps
+  //            its plan and standing;
+  //   NOT_YET  paid, but the provider has not applied the price yet;
+  //   REVIEW   anything that does not add up (a case is opened);
+  //   WAITING  still waiting for payment.
+  async settlePlanChange(
+    tx: Tx,
+    planChangeId: string,
+    snapshot: ProviderSubscriptionSnapshot,
+    invoice: ProviderInvoice | null,
+    origin: {
+      source: 'OPERATOR' | 'BILLING_PROVIDER' | 'SYSTEM';
+      billingProviderEventId: string | null;
+      actorPlatformOperatorId: string | null;
+    },
+  ): Promise<PlanChangeSettlement> {
+    const change = await tx.billingPlanChange.findUniqueOrThrow({
+      where: { id: planChangeId },
+      include: { toPlanPrice: { select: { externalPriceId: true } } },
+    });
+    if (change.status === 'APPLIED') return 'APPLIED';
+    // Already with an operator, and now paid: the collected money is flagged
+    // on its own case (never folded into the earlier one).
+    if (
+      change.status === 'REVIEW' &&
+      invoice !== null &&
+      invoice.status === 'paid'
+    ) {
+      await this.openCase(
+        tx,
+        UPGRADE_PAID_NOT_APPLIED_CASE,
+        change.subscriptionId,
+        origin.billingProviderEventId,
+        planChangeDetail(
+          change,
+          invoice,
+          'Paid while the change was under review.',
+        ),
+      );
+      return 'REVIEW';
+    }
+    if (
+      change.status !== 'AWAITING_PAYMENT' ||
+      change.externalInvoiceId === null
+    ) {
+      return 'WAITING';
+    }
+    const subscription = await this.load(tx, change.subscriptionId);
+    const invoiceIsOurs =
+      invoice !== null &&
+      invoice.externalInvoiceId === change.externalInvoiceId &&
+      invoice.livemode === this.provider.livemode &&
+      invoice.externalSubscriptionId === subscription.externalSubscriptionId &&
+      (invoice.externalCustomerId === null ||
+        invoice.externalCustomerId === subscription.externalCustomerId) &&
+      invoice.billingReason === 'subscription_update';
+    const ours =
+      snapshot.externalSubscriptionId === subscription.externalSubscriptionId &&
+      snapshot.externalCustomerId === subscription.externalCustomerId &&
+      snapshot.livemode === this.provider.livemode;
+    const onTarget =
+      ours &&
+      change.toPlanPrice.externalPriceId !== null &&
+      verifyBilledPrice(snapshot, change.toPlanPrice.externalPriceId).ok;
+
+    if (invoice !== null && invoice.status === 'paid') {
+      if (!invoiceIsOurs || !ours) {
+        await this.markPlanChangeReview(
+          tx,
+          planChangeId,
+          PLAN_CHANGE_UNCERTAIN_CASE,
+          planChangeDetail(
+            change,
+            invoice,
+            'The paid invoice or subscription does not match this change.',
+          ),
+        );
+        return 'REVIEW';
+      }
+      if (!onTarget) {
+        if (snapshot.hasPendingUpdate === true) return 'NOT_YET';
+        await this.markPlanChangeReview(
+          tx,
+          planChangeId,
+          UPGRADE_PAID_NOT_APPLIED_CASE,
+          planChangeDetail(
+            change,
+            invoice,
+            'Paid, but the provider does not bill the new price.',
+          ),
+        );
+        return 'REVIEW';
+      }
+      if (invoice.amountPaidMinorUnits <= 0) {
+        await this.markPlanChangeReview(
+          tx,
+          planChangeId,
+          PLAN_CHANGE_UNCERTAIN_CASE,
+          planChangeDetail(
+            change,
+            invoice,
+            'Applied by the provider without a collected payment.',
+          ),
+        );
+        return 'REVIEW';
+      }
+      const result = transition(toBillingState(subscription), {
+        type: 'PAYMENT_SUCCEEDED',
+        at: new Date(),
+        reference: change.externalInvoiceId,
+        amountMinorUnits: invoice.amountPaidMinorUnits,
+        currency: (invoice.currency ?? change.currency).toUpperCase(),
+        periodStart: snapshot.currentPeriodStart ?? null,
+        periodEnd: snapshot.currentPeriodEnd ?? null,
+      });
+      const applied =
+        result.ok &&
+        result.changed &&
+        result.next.planPriceId === change.toPlanPriceId &&
+        result.next.planVersionId === change.toPlanVersionId;
+      if (!applied) {
+        await this.markPlanChangeReview(
+          tx,
+          planChangeId,
+          UPGRADE_PAID_NOT_APPLIED_CASE,
+          planChangeDetail(
+            change,
+            invoice,
+            'Paid and applied by the provider, but our subscription is not waiting for it.',
+          ),
+        );
+        return 'REVIEW';
+      }
+      await this.write(
+        tx,
+        subscription,
+        result.next,
+        subscription.lastBillingEventAt,
+      );
+      await this.history(tx, subscription.id, result.history, origin);
+      await tx.billingPlanChange.update({
+        where: { id: planChangeId },
+        data: {
+          status: 'APPLIED',
+          amountPaidMinorUnits: invoice.amountPaidMinorUnits,
+          finishedAt: new Date(),
+        },
+      });
+      // D1 — collected, applied, and the difference reviewed (never
+      // presented as refunded).
+      if (
+        invoice.amountPaidMinorUnits !== change.previewAmountDueMinorUnits ||
+        (invoice.currency ?? change.currency).toUpperCase() !== change.currency
+      ) {
+        await tx.billingReconciliationCase.create({
+          data: {
+            kind: PLAN_CHANGE_AMOUNT_MISMATCH_CASE,
+            subscriptionId: subscription.id,
+            billingProviderEventId: origin.billingProviderEventId,
+            detail: planChangeDetail(
+              change,
+              invoice,
+              'Paid amount differs from the confirmed preview.',
+            ),
+          },
+        });
+      }
+      return 'APPLIED';
+    }
+
+    // Discarded by the provider: nothing applied and nothing payable.
+    if (
+      ours &&
+      snapshot.hasPendingUpdate === false &&
+      !onTarget &&
+      invoice !== null &&
+      invoiceIsOurs &&
+      (invoice.status === 'void' || invoice.status === 'uncollectible')
+    ) {
+      const result = transition(toBillingState(subscription), {
+        type: 'UPGRADE_ABANDONED',
+        at: new Date(),
+        reference: change.externalInvoiceId,
+      });
+      if (result.ok && result.changed) {
+        await this.write(
+          tx,
+          subscription,
+          result.next,
+          subscription.lastBillingEventAt,
+        );
+        await this.history(tx, subscription.id, result.history, origin);
+      }
+      await tx.billingPlanChange.update({
+        where: { id: planChangeId },
+        data: {
+          status: 'EXPIRED',
+          failureCode: 'PAYMENT_NOT_COMPLETED',
+          finishedAt: new Date(),
+        },
+      });
+      return 'ABANDONED';
+    }
+    // The provider no longer holds the change, yet its invoice is still open:
+    // paying it would not apply the plan — reviewed (and no longer offered).
+    if (
+      ours &&
+      snapshot.hasPendingUpdate === false &&
+      !onTarget &&
+      invoice !== null &&
+      invoiceIsOurs &&
+      invoice.status === 'open'
+    ) {
+      await this.markPlanChangeReview(
+        tx,
+        planChangeId,
+        PLAN_CHANGE_UNCERTAIN_CASE,
+        planChangeDetail(
+          change,
+          invoice,
+          'The provider dropped the pending change but its invoice is still open.',
+        ),
+      );
+      return 'REVIEW';
+    }
+    return 'WAITING';
+  }
+
+  // SC3d-2 — a change that needs an operator: REVIEW and one OPEN case.
+  async markPlanChangeReview(
+    tx: Tx,
+    planChangeId: string,
+    caseKind: string,
+    detail: string,
+  ): Promise<void> {
+    const change = await tx.billingPlanChange.findUniqueOrThrow({
+      where: { id: planChangeId },
+      select: { status: true, subscriptionId: true },
+    });
+    if (change.status === 'REQUESTED' || change.status === 'AWAITING_PAYMENT') {
+      await tx.billingPlanChange.update({
+        where: { id: planChangeId },
+        data: { status: 'REVIEW' },
+      });
+    }
+    await this.openCase(
+      tx,
+      caseKind,
+      change.subscriptionId,
+      null,
+      detail.slice(0, 500),
+    );
   }
 
   // SC3b — something for a platform operator to review (never acts). One

@@ -1012,6 +1012,8 @@ export interface AdminBillingResponse {
     canRestartSubscription: boolean;
     canPayInvoice: boolean;
     canManagePaymentMethod: boolean;
+    canChangePlan: boolean;
+    planChange: AdminPlanChangeView | null;
 }
 export interface AdminBillingCheckoutResponse {
     url: string;
@@ -1024,6 +1026,9 @@ export declare const BILLING_PLAN_CHANGE_SAME_PRICE = "BILLING_PLAN_CHANGE_SAME_
 export declare const BILLING_PLAN_CHANGE_CURRENCY = "BILLING_PLAN_CHANGE_CURRENCY";
 export declare const BILLING_PLAN_CHANGE_IN_PROGRESS = "BILLING_PLAN_CHANGE_IN_PROGRESS";
 export declare const BILLING_PLAN_CHANGE_UNVERIFIED = "BILLING_PLAN_CHANGE_UNVERIFIED";
+export declare const BILLING_PLAN_CHANGE_PREVIEW_EXPIRED = "BILLING_PLAN_CHANGE_PREVIEW_EXPIRED";
+export declare const BILLING_PLAN_CHANGE_PREVIEW_CHANGED = "BILLING_PLAN_CHANGE_PREVIEW_CHANGED";
+export declare const BILLING_PLAN_CHANGE_NOT_PAYABLE = "BILLING_PLAN_CHANGE_NOT_PAYABLE";
 export type BillingPlanChangeTiming = "IMMEDIATE" | "PERIOD_END" | "TRIAL_END";
 export interface BillingPlanChangePreviewRequest {
     planPriceId: string;
@@ -1056,6 +1061,37 @@ export interface BillingPlanChangePreview {
         startsAt: string | null;
     };
     expiresAt: string;
+}
+export type AdminPlanChangeStatus = "PROCESSING" | "PAYMENT_NEEDED" | "APPLIED" | "REVIEW" | "EXPIRED" | "FAILED";
+export interface AdminPlanChangeView {
+    id: string;
+    status: AdminPlanChangeStatus;
+    target: BillingPlanChangeSide;
+    amountDueMinorUnits: number | null;
+    currency: string;
+    confirmedAt: string | null;
+    finishedAt: string | null;
+}
+export interface BillingPlanChangeConfirmRequest {
+    previewId: string;
+}
+export interface BillingPlanChangeConfirmResponse {
+    planChange: AdminPlanChangeView;
+}
+export interface AdminPlanOption {
+    planPriceId: string;
+    planName: string;
+    amountMinorUnits: number;
+    currency: string;
+    interval: PlatformBillingInterval;
+    current: boolean;
+}
+export interface AdminPlanOptionsResponse {
+    options: AdminPlanOption[];
+}
+export interface PlatformPlanChangePreviewRequest {
+    planPriceId: string;
+    reason: string;
 }
 export declare const PLATFORM_ALREADY_BILLED = "ALREADY_BILLED";
 export declare const PLATFORM_FOUNDING_COMPLIMENTARY = "FOUNDING_COMPLIMENTARY";

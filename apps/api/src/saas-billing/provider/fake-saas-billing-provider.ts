@@ -142,10 +142,22 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
     }
   >();
   private readonly changeResults = new Map<string, ProviderPriceChangeResult>();
+  // SC3d-2 — immediate changes waiting for payment (Stripe's pending update).
+  readonly pendingChanges = new Map<
+    string,
+    {
+      externalItemId: string;
+      toExternalPriceId: string;
+      externalInvoiceId: string;
+      at: Date;
+    }
+  >();
   private readonly schedulesByKey = new Map<string, string>();
   // Test hooks: adjust the next preview (tax, discount, a different charge);
   // make the next immediate change's payment fail (pending update).
   previewAdjust: Partial<ProviderChargePreview> | null = null;
+  // Test hook: the next change's invoice collects this amount instead.
+  paidAdjust: number | null = null;
   failNextChangePayment = false;
   // SC3c-2 — the Customer Portal (test settings; a safe configuration by
   // default, changeable by tests).
@@ -171,6 +183,9 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
   readonly calls: Array<{ op: string; key: string }> = [];
   // Test hook: make the next provider call fail (a transient outage).
   failNext: string | null = null;
+  // SC3d-2 — make the next call of ONE operation fail (e.g. an interrupted
+  // plan change submission).
+  failOp: { op: string; code: string } | null = null;
 
   constructor(
     private readonly webhookSecret: string = randomBytes(32).toString('hex'),
@@ -182,6 +197,11 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
 
   private call(op: string, key: string): void {
     this.calls.push({ op, key });
+    if (this.failOp !== null && this.failOp.op === op) {
+      const code = this.failOp.code;
+      this.failOp = null;
+      throw new SaasBillingProviderError(code);
+    }
     if (this.failNext !== null) {
       const code = this.failNext;
       this.failNext = null;
@@ -463,21 +483,31 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
       paid ? 'paid' : 'open',
       input.externalSubscriptionId,
       sub.externalCustomerId,
-      { amountMinorUnits: preview.amountDueMinorUnits },
+      {
+        amountMinorUnits: preview.amountDueMinorUnits,
+        billingReason: 'subscription_update',
+        amountPaidMinorUnits: this.paidAdjust ?? undefined,
+      },
     );
+    this.paidAdjust = null;
     // "Apply only if paid": unpaid, the subscription is unchanged.
     const next: ProviderSubscriptionSnapshot = paid
-      ? {
-          ...sub,
-          items: sub.items!.map((i) =>
-            i.externalItemId === input.externalItemId
-              ? { ...i, externalPriceId: input.toExternalPriceId }
-              : i,
-          ),
-          latestInvoiceId: invoiceId,
-          hasPendingUpdate: false,
-        }
+      ? this.applyChange(
+          sub,
+          input.externalItemId,
+          input.toExternalPriceId,
+          input.prorationDate,
+          invoiceId,
+        )
       : { ...sub, latestInvoiceId: invoiceId, hasPendingUpdate: true };
+    if (!paid) {
+      this.pendingChanges.set(input.externalSubscriptionId, {
+        externalItemId: input.externalItemId,
+        toExternalPriceId: input.toExternalPriceId,
+        externalInvoiceId: invoiceId,
+        at: input.prorationDate,
+      });
+    }
     this.subscriptions.set(input.externalSubscriptionId, next);
     const result = {
       snapshot: { ...next },
@@ -543,6 +573,77 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
     return Promise.resolve({
       releasedSubscriptionId: schedule.externalSubscriptionId,
     });
+  }
+
+  // The item moves to the new price; an interval change starts a new period.
+  private applyChange(
+    sub: ProviderSubscriptionSnapshot,
+    externalItemId: string,
+    toExternalPriceId: string,
+    at: Date,
+    invoiceId: string,
+  ): ProviderSubscriptionSnapshot {
+    const fromPrice = sub.items?.find(
+      (i) => i.externalItemId === externalItemId,
+    )?.externalPriceId;
+    const from = fromPrice ? this.priceCatalog.get(fromPrice) : undefined;
+    const to = this.priceCatalog.get(toExternalPriceId);
+    const newPeriod = from && to && from.interval !== to.interval;
+    return {
+      ...sub,
+      items: sub.items!.map((i) =>
+        i.externalItemId === externalItemId
+          ? { ...i, externalPriceId: toExternalPriceId }
+          : i,
+      ),
+      latestInvoiceId: invoiceId,
+      hasPendingUpdate: false,
+      ...(newPeriod
+        ? {
+            currentPeriodStart: at,
+            currentPeriodEnd: new Date(
+              at.getTime() + (to.interval === 'YEAR' ? 365 : 30) * 86_400_000,
+            ),
+          }
+        : {}),
+    };
+  }
+
+  // SC3d-2 — the owner pays the waiting invoice (e.g. after 3-D Secure or
+  // with another card): Stripe applies the pending update.
+  payPendingChange(externalSubscriptionId: string): void {
+    const pending = this.pendingChanges.get(externalSubscriptionId)!;
+    const sub = this.subscriptions.get(externalSubscriptionId)!;
+    const invoice = this.invoices.get(pending.externalInvoiceId)!;
+    this.invoices.set(pending.externalInvoiceId, {
+      ...invoice,
+      status: 'paid',
+      amountPaidMinorUnits: invoice.amountDueMinorUnits,
+    });
+    this.subscriptions.set(
+      externalSubscriptionId,
+      this.applyChange(
+        sub,
+        pending.externalItemId,
+        pending.toExternalPriceId,
+        pending.at,
+        pending.externalInvoiceId,
+      ),
+    );
+    this.pendingChanges.delete(externalSubscriptionId);
+  }
+
+  // SC3d-2 — the pending update expires: Stripe voids its invoice and
+  // discards the change.
+  expirePendingChange(externalSubscriptionId: string): void {
+    const pending = this.pendingChanges.get(externalSubscriptionId)!;
+    const invoice = this.invoices.get(pending.externalInvoiceId)!;
+    this.invoices.set(pending.externalInvoiceId, {
+      ...invoice,
+      status: 'void',
+    });
+    this.setSubscription(externalSubscriptionId, { hasPendingUpdate: false });
+    this.pendingChanges.delete(externalSubscriptionId);
   }
 
   // --- test helpers (the provider side) --------------------------------------
@@ -625,7 +726,12 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
     status: ProviderInvoiceStatus,
     externalSubscriptionId: string | null,
     externalCustomerId: string | null,
-    opts: { amountMinorUnits?: number; createdAt?: Date } = {},
+    opts: {
+      amountMinorUnits?: number;
+      createdAt?: Date;
+      billingReason?: string | null;
+      amountPaidMinorUnits?: number;
+    } = {},
   ): void {
     const amount = opts.amountMinorUnits ?? 4900;
     const existing = this.invoices.get(externalInvoiceId);
@@ -635,7 +741,12 @@ export class FakeSaasBillingProvider implements SaasBillingProvider {
       externalSubscriptionId,
       externalCustomerId,
       livemode: false,
-      amountPaidMinorUnits: status === 'paid' ? amount : 0,
+      billingReason:
+        opts.billingReason !== undefined
+          ? opts.billingReason
+          : (existing?.billingReason ?? 'subscription_cycle'),
+      amountPaidMinorUnits:
+        status === 'paid' ? (opts.amountPaidMinorUnits ?? amount) : 0,
       amountDueMinorUnits: amount,
       currency: 'usd',
       createdAt: opts.createdAt ?? existing?.createdAt ?? new Date(),

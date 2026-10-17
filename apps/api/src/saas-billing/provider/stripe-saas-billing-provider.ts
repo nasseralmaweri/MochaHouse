@@ -456,6 +456,7 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
       hasPendingUpdate:
         sub.pending_update !== null && sub.pending_update !== undefined,
       currentPeriodEnd: date(sub.items?.data?.[0]?.current_period_end),
+      currentPeriodStart: date(sub.items?.data?.[0]?.current_period_start),
     };
   }
 
@@ -660,6 +661,8 @@ export class StripeSaasBillingProvider implements SaasBillingProvider {
         externalCustomerId: id(invoice.customer),
         livemode: invoice.livemode,
         amountPaidMinorUnits: amount(invoice.amount_paid),
+        billingReason: text(invoice.billing_reason, 60),
+        currency: text(invoice.currency, 3),
       };
     } catch (error) {
       if ((error as { code?: unknown })?.code === 'resource_missing') {
@@ -865,9 +868,14 @@ function normalize(
           }
         : { event: { kind: 'UNSUPPORTED' }, externalSubscriptionId: null };
     }
+    // SC3d-2 — pending_update_applied / _expired: a plan change waiting for
+    // payment was applied (paid) or discarded: re-read live, like any
+    // subscription change.
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted':
+    case 'customer.subscription.pending_update_applied':
+    case 'customer.subscription.pending_update_expired':
       return {
         event: { kind: 'SUBSCRIPTION_CHANGED' },
         externalSubscriptionId: text(object.id),

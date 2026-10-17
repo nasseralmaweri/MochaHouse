@@ -1022,3 +1022,85 @@ describe('SC3d-1 Stripe plan change foundations (mocked HTTP)', () => {
     ).toBe(false);
   });
 });
+
+// SC3d-2 — what settlement relies on: an invoice's billing reason and
+// currency, the period start, and the pending-update events.
+describe('SC3d-2 Stripe reads for plan changes (mocked HTTP)', () => {
+  it('reads an invoice billing reason and currency, and the period start', async () => {
+    const { provider } = harness({
+      'GET /v1/invoices/in_up': () => [
+        200,
+        {
+          id: 'in_up',
+          object: 'invoice',
+          livemode: false,
+          status: 'paid',
+          customer: 'cus_1',
+          amount_paid: 3333,
+          currency: 'usd',
+          billing_reason: 'subscription_update',
+          parent: { subscription_details: { subscription: 'sub_1' } },
+        },
+      ],
+      'GET /v1/subscriptions/sub_1': () => [
+        200,
+        {
+          id: 'sub_1',
+          object: 'subscription',
+          customer: 'cus_1',
+          status: 'active',
+          livemode: false,
+          cancel_at_period_end: false,
+          items: {
+            object: 'list',
+            has_more: false,
+            data: [
+              {
+                id: 'si_1',
+                object: 'subscription_item',
+                price: { id: 'price_y', object: 'price' },
+                quantity: 1,
+                current_period_start: 1_800_000_000,
+                current_period_end: 1_831_536_000,
+              },
+            ],
+          },
+        },
+      ],
+    });
+    await expect(provider.retrieveInvoice('in_up')).resolves.toMatchObject({
+      billingReason: 'subscription_update',
+      currency: 'usd',
+      amountPaidMinorUnits: 3333,
+    });
+    await expect(provider.retrieveSubscription('sub_1')).resolves.toMatchObject(
+      {
+        currentPeriodStart: new Date(1_800_000_000_000),
+        currentPeriodEnd: new Date(1_831_536_000_000),
+      },
+    );
+  });
+
+  it('pending update applied / expired events re-read the subscription', () => {
+    const { stripe, provider } = harness({});
+    for (const type of [
+      'customer.subscription.pending_update_applied',
+      'customer.subscription.pending_update_expired',
+    ]) {
+      const verified = provider.verifyEvent({
+        ...signed(stripe, {
+          id: `evt_${type}`,
+          object: 'event',
+          type,
+          created: Math.floor(Date.now() / 1000),
+          livemode: false,
+          data: {
+            object: { id: 'sub_1', object: 'subscription', customer: 'cus_1' },
+          },
+        }),
+      });
+      expect(verified.event).toEqual({ kind: 'SUBSCRIPTION_CHANGED' });
+      expect(verified.externalSubscriptionId).toBe('sub_1');
+    }
+  });
+});

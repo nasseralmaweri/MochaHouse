@@ -34,7 +34,12 @@ export class InternalAuditService {
     input: {
       actorInternalUserId: string;
       subscriptionId: string;
-      kind: 'RESTART_CHECKOUT' | 'INVOICE_PAYMENT' | 'PAYMENT_METHOD_PORTAL';
+      kind:
+        | 'RESTART_CHECKOUT'
+        | 'INVOICE_PAYMENT'
+        | 'PAYMENT_METHOD_PORTAL'
+        // SC3d-2 — the invoice of a plan change waiting for payment.
+        | 'PLAN_CHANGE_PAYMENT';
       reference: string | null;
     },
   ): Promise<void> {
@@ -53,6 +58,38 @@ export class InternalAuditService {
           reference: input.reference,
         },
         reason: 'Billing recovery',
+      },
+    });
+  }
+
+  // SC3d-2 — a business user CONFIRMED a plan change and its charge (the
+  // business's consent): which change, to which price, for how much.
+  async recordPlanChangeConfirmed(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      subscriptionId: string;
+      planChangeId: string;
+      toPlanPriceId: string;
+      amountDueMinorUnits: number;
+      currency: string;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'billing.plan_change_confirmed',
+        targetType: 'billing_subscription',
+        targetId: 'company',
+        afterData: {
+          subscriptionId: input.subscriptionId,
+          planChangeId: input.planChangeId,
+          toPlanPriceId: input.toPlanPriceId,
+          amountDueMinorUnits: input.amountDueMinorUnits,
+          currency: input.currency,
+        },
+        reason: 'Plan change confirmed',
       },
     });
   }

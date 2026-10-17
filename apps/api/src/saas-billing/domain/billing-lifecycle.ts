@@ -133,6 +133,10 @@ export type BillingEvent =
   // Provider: the subscription ended (after a scheduled cancellation, or a
   // cardless trial the provider ended).
   | { type: 'SUBSCRIPTION_ENDED'; at: Date; trialRecoveryDays: number }
+  // SC3d-2 — the provider discarded the upgrade waiting for payment
+  // `reference` (its pending update expired and the invoice can no longer be
+  // paid): the upgrade is abandoned. A failed ATTEMPT never abandons it.
+  | { type: 'UPGRADE_ABANDONED'; at: Date; reference: string }
   // Operator: request an upgrade; it waits for payment `reference`.
   | {
       type: 'UPGRADE_REQUESTED';
@@ -438,10 +442,22 @@ export function transition(
         state.pending?.kind === 'UPGRADE' &&
         state.pending.reference === event.reference
       ) {
+        // SC3d-2 — a monthly -> annual change starts a new period (the
+        // caller passes the provider's live period); otherwise unchanged.
+        const newer =
+          event.periodStart !== null &&
+          event.periodEnd !== null &&
+          event.periodEnd > event.periodStart &&
+          (state.currentPeriodEnd === null ||
+            event.periodEnd > state.currentPeriodEnd);
         const next: BillingState = {
           ...state,
           planVersionId: state.pending.planVersionId,
           planPriceId: state.pending.planPriceId ?? state.planPriceId,
+          currentPeriodStart: newer
+            ? event.periodStart
+            : state.currentPeriodStart,
+          currentPeriodEnd: newer ? event.periodEnd : state.currentPeriodEnd,
           pending: null,
         };
         return changed(state, next, [
@@ -511,20 +527,15 @@ export function transition(
     }
 
     case 'PAYMENT_FAILED': {
-      // The pending upgrade's own payment failed: the upgrade is abandoned
-      // and the subscription keeps its plan and standing.
+      // SC3d-2 — an ATTEMPT on the pending upgrade's own invoice failed: the
+      // provider keeps the change waiting (the owner may still pay, e.g.
+      // after 3-D Secure). Nothing changes: the plan, the standing — never a
+      // delinquency. Only UPGRADE_ABANDONED ends it.
       if (
         state.pending?.kind === 'UPGRADE' &&
         state.pending.reference === event.reference
       ) {
-        const next = { ...state, pending: null };
-        return changed(state, next, [
-          entry('PLAN_CHANGE_ABANDONED', state, next, {
-            from: state.planVersionId,
-            to: state.pending.planVersionId,
-            price: state.pending.planPriceId,
-          }),
-        ]);
+        return unchanged(state);
       }
       if (state.recurringPaymentAuthorizedAt === null) {
         // There was no authorization to charge against: never treated as
@@ -611,6 +622,23 @@ export function transition(
         [entry('GRACE_EXPIRED', state, next)],
         'SUSPEND_FOR_BILLING',
       );
+    }
+
+    case 'UPGRADE_ABANDONED': {
+      if (
+        state.pending?.kind !== 'UPGRADE' ||
+        state.pending.reference !== event.reference
+      ) {
+        return refuse('NOT_CHANGEABLE');
+      }
+      const next = { ...state, pending: null };
+      return changed(state, next, [
+        entry('PLAN_CHANGE_ABANDONED', state, next, {
+          from: state.planVersionId,
+          to: state.pending.planVersionId,
+          price: state.pending.planPriceId,
+        }),
+      ]);
     }
 
     case 'GRACE_EXTENDED': {
@@ -720,7 +748,12 @@ export function transition(
     case 'UPGRADE_REQUESTED': {
       if (state.pending !== null) return refuse('CHANGE_PENDING');
       if (state.status !== 'ACTIVE') return refuse('NOT_CHANGEABLE');
-      if (event.planVersionId === state.planVersionId) {
+      // SC3d-2 — the same plan at another price (monthly <-> annual) IS a
+      // change; only the same plan at the same price is not.
+      if (
+        event.planVersionId === state.planVersionId &&
+        event.planPriceId === state.planPriceId
+      ) {
         return refuse('SAME_PLAN');
       }
       const next: BillingState = {
@@ -747,7 +780,12 @@ export function transition(
       if (state.status !== 'ACTIVE' && state.status !== 'TRIALING') {
         return refuse('NOT_CHANGEABLE');
       }
-      if (event.planVersionId === state.planVersionId) {
+      // SC3d-2 — the same plan at another price (monthly <-> annual) IS a
+      // change; only the same plan at the same price is not.
+      if (
+        event.planVersionId === state.planVersionId &&
+        event.planPriceId === state.planPriceId
+      ) {
         return refuse('SAME_PLAN');
       }
       if (event.effectiveAt <= event.at) {

@@ -93,7 +93,11 @@ describe('SC3d-1 plan change preview (integration, scratch database)', () => {
         'Authorization',
         `Bearer ${signPlatformDevJwt({ sub: `platform-dev:sc3d1-${run}`, mfa: true }, PLATFORM_SECRET, 3600)}`,
       )
-      .send(body as object);
+      // SC3d-2 — an operator preview always carries a written reason.
+      .send({
+        reason: 'Requested by the business owner.',
+        ...(body as object),
+      });
 
   interface Business {
     key: string;
@@ -587,7 +591,7 @@ describe('SC3d-1 plan change preview (integration, scratch database)', () => {
     }).expect(200);
     await prisma.billingPlanChange.update({
       where: { id: body.previewId },
-      data: { status: 'REQUESTED' },
+      data: { status: 'REQUESTED', confirmedAt: new Date() },
     });
     expect(
       codeOf(
@@ -720,7 +724,7 @@ describe('SC3d-1 plan change preview (integration, scratch database)', () => {
     ).body as BillingPlanChangePreview;
     await prisma.billingPlanChange.update({
       where: { id: first.previewId },
-      data: { status: 'REQUESTED' },
+      data: { status: 'REQUESTED', confirmedAt: new Date() },
     });
     await expect(
       prisma.billingPlanChange.update({

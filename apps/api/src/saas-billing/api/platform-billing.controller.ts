@@ -38,7 +38,7 @@ import { BillingReconciliationService } from '../application/billing-reconciliat
 import { BillingEnforcementService } from '../application/billing-enforcement.service';
 import {
   BillingPlanChangeService,
-  parsePlanChangePreview,
+  parseOperatorPlanChangePreview,
 } from '../application/billing-plan-change.service';
 import {
   BillingOperationsService,
@@ -87,7 +87,8 @@ export class PlatformBillingController {
   ) {}
 
   // SC3d-1 — a PREVIEW of a business's plan change on its behalf (nothing
-  // charged or changed; audited).
+  // charged or changed; audited). SC3d-2 — a recent sign-in and a written
+  // reason; an operator never confirms (charges) a change.
   @UseGuards(RateLimitGuard)
   @RateLimit('platform-lifecycle')
   @Header('Cache-Control', 'no-store')
@@ -98,10 +99,13 @@ export class PlatformBillingController {
     @Body() body: unknown,
     @Req() request: PlatformAuthenticatedRequest,
   ): Promise<BillingPlanChangePreview> {
-    return this.planChanges.preview(tenantId, parsePlanChangePreview(body), {
+    assertRecentSignIn(request.platformIdentity);
+    const input = parseOperatorPlanChangePreview(body);
+    return this.planChanges.preview(tenantId, input.planPriceId, {
       kind: 'OPERATOR',
       platformOperatorId: request.platformOperator!.id,
       requestReference: request.requestId ?? null,
+      reason: input.reason,
     });
   }
 

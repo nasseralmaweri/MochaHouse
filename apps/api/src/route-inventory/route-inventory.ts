@@ -26,6 +26,11 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/admin/billing/recovery/portal': { scope: 'tenant' },
   // SC3d-1 — plan change preview (nothing charged or changed).
   'POST /api/v1/admin/billing/plan-change/preview': { scope: 'tenant' },
+  // SC3d-2 — plan options, the business's confirmation (the only charge
+  // path) and the waiting change's invoice page.
+  'GET /api/v1/admin/billing/plan-options': { scope: 'tenant' },
+  'POST /api/v1/admin/billing/plan-change/confirm': { scope: 'tenant' },
+  'POST /api/v1/admin/billing/plan-change/pay': { scope: 'tenant' },
   'GET /api/v1/admin/approvals/:approvalRequestId': { scope: 'tenant' },
   'GET /api/v1/admin/audit': { scope: 'tenant' },
   'GET /api/v1/admin/careers/applications': { scope: 'tenant' },
