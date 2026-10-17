@@ -54,6 +54,7 @@ export type TenantOwnedModel = Exclude<
   | 'BillingEnforcementActivation'
   | 'OwnerRegistration'
   | 'BillingNotification'
+  | 'RegistrationControlChange'
 >;
 
 export type ReferentialAction = 'Cascade' | 'Restrict' | 'SetNull' | 'NoAction';

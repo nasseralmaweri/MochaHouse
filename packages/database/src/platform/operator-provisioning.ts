@@ -239,6 +239,9 @@ export const PLATFORM_PERMISSIONS = [
   "platform.permissions.manage",
   // SC3f — read-only SaaS revenue reporting (granted through this CLI).
   "billing.reports.view",
+  // SC4e — onboarding oversight (read-only) and the registration pause.
+  "onboarding.view",
+  "onboarding.manage",
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 

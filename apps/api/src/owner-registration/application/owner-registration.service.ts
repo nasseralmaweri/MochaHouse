@@ -19,6 +19,11 @@ import { PLATFORM_AUDIT_ACTIONS } from '../../platform-auth/application/platform
 import { CognitoOwnerRegistrationProvider } from '../infrastructure/cognito-owner-registration.provider';
 import { LocalDevOwnerRegistrationProvider } from '../infrastructure/local-dev-owner-registration.provider';
 import type { OwnerRegistrationConfig } from './owner-registration.config';
+import {
+  REGISTRATION_CONTROL_LOCK,
+  isRegistrationPaused,
+  registrationQuotaWindow,
+} from './registration-control';
 import type { OwnerRegistrationProvider } from './owner-registration-provider';
 import type { CompleteRegistrationInput } from './owner-registration-request';
 
@@ -68,7 +73,7 @@ type OwnerRegistration = Prisma.OwnerRegistrationGetPayload<
 //     refused alike (503), so the refusal reveals nothing about an email.
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CODES_PER_WINDOW = 5;
-const MAX_VERIFICATION_ATTEMPTS = 5;
+export const MAX_VERIFICATION_ATTEMPTS = 5;
 const CODE_VALIDITY_MS = DAY_MS;
 
 function codeInvalid(): BadRequestException {
@@ -148,10 +153,13 @@ export class OwnerRegistrationService {
   // --- step 1 -----------------------------------------------------------------
 
   async start(config: OwnerRegistrationConfig, email: string): Promise<void> {
-    const recent = await this.prisma.ownerRegistration.count({
-      where: { createdAt: { gte: new Date(Date.now() - DAY_MS) } },
-    });
-    if (recent >= config.dailyLimit) throw unavailable();
+    // SC4e — an operator's emergency pause stops every new start (and so
+    // every new code), answered exactly like the quota: nothing reveals the
+    // email's state. Unreadable pause state counts as paused (fail closed).
+    // Completing with a code already sent is not affected.
+    if (await isRegistrationPaused(this.prisma)) throw unavailable();
+    const { used } = await registrationQuotaWindow(this.prisma);
+    if (used >= config.dailyLimit) throw unavailable();
 
     const provider = this.provider();
     const registration = await this.findOrCreate(email, provider.providerName);
@@ -209,17 +217,30 @@ export class OwnerRegistrationService {
   // Counts a code against the email's 24-hour allowance BEFORE it is sent
   // (an attempt that then fails still counts). Atomic: concurrent starts can
   // never exceed the allowance. False when it is used up.
+  //
+  // SC4e — also the point a code is admitted against the registration pause:
+  // under the pause lock (shared here, exclusive while an operator pauses or
+  // resumes) and only while not paused, in the same statement. A start
+  // admitted here was admitted before any pause; once a pause commits, no
+  // further code is reserved.
   private async reserveCode(id: string): Promise<boolean> {
     const windowStart = new Date(Date.now() - DAY_MS);
-    const reserved = await this.prisma.$executeRaw(Prisma.sql`
-      UPDATE "OwnerRegistration"
-      SET "codesSent" = CASE WHEN "codeWindowStartedAt" <= ${windowStart} THEN 1 ELSE "codesSent" + 1 END,
-          "codeWindowStartedAt" = CASE WHEN "codeWindowStartedAt" <= ${windowStart} THEN now() ELSE "codeWindowStartedAt" END,
-          "updatedAt" = now()
-      WHERE "id" = ${id}
-        AND "status" <> 'VERIFIED'
-        AND ("codeWindowStartedAt" <= ${windowStart} OR "codesSent" < ${CODES_PER_WINDOW})
-    `);
+    const reserved = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock_shared(${REGISTRATION_CONTROL_LOCK}::bigint)`;
+      return tx.$executeRaw(Prisma.sql`
+        UPDATE "OwnerRegistration"
+        SET "codesSent" = CASE WHEN "codeWindowStartedAt" <= ${windowStart} THEN 1 ELSE "codesSent" + 1 END,
+            "codeWindowStartedAt" = CASE WHEN "codeWindowStartedAt" <= ${windowStart} THEN now() ELSE "codeWindowStartedAt" END,
+            "updatedAt" = now()
+        WHERE "id" = ${id}
+          AND "status" <> 'VERIFIED'
+          AND ("codeWindowStartedAt" <= ${windowStart} OR "codesSent" < ${CODES_PER_WINDOW})
+          AND NOT COALESCE((
+            SELECT "paused" FROM "RegistrationControlChange"
+             ORDER BY "createdAt" DESC, "id" DESC LIMIT 1
+          ), false)
+      `);
+    });
     return reserved === 1;
   }
 

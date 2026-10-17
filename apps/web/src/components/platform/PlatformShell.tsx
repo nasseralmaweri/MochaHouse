@@ -8,6 +8,7 @@ import { CenterivoWordmark } from "@/components/centerivo/Wordmark";
 import {
   IconAdministration,
   IconBusiness,
+  IconChecklist,
   IconClose,
   IconHome,
   IconInfo,
@@ -28,6 +29,7 @@ import {
 const ICONS: Record<PlatformNavKey, typeof IconHome> = {
   overview: IconHome,
   tenants: IconBusiness,
+  onboarding: IconChecklist,
   plans: IconPromotions,
   subscriptions: IconOrders,
   billing: IconReports,

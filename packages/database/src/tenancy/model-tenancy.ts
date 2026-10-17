@@ -47,6 +47,8 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     BillingReconciliationCase: 'platform',
     // SC3c-3 — grace extensions and the billing notification queue.
     BillingGraceExtension: 'platform',
+    // SC4e — the registration pause history (platform data).
+    RegistrationControlChange: 'platform',
     BillingPlanChange: 'platform',
     // SC3e-1 — the subscription invoice history.
     BillingInvoice: 'platform',

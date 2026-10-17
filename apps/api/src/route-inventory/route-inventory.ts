@@ -415,6 +415,24 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     note: "SC3b — a business's billing state.",
   },
   // SC3e-4 — payment setup deadlines.
+  // SC4e — onboarding oversight (onboarding.view; the pause also needs
+  // onboarding.manage and a recent sign-in, audited).
+  'GET /api/v1/platform/onboarding/registrations': {
+    scope: 'platform',
+    note: 'SC4e — owner registrations (onboarding.view; unverified emails masked; each view audited).',
+  },
+  'GET /api/v1/platform/onboarding/businesses': {
+    scope: 'platform',
+    note: 'SC4e — self-service businesses and their getting-started progress (onboarding.view; read-only).',
+  },
+  'GET /api/v1/platform/onboarding/registration-control': {
+    scope: 'platform',
+    note: 'SC4e — registration availability, pause history, quota and issue counts (onboarding.view).',
+  },
+  'POST /api/v1/platform/onboarding/registration-control': {
+    scope: 'platform',
+    note: 'SC4e — pause / resume NEW owner registrations (onboarding.manage, recent sign-in, reason; audited). Cannot enable registration while the deployment flag is off.',
+  },
   'GET /api/v1/platform/billing/payment-setup': {
     scope: 'platform',
     note: 'SC3e-4 — businesses awaiting payment setup and their deadlines (read-only).',

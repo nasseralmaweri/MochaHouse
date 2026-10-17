@@ -265,6 +265,8 @@ const GLOBAL_TABLES = [
   'BillingEnforcementActivation',
   // SC4a — business owner self-service registrations.
   'OwnerRegistration',
+  // SC4e — the registration pause history (platform data).
+  'RegistrationControlChange',
   '_prisma_migrations',
 ];
 

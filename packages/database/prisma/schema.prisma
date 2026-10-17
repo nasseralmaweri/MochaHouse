@@ -184,6 +184,7 @@ model PlatformOperator {
   // SC3b — reconciliation cases this operator resolved.
   billingReconciliationCases   BillingReconciliationCase[]       @relation("BillingReconciliationCaseResolver")
   billingGraceExtensions       BillingGraceExtension[]           @relation("BillingGraceExtensionActor")
+  registrationControlChanges   RegistrationControlChange[]       @relation("RegistrationControlChangeActor")
   billingPlanChanges           BillingPlanChange[]               @relation("BillingPlanChangeActor")
   // SC3e-2 — permissions, complimentary grants and review-case actions.
   permissions                  PlatformOperatorPermission[]      @relation("PlatformOperatorPermissionHolder")
@@ -4020,6 +4021,25 @@ model BillingGraceExtension {
   actorPlatformOperator PlatformOperator   @relation("BillingGraceExtensionActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([subscriptionId, episodeStartedAt])
+  @@index([actorPlatformOperatorId])
+}
+
+// SC4e — the platform's emergency pause of NEW owner registrations, as an
+// append-only history: the latest row is the current state (no row: not
+// paused). Registration is available only when the deployment flag
+// SELF_SERVICE_REGISTRATION_ENABLED is on AND it is not paused here — this
+// can stop registration, never start it. Every change names its operator
+// and reason and has a matching PlatformAuditEvent.
+model RegistrationControlChange {
+  id                      String   @id @default(uuid(7))
+  paused                  Boolean
+  reason                  String
+  actorPlatformOperatorId String
+  createdAt               DateTime @default(now())
+
+  actorPlatformOperator PlatformOperator @relation("RegistrationControlChangeActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([createdAt])
   @@index([actorPlatformOperatorId])
 }
 

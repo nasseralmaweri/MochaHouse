@@ -96,6 +96,8 @@ describe('Tenant query audit (report-only)', () => {
           'BillingEnforcementActivation',
           // SC4a — business owner self-service registrations.
           'OwnerRegistration',
+          // SC4e
+          'RegistrationControlChange',
         ].sort(),
       );
     });

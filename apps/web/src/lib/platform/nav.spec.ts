@@ -4,10 +4,12 @@ import { PLATFORM_NAV_ITEMS, isAvailable, isCurrentNavItem } from "./nav";
 // which Overview and (SC1c) Tenants are built. Unbuilt modules are listed but not
 // navigable — no placeholder screens.
 describe("platform console navigation", () => {
-  it("lists the seven platform modules in order", () => {
+  it("lists the platform modules in order", () => {
     expect(PLATFORM_NAV_ITEMS.map((item) => item.label)).toEqual([
       "Overview",
       "Tenants",
+      // SC4e
+      "Onboarding",
       "Plans",
       "Subscriptions",
       "Billing",
@@ -16,14 +18,21 @@ describe("platform console navigation", () => {
     ]);
   });
 
-  it("only Overview, Tenants, (SC2a) Plans and (SC3b) Billing are links; everything else is marked as not available", () => {
+  it("only Overview, Tenants, (SC4e) Onboarding, (SC2a) Plans and (SC3b) Billing are links; everything else is marked as not available", () => {
     expect(
       PLATFORM_NAV_ITEMS.filter(isAvailable).map((item) => item.href),
-    ).toEqual(["/platform", "/platform/tenants", "/platform/plans", "/platform/billing"]);
+    ).toEqual([
+      "/platform",
+      "/platform/tenants",
+      "/platform/onboarding",
+      "/platform/plans",
+      "/platform/billing",
+    ]);
   });
 
   it("SC1c: Tenants stays current on a tenant's page; Overview only on /platform", () => {
-    const [overview, tenants, plans] = PLATFORM_NAV_ITEMS;
+    const item = (key: string) => PLATFORM_NAV_ITEMS.find((nav) => nav.key === key)!;
+    const [overview, tenants, plans] = [item("overview"), item("tenants"), item("plans")];
     expect(isCurrentNavItem(overview, "/platform")).toBe(true);
     expect(isCurrentNavItem(overview, "/platform/tenants")).toBe(false);
     expect(isCurrentNavItem(tenants, "/platform/tenants")).toBe(true);
