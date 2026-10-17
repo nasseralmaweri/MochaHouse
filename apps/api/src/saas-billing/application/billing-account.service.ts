@@ -853,7 +853,40 @@ export class BillingAccountService {
           },
         })
         .catch(() => undefined); // already open for this business, or the database is down
+      // SC4c — the unrecorded session is also ended at the provider, so it
+      // cannot be paid (the case above stays for review either way).
+      await this.provider
+        .expireCheckoutSession(session.externalSessionId)
+        .catch(() => undefined);
       throw unavailable();
+    }
+    // SC4c — now that the hosted Checkout exists: still exactly the
+    // selection it was opened for, and still offered (an operator may have
+    // archived the price meanwhile). Otherwise it is ended before anything
+    // is returned — or, if that is uncertain, a review case is opened.
+    if (checkedSelection !== null) {
+      const current = await this.prisma.tenantSubscription.findUnique({
+        where: { id: subscription.id },
+        select: { planVersionId: true, planPriceId: true },
+      });
+      const unchanged =
+        current?.planVersionId === checkedSelection.planVersionId &&
+        current.planPriceId === checkedSelection.planPriceId;
+      if (
+        !unchanged ||
+        !(await selfServiceSelectionOffered(
+          this.prisma,
+          checkedSelection.planVersionId,
+          checkedSelection.planPriceId,
+        ))
+      ) {
+        await this.expireRecordedCheckout(
+          checkoutId,
+          session.externalSessionId,
+          subscription.id,
+        );
+        throw unchanged ? selectionUnavailable() : selectionChanged();
+      }
     }
     if (session.status !== 'open' || !session.url) throw unavailable();
     return { url: session.url };
@@ -1099,30 +1132,58 @@ export class BillingAccountService {
       await this.expire(open.id);
       return;
     }
-    let session: ProviderCheckoutSession;
-    try {
-      session = await this.provider.expireCheckoutSession(
-        open.externalSessionId,
-      );
-    } catch (error) {
-      if (error instanceof SaasBillingProviderError) throw unavailable();
-      throw error;
-    }
-    if (session.status === 'complete') {
+    const outcome = await this.expireRecordedCheckout(
+      open.id,
+      open.externalSessionId,
+      subscriptionId,
+    );
+    if (outcome === 'complete') {
       throw conflict(
         BILLING_CHECKOUT_PROCESSING,
         'Your payment setup was just completed and is being confirmed. Reload the page in a moment.',
       );
     }
-    if (session.status !== 'expired') throw unavailable();
-    await this.expire(open.id);
+  }
+
+  // Ends ONE recorded hosted Checkout at the provider: 'expired' (our row
+  // follows) or 'complete' (it is confirmed through its own, verified path).
+  // When the outcome is uncertain — the provider failed, or did not report
+  // it ended — the Checkout is NOT treated as ended: a review case is opened
+  // (CHECKOUT_NOT_ENDED) and this throws (503).
+  private async expireRecordedCheckout(
+    rowId: string,
+    externalSessionId: string,
+    subscriptionId: string,
+  ): Promise<'expired' | 'complete'> {
+    let session: ProviderCheckoutSession | null = null;
+    try {
+      session = await this.provider.expireCheckoutSession(externalSessionId);
+    } catch (error) {
+      if (!(error instanceof SaasBillingProviderError)) throw error;
+    }
+    if (session?.status === 'complete') return 'complete';
+    if (session?.status === 'expired') {
+      await this.expire(rowId);
+      return 'expired';
+    }
+    await this.prisma.billingReconciliationCase
+      .create({
+        data: {
+          kind: 'CHECKOUT_NOT_ENDED',
+          subscriptionId,
+          detail: externalSessionId.slice(0, 200),
+        },
+      })
+      .catch(() => undefined); // already open for this business
+    throw unavailable();
   }
 
   // SC4c (owner decision C4) — after an operator archives a price, the
   // OPEN Checkouts of self-service businesses still in their first payment
   // setup at that price end, so the retired price cannot be paid and the
-  // owner chooses again. Best effort per business (a failure is logged; a
-  // Checkout already completed is confirmed through its own path).
+  // owner chooses again. Per business: one that cannot be ended for certain
+  // opens a CHECKOUT_NOT_ENDED review case; one already completed is
+  // confirmed through its own path (a price mismatch never activates).
   async endSelfServiceCheckoutsAtPrice(planPriceId: string): Promise<void> {
     const open = await this.prisma.billingCheckoutSession.findMany({
       where: {

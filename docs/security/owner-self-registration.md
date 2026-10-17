@@ -182,7 +182,13 @@ rules, activation only from verified provider events.
   the provider has verifiably started the trial (a card-required trial only
   starts after the card is authorized) or recorded a paid period. A browser
   redirect, an opened Checkout, a saved card alone or an unpaid first invoice
-  unlock nothing.
+  unlock nothing. A completed Checkout whose subscription does not bill
+  exactly the chosen price is refused (`PRICE_MISMATCH` review case).
+- **No payable Checkout left behind** — a hosted Checkout is ended before
+  anything is returned if, once it exists, the selection changed or its price
+  was archived; an unrecorded one is ended too; archiving a price ends the
+  open Checkouts at it. An expiry whose outcome is uncertain is never treated
+  as a cancellation: a `CHECKOUT_NOT_ENDED` review case is opened.
 - **C2** — no separate deadline: with enforcement off a pending business keeps
   core only, no add-ons and no sales indefinitely; the existing payment setup
   deadline applies only when enforcement is on.

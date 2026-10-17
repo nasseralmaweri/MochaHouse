@@ -690,6 +690,153 @@ describe('SC4c self-service first payment setup (integration, scratch database)'
     ).toBe(0);
   });
 
+  // --- final verification: no payable Checkout is ever left behind -------------
+
+  type CreateCheckout = FakeSaasBillingProvider['createCheckoutSession'];
+
+  // A business on its own plan (so a price can be archived freely).
+  async function onOwnPlan(key: string, amountMinorUnits: number) {
+    const owner = await ownerBusiness(key);
+    const plan = await extraPlan(key, amountMinorUnits);
+    await admin('post', owner.email, owner.tenantId, '/initial-plan', {
+      planVersionId: plan.versionId,
+      planPriceId: plan.priceId,
+      expectedPrice: { interval: 'MONTH', currency: 'USD', amountMinorUnits },
+    }).expect(200);
+    return { ...owner, ...plan };
+  }
+  const openCases = (tenantId: string, kind: string) =>
+    prisma.billingReconciliationCase.count({
+      where: { kind, subscription: { subscriberTenantId: tenantId } },
+    });
+
+  it('ends a hosted Checkout created while its price was archived, before returning anything', async () => {
+    const o = await onOwnPlan('archived-mid', 8900);
+    const create = (input: Parameters<CreateCheckout>[0]) =>
+      fake.createCheckoutSession(input);
+    jest
+      .spyOn(fake, 'createCheckoutSession')
+      .mockImplementationOnce(async (input: Parameters<CreateCheckout>[0]) => {
+        // The operator archives the price while the session is created.
+        await prisma.subscriptionPlanPrice.update({
+          where: { id: o.priceId },
+          data: { status: 'ARCHIVED', archivedAt: new Date() },
+        });
+        return create(input);
+      });
+    try {
+      const res = await admin('post', o.email, o.tenantId, '/checkout').expect(
+        409,
+      );
+      expect((res.body as { code: string }).code).toBe(
+        'BILLING_SELECTION_UNAVAILABLE',
+      );
+    } finally {
+      jest.restoreAllMocks();
+    }
+    const sub = await subscriptionOf(o.tenantId);
+    const rows = await prisma.billingCheckoutSession.findMany({
+      where: { subscriptionId: sub.id },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('EXPIRED');
+    expect(fake.checkouts.get(rows[0].externalSessionId!)!.status).toBe(
+      'expired',
+    );
+  });
+
+  it('ends a hosted Checkout that could not be recorded, and keeps the review case', async () => {
+    const o = await onOwnPlan('unrecorded', 9100);
+    const sub = await subscriptionOf(o.tenantId);
+    const create = (input: Parameters<CreateCheckout>[0]) =>
+      fake.createCheckoutSession(input);
+    let sessionId = '';
+    jest
+      .spyOn(fake, 'createCheckoutSession')
+      .mockImplementationOnce(async (input: Parameters<CreateCheckout>[0]) => {
+        // Our row is cleaned up meanwhile (as an abandoned creation is).
+        await prisma.billingCheckoutSession.updateMany({
+          where: { subscriptionId: sub.id, status: 'OPEN' },
+          data: { status: 'EXPIRED' },
+        });
+        const session = await create(input);
+        sessionId = session.externalSessionId;
+        return session;
+      });
+    try {
+      await admin('post', o.email, o.tenantId, '/checkout').expect(503);
+    } finally {
+      jest.restoreAllMocks();
+    }
+    expect(fake.checkouts.get(sessionId)!.status).toBe('expired');
+    expect(await openCases(o.tenantId, 'CHECKOUT_NOT_RECORDED')).toBe(1);
+  });
+
+  it('never treats an uncertain expiry as a cancellation: the Checkout stays recorded open and a review case is opened', async () => {
+    // Archive sweep, provider unreachable.
+    const a = await onOwnPlan('uncertain-sweep', 9300);
+    const { sessionId } = await openCheckout(a.email, a.tenantId);
+    await prisma.subscriptionPlanPrice.update({
+      where: { id: a.priceId },
+      data: { status: 'ARCHIVED', archivedAt: new Date() },
+    });
+    fake.failOp = { op: 'expireCheckoutSession', code: 'timeout' };
+    await app
+      .get(BillingAccountService)
+      .endSelfServiceCheckoutsAtPrice(a.priceId);
+    expect(fake.checkouts.get(sessionId)!.status).toBe('open');
+    const subA = await subscriptionOf(a.tenantId);
+    expect(
+      await prisma.billingCheckoutSession.count({
+        where: { subscriptionId: subA.id, status: 'OPEN' },
+      }),
+    ).toBe(1);
+    expect(await openCases(a.tenantId, 'CHECKOUT_NOT_ENDED')).toBe(1);
+
+    // Plan change, provider unreachable: refused (503), nothing changed.
+    const b = await ownerBusiness('uncertain-change');
+    await openCheckout(b.email, b.tenantId);
+    fake.failOp = { op: 'expireCheckoutSession', code: 'timeout' };
+    await admin('post', b.email, b.tenantId, '/initial-plan', {
+      planVersionId: growth.versionId,
+      planPriceId: growth.year,
+      expectedPrice: {
+        interval: 'YEAR',
+        currency: 'USD',
+        amountMinorUnits: 49000,
+      },
+    }).expect((r) => expect([409, 503]).toContain(r.status));
+    expect((await subscriptionOf(b.tenantId)).planPriceId).toBe(growth.month);
+  });
+
+  it('a delayed completion billing a price other than the chosen one never unlocks anything', async () => {
+    const entitlements = app.get(EntitlementsService);
+    const { email, tenantId } = await ownerBusiness('mismatch');
+    const { sessionId } = await openCheckout(email, tenantId);
+    const sub = await subscriptionOf(tenantId);
+    // The provider ends up billing another price.
+    fake.checkouts.get(sessionId)!.externalPriceId = 'fake_price_not_ours';
+    const snapshot = fake.completeCheckout(sessionId, {
+      hasPaymentMethod: true,
+    });
+    const delivered = await webhook('checkout.completed', {
+      session: sessionId,
+      customer: sub.externalCustomerId,
+      subscription: snapshot.externalSubscriptionId,
+    });
+    expect(delivered.res.status).toBe(200);
+    const after = await subscriptionOf(tenantId);
+    expect(after.trialStartedAt).toBeNull();
+    expect(after.currentPeriodStart).toBeNull();
+    expect(await entitlements.forTenant(tenantId)).toMatchObject({
+      salesEnabled: false,
+      paymentSetupPending: true,
+    });
+    expect(await openCases(tenantId, 'PRICE_MISMATCH')).toBeGreaterThanOrEqual(
+      1,
+    );
+  });
+
   it('keeps every business to itself', async () => {
     const a = await ownerBusiness('iso-a');
     const b = await ownerBusiness('iso-b');
