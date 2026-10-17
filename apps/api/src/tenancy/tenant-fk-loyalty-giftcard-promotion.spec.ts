@@ -456,6 +456,8 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
     },
   });
   await prisma.location.create({
+    // Only the id back: an older-migration database lacks later columns.
+    select: { id: true },
     data: { id: i('location'), tenantId, name: 'Store', slug: i('location') },
   });
   await prisma.category.create({

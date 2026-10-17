@@ -54,6 +54,17 @@ async function business(prisma: PrismaClient, tenantId: string, tag: string) {
   const location = await prisma.location.create({
     data: { tenantId, name: `${tag} Store`, slug: `${tag}-store` },
   });
+  // SC4d — an opening period, so its location reference is checked on real
+  // rows.
+  await prisma.locationOpeningPeriod.create({
+    data: {
+      tenantId,
+      locationId: location.id,
+      dayOfWeek: 1,
+      opensAtMinute: 540,
+      closesAtMinute: 1020,
+    },
+  });
   const category = await prisma.category.create({
     data: { tenantId, name: `${tag} Drinks`, slug: `${tag}-drinks` },
   });
@@ -428,7 +439,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     expect(summarize(report)).toEqual([]);
     expect(report.violations).toBe(0);
     expect(report.warnings).toBe(0);
-    expect(report.relationshipsChecked).toBe(111);
+    expect(report.relationshipsChecked).toBe(112);
     expect(report.verdict).toBe('clean');
     expect(report.uncheckedRows).toBe(0);
     // Only the documented by-design exclusions, none holding unchecked rows.
@@ -704,8 +715,8 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     it('summarizes violations by relationship type', () => {
       expect(report.byKind).toEqual({
         'composite-fk-candidate': {
-          relationships: 97,
-          checked: 97,
+          relationships: 98,
+          checked: 98,
           violations: 8,
           warnings: 0,
         },
