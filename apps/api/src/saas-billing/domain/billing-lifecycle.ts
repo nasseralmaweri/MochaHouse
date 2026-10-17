@@ -137,6 +137,20 @@ export type BillingEvent =
   // `reference` (its pending update expired and the invoice can no longer be
   // paid): the upgrade is abandoned. A failed ATTEMPT never abandons it.
   | { type: 'UPGRADE_ABANDONED'; at: Date; reference: string }
+  // SC3d-3 (owner decision D1) — the provider's live subscription confirms
+  // a scheduled change took effect (the expected new price, on a new period
+  // from its effective date): the new plan applies NOW, whether or not the
+  // renewal is paid (a failed renewal is then ordinary delinquency at the
+  // new price). The caller verifies the provider's view.
+  | {
+      type: 'SCHEDULED_CHANGE_APPLIED';
+      at: Date;
+      periodStart: Date | null;
+      periodEnd: Date | null;
+    }
+  // SC3d-3 — a scheduled change is withdrawn (cancelled by the business, or
+  // closed because the provider no longer holds it).
+  | { type: 'SCHEDULED_CHANGE_CANCELED'; at: Date }
   // Operator: request an upgrade; it waits for payment `reference`.
   | {
       type: 'UPGRADE_REQUESTED';
@@ -478,7 +492,7 @@ export function transition(
         event.periodEnd > event.periodStart &&
         (state.currentPeriodEnd === null ||
           event.periodEnd > state.currentPeriodEnd);
-      let next: BillingState = {
+      const next: BillingState = {
         ...state,
         status: 'ACTIVE',
         pastDueAt: null,
@@ -492,30 +506,9 @@ export function transition(
           : state.currentPeriodEnd,
       };
       const history = [entry('PAYMENT_SUCCEEDED', state, next)];
-      // A scheduled downgrade takes effect with the first period that
-      // starts on or after its effective date.
-      if (
-        state.pending?.kind === 'DOWNGRADE' &&
-        state.pending.effectiveAt !== null &&
-        newerPeriod &&
-        event.periodStart !== null &&
-        event.periodStart >= state.pending.effectiveAt
-      ) {
-        const applied: BillingState = {
-          ...next,
-          planVersionId: state.pending.planVersionId,
-          planPriceId: state.pending.planPriceId ?? next.planPriceId,
-          pending: null,
-        };
-        history.push(
-          entry('PLAN_CHANGE_APPLIED', next, applied, {
-            from: state.planVersionId,
-            to: applied.planVersionId,
-            price: state.pending.planPriceId,
-          }),
-        );
-        next = applied;
-      }
+      // SC3d-3 — a scheduled change no longer applies with a payment: only
+      // the provider's verified switch applies it (SCHEDULED_CHANGE_APPLIED),
+      // paid or not.
       const recovered =
         state.status === 'UNPAID' || state.status === 'TRIAL_EXPIRED';
       return changed(
@@ -622,6 +615,58 @@ export function transition(
         [entry('GRACE_EXPIRED', state, next)],
         'SUSPEND_FOR_BILLING',
       );
+    }
+
+    case 'SCHEDULED_CHANGE_APPLIED': {
+      if (
+        state.pending?.kind !== 'DOWNGRADE' ||
+        state.pending.effectiveAt === null
+      ) {
+        return refuse('NOT_CHANGEABLE');
+      }
+      // Never before its effective date (a few minutes of provider clock
+      // skew allowed).
+      if (
+        event.at.getTime() <
+        state.pending.effectiveAt.getTime() - 5 * 60 * 1000
+      ) {
+        return refuse('INVALID_EFFECTIVE_DATE');
+      }
+      const newer =
+        event.periodStart !== null &&
+        event.periodEnd !== null &&
+        event.periodEnd > event.periodStart &&
+        (state.currentPeriodEnd === null ||
+          event.periodEnd > state.currentPeriodEnd);
+      const next: BillingState = {
+        ...state,
+        planVersionId: state.pending.planVersionId,
+        planPriceId: state.pending.planPriceId ?? state.planPriceId,
+        currentPeriodStart: newer
+          ? event.periodStart
+          : state.currentPeriodStart,
+        currentPeriodEnd: newer ? event.periodEnd : state.currentPeriodEnd,
+        pending: null,
+      };
+      return changed(state, next, [
+        entry('PLAN_CHANGE_APPLIED', state, next, {
+          from: state.planVersionId,
+          to: next.planVersionId,
+          price: state.pending.planPriceId,
+        }),
+      ]);
+    }
+
+    case 'SCHEDULED_CHANGE_CANCELED': {
+      if (state.pending?.kind !== 'DOWNGRADE') return refuse('NOT_CHANGEABLE');
+      const next = { ...state, pending: null };
+      return changed(state, next, [
+        entry('PLAN_CHANGE_ABANDONED', state, next, {
+          from: state.planVersionId,
+          to: state.pending.planVersionId,
+          price: state.pending.planPriceId,
+        }),
+      ]);
     }
 
     case 'UPGRADE_ABANDONED': {

@@ -7,6 +7,7 @@ import type {
   BillingPlanChangePreview,
 } from "@mocha-house/contracts";
 import {
+  cancelAdminPlanChange,
   confirmAdminPlanChange,
   openAdminPlanChangePayment,
   previewAdminPlanChange,
@@ -61,6 +62,22 @@ export async function confirmPlanChangeAction(
   }
   revalidatePath("/admin/billing");
   return { kind: "done", planChange: result.data.planChange };
+}
+
+// SC3d-3 — cancel the scheduled change (the API re-checks the business,
+// the change and the cut-off). Used with useActionState.
+export async function cancelScheduledPlanChangeAction(
+  _previous: { message: string | null },
+  form: FormData,
+): Promise<{ message: string | null }> {
+  const planChangeId = form.get("planChangeId");
+  if (typeof planChangeId !== "string" || !UUID.test(planChangeId)) {
+    return { message: "Refresh this page and try again." };
+  }
+  const result = await cancelAdminPlanChange(planChangeId);
+  if (result.outcome === "refused") return { message: result.message };
+  revalidatePath("/admin/billing");
+  return { message: null };
 }
 
 // Used with useActionState; the previous state is not needed.

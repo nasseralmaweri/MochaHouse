@@ -10,6 +10,13 @@ import { formatDeadline } from "./billing";
 // messages, what can be confirmed). A completed upgrade is NEVER shown
 // before the payment provider's payment and price are verified (the API's
 // APPLIED status is the only source).
+// SC3d-3 — scheduled changes (a downgrade or annual -> monthly at the period
+// end, the plan a trial becomes at its end): nothing is charged now; they
+// can be cancelled until an hour before their date.
+
+// The API's cut-off (owner decision D4): the page offers cancelling only
+// while it is further away than this; the API re-checks.
+export const PLAN_CHANGE_CUTOFF_MS = 60 * 60 * 1000;
 
 export const PLAN_CHANGE_MESSAGES = {
   unavailable: "Plan changes aren't available right now. Nothing was changed. Try again in a moment.",
@@ -27,8 +34,11 @@ export const PLAN_CHANGE_MESSAGES = {
   forbidden: "Only someone who manages billing can change the plan.",
   sessionEnded: "Your session has ended. Sign in again to continue.",
   tooMany: "Too many attempts. Wait a few minutes, then try again.",
-  laterOnly:
-    "This change would start at the end of your billing period. Changes like this aren't available yet; your current plan stays as it is.",
+  tooLate:
+    "It's too close to your renewal to change this now. Try again after your renewal.",
+  paymentMethodRequired:
+    "Add a payment method first (Update payment method above). You can then choose the plan your trial becomes.",
+  notCancelable: "There's no scheduled plan change to cancel. This page shows the latest status.",
 } as const;
 
 const CONFLICTS: Record<string, string> = {
@@ -40,6 +50,9 @@ const CONFLICTS: Record<string, string> = {
   BILLING_PLAN_CHANGE_PREVIEW_EXPIRED: PLAN_CHANGE_MESSAGES.expired,
   BILLING_PLAN_CHANGE_PREVIEW_CHANGED: PLAN_CHANGE_MESSAGES.changed,
   BILLING_PLAN_CHANGE_NOT_PAYABLE: PLAN_CHANGE_MESSAGES.notPayable,
+  BILLING_PLAN_CHANGE_TOO_LATE: PLAN_CHANGE_MESSAGES.tooLate,
+  BILLING_PLAN_CHANGE_PAYMENT_METHOD_REQUIRED: PLAN_CHANGE_MESSAGES.paymentMethodRequired,
+  BILLING_PLAN_CHANGE_NOT_CANCELABLE: PLAN_CHANGE_MESSAGES.notCancelable,
 };
 
 // A refused answer's message (never server detail).
@@ -55,12 +68,53 @@ export function planChangeRefusalMessage(status: number | null, body: unknown): 
   return PLAN_CHANGE_MESSAGES.unavailable;
 }
 
-// Only an immediate change can be confirmed in this release.
+// An unexpired preview: an immediate change with its charge, or a scheduled
+// one (nothing charged now) with its date.
 export function canConfirm(preview: BillingPlanChangePreview, now: number = Date.now()): boolean {
+  if (new Date(preview.expiresAt).getTime() <= now) return false;
+  return preview.timing === "IMMEDIATE"
+    ? preview.chargeNow !== null
+    : preview.chargeNow === null && preview.nextRecurring.startsAt !== null;
+}
+
+// SC3d-3 — the date a scheduled change takes effect (null: immediate).
+export function scheduledDate(preview: BillingPlanChangePreview): string | null {
+  return preview.timing === "IMMEDIATE" ? null : preview.nextRecurring.startsAt;
+}
+
+// SC3d-3 — the features the change removes and adds, in plain words
+// (null: the same features).
+export function moduleChangeSentences(preview: BillingPlanChangePreview): string[] {
+  const list = (items: { label: string }[]) => items.map((item) => item.label).join(", ");
+  const when = preview.timing === "IMMEDIATE" ? "" : ` from ${formatDeadline(preview.nextRecurring.startsAt!)}`;
+  const sentences: string[] = [];
+  if (preview.modules.lost.length > 0) {
+    sentences.push(
+      `You'll no longer have${when}: ${list(preview.modules.lost)}. Your data in them is kept, not deleted.`,
+    );
+  }
+  if (preview.modules.gained.length > 0) {
+    sentences.push(`You'll get${when}: ${list(preview.modules.gained)}.`);
+  }
+  return sentences;
+}
+
+// SC3d-3 — what confirming a scheduled change does (nothing charged now).
+export function scheduledTerms(preview: BillingPlanChangePreview): string {
+  const date = formatDeadline(preview.nextRecurring.startsAt!);
+  const next = preview.nextRecurring;
+  const price = `${money(next.amountMinorUnits, next.currency)} ${perInterval(next.interval)}`;
+  return preview.timing === "TRIAL_END"
+    ? `Nothing is charged now and your trial continues on your current plan. When your trial ends (${date}), your plan becomes ${preview.target.planName} and your saved payment method is charged ${price}. You can cancel this until an hour before.`
+    : `Nothing is charged now. You keep your current plan and its features until ${date}; then your plan becomes ${preview.target.planName} at ${price}. You can cancel this until an hour before.`;
+}
+
+// SC3d-3 — a SCHEDULED change can be cancelled until an hour before its date.
+export function canCancelScheduled(view: AdminPlanChangeView, now: number = Date.now()): boolean {
   return (
-    preview.timing === "IMMEDIATE" &&
-    preview.chargeNow !== null &&
-    new Date(preview.expiresAt).getTime() > now
+    view.status === "SCHEDULED" &&
+    view.effectiveAt !== null &&
+    new Date(view.effectiveAt).getTime() - now >= PLAN_CHANGE_CUTOFF_MS
   );
 }
 
@@ -131,13 +185,26 @@ export function planChangeStatusMessage(view: AdminPlanChangeView): string {
     view.target.price.amountMinorUnits,
     view.target.price.currency,
   )} ${perInterval(view.target.price.interval)})`;
+  const scheduled = view.timing !== "IMMEDIATE" && view.effectiveAt !== null;
+  const date = scheduled ? formatDeadline(view.effectiveAt!) : "";
   const messages: Record<AdminPlanChangeStatus, string> = {
-    PROCESSING: `We're confirming your change to ${target} with our payment provider. Your current plan stays active until the payment is confirmed. Refresh this page in a minute.`,
+    SCHEDULED:
+      view.timing === "TRIAL_END"
+        ? `When your trial ends (${date}), your plan becomes ${target} and your saved payment method is charged. Your trial continues on your current plan until then; nothing has been charged yet.`
+        : `Your plan changes to ${target} on ${date}. You keep your current plan and its features until then; nothing has been charged.`,
+    CANCELED: `You cancelled the change to ${target}. Your plan stays as it is.`,
+    PROCESSING: scheduled
+      ? `We're setting up your change to ${target} with our payment provider. Nothing has been charged. Refresh this page in a minute.`
+      : `We're confirming your change to ${target} with our payment provider. Your current plan stays active until the payment is confirmed. Refresh this page in a minute.`,
     PAYMENT_NEEDED: `Your change to ${target} needs payment. The charge didn't go through yet (for example a declined card or an extra security check). Your current plan stays active; nothing changes until the payment is completed.`,
-    APPLIED: `Your plan is now ${target}. The payment was confirmed.`,
-    REVIEW: `Your change to ${target} is being checked by our team. You don't need to do anything now; we'll confirm any charge with you.`,
+    APPLIED: scheduled
+      ? `Your plan is now ${target} (since ${date}).`
+      : `Your plan is now ${target}. The payment was confirmed.`,
+    REVIEW: scheduled
+      ? `Your scheduled change to ${target} is being checked by our team. You keep your current plan meanwhile; you don't need to do anything now.`
+      : `Your change to ${target} is being checked by our team. You don't need to do anything now; we'll confirm any charge with you.`,
     EXPIRED: `Your change to ${target} wasn't completed because the payment wasn't finished in time. Nothing changed and you weren't charged for it.`,
-    FAILED: `Your change to ${target} couldn't be completed. Nothing changed.`,
+    FAILED: `Your change to ${target} couldn't be completed. Nothing changed and you weren't charged for it.`,
   };
   return messages[view.status];
 }

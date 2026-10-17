@@ -2081,6 +2081,17 @@ export const BILLING_PLAN_CHANGE_UNVERIFIED = "BILLING_PLAN_CHANGE_UNVERIFIED";
 export const BILLING_PLAN_CHANGE_PREVIEW_EXPIRED = "BILLING_PLAN_CHANGE_PREVIEW_EXPIRED";
 export const BILLING_PLAN_CHANGE_PREVIEW_CHANGED = "BILLING_PLAN_CHANGE_PREVIEW_CHANGED";
 export const BILLING_PLAN_CHANGE_NOT_PAYABLE = "BILLING_PLAN_CHANGE_NOT_PAYABLE";
+// SC3d-3 — scheduled changes:
+//   BILLING_PLAN_CHANGE_TOO_LATE — within an hour of the period (or trial)
+//       end: try again after the renewal;
+//   BILLING_PLAN_CHANGE_PAYMENT_METHOD_REQUIRED — choosing the plan after a
+//       trial needs a payment method on file (a cardless trial keeps its
+//       expiry and recovery);
+//   BILLING_PLAN_CHANGE_NOT_CANCELABLE — no scheduled change to cancel.
+export const BILLING_PLAN_CHANGE_TOO_LATE = "BILLING_PLAN_CHANGE_TOO_LATE";
+export const BILLING_PLAN_CHANGE_PAYMENT_METHOD_REQUIRED =
+  "BILLING_PLAN_CHANGE_PAYMENT_METHOD_REQUIRED";
+export const BILLING_PLAN_CHANGE_NOT_CANCELABLE = "BILLING_PLAN_CHANGE_NOT_CANCELABLE";
 
 // IMMEDIATE: an upgrade (or monthly -> annual), charged now with proration;
 // PERIOD_END: a downgrade (or annual -> monthly), at the end of the period;
@@ -2115,6 +2126,12 @@ export interface BillingPlanChangePreview {
     prorationMinorUnits: number;
     currency: string;
   } | null;
+  // SC3d-3 — the features the change removes / adds (at the switch for a
+  // scheduled change). Nothing is ever deleted.
+  modules: {
+    lost: { key: string; label: string }[];
+    gained: { key: string; label: string }[];
+  };
   // The recurring bill after the change, and from when (null: now).
   nextRecurring: {
     amountMinorUnits: number;
@@ -2135,6 +2152,10 @@ export interface BillingPlanChangePreview {
 //   EXPIRED         the payment was not completed in time: nothing changed;
 //   FAILED          it could not be submitted: nothing changed.
 export type AdminPlanChangeStatus =
+  // SC3d-3 — scheduled for its date (cancellable until an hour before), or
+  // cancelled by the business.
+  | "SCHEDULED"
+  | "CANCELED"
   | "PROCESSING"
   | "PAYMENT_NEEDED"
   | "APPLIED"
@@ -2145,6 +2166,9 @@ export type AdminPlanChangeStatus =
 export interface AdminPlanChangeView {
   id: string;
   status: AdminPlanChangeStatus;
+  timing: BillingPlanChangeTiming;
+  // When a scheduled change takes effect (null: immediate).
+  effectiveAt: string | null;
   target: BillingPlanChangeSide;
   // The charge the business confirmed (minor units).
   amountDueMinorUnits: number | null;
@@ -2175,6 +2199,14 @@ export interface BillingPlanChangeConfirmResponse {
 
 // GET /api/v1/admin/billing/plan-options (billing.view): the prices the
 // business may move to (offered plans, same currency).
+// POST /api/v1/admin/billing/plan-change/cancel — body exactly
+// { planChangeId } (billing.manage): withdraws a SCHEDULED change (its
+// provider schedule is RELEASED; the subscription is untouched).
+//   409 BILLING_PLAN_CHANGE_NOT_CANCELABLE / BILLING_PLAN_CHANGE_TOO_LATE
+export interface BillingPlanChangeCancelRequest {
+  planChangeId: string;
+}
+
 export interface AdminPlanOption {
   planPriceId: string;
   planName: string;

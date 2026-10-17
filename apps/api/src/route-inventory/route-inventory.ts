@@ -31,6 +31,8 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'GET /api/v1/admin/billing/plan-options': { scope: 'tenant' },
   'POST /api/v1/admin/billing/plan-change/confirm': { scope: 'tenant' },
   'POST /api/v1/admin/billing/plan-change/pay': { scope: 'tenant' },
+  // SC3d-3 — cancelling a scheduled change.
+  'POST /api/v1/admin/billing/plan-change/cancel': { scope: 'tenant' },
   'GET /api/v1/admin/approvals/:approvalRequestId': { scope: 'tenant' },
   'GET /api/v1/admin/audit': { scope: 'tenant' },
   'GET /api/v1/admin/careers/applications': { scope: 'tenant' },

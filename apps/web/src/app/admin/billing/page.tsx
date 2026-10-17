@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import { getInternalSession } from "@/lib/internal-auth/session";
 import { can } from "@/lib/admin/capabilities";
 import { getAdminBilling, getAdminPlanOptions } from "@/lib/internal-auth/admin-billing";
-import { planChangeStatusMessage } from "@/lib/admin/plan-change";
+import { canCancelScheduled, planChangeStatusMessage } from "@/lib/admin/plan-change";
+import { formatDeadline } from "@/lib/admin/billing";
 import {
   BILLING_MESSAGES,
   BILLING_STATE_LABELS,
@@ -20,6 +21,8 @@ import { BillingActionForm } from "./BillingActionForm";
 import { CheckoutConfirming } from "./CheckoutConfirming";
 import { ForgetCheckoutReturn } from "./ForgetCheckoutReturn";
 import { ChangePlanPanel } from "./ChangePlanPanel";
+import { CancelScheduledChangeForm } from "./CancelScheduledChangeForm";
+import { PlanChangeStatus } from "./PlanChangeStatus";
 
 // SC3b — the business's own CENTERIVO subscription: plan, price and billing
 // status, and (owner) payment setup through the provider's hosted Checkout.
@@ -172,12 +175,7 @@ export default async function AdminBillingPage({
         <Card className="flex flex-col gap-4">
           {planChange ? (
             <div className="flex flex-col gap-2">
-              <p
-                role="status"
-                className="rounded-lg bg-surface-subtle px-3 py-2 text-sm text-text-primary"
-              >
-                {planChangeStatusMessage(planChange)}
-              </p>
+              <PlanChangeStatus status={planChange.status} message={planChangeStatusMessage(planChange)} />
               {planChange.status === "PROCESSING" ? (
                 <a
                   href="/admin/billing"
@@ -188,6 +186,16 @@ export default async function AdminBillingPage({
               ) : null}
               {planChange.status === "PAYMENT_NEEDED" && can(session.authorization.capabilities, "billing.manage") ? (
                 <BillingActionForm kind="planChange" />
+              ) : null}
+              {planChange.status === "SCHEDULED" && can(session.authorization.capabilities, "billing.manage") ? (
+                canCancelScheduled(planChange) ? (
+                  <CancelScheduledChangeForm planChangeId={planChange.id} />
+                ) : (
+                  <p className="text-sm text-text-secondary">
+                    It&apos;s too close to {formatDeadline(planChange.effectiveAt!)} to cancel. The change still
+                    takes effect then.
+                  </p>
+                )
               ) : null}
             </div>
           ) : null}

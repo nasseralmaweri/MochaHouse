@@ -185,6 +185,13 @@ export function confirmAdminPlanChange(
   return postPlanChange("plan-change/confirm", { previewId });
 }
 
+// SC3d-3 — withdraw a scheduled change (only OUR id).
+export function cancelAdminPlanChange(
+  planChangeId: string,
+): Promise<PlanChangeCallResult<BillingPlanChangeConfirmResponse>> {
+  return postPlanChange("plan-change/cancel", { planChangeId });
+}
+
 // The provider's own hosted page for the waiting change's invoice (checked
 // against the provider's host).
 export async function openAdminPlanChangePayment(): Promise<OpenCheckoutResult> {

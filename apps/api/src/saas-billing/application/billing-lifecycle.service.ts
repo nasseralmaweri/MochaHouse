@@ -22,6 +22,7 @@ import {
   type ProviderCheckoutSession,
   type ProviderInvoice,
   type ProviderPayableInvoice,
+  type ProviderSchedule,
   type ProviderLifecycleEvent,
   type SaasBillingProvider,
   type VerifiedBillingProviderEvent,
@@ -54,6 +55,9 @@ type ProviderFacts =
       openInvoices: ProviderPayableInvoice[] | null;
       // SC3d-2 — the invoice of a plan change waiting for payment.
       planChangeInvoice?: ProviderInvoice | null;
+      // SC3d-3 — the provider's schedule of a scheduled plan change (null:
+      // the provider has none; undefined: no scheduled change).
+      planChangeSchedule?: ProviderSchedule | null;
     }
   // null: the provider has no such invoice.
   | {
@@ -68,6 +72,12 @@ type ProviderFacts =
       } | null;
       // SC3d-2 — the invoice is a plan change's: the live subscription.
       planChangeSnapshot?: ProviderSubscriptionSnapshot | null;
+      // SC3d-3 — a scheduled change is due: the live subscription and its
+      // schedule, so the switch is applied before the payment.
+      scheduledChange?: {
+        snapshot: ProviderSubscriptionSnapshot;
+        schedule: ProviderSchedule | null;
+      };
     };
 
 // Applies lifecycle events in order to a state, skipping the ones it refuses
@@ -268,6 +278,10 @@ export const UNLINKED_REPLACEMENT_CASE = 'UNLINKED_REPLACEMENT';
 export const PLAN_CHANGE_AMOUNT_MISMATCH_CASE = 'PLAN_CHANGE_AMOUNT_MISMATCH';
 export const UPGRADE_PAID_NOT_APPLIED_CASE = 'UPGRADE_PAID_NOT_APPLIED';
 export const PLAN_CHANGE_UNCERTAIN_CASE = 'PLAN_CHANGE_UNCERTAIN';
+// SC3d-3 — a scheduled change the provider no longer holds as agreed.
+export const SCHEDULED_CHANGE_DISRUPTED_CASE = 'SCHEDULED_CHANGE_DISRUPTED';
+// How long after its date a scheduled switch may take to be seen.
+const SWITCH_LAG_MS = 2 * 60 * 60 * 1000;
 const OPEN_PLAN_CHANGE = ['REQUESTED', 'AWAITING_PAYMENT', 'REVIEW'];
 
 export type PlanChangeSettlement =
@@ -496,8 +510,13 @@ export class BillingLifecycleService {
         if (!(await this.isLinked(verified))) return { kind: 'none' };
         {
           const waiting = await this.waitingPlanChangeInvoice(verified);
+          const scheduled = await this.scheduledPlanChange(verified);
           return {
             kind: 'snapshot',
+            planChangeSchedule:
+              scheduled === null
+                ? undefined
+                : await this.provider.retrieveSchedule(scheduled),
             snapshot: await this.provider.retrieveSubscription(
               verified.externalSubscriptionId!,
             ),
@@ -536,10 +555,24 @@ export class BillingLifecycleService {
           where: { externalInvoiceId: event.reference },
           select: { id: true },
         });
+        // SC3d-3 — a subscription with a scheduled change: its live view
+        // and schedule too, so the switch is settled first (the renewal
+        // invoice may arrive before the subscription event).
+        const due = await this.scheduledPlanChange(verified);
+        const scheduledChange =
+          due === null
+            ? undefined
+            : {
+                snapshot: await this.provider.retrieveSubscription(
+                  verified.externalSubscriptionId!,
+                ),
+                schedule: await this.provider.retrieveSchedule(due),
+              };
         return {
           kind: 'invoice',
           invoice,
           recovery,
+          scheduledChange,
           planChangeSnapshot: planChange
             ? await this.provider.retrieveSubscription(
                 verified.externalSubscriptionId!,
@@ -629,7 +662,7 @@ export class BillingLifecycleService {
       return finish('IGNORED', 'NO_SUBSCRIPTION_REFERENCE', null);
     }
     // The ONLY way an event reaches a business: our stored provider ids.
-    const subscription = await tx.tenantSubscription.findUnique({
+    let subscription = await tx.tenantSubscription.findUnique({
       where: {
         billingProvider_externalSubscriptionId: {
           billingProvider: verified.provider,
@@ -749,6 +782,29 @@ export class BillingLifecycleService {
           current = await this.load(tx, subscription.id);
         }
       }
+      // SC3d-3 — a scheduled change: applied at the verified switch, or
+      // closed / reviewed when the provider no longer holds it.
+      if (facts.planChangeSchedule !== undefined) {
+        const scheduled = await tx.billingPlanChange.findFirst({
+          where: { subscriptionId: subscription.id, status: 'SCHEDULED' },
+          select: { id: true },
+        });
+        if (scheduled) {
+          await this.settleScheduledChange(
+            tx,
+            scheduled.id,
+            facts.snapshot,
+            facts.planChangeSchedule,
+            new Date(),
+            {
+              source: 'BILLING_PROVIDER',
+              billingProviderEventId: ledgerId,
+              actorPlatformOperatorId: null,
+            },
+          );
+          current = await this.load(tx, subscription.id);
+        }
+      }
       return this.applySnapshot(
         tx,
         ledgerId,
@@ -769,6 +825,32 @@ export class BillingLifecycleService {
       // retryable).
       if (facts.kind !== 'invoice') {
         return finish('FAILED', 'PROVIDER_READ_MISSING', subscription.id);
+      }
+      // SC3d-3 — a scheduled change whose date has come: the provider's
+      // switch is applied BEFORE the renewal payment (owner decision D1), so
+      // a failed renewal is delinquency at the NEW plan and price.
+      if (facts.scheduledChange !== undefined) {
+        const scheduled = await tx.billingPlanChange.findFirst({
+          where: { subscriptionId: subscription.id, status: 'SCHEDULED' },
+          select: { id: true },
+        });
+        if (scheduled) {
+          const settled = await this.settleScheduledChange(
+            tx,
+            scheduled.id,
+            facts.scheduledChange.snapshot,
+            facts.scheduledChange.schedule,
+            new Date(),
+            {
+              source: 'BILLING_PROVIDER',
+              billingProviderEventId: ledgerId,
+              actorPlatformOperatorId: null,
+            },
+          );
+          if (settled !== 'WAITING') {
+            subscription = await this.load(tx, subscription.id);
+          }
+        }
       }
       const invoice = facts.invoice;
       if (
@@ -1495,7 +1577,20 @@ export class BillingLifecycleService {
         { ...snapshot, scheduleId: null, hasPendingUpdate: false },
         price?.externalPriceId ?? null,
       );
-      if (!billed.ok) {
+      // SC3d-3 — the target of a change in flight (a switch not settled
+      // yet) is expected, not a mismatch; it is settled by its own path.
+      const live =
+        snapshot.items.length === 1 ? snapshot.items[0].externalPriceId : null;
+      const inFlight =
+        live !== null &&
+        (await tx.billingPlanChange.count({
+          where: {
+            subscriptionId: subscription.id,
+            status: { in: ['SCHEDULED', 'AWAITING_PAYMENT', 'REQUESTED'] },
+            toPlanPrice: { externalPriceId: live },
+          },
+        })) > 0;
+      if (!billed.ok && !inFlight) {
         await this.openCase(
           tx,
           'PRICE_MISMATCH',
@@ -1712,6 +1807,272 @@ export class BillingLifecycleService {
       select: { externalInvoiceId: true },
     });
     return waiting?.externalInvoiceId ?? null;
+  }
+
+  // SC3d-3 — the provider schedule of the event subscription's SCHEDULED
+  // change (null: none).
+  private async scheduledPlanChange(
+    verified: VerifiedBillingProviderEvent,
+  ): Promise<string | null> {
+    if (verified.externalSubscriptionId === null) return null;
+    const scheduled = await this.prisma.billingPlanChange.findFirst({
+      where: {
+        status: 'SCHEDULED',
+        externalScheduleId: { not: null },
+        subscription: {
+          billingProvider: verified.provider,
+          externalSubscriptionId: verified.externalSubscriptionId,
+        },
+      },
+      select: { externalScheduleId: true },
+    });
+    return scheduled?.externalScheduleId ?? null;
+  }
+
+  // SC3d-3 — a confirmed scheduled change now has its provider schedule
+  // (verified by the caller): recorded, and the subscription's pending
+  // change set for the effective date. Our records refusing it (another
+  // change landed) is reviewed, never guessed.
+  async recordScheduleCreated(
+    tx: Tx,
+    planChangeId: string,
+    externalScheduleId: string,
+    effectiveAt: Date,
+    origin: {
+      source: 'OPERATOR' | 'BILLING_PROVIDER' | 'SYSTEM';
+      billingProviderEventId: string | null;
+      actorPlatformOperatorId: string | null;
+    },
+  ): Promise<'SCHEDULED' | 'REVIEW'> {
+    const change = await tx.billingPlanChange.findUniqueOrThrow({
+      where: { id: planChangeId },
+    });
+    if (change.status !== 'REQUESTED') {
+      return change.status === 'SCHEDULED' ? 'SCHEDULED' : 'REVIEW';
+    }
+    await tx.billingPlanChange.update({
+      where: { id: planChangeId },
+      data: { externalScheduleId, status: 'SCHEDULED' },
+    });
+    const subscription = await this.load(tx, change.subscriptionId);
+    const result = transition(toBillingState(subscription), {
+      type: 'DOWNGRADE_SCHEDULED',
+      at: new Date(),
+      planVersionId: change.toPlanVersionId,
+      planPriceId: change.toPlanPriceId,
+      effectiveAt,
+    });
+    if (!result.ok || !result.changed) {
+      await this.markPlanChangeReview(
+        tx,
+        planChangeId,
+        SCHEDULED_CHANGE_DISRUPTED_CASE,
+        `Plan change ${planChangeId}: the provider schedule ${externalScheduleId} exists but our subscription refused the scheduled change (${result.ok ? 'NO_CHANGE' : result.reason}). Nothing was released or changed at the provider: the schedule may still switch the price at its date — release it or resolve before then.`,
+      );
+      return 'REVIEW';
+    }
+    await this.write(
+      tx,
+      subscription,
+      result.next,
+      subscription.lastBillingEventAt,
+    );
+    await this.history(tx, subscription.id, result.history, origin);
+    return 'SCHEDULED';
+  }
+
+  // SC3d-3 — the business cancelled its scheduled change (the provider
+  // schedule already released): the subscription's pending change is
+  // withdrawn, with its history.
+  async withdrawScheduledChange(tx: Tx, subscriptionId: string): Promise<void> {
+    const subscription = await this.load(tx, subscriptionId);
+    const result = transition(toBillingState(subscription), {
+      type: 'SCHEDULED_CHANGE_CANCELED',
+      at: new Date(),
+    });
+    if (result.ok && result.changed) {
+      await this.write(
+        tx,
+        subscription,
+        result.next,
+        subscription.lastBillingEventAt,
+      );
+      await this.history(tx, subscription.id, result.history, {
+        source: 'SYSTEM',
+        billingProviderEventId: null,
+        actorPlatformOperatorId: null,
+      });
+    }
+  }
+
+  // SC3d-3 — settles a SCHEDULED change against the provider's LIVE view
+  // (owner decisions D1/D5):
+  //   APPLIED   the provider bills exactly the scheduled price, on a period
+  //             that started on (or after) the effective date — applied now,
+  //             paid or not (a failed renewal is ordinary delinquency at the
+  //             new price);
+  //   CANCELED  the subscription ended (or the trial expired): closed;
+  //   REVIEW    the schedule is gone, replaced or altered before the switch,
+  //             or the switch is overdue: reviewed (the pending change is
+  //             withdrawn; NOTHING is recreated at the provider);
+  //   WAITING   scheduled as agreed, its date not reached yet.
+  async settleScheduledChange(
+    tx: Tx,
+    planChangeId: string,
+    snapshot: ProviderSubscriptionSnapshot,
+    schedule: ProviderSchedule | null,
+    now: Date,
+    origin: {
+      source: 'OPERATOR' | 'BILLING_PROVIDER' | 'SYSTEM';
+      billingProviderEventId: string | null;
+      actorPlatformOperatorId: string | null;
+    },
+  ): Promise<'APPLIED' | 'CANCELED' | 'REVIEW' | 'WAITING'> {
+    const change = await tx.billingPlanChange.findUniqueOrThrow({
+      where: { id: planChangeId },
+      include: {
+        fromPlanPrice: { select: { externalPriceId: true } },
+        toPlanPrice: { select: { externalPriceId: true } },
+      },
+    });
+    if (
+      change.status !== 'SCHEDULED' ||
+      change.nextRecurringStartsAt === null
+    ) {
+      return change.status === 'APPLIED' ? 'APPLIED' : 'WAITING';
+    }
+    const effectiveAt = change.nextRecurringStartsAt;
+    const subscription = await this.load(tx, change.subscriptionId);
+    const ours =
+      snapshot.externalSubscriptionId === subscription.externalSubscriptionId &&
+      snapshot.externalCustomerId === subscription.externalCustomerId &&
+      snapshot.livemode === this.provider.livemode;
+    const item = snapshot.items?.length === 1 ? snapshot.items[0] : null;
+    const SKEW = 5 * 60 * 1000;
+    const switched =
+      ours &&
+      item !== null &&
+      item.quantity === 1 &&
+      change.toPlanPrice.externalPriceId !== null &&
+      item.externalPriceId === change.toPlanPrice.externalPriceId &&
+      snapshot.currentPeriodStart != null &&
+      snapshot.currentPeriodStart.getTime() >= effectiveAt.getTime() - SKEW;
+    const withdraw = async () => {
+      const current = await this.load(tx, subscription.id);
+      const result = transition(toBillingState(current), {
+        type: 'SCHEDULED_CHANGE_CANCELED',
+        at: now,
+      });
+      if (result.ok && result.changed) {
+        await this.write(tx, current, result.next, current.lastBillingEventAt);
+        await this.history(tx, current.id, result.history, origin);
+      }
+    };
+
+    if (switched) {
+      const result = transition(toBillingState(subscription), {
+        type: 'SCHEDULED_CHANGE_APPLIED',
+        at: new Date(
+          Math.max(now.getTime(), snapshot.currentPeriodStart!.getTime()),
+        ),
+        periodStart: snapshot.currentPeriodStart ?? null,
+        periodEnd: snapshot.currentPeriodEnd ?? null,
+      });
+      if (
+        !result.ok ||
+        !result.changed ||
+        result.next.planPriceId !== change.toPlanPriceId ||
+        result.next.planVersionId !== change.toPlanVersionId
+      ) {
+        await this.markPlanChangeReview(
+          tx,
+          planChangeId,
+          SCHEDULED_CHANGE_DISRUPTED_CASE,
+          `Plan change ${planChangeId}: the provider switched to the scheduled price but our subscription is not waiting for it (${result.ok ? 'NO_CHANGE' : result.reason}). Not adopted.`,
+        );
+        return 'REVIEW';
+      }
+      await this.write(
+        tx,
+        subscription,
+        result.next,
+        subscription.lastBillingEventAt,
+      );
+      await this.history(tx, subscription.id, result.history, origin);
+      await tx.billingPlanChange.update({
+        where: { id: planChangeId },
+        data: { status: 'APPLIED', finishedAt: now },
+      });
+      return 'APPLIED';
+    }
+
+    // The subscription ended (or a trial expired without payment): closed.
+    if (
+      snapshot.status === 'canceled' ||
+      snapshot.status === 'incomplete_expired' ||
+      subscription.status === 'CANCELED' ||
+      subscription.status === 'TRIAL_EXPIRED'
+    ) {
+      await withdraw();
+      await tx.billingPlanChange.update({
+        where: { id: planChangeId },
+        data: {
+          status: 'CANCELED',
+          failureCode: 'SUBSCRIPTION_ENDED',
+          finishedAt: now,
+        },
+      });
+      return 'CANCELED';
+    }
+
+    // The business cancelled it (marked before the release): its schedule
+    // released or gone is that cancellation, not a disruption.
+    if (
+      change.failureCode === 'CANCEL_REQUESTED' &&
+      snapshot.scheduleId !== change.externalScheduleId &&
+      (schedule === null || schedule.status === 'released')
+    ) {
+      await withdraw();
+      await tx.billingPlanChange.update({
+        where: { id: planChangeId },
+        data: { status: 'CANCELED', failureCode: null, finishedAt: now },
+      });
+      return 'CANCELED';
+    }
+
+    const intact =
+      ours &&
+      snapshot.scheduleId === change.externalScheduleId &&
+      schedule !== null &&
+      schedule.externalScheduleId === change.externalScheduleId &&
+      schedule.externalSubscriptionId === subscription.externalSubscriptionId &&
+      (schedule.status === 'active' || schedule.status === 'not_started') &&
+      schedule.phases.length >= 2 &&
+      schedule.phases[0].externalPriceId ===
+        change.fromPlanPrice.externalPriceId &&
+      schedule.phases[0].endDate !== null &&
+      Math.abs(schedule.phases[0].endDate.getTime() - effectiveAt.getTime()) <=
+        SKEW &&
+      schedule.phases[1].externalPriceId ===
+        change.toPlanPrice.externalPriceId &&
+      schedule.phases[1].quantity === 1;
+    if (intact && now.getTime() < effectiveAt.getTime() + SWITCH_LAG_MS) {
+      return 'WAITING';
+    }
+    // Removed, replaced or altered outside CENTERIVO — or overdue: never
+    // recreated; the pending change is withdrawn and an operator reviews.
+    await withdraw();
+    await this.markPlanChangeReview(
+      tx,
+      planChangeId,
+      SCHEDULED_CHANGE_DISRUPTED_CASE,
+      `Plan change ${planChangeId} (scheduled for ${effectiveAt.toISOString()}): ${
+        intact
+          ? 'the provider has not switched the subscription yet, past its date'
+          : `the provider schedule ${change.externalScheduleId ?? '-'} is ${schedule === null ? 'gone' : `${schedule.status} or altered`} (subscription schedule now ${snapshot.scheduleId ?? 'none'})`
+      }. Not recreated; the business keeps its current plan.`,
+    );
+    return 'REVIEW';
   }
 
   // SC3d-2 — a confirmed immediate change was sent to the provider: its
@@ -2012,7 +2373,11 @@ export class BillingLifecycleService {
       where: { id: planChangeId },
       select: { status: true, subscriptionId: true },
     });
-    if (change.status === 'REQUESTED' || change.status === 'AWAITING_PAYMENT') {
+    if (
+      change.status === 'REQUESTED' ||
+      change.status === 'AWAITING_PAYMENT' ||
+      change.status === 'SCHEDULED'
+    ) {
       await tx.billingPlanChange.update({
         where: { id: planChangeId },
         data: { status: 'REVIEW' },
