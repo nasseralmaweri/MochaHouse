@@ -1,5 +1,6 @@
 import "server-only";
 import type {
+  AdminGettingStartedResponse,
   AdminLocationDetail,
   AdminLocationSummary,
 } from "@mocha-house/contracts";
@@ -107,4 +108,26 @@ export async function getAdminLocation(
     outcome: "success",
     location: (await response.json()) as AdminLocationDetail,
   };
+}
+
+// SC4d — the business's getting-started checklist (corporate
+// `locations.view`). Null when it can't be read for any reason: the
+// checklist is guidance, so a page shows its other content without it.
+export async function getAdminGettingStarted(): Promise<AdminGettingStartedResponse | null> {
+  const token = await getInternalSessionToken();
+  if (!token) {
+    return null;
+  }
+  try {
+    const response = await fetch(`${getApiUrl()}/admin/getting-started`, {
+      headers: await internalAuthHeaders(token),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as AdminGettingStartedResponse;
+  } catch {
+    return null;
+  }
 }

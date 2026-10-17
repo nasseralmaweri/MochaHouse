@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { AdminProductSummary } from "@mocha-house/contracts";
 import { addProductToMenuFromBrowser } from "@/lib/api-client";
@@ -65,8 +66,16 @@ export function AddMenuProductForm({
 
   if (products.length === 0) {
     return (
+      // SC4d — also what a brand-new business sees: no products exist yet.
       <p className="text-sm text-text-secondary">
-        Every product is already on this menu.
+        There are no other products to add.{" "}
+        <Link
+          href="/admin/menu/products/new"
+          className="font-medium text-text-primary underline underline-offset-2"
+        >
+          Create a product
+        </Link>{" "}
+        first, then add it here.
       </p>
     );
   }

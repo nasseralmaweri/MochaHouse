@@ -28,8 +28,11 @@ import { getOperationsTasksSnapshot } from "@/lib/internal-auth/admin-operations
 import {
   can,
   canAtLocation,
+  isCorporateFor,
   type AdminCapabilities,
 } from "@/lib/admin/capabilities";
+import { getAdminGettingStarted } from "@/lib/internal-auth/admin-locations";
+import { GettingStartedSummary } from "@/components/admin/GettingStartedChecklist";
 import {
   digitalOrderingAttentionItems,
   type AttentionItem,
@@ -193,6 +196,16 @@ export default async function AdminOverviewPage({
     );
   }
 
+  // SC4d — while the business's setup checklist is open, corporate staff
+  // see their progress and next step first.
+  const setup = isCorporateFor(capabilities, "locations.view")
+    ? await getAdminGettingStarted()
+    : null;
+  const setupCard =
+    setup && !setup.setupComplete ? (
+      <GettingStartedSummary checklist={setup} />
+    ) : null;
+
   const scopeLabel =
     scope.kind === "company"
       ? "Company-wide"
@@ -225,10 +238,12 @@ export default async function AdminOverviewPage({
     return (
       <AdminPage>
         {header}
-        <AdminEmptyState
-          title="No locations assigned yet"
-          description="Your role is active, but it isn't tied to a location. An administrator can assign one."
-        />
+        {setupCard ?? (
+          <AdminEmptyState
+            title="No locations assigned yet"
+            description="Your role is active, but it isn't tied to a location. An administrator can assign one."
+          />
+        )}
       </AdminPage>
     );
   }
@@ -262,6 +277,7 @@ export default async function AdminOverviewPage({
   return (
     <AdminPage width="wide">
       {header}
+      {setupCard}
       {body}
     </AdminPage>
   );

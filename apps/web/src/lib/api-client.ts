@@ -4,7 +4,15 @@ import {
   ACTIVE_ORDER_STATUSES,
   TERMINAL_ORDER_STATUSES,
 } from "@mocha-house/domain";
-import { FEATURE_NOT_AVAILABLE } from "@mocha-house/contracts";
+import {
+  FEATURE_NOT_AVAILABLE,
+  LOCATION_ORDERING_NOT_READY,
+  type AdminAssignLocationMenuResponse,
+  type AdminCreateMenuResponse,
+  type AdminLocationProfileRequest,
+  type AdminSetOpeningHoursRequest,
+  type GettingStartedStepKey,
+} from "@mocha-house/contracts";
 import type {
   AdminAdjustMochaBeansRequest,
   AdminApprovalRequest,
@@ -555,6 +563,8 @@ export type UpdateLocationOrderingResult =
   | { outcome: "success"; isDigitalOrderingEnabled: boolean }
   | { outcome: "forbidden" }
   | { outcome: "not-found" }
+  // SC4d — setup or billing steps still to do before ordering can go on.
+  | { outcome: "not-ready"; message: string; missing: GettingStartedStepKey[] }
   | { outcome: "error"; message: string };
 
 export async function updateLocationDigitalOrderingFromBrowser(
@@ -587,6 +597,24 @@ export async function updateLocationDigitalOrderingFromBrowser(
   }
   if (response.status === 404) {
     return { outcome: "not-found" };
+  }
+  if (response.status === 409) {
+    const body = (await safeJson(response)) as {
+      code?: unknown;
+      message?: string;
+      missing?: unknown;
+    } | null;
+    if (body?.code === LOCATION_ORDERING_NOT_READY) {
+      return {
+        outcome: "not-ready",
+        message:
+          body.message ??
+          "Finish setting up this location before turning on online ordering.",
+        missing: Array.isArray(body.missing)
+          ? (body.missing as GettingStartedStepKey[])
+          : [],
+      };
+    }
   }
   if (!response.ok) {
     const body = await safeJson(response);
@@ -3031,4 +3059,140 @@ export function rejectApprovalRequestFromBrowser(
   reason: string,
 ): Promise<ApprovalDecisionResult> {
   return approvalDecisionRequest(approvalRequestId, "reject", { reason });
+}
+
+// --- SC4d — first location setup ---------------------------------------
+// Same proxy and failure mapping as the rest of the Admin calls. The API
+// (corporate `locations.create` / `locations.edit` / `catalog.menu.manage`)
+// is the authority; `field` names the profile field a 400 is about, and a
+// 409 carries the API's body (e.g. LOCATION_LIMIT_REACHED and the business's
+// existing location).
+
+export type LocationSetupResult<T> =
+  | { outcome: "success"; data: T }
+  | { outcome: "forbidden" }
+  | { outcome: "not-found" }
+  | { outcome: "invalid"; message: string; field: string | null }
+  | {
+      outcome: "conflict";
+      message: string;
+      code: string | null;
+      locationId: string | null;
+    }
+  | { outcome: "error"; message: string };
+
+async function locationSetupRequest<T>(
+  path: string,
+  method: "POST" | "PUT",
+  body: unknown,
+): Promise<LocationSetupResult<T>> {
+  let response: Response;
+  try {
+    response = await fetch(`${INTERNAL_ADMIN_PROXY}${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { outcome: "error", message: "Could not reach the server." };
+  }
+
+  if (response.status === 401) {
+    redirectToInternalSignIn();
+    return {
+      outcome: "error",
+      message: "Your internal session has expired. Sign in again.",
+    };
+  }
+  if (response.status === 403) {
+    return { outcome: "forbidden" };
+  }
+  if (response.status === 404) {
+    return { outcome: "not-found" };
+  }
+  if (response.status === 400 || response.status === 409) {
+    const parsed = (await safeJson(response)) as {
+      message?: unknown;
+      field?: unknown;
+      code?: unknown;
+      locationId?: unknown;
+    } | null;
+    const message =
+      typeof parsed?.message === "string"
+        ? parsed.message
+        : "Please check the form and try again.";
+    if (response.status === 400) {
+      return {
+        outcome: "invalid",
+        message,
+        field: typeof parsed?.field === "string" ? parsed.field : null,
+      };
+    }
+    return {
+      outcome: "conflict",
+      message,
+      code: typeof parsed?.code === "string" ? parsed.code : null,
+      locationId:
+        typeof parsed?.locationId === "string" ? parsed.locationId : null,
+    };
+  }
+  if (!response.ok) {
+    const parsed = await safeJson(response);
+    return {
+      outcome: "error",
+      message: parsed?.message ?? `Something went wrong (${response.status}).`,
+    };
+  }
+  return { outcome: "success", data: (await response.json()) as T };
+}
+
+export function createLocationFromBrowser(
+  input: AdminLocationProfileRequest,
+): Promise<LocationSetupResult<AdminLocationDetail>> {
+  return locationSetupRequest<AdminLocationDetail>("/locations", "POST", input);
+}
+
+export function updateLocationProfileFromBrowser(
+  locationId: string,
+  input: AdminLocationProfileRequest,
+): Promise<LocationSetupResult<AdminLocationDetail>> {
+  return locationSetupRequest<AdminLocationDetail>(
+    `/locations/${encodeURIComponent(locationId)}/profile`,
+    "PUT",
+    input,
+  );
+}
+
+export function setOpeningHoursFromBrowser(
+  locationId: string,
+  input: AdminSetOpeningHoursRequest,
+): Promise<LocationSetupResult<AdminLocationDetail>> {
+  return locationSetupRequest<AdminLocationDetail>(
+    `/locations/${encodeURIComponent(locationId)}/hours`,
+    "PUT",
+    input,
+  );
+}
+
+// Idempotent by name: succeeds with `created: false` when the business
+// already has a menu with this name.
+export function createMenuFromBrowser(
+  name: string,
+): Promise<LocationSetupResult<AdminCreateMenuResponse>> {
+  return locationSetupRequest<AdminCreateMenuResponse>(
+    "/catalog/menus",
+    "POST",
+    { name },
+  );
+}
+
+export function assignLocationMenuFromBrowser(
+  locationId: string,
+  menuId: string,
+): Promise<LocationSetupResult<AdminAssignLocationMenuResponse>> {
+  return locationSetupRequest<AdminAssignLocationMenuResponse>(
+    `/catalog/locations/${encodeURIComponent(locationId)}/menu`,
+    "PUT",
+    { menuId },
+  );
 }

@@ -98,7 +98,7 @@ export function LocationEditForm({
           }
           setError(null);
         }}
-        hint="Whether this location appears in the Mocha House app for customers."
+        hint="Whether customers can find this location when they order online."
       />
 
       <p className="text-xs text-text-muted">

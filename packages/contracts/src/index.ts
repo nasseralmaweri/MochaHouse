@@ -69,9 +69,8 @@ export interface LocationMenuResponse {
 // `/api/v1/admin/locations*` routes (InternalAuthGuard + PermissionGuard +
 // `locations.view` + resource-level scope), and it deliberately exposes
 // `isActive` — an Admin user may see and open inactive locations, which the
-// public endpoints filter out entirely. No address / hours / timezone /
-// contact / fulfillment fields: those are not modeled yet and are out of
-// scope for this slice.
+// public endpoints filter out entirely. The address, contact, time zone and
+// opening hours (SC4d) are on the detail only.
 export interface AdminLocationSummary {
   id: string;
   name: string;
@@ -95,6 +94,9 @@ export interface AdminLocationAssignedMenu {
 
 export interface AdminLocationDetail extends AdminLocationSummary {
   assignedMenu: AdminLocationAssignedMenu | null;
+  // SC4d — address, contact and time zone, and the weekly opening hours.
+  profile: AdminLocationProfile;
+  openingHours: AdminOpeningHours;
 }
 
 // --- Admin locations: minimal edit (Milestone 5D-2) -------------------
@@ -109,6 +111,529 @@ export interface AdminLocationDetail extends AdminLocationSummary {
 export interface AdminUpdateLocationRequest {
   name?: string;
   isActive?: boolean;
+}
+
+// --- SC4d: location profile, opening hours and the first location ------
+// A location's address, contact phone and IANA time zone. Every field is
+// null on a location created before SC4d until someone fills it in; a
+// location an owner creates always has the required ones (see
+// `validateLocationProfile`).
+export interface AdminLocationProfile {
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  region: string | null;
+  postalCode: string | null;
+  // ISO 3166-1 alpha-2, upper case.
+  countryCode: string | null;
+  // IANA time zone, e.g. "America/New_York".
+  timeZone: string | null;
+  phone: string | null;
+}
+
+// One opening period, in the location's local time: "HH:MM", 00:00–23:59
+// for the opening time and 00:01–24:00 for the closing time. A closing time
+// earlier than the opening time runs past midnight into the next day.
+export interface OpeningPeriod {
+  opensAt: string;
+  closesAt: string;
+}
+
+// ISO weekday: 1 = Monday … 7 = Sunday. A day with no periods is closed.
+export interface OpeningDay {
+  dayOfWeek: number;
+  periods: OpeningPeriod[];
+}
+
+// Always seven days, Monday first. `isSet` is false until hours have been
+// saved once (so "not set up yet" is never shown as "closed every day").
+export interface AdminOpeningHours {
+  isSet: boolean;
+  days: OpeningDay[];
+}
+
+// PUT /api/v1/admin/locations/:locationId/hours — the whole week at once.
+// Days left out are closed.
+export interface AdminSetOpeningHoursRequest {
+  days: OpeningDay[];
+}
+
+// PUT /api/v1/admin/locations/:locationId/profile (`locations.edit`) and the
+// body of POST /api/v1/admin/locations (`locations.create`).
+export interface AdminLocationProfileRequest {
+  name: string;
+  addressLine1: string;
+  addressLine2?: string | null;
+  city: string;
+  region?: string | null;
+  postalCode?: string | null;
+  countryCode: string;
+  timeZone: string;
+  phone: string;
+}
+
+export type AdminCreateLocationRequest = AdminLocationProfileRequest;
+
+// 409 from POST /api/v1/admin/locations: SC4d lets a business create its
+// FIRST location only. `locationId` is the location it already has.
+export const LOCATION_LIMIT_REACHED = "LOCATION_LIMIT_REACHED";
+
+export interface LocationLimitReachedBody {
+  code: typeof LOCATION_LIMIT_REACHED;
+  message: string;
+  locationId: string | null;
+}
+
+export const LOCATION_NAME_MAX_LENGTH = 80;
+export const LOCATION_ADDRESS_LINE_MAX_LENGTH = 200;
+export const LOCATION_CITY_MAX_LENGTH = 100;
+export const LOCATION_REGION_MAX_LENGTH = 100;
+export const LOCATION_POSTAL_CODE_MAX_LENGTH = 20;
+export const LOCATION_PHONE_MAX_LENGTH = 30;
+export const OPENING_PERIODS_PER_DAY_MAX = 4;
+
+// ISO 3166-1 alpha-2 country codes (officially assigned).
+export const COUNTRY_CODES: readonly string[] = (
+  "AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ " +
+  "BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ " +
+  "CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ " +
+  "DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR " +
+  "GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY " +
+  "HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP " +
+  "KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY " +
+  "MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ " +
+  "NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY " +
+  "QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ " +
+  "TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ " +
+  "VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW"
+).split(" ");
+
+const COUNTRY_CODE_SET: ReadonlySet<string> = new Set(COUNTRY_CODES);
+
+export interface ValidLocationProfile {
+  name: string;
+  addressLine1: string;
+  addressLine2: string | null;
+  city: string;
+  region: string | null;
+  postalCode: string | null;
+  countryCode: string;
+  timeZone: string;
+  phone: string;
+}
+
+export type LocationProfileValidation =
+  | { ok: true; value: ValidLocationProfile }
+  | { ok: false; field: keyof AdminLocationProfileRequest; message: string };
+
+type ProfileTextResult =
+  | { ok: true; value: string | null }
+  | { ok: false; field: keyof AdminLocationProfileRequest; message: string };
+
+function profileText(
+  input: Record<string, unknown>,
+  field: keyof AdminLocationProfileRequest,
+  label: string,
+  max: number,
+  required: boolean,
+): ProfileTextResult {
+  const raw = input[field];
+  if (
+    raw === undefined ||
+    raw === null ||
+    (typeof raw === "string" && raw.trim() === "")
+  ) {
+    return required
+      ? { ok: false, field, message: `Enter the ${label}.` }
+      : { ok: true, value: null };
+  }
+  // NUL and other control characters are refused (tabs and line breaks are
+  // collapsed into spaces below).
+  if (
+    typeof raw !== "string" ||
+    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(raw)
+  ) {
+    return {
+      ok: false,
+      field,
+      message: `The ${label} contains invalid characters.`,
+    };
+  }
+  const value = raw.trim().replace(/\s+/g, " ");
+  if (value.length > max) {
+    return {
+      ok: false,
+      field,
+      message: `The ${label} must be at most ${max} characters.`,
+    };
+  }
+  return { ok: true, value };
+}
+
+// The ONE profile rule, shared by the API (authoritative) and the web form.
+// Required: name, first address line, city, country, time zone and phone;
+// region and postal code are optional (not every country uses them).
+export function validateLocationProfile(
+  input: Record<string, unknown>,
+  isTimeZone: (value: string) => boolean = isSupportedTimeZone,
+): LocationProfileValidation {
+  const name = profileText(input, "name", "location name", LOCATION_NAME_MAX_LENGTH, true);
+  if (!name.ok) return name;
+  const addressLine1 = profileText(
+    input,
+    "addressLine1",
+    "street address",
+    LOCATION_ADDRESS_LINE_MAX_LENGTH,
+    true,
+  );
+  if (!addressLine1.ok) return addressLine1;
+  const addressLine2 = profileText(
+    input,
+    "addressLine2",
+    "second address line",
+    LOCATION_ADDRESS_LINE_MAX_LENGTH,
+    false,
+  );
+  if (!addressLine2.ok) return addressLine2;
+  const city = profileText(input, "city", "city", LOCATION_CITY_MAX_LENGTH, true);
+  if (!city.ok) return city;
+  const region = profileText(
+    input,
+    "region",
+    "state or region",
+    LOCATION_REGION_MAX_LENGTH,
+    false,
+  );
+  if (!region.ok) return region;
+  const postalCode = profileText(
+    input,
+    "postalCode",
+    "postal code",
+    LOCATION_POSTAL_CODE_MAX_LENGTH,
+    false,
+  );
+  if (!postalCode.ok) return postalCode;
+  if (
+    postalCode.value !== null &&
+    !/^[A-Za-z0-9][A-Za-z0-9 -]*$/.test(postalCode.value)
+  ) {
+    return {
+      ok: false,
+      field: "postalCode",
+      message:
+        "The postal code may contain only letters, numbers, spaces and hyphens.",
+    };
+  }
+
+  const country = input.countryCode;
+  const countryCode =
+    typeof country === "string" ? country.trim().toUpperCase() : "";
+  if (!COUNTRY_CODE_SET.has(countryCode)) {
+    return { ok: false, field: "countryCode", message: "Choose the country." };
+  }
+
+  const zone = input.timeZone;
+  const timeZone = typeof zone === "string" ? zone.trim() : "";
+  if (timeZone === "" || timeZone.length > 64 || !isTimeZone(timeZone)) {
+    return {
+      ok: false,
+      field: "timeZone",
+      message: "Choose the location's time zone.",
+    };
+  }
+
+  const phone = profileText(input, "phone", "phone number", LOCATION_PHONE_MAX_LENGTH, true);
+  if (!phone.ok) return phone;
+  const phoneValue = phone.value ?? "";
+  const digits = phoneValue.replace(/\D/g, "").length;
+  if (!/^\+?[0-9 ().\-/]+$/.test(phoneValue) || digits < 7 || digits > 15) {
+    return {
+      ok: false,
+      field: "phone",
+      message:
+        "Enter a phone number with 7 to 15 digits (for example +1 555 123 4567).",
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      name: name.value!,
+      addressLine1: addressLine1.value!,
+      addressLine2: addressLine2.value,
+      city: city.value!,
+      region: region.value,
+      postalCode:
+        postalCode.value === null ? null : postalCode.value.toUpperCase(),
+      countryCode,
+      timeZone,
+      phone: phoneValue,
+    },
+  };
+}
+
+// The IANA time zones this runtime knows (canonical names), plus "UTC".
+// Aliases such as "EST" or "US/Eastern" are not offered or accepted.
+export function supportedTimeZones(): readonly string[] {
+  const intl = Intl as unknown as {
+    supportedValuesOf?: (key: string) => string[];
+  };
+  const zones = intl.supportedValuesOf ? intl.supportedValuesOf("timeZone") : [];
+  return zones.includes("UTC") ? zones : [...zones, "UTC"];
+}
+
+let timeZoneSet: ReadonlySet<string> | null = null;
+
+export function isSupportedTimeZone(value: string): boolean {
+  timeZoneSet ??= new Set(supportedTimeZones());
+  return timeZoneSet.has(value);
+}
+
+const DAY_MINUTES = 1440;
+const WEEK_MINUTES = 7 * DAY_MINUTES;
+
+// "HH:MM" -> minutes after midnight. Opening times are 00:00–23:59; closing
+// times 00:01–24:00 (24:00 = end of the day). Null when malformed.
+export function parseClockTime(value: unknown, closing: boolean): number | null {
+  if (typeof value !== "string") return null;
+  const match = /^([01]\d|2[0-4]):([0-5]\d)$/.exec(value.trim());
+  if (!match) return null;
+  const minutes = Number(match[1]) * 60 + Number(match[2]);
+  if (minutes > DAY_MINUTES) return null;
+  if (closing ? minutes === 0 : minutes === DAY_MINUTES) return null;
+  return minutes;
+}
+
+export function formatClockMinutes(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  return `${String(hours).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+export const WEEKDAY_NAMES = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+] as const;
+
+export interface StoredOpeningPeriod {
+  dayOfWeek: number;
+  opensAtMinute: number;
+  closesAtMinute: number;
+}
+
+export type OpeningHoursValidation =
+  | { ok: true; periods: StoredOpeningPeriod[] }
+  | { ok: false; message: string };
+
+const MALFORMED_HOURS = "The opening hours are malformed.";
+
+// The ONE opening-hours rule, shared by the API (authoritative) and the web
+// form. Each day at most once; at most OPENING_PERIODS_PER_DAY_MAX periods a
+// day; no zero-length period; and no two periods of the week may overlap —
+// including a period that runs past midnight into the next day's first one,
+// and Sunday night into Monday morning. Periods that only touch (one closes
+// at 12:00, the next opens at 12:00) are allowed.
+export function validateOpeningHours(input: unknown): OpeningHoursValidation {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return { ok: false, message: MALFORMED_HOURS };
+  }
+  const days = (input as { days?: unknown }).days;
+  if (!Array.isArray(days) || days.length > 7) {
+    return { ok: false, message: MALFORMED_HOURS };
+  }
+  const seen = new Set<number>();
+  const periods: StoredOpeningPeriod[] = [];
+  for (const day of days as unknown[]) {
+    if (typeof day !== "object" || day === null) {
+      return { ok: false, message: MALFORMED_HOURS };
+    }
+    const { dayOfWeek, periods: dayPeriods } = day as {
+      dayOfWeek?: unknown;
+      periods?: unknown;
+    };
+    if (
+      typeof dayOfWeek !== "number" ||
+      !Number.isInteger(dayOfWeek) ||
+      dayOfWeek < 1 ||
+      dayOfWeek > 7 ||
+      seen.has(dayOfWeek)
+    ) {
+      return {
+        ok: false,
+        message: "Each day of the week can appear only once.",
+      };
+    }
+    seen.add(dayOfWeek);
+    const dayName = WEEKDAY_NAMES[dayOfWeek - 1];
+    if (!Array.isArray(dayPeriods)) {
+      return { ok: false, message: `${dayName}: the opening times are malformed.` };
+    }
+    if (dayPeriods.length > OPENING_PERIODS_PER_DAY_MAX) {
+      return {
+        ok: false,
+        message: `${dayName}: at most ${OPENING_PERIODS_PER_DAY_MAX} opening periods a day.`,
+      };
+    }
+    for (const period of dayPeriods as unknown[]) {
+      const record = (
+        typeof period === "object" && period !== null ? period : {}
+      ) as { opensAt?: unknown; closesAt?: unknown };
+      const opens = parseClockTime(record.opensAt, false);
+      const closes = parseClockTime(record.closesAt, true);
+      if (opens === null || closes === null) {
+        return {
+          ok: false,
+          message: `${dayName}: enter opening and closing times as HH:MM (closing may be 24:00).`,
+        };
+      }
+      if (opens === closes) {
+        return {
+          ok: false,
+          message: `${dayName}: a period can't open and close at the same time.`,
+        };
+      }
+      periods.push({ dayOfWeek, opensAtMinute: opens, closesAtMinute: closes });
+    }
+  }
+
+  // Lay every period on one week of minutes (Monday 00:00 = 0). A period
+  // closing earlier than it opens ends the next day; one ending after Sunday
+  // midnight wraps to Monday morning.
+  const spans: Array<{ start: number; end: number; day: number }> = [];
+  for (const period of periods) {
+    const start = (period.dayOfWeek - 1) * DAY_MINUTES + period.opensAtMinute;
+    const length =
+      period.closesAtMinute > period.opensAtMinute
+        ? period.closesAtMinute - period.opensAtMinute
+        : period.closesAtMinute + DAY_MINUTES - period.opensAtMinute;
+    const end = start + length;
+    if (end <= WEEK_MINUTES) {
+      spans.push({ start, end, day: period.dayOfWeek });
+    } else {
+      spans.push({ start, end: WEEK_MINUTES, day: period.dayOfWeek });
+      spans.push({ start: 0, end: end - WEEK_MINUTES, day: period.dayOfWeek });
+    }
+  }
+  spans.sort((a, b) => a.start - b.start || a.end - b.end);
+  for (let i = 1; i < spans.length; i++) {
+    if (spans[i].start < spans[i - 1].end) {
+      const first = WEEKDAY_NAMES[spans[i - 1].day - 1];
+      const second = WEEKDAY_NAMES[spans[i].day - 1];
+      return {
+        ok: false,
+        message:
+          first === second
+            ? `${first}: opening periods overlap.`
+            : `${first} and ${second}: opening periods overlap.`,
+      };
+    }
+  }
+
+  periods.sort(
+    (a, b) => a.dayOfWeek - b.dayOfWeek || a.opensAtMinute - b.opensAtMinute,
+  );
+  return { ok: true, periods };
+}
+
+// Stored periods -> the seven-day view, Monday first.
+export function openingHoursView(
+  isSet: boolean,
+  periods: readonly StoredOpeningPeriod[],
+): AdminOpeningHours {
+  return {
+    isSet,
+    days: WEEKDAY_NAMES.map((_, index) => ({
+      dayOfWeek: index + 1,
+      periods: periods
+        .filter((period) => period.dayOfWeek === index + 1)
+        .sort((a, b) => a.opensAtMinute - b.opensAtMinute)
+        .map((period) => ({
+          opensAt: formatClockMinutes(period.opensAtMinute),
+          closesAt: formatClockMinutes(period.closesAtMinute),
+        })),
+    })),
+  };
+}
+
+// --- SC4d: business menus ---------------------------------------------
+// POST /api/v1/admin/catalog/menus (`catalog.menu.manage`). Creating a menu
+// with the name of one the business already has returns that menu
+// (`created: false`) — a repeated or double-clicked submission never makes
+// a second menu.
+export interface AdminCreateMenuRequest {
+  name: string;
+  slug?: string | null;
+}
+
+export interface AdminCreateMenuResponse {
+  menu: AdminMenuSummary;
+  created: boolean;
+}
+
+// PUT /api/v1/admin/catalog/locations/:locationId/menu
+// (`catalog.menu.manage`): the menu this location sells from. Replaces any
+// other active menu of the location; repeating it changes nothing.
+export interface AdminAssignLocationMenuRequest {
+  menuId: string;
+}
+
+export interface AdminAssignLocationMenuResponse {
+  locationId: string;
+  menuId: string;
+  changed: boolean;
+}
+
+// --- SC4d: getting started ----------------------------------------------
+// GET /api/v1/admin/getting-started — computed on every request from the
+// business's real data (nothing stored). "Setup complete" means these steps
+// are done; it is NOT "publicly live": the business storefront and other
+// launch requirements are separate.
+export const GETTING_STARTED_STEP_KEYS = [
+  "business",
+  "billing",
+  "location",
+  "profile",
+  "hours",
+  "menu",
+  "ordering",
+] as const;
+
+export type GettingStartedStepKey = (typeof GETTING_STARTED_STEP_KEYS)[number];
+
+export interface GettingStartedStep {
+  key: GettingStartedStepKey;
+  done: boolean;
+}
+
+export interface AdminGettingStartedResponse {
+  steps: GettingStartedStep[];
+  completedCount: number;
+  totalCount: number;
+  setupComplete: boolean;
+  // The location the steps refer to (the business's first), when it has one.
+  locationId: string | null;
+  // That location's menu, when it has one.
+  menuId: string | null;
+  // Whether this deployment's customer storefront serves this business today.
+  // False for every self-service business until multi-business storefront
+  // routing (SC4f): its online ordering can be on, but customers cannot reach
+  // it yet.
+  storefrontLive: boolean;
+}
+
+// 409 from PATCH /api/v1/admin/locations/:id/digital-ordering when online
+// ordering is turned ON for a self-service business's location that is not
+// ready yet. `missing` lists the getting-started steps still to do.
+export const LOCATION_ORDERING_NOT_READY = "LOCATION_ORDERING_NOT_READY";
+
+export interface LocationOrderingNotReadyBody {
+  code: typeof LOCATION_ORDERING_NOT_READY;
+  message: string;
+  missing: GettingStartedStepKey[];
 }
 
 // --- Admin products: master catalog management (Milestone 5D-3) -------
@@ -3262,6 +3787,9 @@ export const INTERNAL_PERMISSION_KEYS = [
   "catalog.view",
   "locations.view",
   "locations.edit",
+  // SC4d — create a location. CORPORATE-only; SC4d allows a business its
+  // first location only (the rule lives in the service, not the key).
+  "locations.create",
   "locations.manage_digital_ordering",
   "users.view",
   "roles.view",
@@ -3529,6 +4057,7 @@ export const PERMISSION_MODULE: Readonly<
   "catalog.view": "core",
   "locations.view": "core",
   "locations.edit": "core",
+  "locations.create": "core",
   "locations.manage_digital_ordering": "core",
   "users.view": "core",
   "roles.view": "core",
@@ -3725,6 +4254,12 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "locations.edit",
     description:
       "Edit a location record (name, active state). A corporate-scoped operation.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "locations.create": {
+    key: "locations.create",
+    description:
+      "Create a location for the business. A corporate-scoped operation.",
     allowedScopeTypes: ["CORPORATE"],
   },
   "locations.manage_digital_ordering": {

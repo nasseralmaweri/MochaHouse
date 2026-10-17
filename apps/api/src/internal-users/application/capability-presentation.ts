@@ -108,6 +108,12 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Edit location information',
     definition: 'Edit location information',
   },
+  'locations.create': {
+    group: 'Locations',
+    effectiveAll: 'Add locations',
+    effectiveScoped: 'Add locations',
+    definition: 'Add locations',
+  },
   'locations.manage_digital_ordering': {
     group: 'Locations',
     effectiveAll: 'Turn online ordering on or off for all locations',
@@ -387,6 +393,7 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'catalog.overrides.manage',
   'locations.view',
   'locations.edit',
+  'locations.create',
   'locations.manage_digital_ordering',
   'loyalty.view',
   'loyalty.adjust',

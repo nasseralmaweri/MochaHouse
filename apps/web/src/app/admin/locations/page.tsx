@@ -11,6 +11,7 @@ import {
   AdminForbidden,
 } from "@/components/admin/states";
 import { StatusBadge } from "@/components/admin/StatusBadge";
+import { ButtonLink } from "@/components/admin/Button";
 import { Card } from "@/components/Card";
 
 // Admin Locations list (Milestone 5D-1). Server component, inside the shared
@@ -67,13 +68,28 @@ export default async function AdminLocationsPage() {
   }
 
   if (result.locations.length === 0) {
+    // SC4d — a business with no locations yet: whoever may add one is
+    // offered to; everyone else still needs an administrator.
+    const canCreate = can(session.authorization.capabilities, "locations.create");
     return (
       <AdminPage>
         {header}
-        <AdminEmptyState
-          title="No locations in your scope"
-          description="Your role doesn't cover any locations yet. An administrator needs to assign one."
-        />
+        {canCreate ? (
+          <AdminEmptyState
+            title="Add your first location"
+            description="Add the restaurant or café your customers will order from. Online ordering stays off until you turn it on."
+            action={
+              <ButtonLink href="/admin/locations/new" variant="primary">
+                Add your location
+              </ButtonLink>
+            }
+          />
+        ) : (
+          <AdminEmptyState
+            title="No locations in your scope"
+            description="Your role doesn't cover any locations yet. An administrator needs to assign one."
+          />
+        )}
       </AdminPage>
     );
   }

@@ -1,4 +1,4 @@
-import { can, type AdminCapabilities } from "./capabilities";
+import { can, isCorporateFor, type AdminCapabilities } from "./capabilities";
 
 export interface AdminNavItem {
   key: string;
@@ -234,6 +234,17 @@ export function adminNavItems(
 
   // SC3b — the business's own CENTERIVO subscription (billing.view,
   // CORPORATE-only). The page re-checks.
+  // SC4d — the business setup checklist (corporate `locations.view`; the
+  // page and the API re-check). Business-wide, so never for a
+  // location-scoped grant.
+  if (isCorporateFor(capabilities, "locations.view")) {
+    items.push({
+      key: "getting-started",
+      label: "Getting started",
+      href: "/admin/getting-started",
+    });
+  }
+
   if (can(capabilities, "billing.view")) {
     items.push({ key: "billing", label: "Billing", href: "/admin/billing" });
   }
@@ -310,7 +321,7 @@ const NAV_GROUPS: ReadonlyArray<{
     key: "admin",
     label: null,
     tier: "footer",
-    itemKeys: ["billing", "administration"],
+    itemKeys: ["getting-started", "billing", "administration"],
   },
 ];
 

@@ -324,24 +324,25 @@ Conventions:
   - online ordering on/off: `locations.manage_digital_ordering` (C/L);
   - location menu prices and availability: `catalog.overrides.manage` (C/L).
 - **Location menu screen.** For each product it shows standard price, location price, resulting price, and location availability with the resulting availability. Actions are set or clear a price, and set or clear availability.
+- **Location setup (SC4d):** a business creates its **first** location (`locations.create`, C; more locations are not available yet), with its address, country, IANA time zone and phone (`/admin/locations/new`, `/[id]/profile`); weekly opening hours with split and overnight periods (`/[id]/hours`, saved and shown only — ordering does not follow them yet); and the menu it sells from (`/[id]/choose-menu`). A new location starts with online ordering **off**; a self-service business can turn it on only once billing is authorized and the address, hours and a sellable menu are in place. **Getting started** (`/admin/getting-started`) shows the setup checklist, computed from real data.
 - **Not modeled:**
-  - address, hours, time zone, contact details and fulfillment settings ("not modeled yet", contracts 5D-1);
-  - **creating a location** (there is no create endpoint).
+  - fulfillment settings; an online-ordering pause reason;
+  - ordering-hours enforcement (must handle time zones and daylight-saving transitions).
 
-  ⚠ D-13.
+  ⚠ D-13 (partly done in SC4d).
 
 ### 4.5 Menu & Products: `/admin/menu`, `/menu/products[/id[/edit]]`, `/menu/menus[/id]` (IMPLEMENTED, edit-only)
 - **Purpose:** the shared master catalog. **Permission:** `catalog.view` (C).
 - **Actions:**
   - edit a product's name, description, **standard price** and active state (`catalog.products.edit`);
   - show or hide a product on a menu (`catalog.menu.manage`).
+- **Available since S1 / SC4d:** creating categories, products and menus; adding products to a menu; choosing a location's menu.
 - **Not available:**
-  - creating products, categories, menus, modifier groups or options;
+  - creating or editing modifier groups and options (**a FIRST-LAUNCH requirement**: restaurants need customizable products);
   - changing a product's category;
-  - assigning a menu to a location;
   - product images.
 
-  All of these need development (⚠ D-14). Modifiers exist and are priced (§5.10), but there's no admin screen for them.
+  These need development (⚠ D-14). Modifiers exist and are priced (§5.10), but there's no admin screen for them.
 
 ### 4.6 Customers (CRM): `/admin/customers`, `/[customerId]` (IMPLEMENTED: 8A)
 - **Purpose:** an HQ read-only view over existing customer data.
@@ -754,8 +755,8 @@ Multi-tenant data isolation (S0C–S0F) · business selection · company/locatio
 | D-10 | **Tax, fees, tips, and fulfillment type** (pickup or delivery) | Not modeled |
 | D-11 | **Order cancellation and refund** policy and flow | No such statuses exist |
 | D-12 | **Admin order history and search** (completed orders) | Queue shows active orders only |
-| D-13 | **Location profile and onboarding:** address, hours, contact, time zone, creating locations; an online-ordering pause reason | Not modeled |
-| D-14 | **Catalog authoring:** create products, categories, modifiers, menus; images | Edit-only today |
+| D-13 | **Location profile and onboarding:** address, hours, contact, time zone, creating locations; an online-ordering pause reason | SC4d: profile, hours (display only) and the first location done; pause reason and hours enforcement open |
+| D-14 | **Catalog authoring:** create products, categories, modifiers, menus; images | Categories, products and menus done (S1/SC4d); **modifiers are a first-launch requirement**; images open |
 | D-15 | **Time zone and currency per tenant or location** (fixed to America/Detroit and USD) | Required for SaaS beyond Michigan |
 | D-16 | **Customer account administration** (restrict, deactivate) from CRM | Read-only today |
 | D-17 | **Approvals beyond campaigns** (e.g. promotions, menu or price changes)? | Only one workflow exists |
