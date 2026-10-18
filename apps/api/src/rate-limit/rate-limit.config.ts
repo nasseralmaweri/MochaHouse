@@ -78,7 +78,9 @@ export type PolicyName =
   | 'owner-registration'
   | 'owner-registration-verification'
   // SC4b — a verified owner creating their business.
-  | 'owner-onboarding';
+  | 'owner-onboarding'
+  // SC4f-2 — a signed-in customer joining a business.
+  | 'customer-enrollment';
 
 interface ScopeDefault {
   name: string;
@@ -146,6 +148,21 @@ const DEFAULTS: Record<PolicyName, PolicyDefault> = {
         appliesTo: 'anonymous',
       },
       { name: 'tenant', key: ['tenant'], limit: 600, windowSeconds: MINUTE },
+    ],
+  },
+  // SC4f-2 — joining a business creates at most one profile per login, so
+  // a signed-in customer never needs more than a few attempts; the business
+  // ceiling bounds a burst of new logins.
+  'customer-enrollment': {
+    scopes: [
+      {
+        name: 'subject',
+        key: ['tenant', 'subject'],
+        limit: 10,
+        windowSeconds: HOUR,
+        appliesTo: 'authenticated',
+      },
+      { name: 'tenant', key: ['tenant'], limit: 600, windowSeconds: HOUR },
     ],
   },
   'reward-eligibility': {

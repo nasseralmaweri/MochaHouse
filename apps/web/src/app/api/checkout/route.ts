@@ -13,6 +13,12 @@ import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 import { CUSTOMER_SESSION_COOKIE } from "@/lib/auth/session";
 import { signedClientIpHeaders } from "@/lib/client-ip-forwarding";
 import { passthroughHeaders } from "@/lib/rate-limit-message";
+import { CUSTOMER_NOT_ENROLLED } from "@mocha-house/contracts";
+
+// SC4f-2 — refusal when a signed-in customer asks to check out as a guest
+// but has (or may have) an account at this restaurant.
+const GUEST_CHECKOUT_NOT_ALLOWED = "GUEST_CHECKOUT_NOT_ALLOWED";
+const SESSION_EXPIRED = "SESSION_EXPIRED";
 
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;
@@ -37,12 +43,66 @@ function getApiUrl(): string {
 // cookie is present — omitted entirely for a signed-out visitor, so guest
 // checkout reaches the API exactly as before this slice. The response is
 // passed through unchanged (status and body) in either case.
+//
+// SC4f-2 — `?as=guest`: a signed-in login that has NOT joined this restaurant
+// may choose to order as a guest instead. That choice is honoured only after
+// the API confirms CUSTOMER_NOT_ENROLLED; a login with a profile here —
+// active, restricted or deactivated — never silently falls back to guest
+// checkout (it gets 409 GUEST_CHECKOUT_NOT_ALLOWED).
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const untrusted = rejectUntrustedOrigin(request);
   if (untrusted) return untrusted as NextResponse;
 
-  const token = request.cookies.get(CUSTOMER_SESSION_COOKIE)?.value;
+  let token = request.cookies.get(CUSTOMER_SESSION_COOKIE)?.value;
   const body = await request.text();
+
+  if (token && request.nextUrl.searchParams.get("as") === "guest") {
+    let me: Response;
+    try {
+      me = await storefrontApiFetch(`${getApiUrl()}/customers/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+    } catch {
+      return NextResponse.json(
+        { message: "Could not check your account. Please try again." },
+        { status: 503 },
+      );
+    }
+    const meBody = (await me.json().catch(() => null)) as {
+      code?: unknown;
+    } | null;
+    const notEnrolled =
+      me.status === 403 && meBody?.code === CUSTOMER_NOT_ENROLLED;
+    // Fail closed in every other case, but say what actually happened: an
+    // expired sign-in must sign in again (never order as a guest with it).
+    if (me.status === 401) {
+      return NextResponse.json(
+        {
+          code: SESSION_EXPIRED,
+          message: "Your sign-in has expired. Sign in again to continue.",
+        },
+        { status: 401 },
+      );
+    }
+    if (!notEnrolled && !me.ok && me.status !== 403) {
+      return NextResponse.json(
+        { message: "Could not check your account. Please try again." },
+        { status: 503 },
+      );
+    }
+    if (!notEnrolled) {
+      return NextResponse.json(
+        {
+          code: GUEST_CHECKOUT_NOT_ALLOWED,
+          message:
+            "You're signed in to your account at this restaurant. Sign out to order as a guest.",
+        },
+        { status: 409 },
+      );
+    }
+    token = undefined;
+  }
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",

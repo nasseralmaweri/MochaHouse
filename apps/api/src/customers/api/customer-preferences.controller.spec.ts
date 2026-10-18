@@ -1,3 +1,5 @@
+import { enrollTestCustomer } from '@mocha-house/testing';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -52,7 +54,14 @@ describe('CustomerPreferencesController (integration)', () => {
 
   const prefs = '/api/v1/customers/me/preferences';
 
-  function token(identifier = `test-4fp-${randomUUID()}@example.com`): string {
+  async function token(
+    identifier = `test-4fp-${randomUUID()}@example.com`,
+  ): Promise<string> {
+    await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, {
+      provider: 'dev',
+      subject: `dev:${identifier}`,
+      email: identifier,
+    });
     return signDevJwt(
       { sub: `dev:${identifier}`, email: identifier, name: null },
       devSecret,
@@ -77,7 +86,7 @@ describe('CustomerPreferencesController (integration)', () => {
   });
 
   it('a brand-new customer defaults to marketingEmailOptIn: false', async () => {
-    const t = token();
+    const t = await token();
     const res = await request(app.getHttpServer())
       .get(prefs)
       .set('Authorization', `Bearer ${t}`)
@@ -88,7 +97,7 @@ describe('CustomerPreferencesController (integration)', () => {
   });
 
   it('opts in, persists across requests, then opts back out', async () => {
-    const t = token();
+    const t = await token();
 
     const on = await request(app.getHttpServer())
       .patch(prefs)
@@ -118,7 +127,7 @@ describe('CustomerPreferencesController (integration)', () => {
   });
 
   it('rejects a non-boolean value with 400 and does not change the stored preference', async () => {
-    const t = token();
+    const t = await token();
     await request(app.getHttpServer())
       .patch(prefs)
       .set('Authorization', `Bearer ${t}`)
@@ -141,8 +150,8 @@ describe('CustomerPreferencesController (integration)', () => {
   });
 
   it('customer A cannot alter customer B', async () => {
-    const a = token();
-    const b = token();
+    const a = await token();
+    const b = await token();
 
     await request(app.getHttpServer())
       .patch(prefs)
@@ -164,7 +173,7 @@ describe('CustomerPreferencesController (integration)', () => {
 
   it('changing the preference never touches identity, status, email, or verification', async () => {
     const identifier = `test-4fp-${randomUUID()}@example.com`;
-    const t = token(identifier);
+    const t = await token(identifier);
 
     const before = await request(app.getHttpServer())
       .get('/api/v1/customers/me')
@@ -186,7 +195,8 @@ describe('CustomerPreferencesController (integration)', () => {
 
     const stored = await prisma.customer.findUnique({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: 'dev',
           externalSubject: `dev:${identifier}`,
         },

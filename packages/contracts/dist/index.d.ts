@@ -437,6 +437,23 @@ export interface CustomerProfile {
     emailVerified: boolean;
     createdAt: string;
 }
+export declare const CUSTOMER_NOT_ENROLLED = "CUSTOMER_NOT_ENROLLED";
+export declare const CUSTOMER_ACCOUNT_RESTRICTED = "CUSTOMER_ACCOUNT_RESTRICTED";
+export declare const CUSTOMER_ACCOUNT_UNAVAILABLE = "CUSTOMER_ACCOUNT_UNAVAILABLE";
+export declare const CUSTOMER_EMAIL_NOT_VERIFIED = "CUSTOMER_EMAIL_NOT_VERIFIED";
+export interface CustomerNotEnrolledError {
+    statusCode: 403;
+    code: typeof CUSTOMER_NOT_ENROLLED;
+    message: string;
+    businessName: string;
+}
+export interface CustomerEnrollmentRequest {
+    displayName?: string | null;
+}
+export interface CustomerEnrollmentResponse {
+    profile: CustomerProfile;
+    created: boolean;
+}
 export type CustomerPreferredLocationsResponse = LocationSummary[];
 export interface AddPreferredLocationRequest {
     locationId: string;

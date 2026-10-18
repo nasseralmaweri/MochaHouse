@@ -24,7 +24,10 @@ import {
 import type { PaymentProvider } from '@mocha-house/integrations';
 import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CustomersService } from '../../customers/application/customers.service';
+import {
+  CustomersService,
+  assertCustomerAccess,
+} from '../../customers/application/customers.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 import { PAYMENT_PROVIDER } from '../../payment/payment-provider.token';
 import {
@@ -528,16 +531,22 @@ export class GiftCardPurchaseService implements OnModuleInit {
       if (!customerIdentity) {
         return false;
       }
+      // SC4f-2 — the signed-in login's profile in the PURCHASE's business,
+      // and only while that profile may act there (a restricted or
+      // deactivated profile cannot retrieve a code).
       const customer = await this.prisma.customer.findUnique({
         where: {
-          externalProvider_externalSubject: {
+          tenantId_externalProvider_externalSubject: {
+            tenantId: purchase.tenantId,
             externalProvider: customerIdentity.provider,
             externalSubject: customerIdentity.subject,
           },
         },
-        select: { id: true },
+        select: { id: true, status: true },
       });
-      return customer?.id === purchase.customerId;
+      if (!customer || customer.id !== purchase.customerId) return false;
+      assertCustomerAccess(customer.status, 'write');
+      return true;
     }
     return recoveryCredentialMatches(
       suppliedCredential,
@@ -594,9 +603,10 @@ export class GiftCardPurchaseService implements OnModuleInit {
     if (!customerIdentity) {
       return null;
     }
-    const customer = await this.customersService.resolveOrCreateFromIdentity(
+    const customer = await this.customersService.requireCustomer(
       customerIdentity,
       tenant,
+      'write',
     );
     return customer.id;
   }

@@ -120,11 +120,10 @@ export class AuthController {
       throw new BadRequestException('Please provide a valid email address.');
     }
 
-    // JIT-creates the Mocha House Customer exactly like sign-in's
-    // CustomerAuthGuard flow does for GET /customers/me — the same
-    // (externalProvider, externalSubject) key means sign-in later resolves
-    // this exact row rather than creating a second one.
-    await this.customersService.resolveOrCreateFromIdentity(
+    // SC4f-2 — registering HERE is the customer's choice of this business:
+    // it creates the login's profile at this business only (the same
+    // (business, provider, subject) key sign-in later resolves).
+    await this.customersService.createAtRegistration(
       {
         provider: result.provider,
         subject: result.subject,
@@ -146,6 +145,7 @@ export class AuthController {
   @Post('verify')
   async verify(
     @Body() body: CustomerVerifyRequest,
+    @CurrentTenantContext() tenant: TenantContext,
   ): Promise<CustomerVerifyResponse> {
     const email = typeof body?.email === 'string' ? body.email.trim() : '';
     const code = typeof body?.code === 'string' ? body.code.trim() : '';
@@ -184,9 +184,11 @@ export class AuthController {
     // choice only to know which (externalProvider, email) pair to look
     // the Customer up under, never to pick a provider for a second time.
     const providerLabel = isDevCustomerAuthEnabled() ? 'dev' : 'cognito';
+    // SC4f-2: only THIS business's profile is ever marked verified.
     const customer = await this.customersService.findByEmailAndProvider(
       providerLabel,
       email,
+      tenant,
     );
 
     if (customer) {
@@ -208,12 +210,10 @@ export class AuthController {
     // (see CustomersService.findByEmailAndProvider). Reported as success
     // rather than "not found": the thing this response is actually about
     // — did the provider confirm the account — is true, and no special
-    // recovery step is needed from here. The customer's very next
-    // successful sign-in resolves this correctly on its own:
-    // CustomerAuthGuard extracts the authoritative subject straight from
-    // their verified ID token, and CustomersService.resolveOrCreateFromIdentity
-    // JIT-creates the Customer row from it — already stamped verified,
-    // since that same token's email_verified claim is true by then.
+    // recovery step is needed from here. SC4f-2: after signing in, the
+    // customer is asked to join this restaurant (CUSTOMER_NOT_ENROLLED) and
+    // their explicit join creates the profile from their verified ID token —
+    // a profile is never created without that choice.
     return { email };
   }
 

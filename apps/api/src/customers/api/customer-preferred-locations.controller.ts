@@ -36,9 +36,10 @@ export class CustomerPreferredLocationsController {
     @Req() request: CustomerAuthenticatedRequest,
     @CurrentTenantContext() tenant: TenantContext,
   ): Promise<CustomerPreferredLocationsResponse> {
-    const customer = await this.customersService.resolveOrCreateFromIdentity(
+    const customer = await this.customersService.requireCustomer(
       request.customerIdentity!,
       tenant,
+      'read',
     );
     return this.preferredLocationsService.listForCustomer(customer.id);
   }
@@ -49,9 +50,10 @@ export class CustomerPreferredLocationsController {
     @CurrentTenantContext() tenant: TenantContext,
     @Body() body: AddPreferredLocationRequest,
   ): Promise<CustomerPreferredLocationsResponse> {
-    const customer = await this.customersService.resolveOrCreateFromIdentity(
+    const customer = await this.customersService.requireCustomer(
       request.customerIdentity!,
       tenant,
+      'write',
     );
     const locationId =
       typeof body?.locationId === 'string' ? body.locationId.trim() : '';
@@ -68,9 +70,10 @@ export class CustomerPreferredLocationsController {
     @Req() request: CustomerAuthenticatedRequest,
     @CurrentTenantContext() tenant: TenantContext,
   ): Promise<CustomerPreferredLocationsResponse> {
-    const customer = await this.customersService.resolveOrCreateFromIdentity(
+    const customer = await this.customersService.requireCustomer(
       request.customerIdentity!,
       tenant,
+      'write',
     );
     return this.preferredLocationsService.removeForCustomer(
       customer.id,

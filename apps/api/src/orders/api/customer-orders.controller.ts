@@ -40,9 +40,10 @@ export class CustomerOrdersController {
     @CurrentTenantContext() tenant: TenantContext,
   ): Promise<CustomerOrderSummary[]> {
     // CustomerAuthGuard always sets this before a request reaches here.
-    const customer = await this.customersService.resolveOrCreateFromIdentity(
+    const customer = await this.customersService.requireCustomer(
       request.customerIdentity!,
       tenant,
+      'read',
     );
     return this.customerOrdersService.listForCustomer(customer.id);
   }
@@ -53,9 +54,10 @@ export class CustomerOrdersController {
     @Req() request: CustomerAuthenticatedRequest,
     @CurrentTenantContext() tenant: TenantContext,
   ): Promise<CustomerOrderDetail> {
-    const customer = await this.customersService.resolveOrCreateFromIdentity(
+    const customer = await this.customersService.requireCustomer(
       request.customerIdentity!,
       tenant,
+      'read',
     );
     return this.customerOrdersService.getDetail(customer.id, orderId);
   }
@@ -72,9 +74,10 @@ export class CustomerOrdersController {
     @Req() request: CustomerAuthenticatedRequest,
     @CurrentTenantContext() tenant: TenantContext,
   ): Promise<ReorderPreparation> {
-    const customer = await this.customersService.resolveOrCreateFromIdentity(
+    const customer = await this.customersService.requireCustomer(
       request.customerIdentity!,
       tenant,
+      'write',
     );
     return this.customerReorderService.prepare(customer.id, orderId);
   }

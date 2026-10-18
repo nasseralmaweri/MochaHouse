@@ -225,7 +225,8 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
   async function customerIdFor(id: CustomerIdentity): Promise<string> {
     const customer = await prisma.customer.findUniqueOrThrow({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: id.provider,
           externalSubject: id.subject,
         },
@@ -239,7 +240,8 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     // throwaway checkout is heavy; create directly.
     const customer = await prisma.customer.upsert({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: id.provider,
           externalSubject: id.subject,
         },

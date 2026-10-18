@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { tenantContextFor } from '@mocha-house/testing';
+import { tenantContextFor, enrollTestCustomer } from '@mocha-house/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -269,16 +269,23 @@ describe('Customer reorder (integration)', () => {
     });
   });
 
-  function identityFor(identifier: string): CustomerIdentity {
-    return {
+  async function identityFor(identifier: string): Promise<CustomerIdentity> {
+    const enrolled: CustomerIdentity = {
       provider: 'dev',
       subject: `dev:${identifier}`,
       email: identifier,
       name: null,
       emailVerified: null,
     };
+    await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, enrolled);
+    return enrolled;
   }
-  function tokenFor(identifier: string): string {
+  async function tokenFor(identifier: string): Promise<string> {
+    await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, {
+      provider: 'dev',
+      subject: `dev:${identifier}`,
+      email: identifier,
+    });
     return signDevJwt(
       { sub: `dev:${identifier}`, email: identifier, name: null },
       devSecret,
@@ -314,7 +321,7 @@ describe('Customer reorder (integration)', () => {
   ): Promise<OrderConfirmation> {
     return checkoutService.checkout(
       checkoutBody(optionId),
-      identityFor(identifier),
+      await identityFor(identifier),
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
   }
@@ -350,12 +357,12 @@ describe('Customer reorder (integration)', () => {
 
     await request(app.getHttpServer())
       .post(reorderUrl(order.orderId))
-      .set('Authorization', `Bearer ${tokenFor(intruder)}`)
+      .set('Authorization', `Bearer ${await tokenFor(intruder)}`)
       .expect(404);
 
     await request(app.getHttpServer())
       .post(reorderUrl(`00000000-0000-0000-0000-000000000000`))
-      .set('Authorization', `Bearer ${tokenFor(intruder)}`)
+      .set('Authorization', `Bearer ${await tokenFor(intruder)}`)
       .expect(404);
   });
 
@@ -369,7 +376,7 @@ describe('Customer reorder (integration)', () => {
 
     await request(app.getHttpServer())
       .post(reorderUrl(order.orderId))
-      .set('Authorization', `Bearer ${tokenFor(id)}`)
+      .set('Authorization', `Bearer ${await tokenFor(id)}`)
       .expect(200);
 
     expect(await prisma.order.count({ where: { locationId } })).toBe(
@@ -386,7 +393,7 @@ describe('Customer reorder (integration)', () => {
 
     const res = await request(app.getHttpServer())
       .post(reorderUrl(order.orderId))
-      .set('Authorization', `Bearer ${tokenFor(id)}`)
+      .set('Authorization', `Bearer ${await tokenFor(id)}`)
       .expect(200);
     const prep = res.body as ReorderPreparation;
 
@@ -413,7 +420,7 @@ describe('Customer reorder (integration)', () => {
 
     const res = await request(app.getHttpServer())
       .post(reorderUrl(order.orderId))
-      .set('Authorization', `Bearer ${tokenFor(id)}`)
+      .set('Authorization', `Bearer ${await tokenFor(id)}`)
       .expect(200);
     const prep = res.body as ReorderPreparation;
 
@@ -434,7 +441,7 @@ describe('Customer reorder (integration)', () => {
 
     const res = await request(app.getHttpServer())
       .post(reorderUrl(order.orderId))
-      .set('Authorization', `Bearer ${tokenFor(id)}`)
+      .set('Authorization', `Bearer ${await tokenFor(id)}`)
       .expect(200);
     expect((res.body as ReorderPreparation).items[0].currentUnitPrice).toBe(
       630,
@@ -456,7 +463,7 @@ describe('Customer reorder (integration)', () => {
 
     const res = await request(app.getHttpServer())
       .post(reorderUrl(order.orderId))
-      .set('Authorization', `Bearer ${tokenFor(id)}`)
+      .set('Authorization', `Bearer ${await tokenFor(id)}`)
       .expect(200);
     const prep = res.body as ReorderPreparation;
     expect(prep.status).toBe('UNAVAILABLE');
@@ -474,7 +481,7 @@ describe('Customer reorder (integration)', () => {
 
     const res = await request(app.getHttpServer())
       .post(reorderUrl(order.orderId))
-      .set('Authorization', `Bearer ${tokenFor(id)}`)
+      .set('Authorization', `Bearer ${await tokenFor(id)}`)
       .expect(200);
     expect((res.body as ReorderPreparation).items[0].issues[0].code).toBe(
       'PRODUCT_NOT_ON_MENU',
@@ -496,7 +503,7 @@ describe('Customer reorder (integration)', () => {
 
     const res = await request(app.getHttpServer())
       .post(reorderUrl(order.orderId))
-      .set('Authorization', `Bearer ${tokenFor(id)}`)
+      .set('Authorization', `Bearer ${await tokenFor(id)}`)
       .expect(200);
     const item = (res.body as ReorderPreparation).items[0];
     expect(item.status).toBe('CHANGED');
@@ -546,7 +553,7 @@ describe('Customer reorder (integration)', () => {
 
     const res = await request(app.getHttpServer())
       .post(reorderUrl(order.orderId))
-      .set('Authorization', `Bearer ${tokenFor(id)}`)
+      .set('Authorization', `Bearer ${await tokenFor(id)}`)
       .expect(200);
     const item = (res.body as ReorderPreparation).items[0];
     expect(item.status).toBe('CHANGED');
@@ -567,7 +574,7 @@ describe('Customer reorder (integration)', () => {
 
     const res = await request(app.getHttpServer())
       .post(reorderUrl(order.orderId))
-      .set('Authorization', `Bearer ${tokenFor(id)}`)
+      .set('Authorization', `Bearer ${await tokenFor(id)}`)
       .expect(200);
     const prep = res.body as ReorderPreparation;
     expect(prep.status).toBe('UNAVAILABLE');
@@ -585,7 +592,7 @@ describe('Customer reorder (integration)', () => {
 
     const res = await request(app.getHttpServer())
       .post(reorderUrl(order.orderId))
-      .set('Authorization', `Bearer ${tokenFor(id)}`)
+      .set('Authorization', `Bearer ${await tokenFor(id)}`)
       .expect(200);
     const prep = res.body as ReorderPreparation;
     expect(prep.status).toBe('UNAVAILABLE');

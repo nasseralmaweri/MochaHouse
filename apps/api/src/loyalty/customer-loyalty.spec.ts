@@ -1,3 +1,4 @@
+import { enrollTestCustomer } from '@mocha-house/testing';
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
@@ -54,7 +55,12 @@ describe('GET /api/v1/customers/me/loyalty (integration)', () => {
     process.env = { ...originalEnv };
   });
 
-  function devToken(identifier: string): string {
+  async function devToken(identifier: string): Promise<string> {
+    await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, {
+      provider: 'dev',
+      subject: `${SUBJECT_PREFIX}${identifier}`,
+      email: `${identifier}@x.test`,
+    });
     return signDevJwt(
       { sub: `${SUBJECT_PREFIX}${identifier}`, email: `${identifier}@x.test`, name: null },
       devSecret,
@@ -88,7 +94,7 @@ describe('GET /api/v1/customers/me/loyalty (integration)', () => {
   });
 
   it('returns 0 for a customer who has never earned', async () => {
-    const token = devToken(randomUUID());
+    const token = await devToken(randomUUID());
     const response = await request(app.getHttpServer())
       .get('/api/v1/customers/me/loyalty')
       .set('Authorization', `Bearer ${token}`)
@@ -99,7 +105,7 @@ describe('GET /api/v1/customers/me/loyalty (integration)', () => {
   it('returns the caller\'s own materialized balance', async () => {
     const identifier = randomUUID();
     await seedBalance(`${SUBJECT_PREFIX}${identifier}`, 125);
-    const token = devToken(identifier);
+    const token = await devToken(identifier);
 
     const response = await request(app.getHttpServer())
       .get('/api/v1/customers/me/loyalty')
@@ -117,7 +123,7 @@ describe('GET /api/v1/customers/me/loyalty (integration)', () => {
     await seedBalance(`${SUBJECT_PREFIX}${otherId}`, 999);
 
     // A different caller — freshly provisioned, no balance.
-    const token = devToken(randomUUID());
+    const token = await devToken(randomUUID());
     const response = await request(app.getHttpServer())
       .get('/api/v1/customers/me/loyalty')
       .set('Authorization', `Bearer ${token}`)
@@ -127,7 +133,7 @@ describe('GET /api/v1/customers/me/loyalty (integration)', () => {
   });
 
   it('exposes no customer-facing Bean history endpoint', async () => {
-    const token = devToken(randomUUID());
+    const token = await devToken(randomUUID());
     for (const path of [
       '/api/v1/customers/me/loyalty/history',
       '/api/v1/customers/me/loyalty/entries',

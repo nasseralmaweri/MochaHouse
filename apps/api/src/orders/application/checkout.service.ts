@@ -411,9 +411,10 @@ export class CheckoutService {
     }
     assertValidCheckoutLines(request.lines);
 
-    const customer = await this.customersService.resolveOrCreateFromIdentity(
+    const customer = await this.customersService.requireCustomer(
       customerIdentity,
       tenant,
+      'write',
     );
 
     // The quote is priced only against the storefront business's own
@@ -690,13 +691,12 @@ export class CheckoutService {
     };
   }
 
-  // customerIdentity is undefined for guest checkout (no Authorization
-  // header) and also whenever OptionalCustomerAuthGuard couldn't verify a
-  // header that was present — both cases resolve to a plain guest order
-  // (customerId: null), never an error. JIT-provisions the Customer record
-  // exactly like GET /customers/me does, so a customer's very first
-  // checkout can associate to their account without a prior /customers/me
-  // call ever having happened.
+  // customerIdentity is undefined ONLY for guest checkout (no Authorization
+  // header): OptionalCustomerAuthGuard refuses a header that is present but
+  // cannot be verified (401), so an expired or forged session never becomes
+  // a guest order. SC4f-2: a signed-in checkout needs this business's own
+  // ACTIVE profile (requireCustomer 'write') — never created here, and a
+  // restricted, deactivated or not-joined login is refused, not downgraded.
   // The tenant of the ordering Location, which must belong to the request's
   // server-resolved tenant. Another tenant's Location is reported exactly
   // like a missing or unorderable one (the same 404 findMenu gives), so
@@ -724,9 +724,10 @@ export class CheckoutService {
     if (!customerIdentity) {
       return null;
     }
-    const customer = await this.customersService.resolveOrCreateFromIdentity(
+    const customer = await this.customersService.requireCustomer(
       customerIdentity,
       tenant,
+      'write',
     );
     return customer.id;
   }

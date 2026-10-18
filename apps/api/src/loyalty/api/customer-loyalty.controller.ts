@@ -35,9 +35,10 @@ export class CustomerLoyaltyController {
     @CurrentTenantContext() tenant: TenantContext,
   ): Promise<CustomerLoyaltySummary> {
     // CustomerAuthGuard always sets this before a request reaches here.
-    const customer = await this.customersService.resolveOrCreateFromIdentity(
+    const customer = await this.customersService.requireCustomer(
       request.customerIdentity!,
       tenant,
+      'read',
     );
     const balance = await this.loyaltyService.getBalanceForCustomer(
       customer.id,

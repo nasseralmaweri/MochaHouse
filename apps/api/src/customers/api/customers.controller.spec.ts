@@ -1,3 +1,5 @@
+import { enrollTestCustomer } from '@mocha-house/testing';
+import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -46,7 +48,12 @@ describe('GET /api/v1/customers/me (integration)', () => {
     process.env = { ...originalEnv };
   });
 
-  function devToken(identifier: string): string {
+  async function devToken(identifier: string): Promise<string> {
+    await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, {
+      provider: 'dev',
+      subject: `dev:${identifier}`,
+      email: identifier,
+    });
     return signDevJwt(
       { sub: `dev:${identifier}`, email: identifier, name: null },
       devSecret,
@@ -79,7 +86,7 @@ describe('GET /api/v1/customers/me (integration)', () => {
 
   it('resolves a valid authenticated customer and returns their profile', async () => {
     const identifier = `test-${randomUUID()}@example.com`;
-    const token = devToken(identifier);
+    const token = await devToken(identifier);
 
     const response = await request(app.getHttpServer())
       .get('/api/v1/customers/me')
@@ -93,7 +100,8 @@ describe('GET /api/v1/customers/me (integration)', () => {
 
     const stored = await prisma.customer.findUnique({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: 'dev',
           externalSubject: `dev:${identifier}`,
         },
@@ -104,7 +112,7 @@ describe('GET /api/v1/customers/me (integration)', () => {
 
   it('resolves the same customer id across repeated sign-ins by the same identity', async () => {
     const identifier = `test-${randomUUID()}@example.com`;
-    const token = devToken(identifier);
+    const token = await devToken(identifier);
 
     const first = await request(app.getHttpServer())
       .get('/api/v1/customers/me')
@@ -151,7 +159,7 @@ describe('GET /api/v1/customers/me (integration)', () => {
 
     it('updates the display name and returns it, and GET /me then reflects it', async () => {
       const identifier = `test-${randomUUID()}@example.com`;
-      const token = devToken(identifier);
+      const token = await devToken(identifier);
 
       const patched = await request(app.getHttpServer())
         .patch('/api/v1/customers/me')
@@ -170,7 +178,7 @@ describe('GET /api/v1/customers/me (integration)', () => {
     });
 
     it('stores a blank display name as null', async () => {
-      const token = devToken(`test-${randomUUID()}@example.com`);
+      const token = await devToken(`test-${randomUUID()}@example.com`);
       const patched = await request(app.getHttpServer())
         .patch('/api/v1/customers/me')
         .set('Authorization', `Bearer ${token}`)
@@ -180,7 +188,7 @@ describe('GET /api/v1/customers/me (integration)', () => {
     });
 
     it('rejects an over-long display name with 400', async () => {
-      const token = devToken(`test-${randomUUID()}@example.com`);
+      const token = await devToken(`test-${randomUUID()}@example.com`);
       await request(app.getHttpServer())
         .patch('/api/v1/customers/me')
         .set('Authorization', `Bearer ${token}`)
@@ -190,7 +198,7 @@ describe('GET /api/v1/customers/me (integration)', () => {
 
     it('ignores unknown fields and cannot change identity/status/verification', async () => {
       const identifier = `test-${randomUUID()}@example.com`;
-      const token = devToken(identifier);
+      const token = await devToken(identifier);
 
       // Establish the row first.
       const before = await request(app.getHttpServer())
@@ -214,7 +222,8 @@ describe('GET /api/v1/customers/me (integration)', () => {
 
       const stored = await prisma.customer.findUnique({
         where: {
-          externalProvider_externalSubject: {
+          tenantId_externalProvider_externalSubject: {
+            tenantId: TENANT_1_MOCHA_HOUSE_ID,
             externalProvider: 'dev',
             externalSubject: `dev:${identifier}`,
           },
@@ -228,9 +237,9 @@ describe('GET /api/v1/customers/me (integration)', () => {
     });
 
     it('one customer updating their profile never affects another', async () => {
-      const tokenA = devToken(`test-${randomUUID()}@example.com`);
+      const tokenA = await devToken(`test-${randomUUID()}@example.com`);
       const idB = `test-${randomUUID()}@example.com`;
-      const tokenB = devToken(idB);
+      const tokenB = await devToken(idB);
 
       await request(app.getHttpServer())
         .patch('/api/v1/customers/me')
@@ -254,12 +263,22 @@ describe('GET /api/v1/customers/me (integration)', () => {
     it('a customer-set display name survives a subsequent sign-in that carries a provider name claim', async () => {
       const identifier = `test-${randomUUID()}@example.com`;
       const seededToken = signDevJwt(
-        { sub: `dev:${identifier}`, email: identifier, name: 'Provider Name' },
+        {
+          sub: `dev:${identifier}`,
+          email: identifier,
+          name: 'Provider Name',
+          emailVerified: true,
+        },
         devSecret,
         3600,
       );
 
-      // First sign-in seeds displayName from the provider claim.
+      // SC4f-2 — joining seeds displayName from the provider claim.
+      await request(app.getHttpServer())
+        .post('/api/v1/customers/me/enrollment')
+        .set('Authorization', `Bearer ${seededToken}`)
+        .send({})
+        .expect(201);
       const seeded = await request(app.getHttpServer())
         .get('/api/v1/customers/me')
         .set('Authorization', `Bearer ${seededToken}`)

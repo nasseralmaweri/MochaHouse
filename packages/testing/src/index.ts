@@ -63,3 +63,7 @@ export {
   type MigrationProject,
   type PrismaResult,
 } from "./prisma-migrations";
+export {
+  enrollTestCustomer,
+  type TestCustomerIdentity,
+} from "./customers";

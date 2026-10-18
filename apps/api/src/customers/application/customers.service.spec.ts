@@ -11,10 +11,17 @@ import type { CustomerIdentity } from '../../customer-auth/infrastructure/custom
 // Integration test against the real local Postgres instance (see
 // infrastructure/local/compose.yml + apps/api/.env), mirroring
 // orders/application/checkout.service.spec.ts's pattern.
+//
+// SC4f-2 — a profile is created only by registering at the business
+// (createAtRegistration) or joining it (enroll); requireCustomer only ever
+// resolves an existing one. Cross-business behaviour is covered by
+// tenancy/tenant-customer-jit.spec.ts and
+// tenancy/customer-profiles-per-business.spec.ts.
 describe('CustomersService (integration)', () => {
   let prisma: PrismaService;
   let customersService: CustomersService;
   const createdIds: string[] = [];
+  const T1 = tenantContextFor(TENANT_1_MOCHA_HOUSE_ID);
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -47,35 +54,45 @@ describe('CustomersService (integration)', () => {
     };
   }
 
-  it('creates a new Customer on first resolution for an identity', async () => {
+  const register = async (identity: CustomerIdentity) => {
+    const customer = await customersService.createAtRegistration(identity, T1);
+    createdIds.push(customer.id);
+    return customer;
+  };
+  const resolve = (identity: CustomerIdentity) =>
+    customersService.requireCustomer(identity, T1, 'profile');
+
+  it('creates a profile at registration, which later sign-ins resolve', async () => {
     const identity = testIdentity();
 
-    const customer = await customersService.resolveOrCreateFromIdentity(
-      identity,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-    createdIds.push(customer.id);
+    const customer = await register(identity);
 
+    expect(customer.tenantId).toBe(TENANT_1_MOCHA_HOUSE_ID);
     expect(customer.externalProvider).toBe(identity.provider);
     expect(customer.externalSubject).toBe(identity.subject);
     expect(customer.email).toBe(identity.email);
     expect(customer.displayName).toBe(identity.name);
     expect(customer.status).toBe('ACTIVE');
+    expect(customer.marketingEmailOptIn).toBe(false);
+    expect((await resolve(identity)).id).toBe(customer.id);
   });
 
-  it('resolves the same Customer record for a repeat sign-in by the same identity', async () => {
+  it('never creates a profile just because a signed-in login has none here', async () => {
     const identity = testIdentity();
+    await expect(resolve(identity)).rejects.toMatchObject({
+      response: { code: 'CUSTOMER_NOT_ENROLLED' },
+    });
+    expect(
+      await prisma.customer.count({
+        where: { externalSubject: identity.subject },
+      }),
+    ).toBe(0);
+  });
 
-    const first = await customersService.resolveOrCreateFromIdentity(
-      identity,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-    createdIds.push(first.id);
-    const second = await customersService.resolveOrCreateFromIdentity(
-      identity,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-
+  it('a repeated registration for the same login resolves the same profile', async () => {
+    const identity = testIdentity();
+    const first = await register(identity);
+    const second = await register(identity);
     expect(second.id).toBe(first.id);
   });
 
@@ -84,115 +101,111 @@ describe('CustomersService (integration)', () => {
       email: 'old@example.com',
       name: 'Old Name',
     });
-    const created = await customersService.resolveOrCreateFromIdentity(
-      identity,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-    createdIds.push(created.id);
+    const created = await register(identity);
 
-    const updated = await customersService.resolveOrCreateFromIdentity(
-      {
-        ...identity,
-        email: 'new@example.com',
-        name: 'New Name',
-      },
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
+    const updated = await resolve({
+      ...identity,
+      email: 'new@example.com',
+      name: 'New Name',
+      emailVerified: true,
+    });
     expect(updated.id).toBe(created.id);
     expect(updated.email).toBe('new@example.com');
 
     // A later sign-in with no email claim (e.g. the dev boundary for a
     // non-email identifier) must not blank out what's already known.
-    const resyncedWithoutClaims =
-      await customersService.resolveOrCreateFromIdentity(
-        {
-          ...identity,
-          email: null,
-          name: null,
-        },
-        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-      );
+    const resyncedWithoutClaims = await resolve({
+      ...identity,
+      email: null,
+      name: null,
+    });
     expect(resyncedWithoutClaims.id).toBe(created.id);
     expect(resyncedWithoutClaims.email).toBe('new@example.com');
   });
 
+  it('follows only a VERIFIED new email from the identity provider', async () => {
+    const identity = testIdentity({ email: 'kept@example.com' });
+    const created = await register(identity);
+    const unverified = await resolve({
+      ...identity,
+      email: 'unverified@example.com',
+      emailVerified: false,
+    });
+    expect(unverified.email).toBe('kept@example.com');
+    const verified = await resolve({
+      ...identity,
+      email: 'verified@example.com',
+      emailVerified: true,
+    });
+    expect(verified.id).toBe(created.id);
+    expect(verified.email).toBe('verified@example.com');
+  });
+
+  it('never writes a deactivated profile when it is read', async () => {
+    const identity = testIdentity({ email: 'before@example.com' });
+    const created = await register(identity);
+    await prisma.customer.update({
+      where: { id: created.id },
+      data: { status: 'DEACTIVATED' },
+    });
+    const read = await resolve({
+      ...identity,
+      email: 'after@example.com',
+      emailVerified: true,
+    });
+    expect(read.email).toBe('before@example.com');
+  });
+
+  it('seeds a new profile name from the claim with the same trimming and limit as an edit', async () => {
+    const long = await register(
+      testIdentity({ name: `  ${'n'.repeat(100)}  ` }),
+    );
+    expect(long.displayName).toBe('n'.repeat(80));
+    const blank = await register(testIdentity({ name: '   ' }));
+    expect(blank.displayName).toBeNull();
+  });
+
   it('seeds displayName from the identity at creation, then never overwrites it from later claims (Milestone 4E ownership rule)', async () => {
     const identity = testIdentity({ name: 'Seeded Name' });
-    const created = await customersService.resolveOrCreateFromIdentity(
-      identity,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-    createdIds.push(created.id);
+    const created = await register(identity);
     expect(created.displayName).toBe('Seeded Name');
 
-    // Customer edits their Mocha House profile.
+    // Customer edits their profile.
     await customersService.updateProfile(created.id, {
       displayName: 'Customer Chosen Name',
     });
 
     // A later sign-in whose token still carries the old provider name must
     // NOT clobber the customer-owned value.
-    const afterResync = await customersService.resolveOrCreateFromIdentity(
-      {
-        ...identity,
-        name: 'Seeded Name',
-      },
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
+    const afterResync = await resolve({ ...identity, name: 'Seeded Name' });
     expect(afterResync.id).toBe(created.id);
     expect(afterResync.displayName).toBe('Customer Chosen Name');
   });
 
-  it('stamps emailVerifiedAt at creation when the identity asserts emailVerified: true', async () => {
-    const identity = testIdentity({ emailVerified: true });
-
-    const customer = await customersService.resolveOrCreateFromIdentity(
-      identity,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-    createdIds.push(customer.id);
-
-    expect(customer.emailVerifiedAt).not.toBeNull();
+  it('never stamps emailVerifiedAt at registration, even when a claim asserts it', async () => {
+    const customer = await register(testIdentity({ emailVerified: true }));
+    expect(customer.emailVerifiedAt).toBeNull();
   });
 
-  it('leaves emailVerifiedAt null at creation when the identity does not assert verification', async () => {
-    const identity = testIdentity({ emailVerified: false });
-    const customerA = await customersService.resolveOrCreateFromIdentity(
+  it('stamps emailVerifiedAt when a verified login joins', async () => {
+    const identity = testIdentity({ emailVerified: true });
+    const { customer, created } = await customersService.enroll(
       identity,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      T1,
+      undefined,
     );
-    createdIds.push(customerA.id);
-    expect(customerA.emailVerifiedAt).toBeNull();
-
-    const identityB = testIdentity({ emailVerified: null });
-    const customerB = await customersService.resolveOrCreateFromIdentity(
-      identityB,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-    createdIds.push(customerB.id);
-    expect(customerB.emailVerifiedAt).toBeNull();
+    createdIds.push(customer.id);
+    expect(created).toBe(true);
+    expect(customer.emailVerifiedAt).not.toBeNull();
   });
 
   it('never retroactively sets emailVerifiedAt on an existing row via a later resolve, even if the identity now asserts verification', async () => {
     const identity = testIdentity({ emailVerified: false });
-    const created = await customersService.resolveOrCreateFromIdentity(
-      identity,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-    createdIds.push(created.id);
+    const created = await register(identity);
     expect(created.emailVerifiedAt).toBeNull();
 
-    // A later sign-in for the same (already-existing) identity now
-    // claiming emailVerified: true must not be treated as a fresh
-    // verification event by this path — only AuthController.verify's
-    // explicit markEmailVerified call may do that.
-    const resolvedAgain = await customersService.resolveOrCreateFromIdentity(
-      {
-        ...identity,
-        emailVerified: true,
-      },
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
+    // Only AuthController.verify's explicit markEmailVerified may do that.
+    const resolvedAgain = await resolve({ ...identity, emailVerified: true });
     expect(resolvedAgain.id).toBe(created.id);
     expect(resolvedAgain.emailVerifiedAt).toBeNull();
   });
@@ -202,22 +215,19 @@ describe('CustomersService (integration)', () => {
       const result = await customersService.findByEmailAndProvider(
         'test',
         `nobody-${randomUUID()}@example.com`,
+        T1,
       );
       expect(result).toBeNull();
     });
 
     it('returns the single matching Customer scoped to the given provider', async () => {
       const email = `unique-${randomUUID()}@example.com`;
-      const identity = testIdentity({ email });
-      const created = await customersService.resolveOrCreateFromIdentity(
-        identity,
-        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-      );
-      createdIds.push(created.id);
+      const created = await register(testIdentity({ email }));
 
       const result = await customersService.findByEmailAndProvider(
         'test',
         email,
+        T1,
       );
       expect(result?.id).toBe(created.id);
 
@@ -227,35 +237,24 @@ describe('CustomersService (integration)', () => {
       const crossProvider = await customersService.findByEmailAndProvider(
         'some-other-provider',
         email,
+        T1,
       );
       expect(crossProvider).toBeNull();
     });
 
     it('refuses to guess when more than one Customer under the same provider shares an email, rather than silently binding to one', async () => {
       const email = `ambiguous-${randomUUID()}@example.com`;
-      const first = await customersService.resolveOrCreateFromIdentity(
-        testIdentity({ email }),
-        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-      );
-      const second = await customersService.resolveOrCreateFromIdentity(
-        testIdentity({ email }),
-        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-      );
-      createdIds.push(first.id, second.id);
+      await register(testIdentity({ email }));
+      await register(testIdentity({ email }));
 
       await expect(
-        customersService.findByEmailAndProvider('test', email),
+        customersService.findByEmailAndProvider('test', email, T1),
       ).rejects.toThrow('Ambiguous Customer lookup');
     });
   });
 
   it('maps a Customer row to the shared CustomerProfile contract shape', async () => {
-    const identity = testIdentity({ emailVerified: false });
-    const customer = await customersService.resolveOrCreateFromIdentity(
-      identity,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-    createdIds.push(customer.id);
+    const customer = await register(testIdentity({ emailVerified: false }));
 
     const profile = customersService.toProfile(customer);
 
@@ -270,24 +269,14 @@ describe('CustomersService (integration)', () => {
   });
 
   it('reports emailVerified: true once emailVerifiedAt is set', async () => {
-    const identity = testIdentity({ emailVerified: true });
-    const customer = await customersService.resolveOrCreateFromIdentity(
-      identity,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-    createdIds.push(customer.id);
-
-    expect(customersService.toProfile(customer).emailVerified).toBe(true);
+    const customer = await register(testIdentity());
+    const verified = await customersService.markEmailVerified(customer.id);
+    expect(customersService.toProfile(verified).emailVerified).toBe(true);
   });
 
   describe('updateProfile', () => {
     async function freshCustomer() {
-      const customer = await customersService.resolveOrCreateFromIdentity(
-        testIdentity({ name: 'Original', emailVerified: true }),
-        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-      );
-      createdIds.push(customer.id);
-      return customer;
+      return register(testIdentity({ name: 'Original', emailVerified: true }));
     }
 
     it('updates the display name and returns the updated row', async () => {
@@ -356,16 +345,13 @@ describe('CustomersService (integration)', () => {
       const a = await freshCustomer();
       const b = await freshCustomer();
       await customersService.updateProfile(a.id, { displayName: 'A Only' });
-      const bReloaded = await customersService.resolveOrCreateFromIdentity(
-        {
-          provider: b.externalProvider,
-          subject: b.externalSubject,
-          email: b.email,
-          name: null,
-          emailVerified: null,
-        },
-        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-      );
+      const bReloaded = await resolve({
+        provider: b.externalProvider,
+        subject: b.externalSubject,
+        email: b.email,
+        name: null,
+        emailVerified: null,
+      });
       expect(bReloaded.displayName).toBe('Original');
     });
   });

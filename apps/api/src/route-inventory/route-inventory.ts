@@ -230,6 +230,8 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   },
   'POST /api/v1/admin/promotions': { scope: 'tenant' },
   'POST /api/v1/careers/jobs/:jobId/applications': { scope: 'tenant' },
+  // SC4f-2 — a signed-in customer joining the resolved business.
+  'POST /api/v1/customers/me/enrollment': { scope: 'tenant' },
   'POST /api/v1/customers/me/locations': { scope: 'tenant' },
   'POST /api/v1/customers/me/orders/:orderId/reorder': { scope: 'tenant' },
   'POST /api/v1/franchising/inquiries': { scope: 'tenant' },

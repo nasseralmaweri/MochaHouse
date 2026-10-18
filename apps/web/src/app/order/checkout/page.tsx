@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type {
   CheckoutQuoteResponse,
@@ -48,6 +49,19 @@ export default function CheckoutPage() {
   const [guestEmail, setGuestEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // SC4f-2 — signed in with a CENTERIVO login that has not joined this
+  // restaurant: the restaurant's own name (from the API) for the prompt.
+  const [joinPrompt, setJoinPrompt] = useState<string | null>(null);
+  // A sign-in that expired (or an account to manage) while checking out.
+  const [accountLink, setAccountLink] = useState<{
+    href: string;
+    label: string;
+  } | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const joinHeadingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (joinPrompt !== null) joinHeadingRef.current?.focus();
+  }, [joinPrompt]);
   // Milestone 7E — the server-authoritative pricing quote (regular
   // Promotion/Coupon + Mocha Bean rewards + total). Recomputed whenever the
   // cart, the applied coupon, or the selected reward changes.
@@ -214,14 +228,23 @@ export default function CheckoutPage() {
   const amountDue =
     quote?.amountDueAfterGiftCardMinorUnits ?? total - giftCardApplied;
 
-  async function handleSubmit(event: React.FormEvent) {
+  function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    void placeOrder(false);
+  }
+
+  // asGuest — SC4f-2: the customer chose "Continue as a guest" after the
+  // join prompt. The server honours it only for a login that has not joined
+  // this restaurant; a guest order carries no reward.
+  async function placeOrder(asGuest: boolean) {
     if (inFlightRef.current) {
       return;
     }
     inFlightRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
+    setJoinPrompt(null);
+    setAccountLink(null);
 
     if (rotateKeyOnNextSubmitRef.current || !idempotencyKeyRef.current) {
       idempotencyKeyRef.current = crypto.randomUUID();
@@ -244,12 +267,12 @@ export default function CheckoutPage() {
           optionIds: s.optionIds,
         })),
       })),
-      loyaltyRewardId: selectedRewardId,
+      loyaltyRewardId: asGuest ? null : selectedRewardId,
       couponCode: appliedCoupon,
       giftCardCode: appliedGiftCard,
     };
 
-    const result = await submitCheckoutFromBrowser(request);
+    const result = await submitCheckoutFromBrowser(request, { asGuest });
     inFlightRef.current = false;
     setSubmitting(false);
 
@@ -261,6 +284,17 @@ export default function CheckoutPage() {
       return;
     }
 
+    if (result.outcome === "not-enrolled") {
+      // Nothing was placed: the customer chooses to join or order as a guest.
+      setJoinPrompt(result.businessName);
+      return;
+    }
+    if (result.outcome === "session-expired") {
+      setAccountLink({ href: "/account/sign-in", label: "Sign in again" });
+    } else if (result.outcome === "conflict" && asGuest) {
+      // Signed in to an account here: guest checkout is not available.
+      setAccountLink({ href: "/account", label: "Go to your account" });
+    }
     if (result.outcome === "declined" || result.outcome === "failed") {
       rotateKeyOnNextSubmitRef.current = true;
     }
@@ -536,7 +570,7 @@ export default function CheckoutPage() {
         </Card>
       ) : null}
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <form ref={formRef} onSubmit={handleSubmit} className="flex flex-col gap-4">
         <label className="flex flex-col gap-1 text-sm text-text-secondary">
           Name
           <input
@@ -569,10 +603,54 @@ export default function CheckoutPage() {
           />
         </label>
 
+        {joinPrompt !== null ? (
+          <div role="status">
+            <Card tone="subtle" className="flex flex-col gap-3 text-sm text-text-secondary">
+              <h2
+                ref={joinHeadingRef}
+                tabIndex={-1}
+                className="text-base font-semibold text-text-primary"
+              >
+                Join {joinPrompt} with your CENTERIVO account.
+              </h2>
+              <p>
+                You&apos;re signed in, but you haven&apos;t joined {joinPrompt}{" "}
+                yet. Nothing has been ordered or charged.
+              </p>
+              <Link
+                href="/account/join?next=/order/checkout"
+                className="flex min-h-11 items-center justify-center rounded-xl bg-status-success/10 px-4 py-3 text-base font-semibold text-status-success"
+              >
+                Join {joinPrompt}
+              </Link>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => {
+                  // A guest order needs the guest details.
+                  if (formRef.current?.reportValidity() === false) return;
+                  void placeOrder(true);
+                }}
+                className="flex min-h-11 items-center justify-center rounded-xl border border-border-default px-4 py-3 text-base font-semibold text-text-primary disabled:text-text-muted"
+              >
+                Continue as a guest
+              </button>
+            </Card>
+          </div>
+        ) : null}
+
         {submitError ? (
           <div role="alert">
             <Card tone="subtle" className="text-sm text-status-warning">
               {submitError}
+              {accountLink ? (
+                <>
+                  {" "}
+                  <Link href={accountLink.href} className="underline underline-offset-4">
+                    {accountLink.label}
+                  </Link>
+                </>
+              ) : null}
             </Card>
           </div>
         ) : null}

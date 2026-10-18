@@ -33,7 +33,7 @@ export const BUSINESS_UNAVAILABLE = 'BUSINESS_UNAVAILABLE';
 //                                 has already paid can still see their order.
 // Deliberately NOT listed: the signed-in customer routes (/customers/me/*).
 // Even their GETs create the customer record on first use
-// (CustomersService.resolveOrCreateFromIdentity), so they are business writes.
+// (CustomersService.requireCustomer), so they are business writes.
 // Matching is case-insensitive and tolerates one trailing slash, like
 // Express's routing; only GET is ever allowed, so a match can only reach a
 // read.

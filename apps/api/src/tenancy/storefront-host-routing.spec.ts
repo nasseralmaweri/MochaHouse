@@ -19,6 +19,7 @@ import {
 import {
   TEST_TENANT_B_ID,
   createTestTenantB,
+  enrollTestCustomer,
   removeTestTenantB,
 } from '@mocha-house/testing';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -513,9 +514,12 @@ describe('SC4f-1 storefront host routing (integration)', () => {
         Authorization: `Bearer ${token}`,
       });
 
+    // SC4f-2 — the customer has joined business A only.
+    await enrollTestCustomer(prisma, TENANT_A, { provider: 'dev', subject });
     await me(HOST_A).expect(200);
     const crossed = await me(HOST_B);
     expect(crossed.status).toBe(403);
+    expect(crossed.body).toMatchObject({ code: 'CUSTOMER_NOT_ENROLLED' });
     // Nothing was created for the other business.
     const rows = await prisma.customer.findMany({
       where: { externalSubject: subject },

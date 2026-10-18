@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
-import { tenantContextFor } from '@mocha-house/testing';
+import { tenantContextFor, enrollTestCustomer } from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -163,17 +163,24 @@ describe('CustomerOrdersController (integration)', () => {
     };
   }
 
-  function identityFor(identifier: string): CustomerIdentity {
-    return {
+  async function identityFor(identifier: string): Promise<CustomerIdentity> {
+    const enrolled: CustomerIdentity = {
       provider: 'dev',
       subject: `dev:${identifier}`,
       email: identifier,
       name: null,
       emailVerified: null,
     };
+    await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, enrolled);
+    return enrolled;
   }
 
-  function tokenFor(identifier: string): string {
+  async function tokenFor(identifier: string): Promise<string> {
+    await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, {
+      provider: 'dev',
+      subject: `dev:${identifier}`,
+      email: identifier,
+    });
     return signDevJwt(
       { sub: `dev:${identifier}`, email: identifier, name: null },
       devSecret,
@@ -199,12 +206,12 @@ describe('CustomerOrdersController (integration)', () => {
 
     const orderA = await checkoutService.checkout(
       buildCheckoutRequest(),
-      identityFor(identifierA),
+      await identityFor(identifierA),
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     const orderB = await checkoutService.checkout(
       buildCheckoutRequest(),
-      identityFor(identifierB),
+      await identityFor(identifierB),
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     const guestOrder = await checkoutService.checkout(
@@ -215,7 +222,7 @@ describe('CustomerOrdersController (integration)', () => {
 
     const response = await request(app.getHttpServer())
       .get('/api/v1/customers/me/orders')
-      .set('Authorization', `Bearer ${tokenFor(identifierA)}`)
+      .set('Authorization', `Bearer ${await tokenFor(identifierA)}`)
       .expect(200);
 
     const orderIds = (response.body as CustomerOrderSummary[]).map(
@@ -230,13 +237,13 @@ describe('CustomerOrdersController (integration)', () => {
     const identifier = `test-${randomUUID()}@example.com`;
     const confirmation = await checkoutService.checkout(
       buildCheckoutRequest(),
-      identityFor(identifier),
+      await identityFor(identifier),
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
 
     const response = await request(app.getHttpServer())
       .get(`/api/v1/customers/me/orders/${confirmation.orderId}`)
-      .set('Authorization', `Bearer ${tokenFor(identifier)}`)
+      .set('Authorization', `Bearer ${await tokenFor(identifier)}`)
       .expect(200);
 
     const detail = response.body as CustomerOrderDetail;
@@ -253,13 +260,13 @@ describe('CustomerOrdersController (integration)', () => {
     const identifierIntruder = `test-${randomUUID()}@example.com`;
     const ownerOrder = await checkoutService.checkout(
       buildCheckoutRequest(),
-      identityFor(identifierOwner),
+      await identityFor(identifierOwner),
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
 
     await request(app.getHttpServer())
       .get(`/api/v1/customers/me/orders/${ownerOrder.orderId}`)
-      .set('Authorization', `Bearer ${tokenFor(identifierIntruder)}`)
+      .set('Authorization', `Bearer ${await tokenFor(identifierIntruder)}`)
       .expect(404);
   });
 
@@ -273,7 +280,7 @@ describe('CustomerOrdersController (integration)', () => {
 
     await request(app.getHttpServer())
       .get(`/api/v1/customers/me/orders/${guestOrder.orderId}`)
-      .set('Authorization', `Bearer ${tokenFor(identifier)}`)
+      .set('Authorization', `Bearer ${await tokenFor(identifier)}`)
       .expect(404);
   });
 
@@ -282,7 +289,7 @@ describe('CustomerOrdersController (integration)', () => {
 
     const response = await request(app.getHttpServer())
       .get('/api/v1/customers/me/orders')
-      .set('Authorization', `Bearer ${tokenFor(identifier)}`)
+      .set('Authorization', `Bearer ${await tokenFor(identifier)}`)
       .expect(200);
 
     expect(response.body).toEqual([]);
