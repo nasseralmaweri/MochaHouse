@@ -1,5 +1,8 @@
 import 'dotenv/config';
-import { tenantContextFor } from '@mocha-house/testing';
+import {
+  tenantContextFor,
+  removePaymentRecoveryRecordsForTest,
+} from '@mocha-house/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -150,6 +153,16 @@ describe('AdminOrdersService (integration)', () => {
         where: { aggregateType: 'Order', aggregateId: { in: orderIds } },
       });
       await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+      // ESP-03 PR 4 — a payment's saved checkout and reconciliation records
+      // (append-only) go first, through the disposable-only test helper.
+      await removePaymentRecoveryRecordsForTest(
+        (
+          await prisma.paymentAttempt.findMany({
+            where: { id: { in: paymentAttemptIds } },
+            select: { id: true },
+          })
+        ).map((a) => a.id),
+      );
       await prisma.paymentAttempt.deleteMany({
         where: { id: { in: paymentAttemptIds } },
       });

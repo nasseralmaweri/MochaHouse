@@ -1,6 +1,10 @@
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
-import { tenantContextFor, enrollTestCustomer } from '@mocha-house/testing';
+import {
+  tenantContextFor,
+  enrollTestCustomer,
+  removePaymentRecoveryRecordsForTest,
+} from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test, type TestingModule } from '@nestjs/testing';
 import {
@@ -240,6 +244,16 @@ describe('Customer gift-card purchase (integration)', () => {
     });
     await prisma.giftCard.deleteMany({ where: { id: { in: giftCardIds } } });
     await prisma.order.deleteMany({ where: { id: { in: trackedOrderIds } } });
+    // ESP-03 PR 4 — a payment's saved checkout and reconciliation records
+    // (append-only) go first, through the disposable-only test helper.
+    await removePaymentRecoveryRecordsForTest(
+      (
+        await prisma.paymentAttempt.findMany({
+          where: { id: { in: attemptIds } },
+          select: { id: true },
+        })
+      ).map((a) => a.id),
+    );
     await prisma.paymentAttempt.deleteMany({ where: { id: { in: attemptIds } } });
     await prisma.customer.deleteMany({
       where: { externalSubject: { in: [...customerSubjects] } },
@@ -750,7 +764,7 @@ describe('Customer gift-card purchase (integration)', () => {
     expect(chargeSpy).not.toHaveBeenCalled();
   });
 
-  it('payment succeeds but issuance fails: reconciliation recorded, no card, retry does not re-charge', async () => {
+  it('payment succeeds but issuance fails: reconciliation recorded, no card; a retry issues exactly one card without charging again', async () => {
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
     const txSpy = jest
       .spyOn(prisma, '$transaction')
@@ -784,17 +798,28 @@ describe('Customer gift-card purchase (integration)', () => {
     expect(attempt.giftCardPurchase?.status).toBe('RECONCILIATION_REQUIRED');
     expect(attempt.giftCardPurchase?.giftCardId).toBeNull();
 
-    await expect(
-      purchases.purchase(
-        {
-          idempotencyKey: req.idempotencyKey,
-          recoveryCredential: intent.recoveryCredential,
-        },
-        undefined,
-        t1,
-      ),
-    ).rejects.toBeInstanceOf(ConflictException);
+    // ESP-03 PR 4 — the buyer's retry issues the card from the saved
+    // purchase: one card, never a second charge.
+    const resumed = await purchases.purchase(
+      {
+        idempotencyKey: req.idempotencyKey,
+        recoveryCredential: intent.recoveryCredential,
+      },
+      undefined,
+      t1,
+    );
+    expect(resumed.status).toBe('ISSUED');
+    expect(resumed.code).not.toBeNull();
     expect(chargeSpy).toHaveBeenCalledTimes(1);
+    const issued = await prisma.giftCardPurchase.findUniqueOrThrow({
+      where: { paymentAttemptId: attempt.id },
+    });
+    expect(issued.status).toBe('ISSUED');
+    expect(
+      await prisma.giftCardTransaction.count({
+        where: { giftCardPurchaseId: issued.id, type: 'ISSUANCE' },
+      }),
+    ).toBe(1);
   });
 
   // --- idempotency / concurrency ---------------------------

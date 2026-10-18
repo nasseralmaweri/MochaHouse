@@ -75,6 +75,7 @@ model Tenant {
   customerPreferredLocations           CustomerPreferredLocation[]
   paymentAttempts                      PaymentAttempt[]
   paymentReconciliationCases           PaymentReconciliationCase[]
+  checkoutSnapshots                    CheckoutSnapshot[]
   paymentReconciliationEvents          PaymentReconciliationEvent[]
   orderClosures                        OrderClosure[]
   orderRefundObligations               OrderRefundObligation[]
@@ -1337,6 +1338,9 @@ model PaymentAttempt {
   // table — declarative cross-table enforcement, not programmer convention.
   order              Order?
   reconciliationCase PaymentReconciliationCase?
+  // ESP-03 PR 4 — the checkout this attempt pays for, saved before the
+  // provider is called and removed once its order exists.
+  checkoutSnapshot   CheckoutSnapshot?
   // R1 / S5a — at most one refund obligation, through its Order.
   refundObligations  OrderRefundObligation[]
   // Security 4C-3 — the checkout location, now a composite foreign key: a
@@ -1380,6 +1384,34 @@ model PaymentAttempt {
 // resolvedAt consistent. Tenant-owned: composite foreign keys keep the case, its
 // attempt, its assignee and its events inside one business; the
 // "<Table>_tenantId_immutable" trigger refuses a change of tenantId.
+// ESP-03 PR 4 — the server-validated checkout a food-order payment pays for,
+// committed together with its PaymentAttempt BEFORE the provider is called,
+// so a charged payment's order can always be created later from saved data
+// (never from a retried request). One per attempt. `payload` (version 1)
+// holds only what the order needs: location, cart lines and choices, guest
+// contact, the customer, the reward / coupon / gift-card plan (card id, never
+// its code) and the plan features decided at checkout. No card data, no
+// credentials, no provider secrets. Server-side only: never returned by an
+// API or logged. Deleted in the same transaction that creates the order, and
+// when the payment definitively fails; kept while a charged payment still
+// has no order (see docs/security/resumable-fulfilment.md).
+model CheckoutSnapshot {
+  id               String         @id @default(uuid(7))
+  paymentAttemptId String         @unique
+  paymentAttempt   PaymentAttempt @relation(fields: [tenantId, paymentAttemptId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  // Format version of payload (CHECK).
+  version          Int            @default(1)
+  payload          Json
+  createdAt        DateTime       @default(now())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, paymentAttemptId])
+  @@index([tenantId])
+}
+
 model PaymentReconciliationCase {
   id                     String         @id @default(uuid(7))
   paymentAttemptId       String
@@ -4071,7 +4103,7 @@ model StorefrontHost {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  tenant Tenant @relation("StorefrontHostTenant", fields: [storefrontTenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  tenant  Tenant                 @relation("StorefrontHostTenant", fields: [storefrontTenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   // SC4f-3a — who assigned, published and unpublished this address, and why.
   changes StorefrontHostChange[] @relation("StorefrontHostChangeHost")
 

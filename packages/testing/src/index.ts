@@ -27,6 +27,7 @@ export {
 } from "./scratch-database";
 export { TENANT_ID_REQUIRED_MODELS } from './tenant-conversion';
 export { markOrderClosedForTest } from "./closed-orders";
+export { removePaymentRecoveryRecordsForTest } from "./payment-recovery";
 export {
   DISPOSABLE_NAME_SETTING,
   DISPOSABLE_TOKEN_SETTING,

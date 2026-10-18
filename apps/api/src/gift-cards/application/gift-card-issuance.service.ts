@@ -57,6 +57,11 @@ export class GiftCardIssuanceService {
       tx: Prisma.TransactionClient,
       issued: IssuedGiftCard,
     ) => Promise<void>,
+    // ESP-03 PR 4 — runs FIRST in the issuing transaction, before the card
+    // or its ledger row is written: the place to take row locks (a later
+    // lock on a row those inserts reference by foreign key would deadlock
+    // two concurrent issuances) and to refuse an issuance.
+    beforeInsert?: (tx: Prisma.TransactionClient) => Promise<void>,
   ): Promise<IssuedGiftCard> {
     for (let attempt = 0; attempt < CODE_COLLISION_RETRIES; attempt++) {
       const displayCode = generateGiftCardCode();
@@ -66,6 +71,9 @@ export class GiftCardIssuanceService {
 
       try {
         const issued = await this.prisma.$transaction(async (tx) => {
+          if (beforeInsert) {
+            await beforeInsert(tx);
+          }
           const card = await tx.giftCard.create({
             data: {
               tenantId: params.tenantId,

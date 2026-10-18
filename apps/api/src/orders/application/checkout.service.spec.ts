@@ -1,6 +1,10 @@
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
-import { tenantContextFor, enrollTestCustomer } from '@mocha-house/testing';
+import {
+  tenantContextFor,
+  enrollTestCustomer,
+  removePaymentRecoveryRecordsForTest,
+} from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import {
@@ -114,6 +118,16 @@ describe('CheckoutService (integration)', () => {
         where: { aggregateType: 'Order', aggregateId: { in: orderIds } },
       });
       await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+      // ESP-03 PR 4 — a payment's saved checkout and reconciliation records
+      // (append-only) go first, through the disposable-only test helper.
+      await removePaymentRecoveryRecordsForTest(
+        (
+          await prisma.paymentAttempt.findMany({
+            where: { id: { in: attemptIds } },
+            select: { id: true },
+          })
+        ).map((a) => a.id),
+      );
       await prisma.paymentAttempt.deleteMany({
         where: { id: { in: attemptIds } },
       });
@@ -448,14 +462,20 @@ describe('CheckoutService (integration)', () => {
     expect(orders).toBe(1);
   });
 
-  it('marks reconciliation-required when payment succeeds but the order transaction fails, and never charges again on retry', async () => {
+  it('marks reconciliation-required when payment succeeds but the order transaction fails; a retry creates the order from the saved checkout without charging again', async () => {
     const request = buildRequest();
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
     // Deliberately force the protected post-payment transaction to fail —
     // simulates a DB error, a constraint violation, anything that aborts
     // the transaction after FakePaymentProvider has already succeeded.
+    // ESP-03 PR 4 — the first transaction saves the payment attempt with
+    // its checkout (before the charge); the order transaction is the next.
+    const realTransaction = prisma.$transaction.bind(
+      prisma,
+    ) as typeof prisma.$transaction;
     jest
       .spyOn(prisma, '$transaction')
+      .mockImplementationOnce(realTransaction)
       .mockRejectedValueOnce(new Error('Simulated Order transaction failure'));
 
     await expect(
@@ -485,22 +505,27 @@ describe('CheckoutService (integration)', () => {
 
     expect(chargeSpy).toHaveBeenCalledTimes(1);
 
-    // Retrying with the same key must recognize the reconciliation
-    // condition — not charge again, not silently succeed, not replay a
-    // stale "successful" order that was never actually created.
-    await expect(
-      checkoutService.checkout(
-        request,
-        undefined,
-        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-      ),
-    ).rejects.toBeInstanceOf(ConflictException);
+    // ESP-03 PR 4 — retrying with the same key never charges again: the
+    // missing order is created now from the checkout saved before payment.
+    const resumed = await checkoutService.checkout(
+      request,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(chargeSpy).toHaveBeenCalledTimes(1);
-
-    const stillNoOrder = await prisma.order.findUnique({
+    const orders = await prisma.order.findMany({
       where: { paymentAttemptId: attempt.id },
     });
-    expect(stillNoOrder).toBeNull();
+    expect(orders.map((o) => o.id)).toEqual([resumed.orderId]);
+    expect(
+      await prisma.paymentAttempt.findUniqueOrThrow({
+        where: { id: attempt.id },
+      }),
+    ).toMatchObject({
+      status: 'SUCCEEDED',
+      reconciliationRequired: false,
+      fulfilmentStatus: 'DONE',
+    });
   });
 
   it('exposes order status only to the holder of the correct access token', async () => {

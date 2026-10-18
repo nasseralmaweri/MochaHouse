@@ -9,6 +9,7 @@ import {
   TEST_TENANT_B_ID,
   createTestTenantB,
   removeTestTenantB,
+  removePaymentRecoveryRecordsForTest,
 } from '@mocha-house/testing';
 import type {
   AdminAddMenuProductResponse,
@@ -239,6 +240,16 @@ describe('S1 Admin catalog creation (integration)', () => {
       where: { aggregateType: 'Order', aggregateId: { in: orderIds } },
     });
     await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+    // ESP-03 PR 4 — a payment's saved checkout and reconciliation records
+    // (append-only) go first, through the disposable-only test helper.
+    await removePaymentRecoveryRecordsForTest(
+      (
+        await prisma.paymentAttempt.findMany({
+          where: { locationId },
+          select: { id: true },
+        })
+      ).map((a) => a.id),
+    );
     await prisma.paymentAttempt.deleteMany({ where: { locationId } });
     await prisma.locationProductPriceOverride.deleteMany({
       where: { locationId },

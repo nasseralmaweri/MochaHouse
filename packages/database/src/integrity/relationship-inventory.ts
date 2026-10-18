@@ -190,6 +190,7 @@ export const TENANT_MODEL_KEYS: Readonly<
   TenantBillingContact: ['id'],
   PaymentReconciliationCase: ['id'],
   PaymentReconciliationEvent: ['id'],
+  CheckoutSnapshot: ['id'],
   OperationsTask: ['id'],
   Order: ['id'],
   OrderClosure: ['id'],
@@ -452,6 +453,19 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     model: 'OrderStatusHistory',
     column: 'orderId',
     target: 'Order',
+    nullable: false,
+    hasForeignKey: true,
+    onDelete: 'Restrict',
+    tenantEnforced: true,
+  },
+  // ESP-03 PR 4 — a saved checkout belongs to a payment attempt of the SAME
+  // business (composite foreign key).
+  {
+    id: 'CheckoutSnapshot.paymentAttemptId',
+    kind: 'composite-fk-candidate',
+    model: 'CheckoutSnapshot',
+    column: 'paymentAttemptId',
+    target: 'PaymentAttempt',
     nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
@@ -1506,6 +1520,15 @@ const JSON_REFERENCES: readonly JsonReference[] = [
     nullable: false,
     paths: [],
     note: 'Modifier snapshot copied by value at checkout; never joined.',
+  },
+  {
+    id: 'CheckoutSnapshot.payload',
+    kind: 'json-reference',
+    model: 'CheckoutSnapshot',
+    column: 'payload',
+    nullable: false,
+    paths: [],
+    note: 'Saved checkout (ESP-03 PR 4). Its ids are re-resolved within the snapshot’s own business when the order is created (tenant-scoped menu, customer, reward, coupon and gift-card lookups); never joined across businesses.',
   },
   {
     id: 'PaymentReconciliationEvent.detail',

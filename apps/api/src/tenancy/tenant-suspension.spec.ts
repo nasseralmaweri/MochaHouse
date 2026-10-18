@@ -5,7 +5,10 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
-import { removeTestTenant } from '@mocha-house/testing';
+import {
+  removeTestTenant,
+  removePaymentRecoveryRecordsForTest,
+} from '@mocha-house/testing';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisModule } from '../redis/redis.module';
@@ -175,6 +178,16 @@ describe('Tenant suspension — public storefront (integration)', () => {
         where: { orderId: order?.id },
       });
       await prisma.order.deleteMany({ where: { tenantId: TENANT_S } });
+      // ESP-03 PR 4 — a payment's saved checkout and reconciliation records
+      // (append-only) go first, through the disposable-only test helper.
+      await removePaymentRecoveryRecordsForTest(
+        (
+          await prisma.paymentAttempt.findMany({
+            where: { id: attemptId },
+            select: { id: true },
+          })
+        ).map((a) => a.id),
+      );
       await prisma.paymentAttempt.deleteMany({ where: { id: attemptId } });
       await prisma.location.deleteMany({ where: { id: locationId } });
       await removeTestTenant(prisma, TENANT_S);

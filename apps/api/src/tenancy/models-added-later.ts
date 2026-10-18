@@ -15,6 +15,7 @@ import {
 //   OrderRefundObligation        R1 / S5a
 //   TenantBillingContact         SC3c-3
 //   LocationOpeningPeriod        SC4d
+//   CheckoutSnapshot             ESP-03 PR 4
 export const MODELS_ADDED_LATER: ReadonlySet<string> = new Set([
   'NotificationRecipient',
   'PaymentReconciliationCase',
@@ -23,6 +24,7 @@ export const MODELS_ADDED_LATER: ReadonlySet<string> = new Set([
   'OrderRefundObligation',
   'TenantBillingContact',
   'LocationOpeningPeriod',
+  'CheckoutSnapshot',
 ]);
 
 // The relationship inventory as it applied to a database from BEFORE the models

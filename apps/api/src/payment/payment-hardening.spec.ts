@@ -8,6 +8,7 @@ import {
   createTestTenantB,
   removeTestTenantB,
   tenantContextFor,
+  removePaymentRecoveryRecordsForTest,
 } from '@mocha-house/testing';
 import type {
   ChargeRequest,
@@ -188,6 +189,16 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
     await prisma.giftCardPurchase.deleteMany({
       where: { tenantId: TEST_TENANT_B_ID },
     });
+    // ESP-03 PR 4 — a payment's saved checkout and reconciliation records
+    // (append-only) go first, through the disposable-only test helper.
+    await removePaymentRecoveryRecordsForTest(
+      (
+        await prisma.paymentAttempt.findMany({
+          where: { tenantId: TEST_TENANT_B_ID },
+          select: { id: true },
+        })
+      ).map((a) => a.id),
+    );
     await prisma.paymentAttempt.deleteMany({
       where: { tenantId: TEST_TENANT_B_ID },
     });
@@ -688,10 +699,9 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
       });
       for (const r of await reconciling.asStranger())
         expect(r).toEqual(expected);
-      // The buyer still gets the real explanation.
-      expect(JSON.stringify((await reconciling.asBuyer()).response)).toContain(
-        'Do not pay again',
-      );
+      // The buyer's retry issues the charged card (ESP-03 PR 4).
+      const buyer = await reconciling.asBuyer();
+      expect(buyer.ok).toBe(true);
     });
 
     it('an issued purchase answers a stranger exactly like an unknown key; the buyer still gets the code', async () => {
