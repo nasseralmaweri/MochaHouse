@@ -441,7 +441,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     expect(summarize(report)).toEqual([]);
     expect(report.violations).toBe(0);
     expect(report.warnings).toBe(0);
-    expect(report.relationshipsChecked).toBe(112);
+    expect(report.relationshipsChecked).toBe(113);
     expect(report.verdict).toBe('clean');
     expect(report.uncheckedRows).toBe(0);
     // Only the documented by-design exclusions, none holding unchecked rows.
@@ -717,8 +717,8 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     it('summarizes violations by relationship type', () => {
       expect(report.byKind).toEqual({
         'composite-fk-candidate': {
-          relationships: 98,
-          checked: 98,
+          relationships: 99,
+          checked: 99,
           violations: 8,
           warnings: 0,
         },
@@ -735,7 +735,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
           warnings: 4,
         },
         'json-reference': {
-          relationships: 7,
+          relationships: 8,
           checked: 2,
           violations: 2,
           warnings: 0,
