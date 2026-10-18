@@ -9,8 +9,8 @@ import { Card } from "@/components/Card";
 
 // Menu & Products home. Intentionally lightweight — it is the single
 // sidebar destination that gathers the catalog management screens. Products
-// (5D-3) and Menus (5D-4) are real pages; categories and modifiers join
-// later. No "coming soon" links.
+// (5D-3), Categories (S1), Modifiers and Menus (5D-4) are real pages. No
+// "coming soon" links.
 export default async function AdminMenuHomePage() {
   const session = await getInternalSession();
   if (!session) {
@@ -45,6 +45,13 @@ export default async function AdminMenuHomePage() {
             href="/admin/menu/categories"
             title="Categories"
             description="How products are grouped, and where new ones start."
+          />
+        </li>
+        <li>
+          <MenuHomeCard
+            href="/admin/menu/modifiers"
+            title="Modifiers"
+            description="Choices like size or milk, with their prices, shared across products."
           />
         </li>
         <li>

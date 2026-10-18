@@ -4,7 +4,10 @@ import type {
   AdminLocationMenuResponse,
   AdminMenuDetail,
   AdminMenuSummary,
+  AdminModifierGroupDetail,
+  AdminModifierGroupSummary,
   AdminProductDetail,
+  AdminProductModifiersResponse,
   AdminProductSummary,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
@@ -183,5 +186,33 @@ export function getAdminLocationMenu(
 ): Promise<AdminReadResult<AdminLocationMenuResponse>> {
   return adminCatalogGet<AdminLocationMenuResponse>(
     `/admin/catalog/locations/${encodeURIComponent(locationId)}/menu`,
+  );
+}
+
+// --- Product Modifier Management ------------------------------------
+// The business's modifier groups (inactive included), one group with its
+// options and the products using it, and one product's groups.
+// `catalog.view`, CORPORATE-only.
+export function getAdminModifierGroups(): Promise<
+  AdminReadResult<AdminModifierGroupSummary[]>
+> {
+  return adminCatalogGet<AdminModifierGroupSummary[]>(
+    "/admin/catalog/modifier-groups",
+  );
+}
+
+export function getAdminModifierGroup(
+  groupId: string,
+): Promise<AdminReadResult<AdminModifierGroupDetail>> {
+  return adminCatalogGet<AdminModifierGroupDetail>(
+    `/admin/catalog/modifier-groups/${encodeURIComponent(groupId)}`,
+  );
+}
+
+export function getAdminProductModifiers(
+  productId: string,
+): Promise<AdminReadResult<AdminProductModifiersResponse>> {
+  return adminCatalogGet<AdminProductModifiersResponse>(
+    `/admin/catalog/products/${encodeURIComponent(productId)}/modifier-groups`,
   );
 }

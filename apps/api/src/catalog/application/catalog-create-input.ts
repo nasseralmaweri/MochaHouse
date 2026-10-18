@@ -88,7 +88,7 @@ export function parseAddMenuProduct(body: unknown): AddMenuProductInput {
   };
 }
 
-function requireObject(body: unknown): Record<string, unknown> {
+export function requireObject(body: unknown): Record<string, unknown> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     throw new BadRequestException('The request body must be an object.');
   }
@@ -103,7 +103,7 @@ export function hasNulCharacter(value: string): boolean {
   return value.includes('\u0000');
 }
 
-function parseName(value: unknown, label: string): string {
+export function parseName(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new BadRequestException(`${label} name is required.`);
   }
@@ -119,7 +119,7 @@ function parseName(value: unknown, label: string): string {
   return name;
 }
 
-function parseId(value: unknown, message: string): string {
+export function parseId(value: unknown, message: string): string {
   if (
     typeof value !== 'string' ||
     value.trim().length === 0 ||

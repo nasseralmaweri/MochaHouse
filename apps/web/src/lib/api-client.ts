@@ -62,6 +62,11 @@ import type {
   AdminCategorySummary,
   AdminCreateCategoryRequest,
   AdminCreateProductRequest,
+  AdminCreateModifierGroupRequest,
+  AdminCreateModifierOptionRequest,
+  AdminModifierGroupDetail,
+  AdminUpdateModifierGroupRequest,
+  AdminUpdateModifierOptionRequest,
   AdminPromotion,
   CreateLoyaltyBonusPromotionRequest,
   CreateLoyaltyRewardRequest,
@@ -3252,5 +3257,96 @@ export function assignLocationMenuFromBrowser(
     `/catalog/locations/${encodeURIComponent(locationId)}/menu`,
     "PUT",
     { menuId },
+  );
+}
+
+// --- Product Modifier Management ----------------------------------------
+// Same proxy and failure mapping as the catalog creation and menu helpers
+// above. The API (`catalog.products.edit`, CORPORATE-only) is the authority
+// and re-checks every rule; a change that would leave a product unable to
+// be configured comes back as an error with the API's explanation.
+
+export function createModifierGroupFromBrowser(
+  input: AdminCreateModifierGroupRequest,
+): Promise<AdminCreateResult<AdminModifierGroupDetail>> {
+  return adminProxyCreate<AdminModifierGroupDetail>(
+    "/catalog/modifier-groups",
+    input,
+  );
+}
+
+export function updateModifierGroupFromBrowser(
+  groupId: string,
+  input: AdminUpdateModifierGroupRequest,
+): Promise<AdminMutationResult> {
+  return adminProxyMutate(
+    `/catalog/modifier-groups/${encodeURIComponent(groupId)}`,
+    "PATCH",
+    input,
+  );
+}
+
+export function createModifierOptionFromBrowser(
+  groupId: string,
+  input: AdminCreateModifierOptionRequest,
+): Promise<AdminCreateResult<AdminModifierGroupDetail>> {
+  return adminProxyCreate<AdminModifierGroupDetail>(
+    `/catalog/modifier-groups/${encodeURIComponent(groupId)}/options`,
+    input,
+  );
+}
+
+export function updateModifierOptionFromBrowser(
+  groupId: string,
+  optionId: string,
+  input: AdminUpdateModifierOptionRequest,
+): Promise<AdminMutationResult> {
+  return adminProxyMutate(
+    `/catalog/modifier-groups/${encodeURIComponent(groupId)}/options/${encodeURIComponent(optionId)}`,
+    "PATCH",
+    input,
+  );
+}
+
+export function reorderModifierOptionsFromBrowser(
+  groupId: string,
+  optionIds: string[],
+): Promise<AdminMutationResult> {
+  return adminProxyMutate(
+    `/catalog/modifier-groups/${encodeURIComponent(groupId)}/option-order`,
+    "PUT",
+    { optionIds },
+  );
+}
+
+export function attachModifierGroupFromBrowser(
+  productId: string,
+  modifierGroupId: string,
+): Promise<AdminMutationResult> {
+  return adminProxyMutate(
+    `/catalog/products/${encodeURIComponent(productId)}/modifier-groups`,
+    "POST",
+    { modifierGroupId },
+  );
+}
+
+export function detachModifierGroupFromBrowser(
+  productId: string,
+  modifierGroupId: string,
+): Promise<AdminMutationResult> {
+  return adminProxyMutate(
+    `/catalog/products/${encodeURIComponent(productId)}/modifier-groups/${encodeURIComponent(modifierGroupId)}`,
+    "DELETE",
+  );
+}
+
+export function reorderProductModifierGroupsFromBrowser(
+  productId: string,
+  modifierGroupIds: string[],
+): Promise<AdminMutationResult> {
+  return adminProxyMutate(
+    `/catalog/products/${encodeURIComponent(productId)}/modifier-group-order`,
+    "PUT",
+    { modifierGroupIds },
   );
 }

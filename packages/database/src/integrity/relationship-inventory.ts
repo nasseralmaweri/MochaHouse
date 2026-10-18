@@ -1401,6 +1401,9 @@ const AUDIT_TARGETS = {
   loyalty_reward: 'LoyaltyReward',
   media_asset: 'MediaAsset',
   menu: 'Menu',
+  // Product Modifier Management — group and option history.
+  modifier_group: 'ModifierGroup',
+  modifier_option: 'ModifierOption',
   // R1 / S5b — order.rejected / order.cancelled.
   order: 'Order',
   product: 'Product',
