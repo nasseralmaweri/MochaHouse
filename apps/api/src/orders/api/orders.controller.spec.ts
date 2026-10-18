@@ -1,3 +1,4 @@
+import { enrollTestCustomer } from '@mocha-house/testing';
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
@@ -181,6 +182,12 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
 
   it('succeeds with a valid customer token and associates the correct Customer', async () => {
     const identifier = `test-${randomUUID()}@example.com`;
+    // SC4f-2 — the customer has joined this business.
+    await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, {
+      provider: 'dev',
+      subject: `dev:${identifier}`,
+      email: identifier,
+    });
     const token = signDevJwt(
       { sub: `dev:${identifier}`, email: identifier, name: null },
       devSecret,
@@ -202,7 +209,8 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
 
     const customer = await prisma.customer.findUniqueOrThrow({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: 'dev',
           externalSubject: `dev:${identifier}`,
         },

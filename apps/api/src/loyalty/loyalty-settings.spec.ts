@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { tenantContextFor } from '@mocha-house/testing';
+import { tenantContextFor, enrollTestCustomer } from '@mocha-house/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -130,14 +130,16 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
     };
   }
 
-  function identity(s: string): CustomerIdentity {
-    return {
+  async function identity(s: string): Promise<CustomerIdentity> {
+    const enrolled: CustomerIdentity = {
       provider: 'test',
       subject: `${SUBJECT_PREFIX}${s}`,
       email: `${s}@example.com`,
       name: null,
       emailVerified: null,
     };
+    await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, enrolled);
+    return enrolled;
   }
 
   async function earnedBeansFor(customerId: string): Promise<number> {
@@ -358,7 +360,7 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
   });
 
   it('a rate change affects FUTURE authenticated order earning, not past entries', async () => {
-    const id = identity(randomUUID());
+    const id = await identity(randomUUID());
 
     // Earn at rate 1: $12.00 -> 12 Beans.
     const first = await checkoutService.checkout(
@@ -369,7 +371,8 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
     expect(first.subtotal).toBe(1200);
     const customer = await prisma.customer.findUniqueOrThrow({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: id.provider,
           externalSubject: id.subject,
         },

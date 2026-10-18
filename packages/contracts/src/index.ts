@@ -1108,6 +1108,35 @@ export interface CustomerProfile {
   createdAt: string;
 }
 
+// SC4f-2 — one CENTERIVO login, a separate profile per business. Each
+// business's profile is created only when the customer registers there or
+// explicitly joins it; other customer routes refuse with these codes.
+export const CUSTOMER_NOT_ENROLLED = "CUSTOMER_NOT_ENROLLED";
+export const CUSTOMER_ACCOUNT_RESTRICTED = "CUSTOMER_ACCOUNT_RESTRICTED";
+export const CUSTOMER_ACCOUNT_UNAVAILABLE = "CUSTOMER_ACCOUNT_UNAVAILABLE";
+export const CUSTOMER_EMAIL_NOT_VERIFIED = "CUSTOMER_EMAIL_NOT_VERIFIED";
+
+// 403 body for CUSTOMER_NOT_ENROLLED. businessName is the RESOLVED business's
+// own name (never browser input), for "Join {businessName} …".
+export interface CustomerNotEnrolledError {
+  statusCode: 403;
+  code: typeof CUSTOMER_NOT_ENROLLED;
+  message: string;
+  businessName: string;
+}
+
+// POST /customers/me/enrollment — the customer's explicit choice to join the
+// current business. displayName is optional (the login's name otherwise).
+export interface CustomerEnrollmentRequest {
+  displayName?: string | null;
+}
+
+export interface CustomerEnrollmentResponse {
+  profile: CustomerProfile;
+  // false when this login already had a profile here (returned unchanged).
+  created: boolean;
+}
+
 // --- Preferred locations & communication preferences (Milestone 4F) ---
 // The customer account exists to make repeat ordering faster. A preferred
 // location is just a saved reference to an authoritative Location — the

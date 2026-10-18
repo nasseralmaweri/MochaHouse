@@ -5,6 +5,9 @@ import {
   TERMINAL_ORDER_STATUSES,
 } from "@mocha-house/domain";
 import {
+  CUSTOMER_ACCOUNT_RESTRICTED,
+  CUSTOMER_ACCOUNT_UNAVAILABLE,
+  CUSTOMER_NOT_ENROLLED,
   FEATURE_NOT_AVAILABLE,
   LOCATION_ORDERING_NOT_READY,
   type AdminAssignLocationMenuResponse,
@@ -127,6 +130,11 @@ export type CheckoutResult =
   // SC2b — the business no longer offers something this checkout used (a
   // coupon or a reward). Refused before any payment: nothing was charged.
   | { outcome: "unavailable"; message: string }
+  // SC4f-2 — signed in, but not joined to this restaurant (join, or order
+  // as a guest), and an account this restaurant has limited.
+  | { outcome: "not-enrolled"; businessName: string }
+  | { outcome: "account-limited"; message: string }
+  | { outcome: "session-expired"; message: string }
   | { outcome: "network-error"; message: string };
 
 // Milestone 7C — the checkout reward-eligibility quote. Goes through this
@@ -177,10 +185,11 @@ export async function getCheckoutQuoteFromBrowser(
 
 export async function submitCheckoutFromBrowser(
   request: CheckoutRequest,
+  options: { asGuest?: boolean } = {},
 ): Promise<CheckoutResult> {
   let response: Response;
   try {
-    response = await fetch("/api/checkout", {
+    response = await fetch(options.asGuest ? "/api/checkout?as=guest" : "/api/checkout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
@@ -189,6 +198,14 @@ export async function submitCheckoutFromBrowser(
     return {
       outcome: "network-error",
       message: "Could not reach the server. Check your connection and try again.",
+    };
+  }
+
+  if (response.status === 401) {
+    const body = await safeJson(response);
+    return {
+      outcome: "session-expired",
+      message: body?.message ?? "Your sign-in has expired. Sign in again to continue.",
     };
   }
 
@@ -218,6 +235,20 @@ export async function submitCheckoutFromBrowser(
 
   if (response.status === 403) {
     const body = await safeJson(response);
+    // SC4f-2 — signed in, but this login has not joined this restaurant:
+    // the page offers to join or to continue as a guest. Nothing was placed.
+    if (body?.code === CUSTOMER_NOT_ENROLLED && typeof body?.businessName === "string") {
+      return { outcome: "not-enrolled", businessName: body.businessName };
+    }
+    // SC4f-2 — this restaurant has limited the customer's account: no
+    // ordering here, and never a silent fallback to guest checkout.
+    if (
+      (body?.code === CUSTOMER_ACCOUNT_RESTRICTED ||
+        body?.code === CUSTOMER_ACCOUNT_UNAVAILABLE) &&
+      typeof body?.message === "string"
+    ) {
+      return { outcome: "account-limited", message: body.message };
+    }
     return {
       outcome: "unavailable",
       message:
@@ -360,7 +391,12 @@ export async function fetchGuestShareToken(
   }
 }
 
-async function safeJson(response: Response): Promise<{ outcome?: string; message?: string; code?: unknown } | null> {
+async function safeJson(response: Response): Promise<{
+  outcome?: string;
+  message?: string;
+  code?: unknown;
+  businessName?: unknown;
+} | null> {
   try {
     return await response.json();
   } catch {

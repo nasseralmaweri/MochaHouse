@@ -26,9 +26,10 @@ export class CustomerPreferencesController {
     @Req() request: CustomerAuthenticatedRequest,
     @CurrentTenantContext() tenant: TenantContext,
   ): Promise<CustomerCommunicationPreferences> {
-    const customer = await this.customersService.resolveOrCreateFromIdentity(
+    const customer = await this.customersService.requireCustomer(
       request.customerIdentity!,
       tenant,
+      'profile',
     );
     return this.preferencesService.getForCustomer(customer.id);
   }
@@ -39,9 +40,13 @@ export class CustomerPreferencesController {
     @CurrentTenantContext() tenant: TenantContext,
     @Body() body: CustomerUpdateCommunicationPreferencesRequest,
   ): Promise<CustomerCommunicationPreferences> {
-    const customer = await this.customersService.resolveOrCreateFromIdentity(
+    // SC4f-2: withdrawing marketing consent is always possible, whatever
+    // the account status; opting in is a change like any other and needs
+    // an ACTIVE account.
+    const customer = await this.customersService.requireCustomer(
       request.customerIdentity!,
       tenant,
+      body?.marketingEmailOptIn === false ? 'profile' : 'write',
     );
     return this.preferencesService.updateForCustomer(customer.id, body);
   }

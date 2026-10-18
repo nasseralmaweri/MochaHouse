@@ -1180,7 +1180,9 @@ model Customer {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
-  @@unique([externalProvider, externalSubject])
+  // SC4f-2 — one CENTERIVO login may hold ONE profile per business (owner
+  // decision G1): the login is unique within a business, never across them.
+  @@unique([tenantId, externalProvider, externalSubject])
   // Security 4C-2 — composite tenant key: lets child tables reference
   // (tenantId, id) so the database itself can refuse a cross-business link
   // (composite foreign keys arrive in Security 4C-3).

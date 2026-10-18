@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
-import { tenantContextFor } from '@mocha-house/testing';
+import { tenantContextFor, enrollTestCustomer } from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { ConflictException, HttpException } from '@nestjs/common';
@@ -169,14 +169,16 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     };
   }
 
-  function identity(suffix: string): CustomerIdentity {
-    return {
+  async function identity(suffix: string): Promise<CustomerIdentity> {
+    const enrolled: CustomerIdentity = {
       provider: 'test',
       subject: `${SUBJECT_PREFIX}${suffix}`,
       email: `${suffix}@example.com`,
       name: null,
       emailVerified: null,
     };
+    await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, enrolled);
+    return enrolled;
   }
 
   async function balanceOf(customerId: string): Promise<number> {
@@ -202,7 +204,7 @@ describe('Mocha Beans earning on checkout (integration)', () => {
   }
 
   it('an authenticated checkout earns floor(subtotal/100) Beans, once', async () => {
-    const id = identity(randomUUID());
+    const id = await identity(randomUUID());
     // 3 x medium drip coffee = 3 x $4.00 = $12.00 -> 12 Beans.
     const confirmation = await checkoutService.checkout(
       buildRequest({
@@ -223,7 +225,8 @@ describe('Mocha Beans earning on checkout (integration)', () => {
 
     const customer = await prisma.customer.findUniqueOrThrow({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: id.provider,
           externalSubject: id.subject,
         },
@@ -256,7 +259,7 @@ describe('Mocha Beans earning on checkout (integration)', () => {
   });
 
   it('a checkout replay (same idempotency key) does not earn a second time', async () => {
-    const id = identity(randomUUID());
+    const id = await identity(randomUUID());
     const request = buildRequest();
 
     const first = await checkoutService.checkout(
@@ -273,7 +276,8 @@ describe('Mocha Beans earning on checkout (integration)', () => {
 
     const customer = await prisma.customer.findUniqueOrThrow({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: id.provider,
           externalSubject: id.subject,
         },
@@ -287,7 +291,7 @@ describe('Mocha Beans earning on checkout (integration)', () => {
   });
 
   it('a declined payment earns no Beans', async () => {
-    const id = identity(randomUUID());
+    const id = await identity(randomUUID());
     const request = buildRequest({
       guest: {
         name: 'Declined',
@@ -305,7 +309,8 @@ describe('Mocha Beans earning on checkout (integration)', () => {
 
     const customer = await prisma.customer.findUnique({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: id.provider,
           externalSubject: id.subject,
         },
@@ -320,7 +325,7 @@ describe('Mocha Beans earning on checkout (integration)', () => {
   });
 
   it('payment succeeds but the order transaction fails: no Beans, no order', async () => {
-    const id = identity(randomUUID());
+    const id = await identity(randomUUID());
     const request = buildRequest();
     jest
       .spyOn(prisma, '$transaction')
@@ -342,7 +347,8 @@ describe('Mocha Beans earning on checkout (integration)', () => {
 
     const customer = await prisma.customer.findUniqueOrThrow({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: id.provider,
           externalSubject: id.subject,
         },
@@ -358,7 +364,7 @@ describe('Mocha Beans earning on checkout (integration)', () => {
   // an order-transaction failure — never silently orphan a captured
   // payment.
   it('payment succeeds but loyalty-account preparation fails: no order, no Beans, reconciliationRequired set', async () => {
-    const id = identity(randomUUID());
+    const id = await identity(randomUUID());
     const request = buildRequest();
     const spy = jest
       .spyOn(loyaltyService, 'ensureAccountForCustomer')
@@ -395,7 +401,8 @@ describe('Mocha Beans earning on checkout (integration)', () => {
 
     const customer = await prisma.customer.findUniqueOrThrow({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: id.provider,
           externalSubject: id.subject,
         },
@@ -416,7 +423,7 @@ describe('Mocha Beans earning on checkout (integration)', () => {
   });
 
   it('the ledger enforces exactly one EARN per order', async () => {
-    const id = identity(randomUUID());
+    const id = await identity(randomUUID());
     const confirmation = await checkoutService.checkout(
       buildRequest(),
       id,
@@ -425,7 +432,8 @@ describe('Mocha Beans earning on checkout (integration)', () => {
 
     const customer = await prisma.customer.findUniqueOrThrow({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: id.provider,
           externalSubject: id.subject,
         },

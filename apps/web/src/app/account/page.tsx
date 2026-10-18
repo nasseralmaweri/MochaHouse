@@ -28,11 +28,17 @@ export default async function AccountPage() {
 
   // Loyalty is a nice-to-have on this page — if the read fails for any
   // reason the rest of the account still renders.
+  // SC4f-2 — a deactivated profile cannot read its balance here; a
+  // restricted one can, but cannot earn or redeem.
+  const limited = session.status !== "ACTIVE";
   const token = await getCustomerSessionToken();
-  const loyalty = token ? await getCustomerLoyalty(token) : null;
+  const loyalty =
+    token && session.status !== "DEACTIVATED"
+      ? await getCustomerLoyalty(token)
+      : null;
   const summary = loyalty?.outcome === "success" ? loyalty.summary : null;
   const mochaBeans = summary?.balance ?? null;
-  const rewards = summary?.rewards ?? [];
+  const rewards = limited ? [] : (summary?.rewards ?? []);
   // SC2b — the business does not offer loyalty right now: the balance is
   // kept and shown, nothing is earned or redeemed until it returns.
   const loyaltyPaused = summary?.available === false;
@@ -55,13 +61,25 @@ export default async function AccountPage() {
         </div>
       </Card>
 
+      {session.status !== "ACTIVE" ? (
+        <div role="status">
+          <Card tone="subtle" className="text-sm text-status-warning">
+            {session.status === "RESTRICTED"
+              ? "Your account at this restaurant is limited: ordering, rewards and gift cards aren't available. You can still view your history and manage your email preferences. Please contact the restaurant for help."
+              : "Your account at this restaurant is not available. You can still manage your email preferences. Please contact the restaurant for help."}
+          </Card>
+        </div>
+      ) : null}
+
       <Card tone="subtle" className="flex items-center justify-between gap-4">
         <div className="flex flex-col gap-0.5">
           <span className="text-base font-semibold text-text-primary">
             Mocha Beans
           </span>
           <span className="text-sm text-text-secondary">
-            {loyaltyPaused
+            {limited
+              ? "Earning and rewards aren't available at this restaurant right now."
+              : loyaltyPaused
               ? "Rewards are paused right now. Your balance is kept."
               : summary === null
                 ? "We couldn't load your balance right now."

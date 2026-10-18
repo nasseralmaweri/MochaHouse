@@ -9,6 +9,7 @@ import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import {
   TEST_TENANT_B_ID,
   createTestTenantB,
+  enrollTestCustomer,
   removeTestTenantB,
   tenantContextFor,
 } from '@mocha-house/testing';
@@ -175,7 +176,8 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
   const byIdentity = (id: CustomerIdentity) =>
     prisma.customer.findUniqueOrThrow({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: id.provider,
           externalSubject: id.subject,
         },
@@ -270,6 +272,8 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
   describe('CustomerPreferredLocation', () => {
     it('a Tenant #1 Customer saving a Tenant #1 Location persists Tenant #1, whatever tenant the client claims', async () => {
       const id = identity('pl-owner');
+      // SC4f-2 — the customer has joined this (Tenant #1) storefront.
+      await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, id);
 
       const response = await addLocationReq(id, {
         locationId: t1Location,
@@ -304,6 +308,8 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
 
     it('a Tenant #1 Customer cannot attach a Tenant B Location: same 404 as a missing or inactive one, and no row', async () => {
       const id = identity('pl-foreign');
+      // SC4f-2 — the customer has joined this (Tenant #1) storefront.
+      await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, id);
 
       const foreign = await addLocationReq(id, {
         locationId: bLocation,
@@ -334,7 +340,7 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
     });
 
     it('Tenant B structural equivalent: a Tenant B Customer + Tenant B Location persists Tenant B', async () => {
-      const bJit = await customers.resolveOrCreateFromIdentity(
+      const bJit = await customers.createAtRegistration(
         identity('pl-b-owner'),
         tenantB,
       );
@@ -377,13 +383,15 @@ describe('S0D-2B-2 customer child tenant ownership (integration)', () => {
 
     it("remove stays limited to the caller's own rows and never exposes another tenant's", async () => {
       // A Tenant B customer's saved Tenant B location.
-      const bOwner = await customers.resolveOrCreateFromIdentity(
+      const bOwner = await customers.createAtRegistration(
         identity('pl-b-remove'),
         tenantB,
       );
       await preferred.addForCustomer(bOwner, bLocation, tenantB);
 
       const id = identity('pl-remover');
+      // SC4f-2 — the customer has joined this (Tenant #1) storefront.
+      await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, id);
       await addLocationReq(id, { locationId: t1Location }).expect(201);
 
       const response = await request(app.getHttpServer())

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
-import { tenantContextFor } from '@mocha-house/testing';
+import { tenantContextFor, enrollTestCustomer } from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test, type TestingModule } from '@nestjs/testing';
 import {
@@ -119,16 +119,22 @@ describe('Customer gift-card purchase (integration)', () => {
     };
   }
 
-  function signedIn(): CustomerIdentity {
+  // SC4f-2 — a signed-in customer; joined to Tenant #1 unless enroll=false
+  // (a login that has not joined this business).
+  async function signedIn(enroll = true): Promise<CustomerIdentity> {
     const subject = `internal-dev:gcp-${randomUUID()}`;
     customerSubjects.add(subject);
-    return {
+    const enrolled: CustomerIdentity = {
       provider: 'internal-dev',
       subject,
       email: `${subject}@example.com`,
       name: 'GCP Customer',
       emailVerified: true,
     };
+    if (enroll) {
+      await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, enrolled);
+    }
+    return enrolled;
   }
 
   function throttleContext(ip: string, forwardedFor?: string): ExecutionContext {
@@ -301,7 +307,7 @@ describe('Customer gift-card purchase (integration)', () => {
   });
 
   it('step 1 for a signed-in buyer links the customer and returns no credential', async () => {
-    const identity = signedIn();
+    const identity = await signedIn();
     const intent = await purchases.createIntent(
       intentRequest(),
       identity,
@@ -406,7 +412,7 @@ describe('Customer gift-card purchase (integration)', () => {
   });
 
   it('a signed-in purchase does not require a recovery credential', async () => {
-    const identity = signedIn();
+    const identity = await signedIn();
     const req = intentRequest();
     await purchases.createIntent(
       req,
@@ -541,7 +547,7 @@ describe('Customer gift-card purchase (integration)', () => {
   });
 
   it('signed-in purchase: owner recovers without a credential; anonymous and other customers cannot', async () => {
-    const owner = signedIn();
+    const owner = await signedIn();
     const req = intentRequest();
     await purchases.createIntent(
       req,
@@ -570,7 +576,7 @@ describe('Customer gift-card purchase (integration)', () => {
     expect(anon.code).toBeNull();
     expect(anon.purchaseId).toBe(first.purchaseId);
 
-    const stranger = signedIn();
+    const stranger = await signedIn(false);
     const strangerView = await purchases.purchase(
       { idempotencyKey: req.idempotencyKey },
       stranger,
@@ -580,7 +586,8 @@ describe('Customer gift-card purchase (integration)', () => {
     // The unauthorised probe must not JIT-create a Customer row.
     const strangerRow = await prisma.customer.findUnique({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: stranger.provider,
           externalSubject: stranger.subject,
         },
@@ -596,7 +603,7 @@ describe('Customer gift-card purchase (integration)', () => {
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     ); // guest intent
-    const somebody = signedIn();
+    const somebody = await signedIn();
     const res = await purchases.purchase(
       {
         idempotencyKey: req.idempotencyKey,

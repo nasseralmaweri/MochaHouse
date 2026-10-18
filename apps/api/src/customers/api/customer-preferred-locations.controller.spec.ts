@@ -1,3 +1,4 @@
+import { enrollTestCustomer } from '@mocha-house/testing';
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
@@ -96,8 +97,13 @@ describe('CustomerPreferredLocationsController (integration)', () => {
     process.env = { ...originalEnv };
   });
 
-  function token(): string {
+  async function token(): Promise<string> {
     const identifier = `test-4f-${randomUUID()}@example.com`;
+    await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, {
+      provider: 'dev',
+      subject: `dev:${identifier}`,
+      email: identifier,
+    });
     return signDevJwt(
       { sub: `dev:${identifier}`, email: identifier, name: null },
       devSecret,
@@ -137,7 +143,7 @@ describe('CustomerPreferredLocationsController (integration)', () => {
   });
 
   it('starts empty, adds a valid active location, and the list reflects it', async () => {
-    const t = token();
+    const t = await token();
 
     const empty = await request(app.getHttpServer())
       .get(base)
@@ -165,7 +171,7 @@ describe('CustomerPreferredLocationsController (integration)', () => {
   });
 
   it('a duplicate add stays a single association', async () => {
-    const t = token();
+    const t = await token();
     await request(app.getHttpServer())
       .post(base)
       .set('Authorization', `Bearer ${t}`)
@@ -180,7 +186,7 @@ describe('CustomerPreferredLocationsController (integration)', () => {
   });
 
   it('can save an active location that has digital ordering disabled (orderability is decided later, at order time)', async () => {
-    const t = token();
+    const t = await token();
     const res = await request(app.getHttpServer())
       .post(base)
       .set('Authorization', `Bearer ${t}`)
@@ -193,7 +199,7 @@ describe('CustomerPreferredLocationsController (integration)', () => {
   });
 
   it('rejects a nonexistent location id with 404 and saves nothing', async () => {
-    const t = token();
+    const t = await token();
     await request(app.getHttpServer())
       .post(base)
       .set('Authorization', `Bearer ${t}`)
@@ -208,7 +214,7 @@ describe('CustomerPreferredLocationsController (integration)', () => {
   });
 
   it('rejects an inactive location as not available to save', async () => {
-    const t = token();
+    const t = await token();
     await request(app.getHttpServer())
       .post(base)
       .set('Authorization', `Bearer ${t}`)
@@ -217,7 +223,7 @@ describe('CustomerPreferredLocationsController (integration)', () => {
   });
 
   it('rejects a missing / blank locationId with 400', async () => {
-    const t = token();
+    const t = await token();
     await request(app.getHttpServer())
       .post(base)
       .set('Authorization', `Bearer ${t}`)
@@ -231,7 +237,7 @@ describe('CustomerPreferredLocationsController (integration)', () => {
   });
 
   it('removes a preferred location without deleting the Location, and is idempotent', async () => {
-    const t = token();
+    const t = await token();
     await request(app.getHttpServer())
       .post(base)
       .set('Authorization', `Bearer ${t}`)
@@ -259,8 +265,8 @@ describe('CustomerPreferredLocationsController (integration)', () => {
   });
 
   it('customer A cannot read, add to, or remove from customer B', async () => {
-    const a = token();
-    const b = token();
+    const a = await token();
+    const b = await token();
 
     await request(app.getHttpServer())
       .post(base)
@@ -291,7 +297,7 @@ describe('CustomerPreferredLocationsController (integration)', () => {
   });
 
   it('returns authoritative current location data (name reflects the live Location row)', async () => {
-    const t = token();
+    const t = await token();
     await request(app.getHttpServer())
       .post(base)
       .set('Authorization', `Bearer ${t}`)

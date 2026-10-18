@@ -3,15 +3,69 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
-import type {
-  CustomerProfile,
-  CustomerUpdateProfileRequest,
+import {
+  CUSTOMER_ACCOUNT_RESTRICTED,
+  CUSTOMER_ACCOUNT_UNAVAILABLE,
+  CUSTOMER_EMAIL_NOT_VERIFIED,
+  CUSTOMER_NOT_ENROLLED,
+  type CustomerAccountStatus,
+  type CustomerEnrollmentRequest,
+  type CustomerProfile,
+  type CustomerUpdateProfileRequest,
 } from '@mocha-house/contracts';
 import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
+import { businessDisplayName } from '../../tenancy/business-name';
 
 type CustomerRow = Prisma.CustomerGetPayload<Record<string, never>>;
+
+// SC4f-2 — what a customer route needs from the profile (see
+// CustomersService.requireCustomer).
+export type CustomerAccess = 'profile' | 'read' | 'write';
+
+const ALLOWED_STATUSES: Readonly<
+  Record<CustomerAccess, readonly CustomerAccountStatus[]>
+> = {
+  profile: ['ACTIVE', 'RESTRICTED', 'DEACTIVATED'],
+  read: ['ACTIVE', 'RESTRICTED'],
+  write: ['ACTIVE'],
+};
+
+// Refuses a profile whose status does not allow this access. The answer
+// says only that the account is limited AT THIS BUSINESS — never why, and
+// never anything about the login's other businesses.
+export function assertCustomerAccess(
+  status: CustomerAccountStatus,
+  access: CustomerAccess,
+): void {
+  if (ALLOWED_STATUSES[access].includes(status)) return;
+  if (status === 'RESTRICTED') {
+    throw new ForbiddenException({
+      statusCode: 403,
+      error: 'Forbidden',
+      code: CUSTOMER_ACCOUNT_RESTRICTED,
+      message:
+        'Your account at this restaurant is limited. Please contact the restaurant for help.',
+    });
+  }
+  throw new ForbiddenException({
+    statusCode: 403,
+    error: 'Forbidden',
+    code: CUSTOMER_ACCOUNT_UNAVAILABLE,
+    message:
+      'Your account at this restaurant is not available. Please contact the restaurant for help.',
+  });
+}
+
+// The login's profile key AT THIS BUSINESS.
+function identityKey(identity: CustomerIdentity, tenant: TenantContext) {
+  return {
+    tenantId: tenant.tenantId,
+    externalProvider: identity.provider,
+    externalSubject: identity.subject,
+  };
+}
 
 // Upper bound on a stored display name. Generous for real names while
 // still ruling out abuse; the customer-auth boundary keeps the provider's
@@ -22,111 +76,165 @@ const DISPLAY_NAME_MAX_LENGTH = 80;
 export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // JIT provisioning: by the time this runs, the customer-auth boundary has
-  // already verified the caller's identity — Cognito (or its local/test
-  // stand-in) proved who they are, so the first successful authentication
-  // for a given (provider, subject) creates the Mocha House Customer record,
-  // and every later one resyncs the basic profile fields from the identity
-  // provider's latest claims. This is the "authenticated subject with no
-  // permitted customer relationship" case the architecture calls out —
-  // resolved by creating the record rather than rejecting the request.
-  // Fields are only overwritten when the identity actually supplied a
-  // value, so a claim set missing email/name (e.g. the dev auth boundary
-  // for a non-email identifier) never blanks out a previously known value.
+  // SC4f-2 — ONE CENTERIVO login, a SEPARATE profile per business (owner
+  // decisions G1–G5). A Customer row is one business's profile of one login:
+  // (tenantId, externalProvider, externalSubject) is unique, and the
+  // business always comes from the request's server-resolved TenantContext —
+  // never from the identity, the email, the request body, SINGLE_TENANT_ID
+  // or another business's profile.
   //
-  // displayName is deliberately NOT in the `update` clause: the provider's
-  // name claim seeds it once, at creation, and from then on it is a
-  // Mocha-House-owned, customer-editable field (see updateProfile) that a
-  // later sign-in must never silently overwrite with the (lower-authority)
-  // provider value. `email` stays authoritative to the provider identity —
-  // it is not customer-editable in this milestone — and `emailVerifiedAt`
-  // is only ever set by AuthController.verify, never here on update.
+  // A profile is created ONLY by an explicit action at that business:
+  //   * registering there (createAtRegistration), or
+  //   * choosing to join it (enroll — POST /customers/me/enrollment).
+  // Every other customer route resolves the EXISTING profile
+  // (requireCustomer) and refuses with CUSTOMER_NOT_ENROLLED when there is
+  // none — never creating one, never borrowing another business's, never
+  // matching by email. An interrupted registration (the login exists but its
+  // profile was never written) is completed by the same explicit join; no
+  // profile is ever created just because the login has none anywhere.
   //
-  // Milestone S0D-2B-1 — tenant ownership. A Customer is tenant-owned
-  // (ADR-1), and its tenant comes ONLY from the explicit, server-resolved
-  // TenantContext passed in by the request boundary — never from the
-  // identity, the email, the request, SINGLE_TENANT_ID or the async context.
-  //
-  // TRANSITIONAL: (externalProvider, externalSubject) is still GLOBALLY
-  // unique (tenant-scoping it is S0D-3 / S0G), so one identity can own at
-  // most one Customer across all tenants for now. The resolver therefore
-  // fails closed: an identity whose Customer belongs to a DIFFERENT tenant
-  // is refused, never adopted, transferred or updated. The former single
-  // upsert is split into look-up → ownership check → update-or-create so the
-  // check always runs BEFORE any write.
-  async resolveOrCreateFromIdentity(
+  // Account status is the business's own decision about this profile and
+  // never affects the login or the customer's profiles at other businesses:
+  //   'profile' — the customer's own profile and consent: every status (so a
+  //               restricted or deactivated customer is told why and can
+  //               always withdraw marketing consent);
+  //   'read'    — history and balances (orders, loyalty, saved locations):
+  //               ACTIVE and RESTRICTED;
+  //   (withdrawing marketing consent is 'profile'; opting in is 'write')
+  //   'write'   — ordering, redemption, gift cards and other changes:
+  //               ACTIVE only.
+  async requireCustomer(
+    identity: CustomerIdentity,
+    tenant: TenantContext,
+    access: CustomerAccess,
+  ): Promise<CustomerRow> {
+    const customer = await this.prisma.customer.findUnique({
+      where: {
+        tenantId_externalProvider_externalSubject: identityKey(
+          identity,
+          tenant,
+        ),
+      },
+    });
+    if (!customer) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: CUSTOMER_NOT_ENROLLED,
+        message: 'Join this restaurant to use your account here.',
+        businessName: await businessDisplayName(this.prisma, tenant.tenantId),
+      });
+    }
+    assertCustomerAccess(customer.status, access);
+    // A deactivated profile is only ever read here, never written.
+    if (customer.status === 'DEACTIVATED') return customer;
+    return this.resyncEmail(customer, identity);
+  }
+
+  // The customer's explicit choice to join this business. Requires a login
+  // whose email the identity provider has verified. Idempotent and safe
+  // under concurrency: the database's unique key decides, and a profile that
+  // already exists is returned exactly as it is — its status, consent and
+  // data unchanged, so joining again can never lift a restriction. A new
+  // profile starts from the verified login's own claims (and the name the
+  // customer gave while joining), with marketing consent OFF; nothing is
+  // copied from any other business.
+  async enroll(
+    identity: CustomerIdentity,
+    tenant: TenantContext,
+    request: CustomerEnrollmentRequest | undefined,
+  ): Promise<{ customer: CustomerRow; created: boolean }> {
+    if (identity.emailVerified !== true) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: CUSTOMER_EMAIL_NOT_VERIFIED,
+        message: 'Verify your email address before joining a restaurant.',
+      });
+    }
+    const displayName =
+      request?.displayName === undefined
+        ? seedDisplayName(identity.name)
+        : normalizeDisplayName(request.displayName);
+    return this.createProfile(identity, tenant, {
+      displayName,
+      emailVerifiedAt: new Date(),
+    });
+  }
+
+  // Registration at this business: the customer has just chosen it by
+  // signing up here. The login is brand new (the identity provider refuses
+  // an email it already knows), so this is its first profile; a concurrent
+  // duplicate resolves to the same row.
+  async createAtRegistration(
     identity: CustomerIdentity,
     tenant: TenantContext,
   ): Promise<CustomerRow> {
-    const identityKey = {
-      externalProvider_externalSubject: {
-        externalProvider: identity.provider,
-        externalSubject: identity.subject,
-      },
-    };
-
-    const existing = await this.prisma.customer.findUnique({
-      where: identityKey,
+    const { customer } = await this.createProfile(identity, tenant, {
+      displayName: seedDisplayName(identity.name),
+      // Registration always precedes verification: never assumed verified.
+      emailVerifiedAt: null,
     });
-    if (existing) {
-      return this.resyncOwnedCustomer(existing, identity, tenant);
-    }
+    return customer;
+  }
 
+  private async createProfile(
+    identity: CustomerIdentity,
+    tenant: TenantContext,
+    seed: { displayName: string | null; emailVerifiedAt: Date | null },
+  ): Promise<{ customer: CustomerRow; created: boolean }> {
+    const key = identityKey(identity, tenant);
+    const existing = await this.prisma.customer.findUnique({
+      where: { tenantId_externalProvider_externalSubject: key },
+    });
+    if (existing) return { customer: existing, created: false };
     try {
-      return await this.prisma.customer.create({
+      const customer = await this.prisma.customer.create({
         data: {
-          tenantId: tenant.tenantId,
-          externalProvider: identity.provider,
-          externalSubject: identity.subject,
+          tenantId: key.tenantId,
+          externalProvider: key.externalProvider,
+          externalSubject: key.externalSubject,
           email: identity.email,
-          displayName: identity.name,
-          // Set once, at creation, straight from the provider's own
-          // authoritative claim on the verified token — this is what
-          // recovers the Milestone 4C registration partial-failure window
-          // (Cognito SignUp succeeded but the Customer row never got
-          // created) without any reconciliation job: the customer's first
-          // successful sign-in after verifying with Cognito JIT-creates this
-          // row here, and its emailVerified claim is already true by then,
-          // so the row is never incorrectly stuck unverified. Never touched
-          // on update (below) — a real verification, once recorded, is
-          // never revisited by a later sign-in's claims.
-          emailVerifiedAt: identity.emailVerified ? new Date() : null,
+          displayName: seed.displayName,
+          emailVerifiedAt: seed.emailVerifiedAt,
+          marketingEmailOptIn: false,
         },
       });
+      return { customer, created: true };
     } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        // Lost the first-authentication race: a concurrent request created
-        // this identity's Customer first. Re-read the winner and apply the
-        // SAME ownership check before returning or touching it.
+      // Checked structurally, like checkout and gift cards: `instanceof`
+      // can miss the client's error class across module copies.
+      if ((error as { code?: unknown } | null)?.code === 'P2002') {
+        // Lost the race to a concurrent request for the same login at the
+        // same business: that request's profile is this one.
         const winner = await this.prisma.customer.findUniqueOrThrow({
-          where: identityKey,
+          where: { tenantId_externalProvider_externalSubject: key },
         });
-        return this.resyncOwnedCustomer(winner, identity, tenant);
+        return { customer: winner, created: false };
       }
       throw error;
     }
   }
 
-  // The existing-Customer half of resolveOrCreateFromIdentity: refuse a
-  // Customer owned by another tenant (with a generic message that reveals
-  // nothing about it), otherwise apply exactly the resync the former
-  // upsert's `update` branch applied.
-  private async resyncOwnedCustomer(
+  // The identity provider stays authoritative for the login's email — but
+  // only a VERIFIED address replaces the stored one (an unverified address
+  // would otherwise inherit this profile's verified state and consent). A
+  // claim set without one never blanks a known value. displayName is the
+  // customer's own field at this business and is never overwritten here.
+  private async resyncEmail(
     customer: CustomerRow,
     identity: CustomerIdentity,
-    tenant: TenantContext,
   ): Promise<CustomerRow> {
-    if (customer.tenantId !== tenant.tenantId) {
-      throw new ForbiddenException('This account cannot be used here.');
+    if (
+      !identity.email ||
+      identity.emailVerified !== true ||
+      identity.email === customer.email
+    ) {
+      return customer;
     }
     return this.prisma.customer.update({
       where: { id: customer.id },
-      data: {
-        ...(identity.email ? { email: identity.email } : {}),
-      },
+      data: { email: identity.email },
     });
   }
 
@@ -163,7 +271,7 @@ export class CustomersService {
   // provider so a 'dev' and a 'cognito' row can never collide on the same
   // email. Deliberately a lookup, not an identity key: the authoritative
   // identity is always (externalProvider, externalSubject) — see
-  // resolveOrCreateFromIdentity — this exists only because Cognito's
+  // requireCustomer — this exists only because Cognito's
   // ConfirmSignUp response carries no subject to resolve by directly, and
   // there is no non-privileged Cognito API that returns one either
   // (retrieving an existing user's sub requires AdminGetUser, a
@@ -176,12 +284,17 @@ export class CustomersService {
   // rather than silently binding verification state to an arbitrary
   // customer. That would be a genuine data anomaly elsewhere, not a
   // request-level error, so it throws rather than returning null.
+  //
+  // SC4f-2 — scoped to the request's business: one login may hold a profile
+  // at several businesses, and verifying here must only ever mark THIS
+  // business's profile.
   async findByEmailAndProvider(
     provider: string,
     email: string,
+    tenant: TenantContext,
   ): Promise<CustomerRow | null> {
     const matches = await this.prisma.customer.findMany({
-      where: { externalProvider: provider, email },
+      where: { tenantId: tenant.tenantId, externalProvider: provider, email },
     });
 
     if (matches.length > 1) {
@@ -211,6 +324,19 @@ export class CustomersService {
 //     name") rather than an empty string, so a blank submission is never
 //     silently persisted as data
 //   - capped at DISPLAY_NAME_MAX_LENGTH characters
+// SC4f-2 — a new profile's name from the login's own claim: the same
+// trimming as a customer edit, cut to the limit rather than refused (the
+// claim is the identity provider's, not something the customer typed here).
+function seedDisplayName(claim: string | null): string | null {
+  if (typeof claim !== 'string') return null;
+  const normalized = claim
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, DISPLAY_NAME_MAX_LENGTH)
+    .trim();
+  return normalized.length === 0 ? null : normalized;
+}
+
 function normalizeDisplayName(value: unknown): string | null {
   if (value === null) {
     return null;

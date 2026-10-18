@@ -202,7 +202,8 @@ describe('POST /api/v1/orders/reward-eligibility (integration)', () => {
   async function seedCustomerBalance(sub: string, balance: number): Promise<void> {
     const customer = await prisma.customer.upsert({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: 'dev',
           externalSubject: `${SUBJECT_PREFIX}${sub}`,
         },

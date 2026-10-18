@@ -1,3 +1,4 @@
+import { enrollTestCustomer } from '@mocha-house/testing';
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
@@ -177,8 +178,20 @@ describe('checkout request validation and payment safety (integration)', () => {
     };
   }
 
-  function newIdentity(): { subject: string; token: string } {
+  // SC4f-2 — a signed-in customer who has joined this business.
+  // enroll=false: a valid login that has not joined this business — used
+  // where a test proves a refused request leaves no Customer behind.
+  async function newIdentity(
+    enroll = true,
+  ): Promise<{ subject: string; token: string }> {
     const subject = `${SUBJECT_PREFIX}${randomUUID()}`;
+    if (enroll) {
+      await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, {
+        provider: 'dev',
+        subject,
+        email: `${subject.slice(4)}@example.test`,
+      });
+    }
     const token = signDevJwt(
       { sub: subject, email: `${subject.slice(4)}@example.test`, name: null },
       devSecret,
@@ -230,7 +243,7 @@ describe('checkout request validation and payment safety (integration)', () => {
 
     it('POST /api/v1/orders (signed in) — 400, no PaymentAttempt, no Customer', async () => {
       for (const [name, lines] of cases()) {
-        const { subject, token } = newIdentity();
+        const { subject, token } = await newIdentity(false);
         const body = checkoutBody({ lines });
         const response = await request(fakeApp.getHttpServer())
           .post('/api/v1/orders')
@@ -247,7 +260,7 @@ describe('checkout request validation and payment safety (integration)', () => {
 
     it('POST /api/v1/orders/checkout-quote (signed in) — 400, no Customer', async () => {
       for (const [name, lines] of cases()) {
-        const { subject, token } = newIdentity();
+        const { subject, token } = await newIdentity(false);
         const response = await request(fakeApp.getHttpServer())
           .post('/api/v1/orders/checkout-quote')
           .set('Authorization', `Bearer ${token}`)
@@ -262,7 +275,7 @@ describe('checkout request validation and payment safety (integration)', () => {
 
     it('POST /api/v1/orders/reward-eligibility — 400, no Customer', async () => {
       for (const [name, lines] of cases()) {
-        const { subject, token } = newIdentity();
+        const { subject, token } = await newIdentity(false);
         const response = await request(fakeApp.getHttpServer())
           .post('/api/v1/orders/reward-eligibility')
           .set('Authorization', `Bearer ${token}`)
@@ -314,7 +327,7 @@ describe('checkout request validation and payment safety (integration)', () => {
         '/api/v1/orders/checkout-quote',
         '/api/v1/orders/reward-eligibility',
       ]) {
-        const { token } = newIdentity();
+        const { token } = await newIdentity();
         const response = await request(fakeApp.getHttpServer())
           .post(path)
           .set('Authorization', `Bearer ${token}`)
@@ -357,7 +370,7 @@ describe('checkout request validation and payment safety (integration)', () => {
         '/api/v1/orders/checkout-quote',
         '/api/v1/orders/reward-eligibility',
       ]) {
-        const { token } = newIdentity();
+        const { token } = await newIdentity();
         const response = await request(fakeApp.getHttpServer())
           .post(path)
           .set('Authorization', `Bearer ${token}`)
@@ -370,7 +383,7 @@ describe('checkout request validation and payment safety (integration)', () => {
     });
 
     it('quotes and reward eligibility still answer 200', async () => {
-      const { token } = newIdentity();
+      const { token } = await newIdentity();
       await request(fakeApp.getHttpServer())
         .post('/api/v1/orders/checkout-quote')
         .send({ locationId, lines: [validLine()] })
@@ -400,7 +413,7 @@ describe('checkout request validation and payment safety (integration)', () => {
       // Payment availability is decided after pricing (a gift card may cover
       // everything), so the signed-in Customer row may already exist — the
       // payment records must not.
-      const { token } = newIdentity();
+      const { token } = await newIdentity();
       const body = checkoutBody();
       await request(disabledApp.getHttpServer())
         .post('/api/v1/orders')

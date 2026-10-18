@@ -11,6 +11,7 @@ Web side: `apps/web/src/lib/client-ip-forwarding.ts`.
 | `POST /orders` (checkout) | `checkout` | signed-in customer 30/min; anonymous per IP 30/min; tenant ceiling 300/min |
 | `POST /orders/checkout-quote` | `checkout-quote` | customer 60/min; anonymous per IP 60/min; tenant 600/min |
 | `POST /orders/reward-eligibility` | `reward-eligibility` | customer 30/min; tenant 300/min |
+| `POST /customers/me/enrollment` (SC4f-2) | `customer-enrollment` | customer 10/hour; tenant 600/hour |
 | `GET /orders/:orderId` (guest status, polled) | `order-status` | per order 30/min; **unsuccessful** lookups per IP 20 per 5 min (counted on arrival, given back on success); tenant 1200/min |
 | `POST /auth/sign-in` | `customer-sign-in` | per identifier+IP 10 per 15 min; per IP 60 per 5 min; per identifier 60/hour |
 | `POST /internal/auth/sign-in` | `internal-sign-in` | per identifier+IP 5 per 15 min; per IP 30 per 5 min; per identifier 30/hour |

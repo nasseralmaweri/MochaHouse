@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
-import { tenantContextFor } from '@mocha-house/testing';
+import { tenantContextFor, enrollTestCustomer } from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import {
@@ -155,18 +155,20 @@ describe('CheckoutService (integration)', () => {
     };
   }
 
-  function testCustomerIdentity(suffix: string): CustomerIdentity {
-    return {
+  async function testCustomerIdentity(suffix: string): Promise<CustomerIdentity> {
+    const enrolled: CustomerIdentity = {
       provider: 'test',
       subject: `test-customer-${suffix}`,
       email: `${suffix}@example.com`,
       name: null,
       emailVerified: null,
     };
+    await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, enrolled);
+    return enrolled;
   }
 
   it('associates an authenticated checkout with the resolved Customer id (Milestone 4B)', async () => {
-    const identity = testCustomerIdentity(randomUUID());
+    const identity = await testCustomerIdentity(randomUUID());
 
     const confirmation = await checkoutService.checkout(
       buildRequest(),
@@ -181,7 +183,8 @@ describe('CheckoutService (integration)', () => {
 
     const customer = await prisma.customer.findUniqueOrThrow({
       where: {
-        externalProvider_externalSubject: {
+        tenantId_externalProvider_externalSubject: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
           externalProvider: identity.provider,
           externalSubject: identity.subject,
         },
@@ -204,7 +207,7 @@ describe('CheckoutService (integration)', () => {
   });
 
   it('resolves the same Customer across repeated authenticated checkouts by the same identity', async () => {
-    const identity = testCustomerIdentity(randomUUID());
+    const identity = await testCustomerIdentity(randomUUID());
 
     const first = await checkoutService.checkout(
       buildRequest(),

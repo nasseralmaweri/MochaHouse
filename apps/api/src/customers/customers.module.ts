@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TenancyModule } from '../tenancy/tenancy.module';
+import { RateLimitModule } from '../rate-limit/rate-limit.module';
 import { CustomersController } from './api/customers.controller';
 import { CustomerPreferredLocationsController } from './api/customer-preferred-locations.controller';
 import { CustomerPreferencesController } from './api/customer-preferences.controller';
@@ -15,9 +16,11 @@ import { CustomerPreferencesService } from './application/customer-preferences.s
 // (AuthController's register/verify need CustomersService). PrismaService
 // comes from the @Global PrismaModule.
 // TenancyModule (Milestone S0D-2B-1): these controllers pass the request's
-// TenantContext to CustomersService.resolveOrCreateFromIdentity.
+// TenantContext to CustomersService (requireCustomer / enroll, SC4f-2).
+// RateLimitModule (SC4f-2): CustomersController rate-limits joining a
+// business (POST /customers/me/enrollment).
 @Module({
-  imports: [TenancyModule],
+  imports: [TenancyModule, RateLimitModule],
   controllers: [
     CustomersController,
     CustomerPreferredLocationsController,

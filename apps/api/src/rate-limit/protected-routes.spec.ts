@@ -1,5 +1,7 @@
 import 'reflect-metadata';
 import { AuthController } from '../customer-auth/api/auth.controller';
+import { CustomerAuthGuard } from '../customer-auth/infrastructure/customer-auth.guard';
+import { CustomersController } from '../customers/api/customers.controller';
 import { OptionalCustomerAuthGuard } from '../customer-auth/infrastructure/optional-customer-auth.guard';
 import { InternalAuthController } from '../internal-auth/api/internal-auth.controller';
 import { CheckoutRewardsController } from '../orders/api/checkout-rewards.controller';
@@ -57,6 +59,13 @@ const PROTECTED: ReadonlyArray<{
     policy: 'reward-eligibility',
   },
   { controller: AuthController, method: 'signIn', policy: 'customer-sign-in' },
+  // SC4f-2 — a signed-in customer joining a business (limited per login).
+  {
+    controller: CustomersController,
+    method: 'enroll',
+    policy: 'customer-enrollment',
+    authenticatedFirst: CustomerAuthGuard,
+  },
   {
     controller: AuthController,
     method: 'register',

@@ -31,6 +31,7 @@ import {
   removePreferredLocation,
 } from "./locations";
 import { updateCommunicationPreferences } from "./preferences";
+import { enrollCustomer, safeReturnPath } from "./enrollment";
 
 function getApiUrl(): string {
   const apiUrl = process.env.API_URL;
@@ -529,4 +530,39 @@ export async function signOutAction(): Promise<void> {
   const cookieStore = await cookies();
   clearSessionCookie(cookieStore, CUSTOMER_SESSION_COOKIE_BASE);
   redirect("/account/sign-in");
+}
+
+export interface JoinRestaurantFormState {
+  error: string | null;
+}
+
+// SC4f-2 — Server Action backing /account/join: the signed-in customer's
+// explicit choice to join THIS restaurant with their CENTERIVO login. Server
+// Actions only accept same-origin posts; the restaurant is the API's resolved
+// storefront and the return path is limited to this app's own pages.
+export async function joinRestaurantAction(
+  _previousState: JoinRestaurantFormState,
+  formData: FormData,
+): Promise<JoinRestaurantFormState> {
+  const token = await getCustomerSessionToken();
+  if (!token) {
+    redirect("/account/sign-in");
+  }
+
+  const result = await enrollCustomer(token);
+  if (result.outcome === "unauthorized") {
+    redirect("/account/sign-in");
+  }
+  if (result.outcome === "refused") {
+    return { error: result.message };
+  }
+  if (result.outcome === "rate-limited") {
+    return { error: TOO_MANY_ATTEMPTS_MESSAGE };
+  }
+  if (result.outcome === "error") {
+    return { error: "Could not join right now. Please try again." };
+  }
+
+  revalidatePath("/account");
+  redirect(safeReturnPath(formData.get("next")));
 }

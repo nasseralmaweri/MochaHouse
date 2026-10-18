@@ -15,7 +15,7 @@ export interface CustomerIdentity {
   // lookup. null means the provider didn't assert either way (never
   // treated as true). Required, not optional, so every call site has to
   // consciously decide this rather than silently defaulting — see
-  // CustomersService.resolveOrCreateFromIdentity for how it's used.
+  // CustomersService.requireCustomer / enroll for how it's used.
   emailVerified: boolean | null;
 }
 

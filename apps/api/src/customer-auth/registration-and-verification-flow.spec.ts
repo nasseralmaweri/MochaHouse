@@ -333,7 +333,7 @@ describe('Customer registration + email verification (integration)', () => {
     it('surfaces a clear failure, creates no Customer, and a retry correctly reports the account as already existing', async () => {
       const email = uniqueEmail('partialfail');
       const spy = jest
-        .spyOn(customersService, 'resolveOrCreateFromIdentity')
+        .spyOn(customersService, 'createAtRegistration')
         .mockRejectedValueOnce(
           new Error('Simulated Customer persistence failure'),
         );
@@ -370,10 +370,10 @@ describe('Customer registration + email verification (integration)', () => {
       expect(await findCustomer(email)).toBeNull();
     });
 
-    it('verification still succeeds after the partial-failure window (the provider confirmed it), and the next sign-in JIT-creates the Customer already verified', async () => {
+    it('verification still succeeds after the partial-failure window (the provider confirmed it), and after signing in the customer is asked to join and the explicit join creates the Customer already verified (SC4f-2)', async () => {
       const email = uniqueEmail('partialfailverify');
       const spy = jest
-        .spyOn(customersService, 'resolveOrCreateFromIdentity')
+        .spyOn(customersService, 'createAtRegistration')
         .mockRejectedValueOnce(
           new Error('Simulated Customer persistence failure'),
         );
@@ -403,19 +403,29 @@ describe('Customer registration + email verification (integration)', () => {
       // This is the accepted, documented residual limitation.
       expect(await findCustomer(email)).toBeNull();
 
-      // Sign-in itself only mints a token — JIT provisioning happens on
-      // the next *authenticated* request (CustomerAuthGuard), so recovery
-      // completes at the first protected call after signing in, here
-      // /customers/me. Its emailVerified claim (true, since this
-      // identifier is verified in the dev directory) means the
-      // JIT-created Customer is stamped verified immediately, never stuck
-      // incorrectly null.
+      // SC4f-2 — sign-in only mints a token, and a signed-in request never
+      // creates a profile on its own: /customers/me answers
+      // CUSTOMER_NOT_ENROLLED, and the customer's explicit join creates it.
+      // The token's emailVerified claim (true, since this identifier is
+      // verified in the dev directory) means it is stamped verified at once.
       const signInResponse = await request(app.getHttpServer())
         .post('/api/v1/auth/sign-in')
         .send({ identifier: email, password: 'a-fine-password' })
         .expect(201);
       const { idToken } = signInResponse.body as CustomerSignInResponse;
 
+      const notYet = await request(app.getHttpServer())
+        .get('/api/v1/customers/me')
+        .set('Authorization', `Bearer ${idToken}`)
+        .expect(403);
+      expect(notYet.body).toMatchObject({ code: 'CUSTOMER_NOT_ENROLLED' });
+      expect(await findCustomer(email)).toBeNull();
+
+      await request(app.getHttpServer())
+        .post('/api/v1/customers/me/enrollment')
+        .set('Authorization', `Bearer ${idToken}`)
+        .send({})
+        .expect(201);
       const meResponse = await request(app.getHttpServer())
         .get('/api/v1/customers/me')
         .set('Authorization', `Bearer ${idToken}`)
