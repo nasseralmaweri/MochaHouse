@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import type {
   InternalMeResponse,
   InternalPermissionCapability,
@@ -11,6 +11,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorizationService } from '../authorization/authorization.service';
 import { InternalUsersService } from './internal-users.service';
 import type { InternalUserRow } from '../infrastructure/internal-identity';
+import { LEGACY_BRAND, type LegacyBrand } from '../../tenancy/legacy-brand';
+import { effectivePointsLabel } from '../../loyalty/application/loyalty-points-label';
 
 // Composes GET /api/v1/internal/me (Milestone 5C): the user profile plus a
 // DERIVED authorization summary for the Admin shell. Every value here comes
@@ -22,6 +24,7 @@ export class InternalSessionService {
     private readonly prisma: PrismaService,
     private readonly authorizationService: AuthorizationService,
     private readonly internalUsers: InternalUsersService,
+    @Inject(LEGACY_BRAND) private readonly legacyBrand: LegacyBrand,
   ) {}
 
   async buildMeResponse(
@@ -93,6 +96,12 @@ export class InternalSessionService {
       business: { ...business, access },
       user: this.internalUsers.toProfile(user),
       entitlements: context.entitlementsSummary(),
+      // SC4f-3b — presentation only.
+      loyaltyPointsLabel: await effectivePointsLabel(
+        this.prisma,
+        tenant.tenantId,
+        this.legacyBrand,
+      ),
       authorization: {
         permissions: summary.permissions,
         isCorporate: summary.isCorporate,

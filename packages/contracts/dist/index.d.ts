@@ -998,6 +998,7 @@ export interface InternalMeResponse {
     user: InternalUserProfile;
     authorization: InternalAuthorizationSummary;
     entitlements: InternalEntitlementsSummary;
+    loyaltyPointsLabel: string;
 }
 export interface PlatformOperatorProfile {
     id: string;
@@ -1898,6 +1899,21 @@ export interface FeatureNotAvailableError {
     code: typeof FEATURE_NOT_AVAILABLE;
     feature: StorefrontFeatureKey;
     message: string;
+}
+export interface StorefrontProfileResponse {
+    businessName: string;
+    orderingAvailable: boolean;
+    loyaltyPointsLabel: string;
+    presentation: "legacy" | "standard";
+}
+export declare const DEFAULT_LOYALTY_POINTS_LABEL = "Points";
+export declare const LOYALTY_POINTS_LABEL_MAX = 32;
+export interface LoyaltyPointsLabelSettings {
+    pointsLabel: string | null;
+    effectivePointsLabel: string;
+}
+export interface UpdateLoyaltyPointsLabelRequest {
+    pointsLabel: string | null;
 }
 export interface StorefrontFeaturesResponse {
     features: Record<StorefrontFeatureKey, boolean>;

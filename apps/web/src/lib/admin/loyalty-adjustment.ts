@@ -50,7 +50,7 @@ export function prepareAdjustment(
   if (magnitude === null) {
     return {
       ok: false,
-      error: "Enter a whole number of Mocha Beans greater than zero.",
+      error: "Enter a whole number greater than zero.",
     };
   }
 

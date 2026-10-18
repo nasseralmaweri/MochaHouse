@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { FranchisingPageContent } from "@mocha-house/contracts";
+import { notFound } from "next/navigation";
 import { getPublishedFranchisingContent, getStorefrontFeatures } from "@/lib/api";
+import { pageTitle, requireStorefrontProfile } from "@/lib/storefront-profile";
 import { FeatureUnavailable } from "@/components/FeatureUnavailable";
 import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/Card";
@@ -15,6 +17,9 @@ const DEFAULT_DESCRIPTION =
 // The current hard-coded content — used whenever the CMS has nothing
 // published for "franchising" (no row, draft-only, or any fetch/API
 // failure). CMS failure must never break this page.
+// SC4f-3b (owner decision J3): this is Mocha House's own content — only the
+// legacy presentation ever shows it. Any other business shows franchising
+// only when it has published its own content (never generated copy).
 const FALLBACK_CONTENT: FranchisingPageContent = {
   intro: {
     heading: "A growing coffeehouse brand",
@@ -50,10 +55,14 @@ const FALLBACK_CONTENT: FranchisingPageContent = {
 };
 
 export async function generateMetadata(): Promise<Metadata> {
-  const content = await getPublishedFranchisingContent();
+  const [content, profile] = await Promise.all([
+    getPublishedFranchisingContent(),
+    requireStorefrontProfile(),
+  ]);
+  const legacy = profile.presentation === "legacy";
   return {
-    title: content?.seo.pageTitle ?? DEFAULT_TITLE,
-    description: content?.seo.metaDescription ?? DEFAULT_DESCRIPTION,
+    title: content?.seo.pageTitle ?? (legacy ? DEFAULT_TITLE : pageTitle(profile, "Franchising")),
+    description: content?.seo.metaDescription ?? (legacy ? DEFAULT_DESCRIPTION : undefined),
   };
 }
 
@@ -62,10 +71,15 @@ export async function generateMetadata(): Promise<Metadata> {
 // (intro, opportunity, process steps, CTA copy) is CMS-managed. The CTA's
 // destination is always /franchising/inquiry — never CMS-controlled.
 export default async function FranchisingPage() {
-  const [cms, features] = await Promise.all([
+  const [cms, features, profile] = await Promise.all([
     getPublishedFranchisingContent(),
     getStorefrontFeatures(),
+    requireStorefrontProfile(),
   ]);
+  const legacy = profile.presentation === "legacy";
+  // A business without its own published franchising content has no
+  // franchising page (Mocha House keeps its established content).
+  if (!cms && !legacy) notFound();
   const content = cms ?? FALLBACK_CONTENT;
 
   // SC2b — this business does not offer franchising.
@@ -80,10 +94,16 @@ export default async function FranchisingPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-8 px-4 py-8">
-      <PageHeader
-        title="Franchising with Mocha House"
-        subtitle="Bring the Mocha House experience to your community."
-      />
+      {legacy ? (
+        <PageHeader
+          title="Franchising with Mocha House"
+          subtitle="Bring the Mocha House experience to your community."
+        />
+      ) : (
+        <PageHeader
+          title={profile.businessName ? `Franchising with ${profile.businessName}` : "Franchising"}
+        />
+      )}
 
       <section className="flex flex-col gap-2">
         <h2 className="text-base font-semibold text-text-primary">

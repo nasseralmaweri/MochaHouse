@@ -5,6 +5,7 @@ import { getLocationMenu } from "@/lib/api";
 import { formatPrice } from "@/lib/money";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
+import { requireStorefrontProfile } from "@/lib/storefront-profile";
 import { BackLink } from "@/components/BackLink";
 
 interface CategoryGroup {
@@ -70,26 +71,29 @@ export default async function OrderMenuPage({
   }
 
   const { location, menu } = locationMenu;
-
-  if (!location.isDigitalOrderingEnabled) {
-    return (
-      <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
-        <PageHeader title={location.name} />
-        <Card tone="subtle" className="flex flex-col gap-3">
-          <p className="text-sm font-medium text-text-muted">
-            Online ordering isn&apos;t available at this location right now.
-          </p>
-          <BackLink href="/order/location">Choose a different location</BackLink>
-        </Card>
-      </main>
-    );
-  }
+  // SC4f-3b (owner decision J6) — the menu and its prices can always be
+  // browsed; ordering is offered only while this location takes online
+  // orders and the business takes orders. Checkout re-checks on the server.
+  const profile = await requireStorefrontProfile();
+  const orderable = location.isDigitalOrderingEnabled && profile.orderingAvailable;
 
   const categories = groupByCategory(menu.products);
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
       <PageHeader title={location.name} subtitle={menu.name} />
+
+      {!orderable ? (
+        <div role="status">
+          <Card tone="subtle" className="flex flex-col gap-3">
+            <p className="text-sm font-medium text-text-muted">
+              Online ordering isn&apos;t available at this location right now.
+              You can still browse the menu.
+            </p>
+            <BackLink href="/order/location">Choose a different location</BackLink>
+          </Card>
+        </div>
+      ) : null}
 
       {categories.length === 0 ? (
         <p className="text-sm text-text-muted">
@@ -134,7 +138,9 @@ function MenuProductRow({
           {item.product.name}
         </span>
         <span className="shrink-0 text-base font-semibold text-text-primary">
-          {formatPrice(item.effectivePrice, item.product.currency)}
+          {item.effectivePrice === null
+            ? "Price unavailable"
+            : formatPrice(item.effectivePrice, item.product.currency)}
         </span>
       </Card>
     </Link>

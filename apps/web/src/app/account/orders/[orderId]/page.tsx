@@ -7,6 +7,7 @@ import { formatPrice } from "@/lib/money";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { BackLink } from "@/components/BackLink";
+import { requireStorefrontProfile } from "@/lib/storefront-profile";
 
 const STATUS_LABEL: Record<OrderStatus, string> = {
   RECEIVED: "Received",
@@ -23,6 +24,7 @@ export default async function AccountOrderDetailPage({
 }: {
   params: Promise<{ orderId: string }>;
 }) {
+  const profile = await requireStorefrontProfile();
   const { orderId } = await params;
 
   const token = await getCustomerSessionToken();
@@ -97,7 +99,7 @@ export default async function AccountOrderDetailPage({
           ) : null}
           {order.loyaltyReward ? (
             <div className="flex items-center justify-between text-sm text-status-success">
-              <span>Mocha Beans Reward · {order.loyaltyReward.rewardName}</span>
+              <span>{profile.loyaltyPointsLabel} Reward · {order.loyaltyReward.rewardName}</span>
               <span>−{formatPrice(order.rewardDiscount, order.currency)}</span>
             </div>
           ) : null}
@@ -145,12 +147,12 @@ export default async function AccountOrderDetailPage({
           ) : null}
           {order.loyaltyReward ? (
             <p className="text-xs text-text-muted">
-              {order.loyaltyReward.beanCost} Mocha Beans used
+              {order.loyaltyReward.beanCost} {profile.loyaltyPointsLabel} used
             </p>
           ) : null}
           {order.loyaltyBonus && order.loyaltyBonus.totalBonusBeans > 0 ? (
             <p className="text-xs text-status-success">
-              +{order.loyaltyBonus.totalBonusBeans} bonus Mocha Beans earned
+              +{order.loyaltyBonus.totalBonusBeans} bonus {profile.loyaltyPointsLabel} earned
             </p>
           ) : null}
         </div>

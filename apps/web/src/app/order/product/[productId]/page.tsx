@@ -4,6 +4,8 @@ import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { BackLink } from "@/components/BackLink";
 import { ProductCustomizer } from "@/components/ProductCustomizer";
+import { formatPrice } from "@/lib/money";
+import { requireStorefrontProfile } from "@/lib/storefront-profile";
 
 export default async function OrderProductPage({
   params,
@@ -36,20 +38,9 @@ export default async function OrderProductPage({
   }
 
   const { location, menu } = locationMenu;
-
-  if (!location.isDigitalOrderingEnabled) {
-    return (
-      <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
-        <PageHeader title={location.name} />
-        <Card tone="subtle" className="flex flex-col gap-3">
-          <p className="text-sm font-medium text-text-muted">
-            Online ordering isn&apos;t available at this location right now.
-          </p>
-          <BackLink href="/order/location">Choose a different location</BackLink>
-        </Card>
-      </main>
-    );
-  }
+  // SC4f-3b (owner decision J6) — see menu/page.tsx.
+  const profile = await requireStorefrontProfile();
+  const orderable = location.isDigitalOrderingEnabled && profile.orderingAvailable;
 
   const menuProduct = menu.products.find(
     (item) => item.product.id === productId,
@@ -71,6 +62,31 @@ export default async function OrderProductPage({
             Back to menu
           </BackLink>
         </Card>
+      </main>
+    );
+  }
+
+  if (!orderable) {
+    // Browse only: the item and its price, with no way to add it to a cart.
+    return (
+      <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
+        <BackLink href={`/order/menu?location=${location.id}`}>
+          ← {menu.name}
+        </BackLink>
+        <PageHeader
+          title={menuProduct.product.name}
+          subtitle={menuProduct.product.description ?? undefined}
+        />
+        {menuProduct.effectivePrice !== null ? (
+          <p className="text-lg font-semibold text-text-primary">
+            {formatPrice(menuProduct.effectivePrice, menuProduct.product.currency)}
+          </p>
+        ) : null}
+        <div role="status">
+          <Card tone="subtle" className="text-sm font-medium text-text-muted">
+            Online ordering isn&apos;t available at this location right now.
+          </Card>
+        </div>
       </main>
     );
   }

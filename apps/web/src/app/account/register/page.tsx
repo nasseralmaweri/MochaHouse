@@ -3,8 +3,10 @@ import { getCustomerSession } from "@/lib/auth/session";
 import { PageHeader } from "@/components/PageHeader";
 import { BackLink } from "@/components/BackLink";
 import { RegisterForm } from "./RegisterForm";
+import { named, requireStorefrontProfile } from "@/lib/storefront-profile";
 
 export default async function RegisterPage() {
+  const profile = await requireStorefrontProfile();
   const session = await getCustomerSession();
   if (session) {
     redirect("/account");
@@ -14,7 +16,11 @@ export default async function RegisterPage() {
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
       <PageHeader
         title="Create account"
-        subtitle="Join Mocha House to track your orders."
+        subtitle={named(
+          profile,
+          "Join {name} to track your orders.",
+          "Create an account to track your orders.",
+        )}
       />
       <RegisterForm />
       <BackLink href="/account/sign-in">Already have an account? Sign in</BackLink>

@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { BackLink } from "@/components/BackLink";
 import { RemovePreferredLocationButton } from "./RemovePreferredLocationButton";
 import { AddPreferredLocationForm } from "./AddPreferredLocationForm";
+import { named, requireStorefrontProfile } from "@/lib/storefront-profile";
 
 // Preferred locations are admin-mutable (a location can be deactivated or
 // have digital ordering toggled at any time), so this must render per
@@ -16,6 +17,7 @@ import { AddPreferredLocationForm } from "./AddPreferredLocationForm";
 export const dynamic = "force-dynamic";
 
 export default async function PreferredLocationsPage() {
+  const profile = await requireStorefrontProfile();
   const token = await getCustomerSessionToken();
   if (!token) {
     redirect("/account/sign-in");
@@ -47,7 +49,11 @@ export default async function PreferredLocationsPage() {
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
       <PageHeader
         title="Preferred locations"
-        subtitle="Save the Mocha House locations you order from most."
+        subtitle={named(
+          profile,
+          "Save the {name} locations you order from most.",
+          "Save the locations you order from most.",
+        )}
       />
 
       {loadError ? (

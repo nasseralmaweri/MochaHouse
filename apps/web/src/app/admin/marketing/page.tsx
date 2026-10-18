@@ -6,6 +6,8 @@ import { AdminPage } from "@/components/admin/AdminPage";
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import { AdminErrorState, AdminForbidden } from "@/components/admin/states";
 import { CampaignsManager } from "@/components/admin/CampaignsManager";
+import { adminPointsLabel } from "@/lib/internal-auth/points-label";
+import { singularPoints } from "@/lib/loyalty-label";
 
 // Admin → Marketing (Milestone 8G). A thin HQ "Campaign Management" layer
 // that organizes existing Promotions, Bonus Mocha Bean Promotions, Products
@@ -13,6 +15,7 @@ import { CampaignsManager } from "@/components/admin/CampaignsManager";
 // page; create/edit/status actions gate on `marketing.manage`. The API
 // enforces both.
 export default async function AdminMarketingPage() {
+  const pointsLabel = await adminPointsLabel();
   const session = await getInternalSession();
   if (!session) {
     redirect("/internal/sign-in");
@@ -22,7 +25,7 @@ export default async function AdminMarketingPage() {
   const header = (
     <AdminPageHeader
       title="Marketing"
-      description="Campaigns organize existing Promotions, Bonus Mocha Bean Promotions, featured products and creative — they never duplicate those systems' own rules."
+      description={`Campaigns organize existing Promotions, Bonus ${singularPoints(pointsLabel)} Promotions, featured products and creative — they never duplicate those systems' own rules.`}
       breadcrumbs={[{ label: "Marketing" }]}
     />
   );

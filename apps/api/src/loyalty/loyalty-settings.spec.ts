@@ -9,6 +9,8 @@ import type { App } from 'supertest/types';
 import { FakePaymentProvider } from '@mocha-house/integrations';
 import type {
   CheckoutRequest,
+  InternalMeResponse,
+  LoyaltyPointsLabelSettings,
   LoyaltySettings,
 } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -46,6 +48,8 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
   let productId: string;
   let sizeGroupId: string;
   let mediumOptionId: string;
+
+  let originalPointsLabel: string | null = null;
 
   const KEY_PREFIX = 'test_settings_';
   const SUBJECT_PREFIX = 'test-settings-';
@@ -247,11 +251,33 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
       },
     });
 
+    await makeUserWithRole('viewer', ['loyalty.view'], {
+      scopeType: 'CORPORATE',
+      scopeId: null,
+    });
+    const config = await prisma.loyaltyConfiguration.findUnique({
+      where: {
+        tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+      },
+      select: { pointsLabel: true },
+    });
+    originalPointsLabel = config?.pointsLabel ?? null;
+
     await setRate(1);
   }, 45_000);
 
   afterEach(async () => {
     await setRate(1);
+    await prisma.loyaltyConfiguration.updateMany({
+      where: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+      data: { pointsLabel: originalPointsLabel },
+    });
+    await prisma.internalAuditEvent.deleteMany({
+      where: {
+        actorInternalUserId: { in: userIds },
+        action: 'loyalty.points_label_changed',
+      },
+    });
     await prisma.internalAuditEvent.deleteMany({
       where: {
         actorInternalUserId: { in: userIds },
@@ -345,6 +371,90 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
   it('loyalty.configure held only at LOCATION scope cannot update the rate', async () => {
     await getSettings('locationScoped').expect(403);
     await putSettings('locationScoped', { earningRatePerDollar: 2 }).expect(403);
+  });
+
+  // SC4f-3b — the business's name for its loyalty points, over real HTTP.
+  describe('points name', () => {
+    const path = '/api/v1/admin/loyalty/settings/points-label';
+    const getLabel = (key: string) =>
+      request(app.getHttpServer())
+        .get(path)
+        .set('Authorization', `Bearer ${token(`${key}-${suffix}`)}`);
+    const putLabel = (key: string, body: unknown) =>
+      request(app.getHttpServer())
+        .put(path)
+        .set('Authorization', `Bearer ${token(`${key}-${suffix}`)}`)
+        .send(body as object);
+    const storedLabel = async () =>
+      (
+        await prisma.loyaltyConfiguration.findUniqueOrThrow({
+          where: {
+            tenantId_key: { tenantId: TENANT_1_MOCHA_HOUSE_ID, key: 'company' },
+          },
+          select: { pointsLabel: true },
+        })
+      ).pointsLabel;
+    const labelAudits = () =>
+      prisma.internalAuditEvent.count({
+        where: {
+          actorInternalUserId: { in: userIds },
+          action: 'loyalty.points_label_changed',
+        },
+      });
+
+    it('requires a signed-in staff member', async () => {
+      await request(app.getHttpServer()).get(path).expect(401);
+      await request(app.getHttpServer())
+        .put(path)
+        .send({ pointsLabel: 'Stars' })
+        .expect(401);
+    });
+
+    it('refuses view-only, store manager and location-scoped staff, with no change or audit', async () => {
+      const before = await storedLabel();
+      for (const key of ['viewer', 'storeMgr', 'locationScoped']) {
+        await getLabel(key).expect(403);
+        await putLabel(key, { pointsLabel: 'Stars' }).expect(403);
+      }
+      expect(await storedLabel()).toBe(before);
+      expect(await labelAudits()).toBe(0);
+    });
+
+    it('HQ can set the name (audited, shown in /internal/me); null restores the default', async () => {
+      const set = (
+        await putLabel('hq', { pointsLabel: '  Gold  Stars ' }).expect(200)
+      ).body as LoyaltyPointsLabelSettings;
+      expect(set).toEqual({
+        pointsLabel: 'Gold Stars',
+        effectivePointsLabel: 'Gold Stars',
+      });
+      expect(await storedLabel()).toBe('Gold Stars');
+      expect(await labelAudits()).toBe(1);
+
+      const me = await request(app.getHttpServer())
+        .get('/api/v1/internal/me')
+        .set('Authorization', `Bearer ${token(`hq-${suffix}`)}`)
+        .expect(200);
+      expect((me.body as InternalMeResponse).loyaltyPointsLabel).toBe(
+        'Gold Stars',
+      );
+
+      const cleared = (await putLabel('hq', { pointsLabel: null }).expect(200))
+        .body as LoyaltyPointsLabelSettings;
+      expect(cleared.pointsLabel).toBeNull();
+      expect(await storedLabel()).toBeNull();
+      expect((await getLabel('hq').expect(200)).body).toEqual(cleared);
+      expect(await labelAudits()).toBe(2);
+    });
+
+    it('rejects an invalid name without changing anything', async () => {
+      const before = await storedLabel();
+      for (const bad of ['x'.repeat(33), '<b>', 7]) {
+        await putLabel('hq', { pointsLabel: bad }).expect(400);
+      }
+      expect(await storedLabel()).toBe(before);
+      expect(await labelAudits()).toBe(0);
+    });
   });
 
   it('rejects an invalid rate', async () => {

@@ -7,6 +7,9 @@ import { updateLoyaltySettingsFromBrowser } from "@/lib/api-client";
 import { parseEarningRate } from "@/lib/admin/loyalty-rewards";
 import { ADMIN_FIELD_CLASS, FormField } from "./form";
 import { Button } from "./Button";
+import { usePointsLabel } from "@/lib/points-label-context";
+
+import { pointsCount } from "@/lib/loyalty-label";
 
 // HQ earning-rate control (Milestone 7B). The API (`loyalty.configure`,
 // CORPORATE-only) is the authority — it validates the range and audits the
@@ -16,6 +19,7 @@ export function LoyaltySettingsForm({
 }: {
   settings: LoyaltySettings;
 }) {
+  const pointsLabel = usePointsLabel();
   const router = useRouter();
   const [rate, setRate] = useState(String(settings.earningRatePerDollar));
   const [pending, setPending] = useState(false);
@@ -40,9 +44,7 @@ export function LoyaltySettingsForm({
     if (result.outcome === "success") {
       setRate(String(result.data.earningRatePerDollar));
       setNotice(
-        `Customers now earn ${result.data.earningRatePerDollar} Mocha Bean${
-          result.data.earningRatePerDollar === 1 ? "" : "s"
-        } per qualifying dollar. This affects future orders only.`,
+        `Customers now earn ${pointsCount(result.data.earningRatePerDollar, pointsLabel)} per qualifying dollar. This affects future orders only.`,
       );
       router.refresh();
       return;
@@ -59,7 +61,7 @@ export function LoyaltySettingsForm({
   return (
     <div className="flex max-w-md flex-col gap-3">
       <FormField
-        label="Mocha Beans per qualifying dollar"
+        label={`${pointsLabel} per qualifying dollar`}
         htmlFor="earning-rate"
         hint="A whole number between 1 and 100. Qualifying spend is whole dollars only."
       >

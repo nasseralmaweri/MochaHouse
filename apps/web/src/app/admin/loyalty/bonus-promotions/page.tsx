@@ -10,11 +10,13 @@ import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import { AdminErrorState, AdminForbidden } from "@/components/admin/states";
 import { LoyaltyTabs } from "@/components/admin/LoyaltyTabs";
 import { BonusPromotionsManager } from "@/components/admin/BonusPromotionsManager";
+import { adminPointsLabel } from "@/lib/internal-auth/points-label";
 
 // Admin → Loyalty → Bonus promotions (Milestone 7D). Deliberately simple
 // product-based Mocha Bean bonus campaigns — no discounts, no rules engine.
 // `loyalty.configure` is CORPORATE-only and the API enforces it.
 export default async function AdminLoyaltyBonusPromotionsPage() {
+  const pointsLabel = await adminPointsLabel();
   const session = await getInternalSession();
   if (!session) {
     redirect("/internal/sign-in");
@@ -24,7 +26,7 @@ export default async function AdminLoyaltyBonusPromotionsPage() {
   const header = (
     <AdminPageHeader
       title="Bonus promotions"
-      description="Award extra Mocha Beans on chosen products. No discounts — Beans only."
+      description={`Award extra ${pointsLabel} on chosen products. No discounts — ${pointsLabel} only.`}
       breadcrumbs={[
         { label: "Loyalty", href: "/admin/loyalty" },
         { label: "Bonus promotions" },

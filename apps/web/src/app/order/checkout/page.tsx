@@ -14,6 +14,7 @@ import { useCart } from "@/lib/cart/store";
 import { normalizeGiftCardCodeInput } from "@/lib/checkout/gift-card";
 import {
   getCheckoutQuoteFromBrowser,
+  CartLocationNotHereError,
   getLocationMenuFromBrowser,
   submitCheckoutFromBrowser,
 } from "@/lib/api-client";
@@ -21,6 +22,9 @@ import { formatPrice } from "@/lib/money";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { BackLink } from "@/components/BackLink";
+import { usePointsLabel } from "@/lib/points-label-context";
+import { useStorefrontProfile } from "@/lib/storefront-profile-context";
+import { pointsCount } from "@/lib/loyalty-label";
 
 const inputClassName =
   "rounded-xl border border-border-default bg-surface-card px-4 py-3 text-base text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
@@ -40,8 +44,12 @@ const COUPON_MESSAGE: Record<CouponQuoteStatus, string> = {
 };
 
 export default function CheckoutPage() {
+  const pointsLabel = usePointsLabel();
+  const profile = useStorefrontProfile();
   const router = useRouter();
   const cart = useCart();
+  // A stable store function (module-level), safe as an effect dependency.
+  const clearCart = cart.clearCart;
   const [menu, setMenu] = useState<LocationMenuResponse | null>(null);
   const [menuFailed, setMenuFailed] = useState(false);
   const [guestName, setGuestName] = useState("");
@@ -90,13 +98,21 @@ export default function CheckoutPage() {
       .then((result) => {
         if (!cancelled) setMenu(result);
       })
-      .catch(() => {
-        if (!cancelled) setMenuFailed(true);
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        // SC4f-3b (J7) — a cart from another storefront is cleared, never
+        // checked out here (the cart page explains).
+        if (error instanceof CartLocationNotHereError) {
+          clearCart();
+          router.replace("/order/cart");
+          return;
+        }
+        setMenuFailed(true);
       });
     return () => {
       cancelled = true;
     };
-  }, [cart.isHydrated, cart.locationId]);
+  }, [cart.isHydrated, cart.locationId, clearCart, router]);
 
   const cartLinesKey = cart.isHydrated
     ? JSON.stringify(
@@ -191,6 +207,14 @@ export default function CheckoutPage() {
       )
     : null;
   const cartBlocked = priced !== null && !priced.ok;
+  // SC4f-3b (J6) — the same rule as the cart: the business not taking
+  // orders, or this location not taking online orders, closes checkout
+  // (the server refuses regardless).
+  const orderingDisabled =
+    (profile !== null && !profile.orderingAvailable) ||
+    (menu !== null && menu.location.id === cart.locationId
+      ? !menu.location.isDigitalOrderingEnabled
+      : false);
 
   const currency = quote?.currency ?? (priced?.ok ? priced.currency : "USD");
   const subtotal = quote?.subtotal ?? (priced?.ok ? priced.subtotal : 0);
@@ -237,7 +261,7 @@ export default function CheckoutPage() {
   // join prompt. The server honours it only for a login that has not joined
   // this restaurant; a guest order carries no reward.
   async function placeOrder(asGuest: boolean) {
-    if (inFlightRef.current) {
+    if (inFlightRef.current || orderingDisabled) {
       return;
     }
     inFlightRef.current = true;
@@ -334,6 +358,13 @@ export default function CheckoutPage() {
         </Card>
       ) : null}
 
+      {orderingDisabled ? (
+        <Card tone="subtle" className="text-sm text-text-muted">
+          Online ordering isn&apos;t available at this location right now.{" "}
+          <BackLink href="/order/cart">Back to your cart</BackLink>
+        </Card>
+      ) : null}
+
       {cartBlocked ? (
         <Card tone="subtle" className="text-sm text-status-warning">
           Something in your cart needs attention before you can check out.{" "}
@@ -385,7 +416,7 @@ export default function CheckoutPage() {
             ) : null}
             {selectedReward ? (
               <div className="flex items-center justify-between text-sm text-status-success">
-                <span>Mocha Beans Reward · {selectedReward.name}</span>
+                <span>{pointsLabel} Reward · {selectedReward.name}</span>
                 <span>−{formatPrice(rewardDiscount, currency)}</span>
               </div>
             ) : null}
@@ -427,7 +458,7 @@ export default function CheckoutPage() {
             ) : null}
             {selectedReward ? (
               <p className="text-xs text-text-muted">
-                {selectedReward.beanCost} Mocha Beans will be used.
+                {selectedReward.beanCost} {pointsLabel} will be used.
               </p>
             ) : null}
           </div>
@@ -526,7 +557,7 @@ export default function CheckoutPage() {
       {rewardOptions.length > 0 && priced?.ok ? (
         <Card className="flex flex-col gap-3">
           <span className="text-sm font-semibold text-text-primary">
-            Use Mocha Beans
+            Use {pointsLabel}
           </span>
           <div className="flex flex-col gap-2">
             <label className="flex items-center gap-2 text-sm text-text-primary">
@@ -561,7 +592,7 @@ export default function CheckoutPage() {
                   ) : null}
                 </span>
                 <span className="shrink-0 text-xs">
-                  {reward.beanCost} Beans
+                  {pointsCount(reward.beanCost, pointsLabel)}
                   {reward.canAfford ? "" : " · not enough"}
                 </span>
               </label>
@@ -657,7 +688,7 @@ export default function CheckoutPage() {
 
         <button
           type="submit"
-          disabled={submitting || cartBlocked}
+          disabled={submitting || cartBlocked || orderingDisabled}
           className="flex min-h-11 items-center justify-center rounded-xl bg-status-success/10 px-4 py-3 text-base font-semibold text-status-success disabled:bg-surface-subtle disabled:text-text-muted"
         >
           {submitting

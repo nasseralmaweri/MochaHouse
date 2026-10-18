@@ -4,8 +4,10 @@ import { PageHeader } from "@/components/PageHeader";
 import { BackLink } from "@/components/BackLink";
 import { Card } from "@/components/Card";
 import { ProfileForm } from "./ProfileForm";
+import { named, requireStorefrontProfile } from "@/lib/storefront-profile";
 
 export default async function ProfilePage() {
+  const profile = await requireStorefrontProfile();
   const session = await getCustomerSession();
   if (!session) {
     redirect("/account/sign-in");
@@ -15,7 +17,11 @@ export default async function ProfilePage() {
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
       <PageHeader
         title="Profile"
-        subtitle="Update the name shown on your Mocha House account."
+        subtitle={named(
+          profile,
+          "Update the name shown on your {name} account.",
+          "Update the name shown on your account.",
+        )}
       />
 
       <Card className="flex flex-col gap-2 text-sm text-text-secondary">

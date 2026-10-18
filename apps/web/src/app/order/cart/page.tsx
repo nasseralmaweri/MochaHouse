@@ -4,7 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { LocationMenuResponse } from "@mocha-house/contracts";
 import { useCart, type CartLine } from "@/lib/cart/store";
-import { getLocationMenuFromBrowser } from "@/lib/api-client";
+import {
+  CartLocationNotHereError,
+  getLocationMenuFromBrowser,
+} from "@/lib/api-client";
+import { useStorefrontProfile } from "@/lib/storefront-profile-context";
 import { formatPrice } from "@/lib/money";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
@@ -28,6 +32,12 @@ export default function OrderCartPage() {
   const [failedLocationId, setFailedLocationId] = useState<string | null>(
     null,
   );
+  // SC4f-3b (J7) — a saved cart that does not belong to this storefront was
+  // cleared (never moved to this business).
+  const [clearedForeignCart, setClearedForeignCart] = useState(false);
+  const profile = useStorefrontProfile();
+  // A stable store function (module-level), safe as an effect dependency.
+  const clearCart = cart.clearCart;
 
   useEffect(() => {
     // A null locationId only ever occurs with an empty cart (the store
@@ -46,8 +56,13 @@ export default function OrderCartPage() {
         }
         setMenu(result);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (cancelled) {
+          return;
+        }
+        if (error instanceof CartLocationNotHereError) {
+          clearCart();
+          setClearedForeignCart(true);
           return;
         }
         setFailedLocationId(cart.locationId);
@@ -56,7 +71,7 @@ export default function OrderCartPage() {
     return () => {
       cancelled = true;
     };
-  }, [cart.isHydrated, cart.locationId]);
+  }, [cart.isHydrated, cart.locationId, clearCart]);
 
   // Guards against briefly using a previous location's cached menu to
   // validate the current cart if the location changes without a remount.
@@ -158,9 +173,10 @@ export default function OrderCartPage() {
     return statuses;
   }, [effectiveMenu, cart.lines]);
 
-  const orderingDisabled = effectiveMenu
-    ? !effectiveMenu.location.isDigitalOrderingEnabled
-    : false;
+  // SC4f-3b (J6) — the business not taking orders closes ordering too.
+  const orderingDisabled =
+    (profile !== null && !profile.orderingAvailable) ||
+    (effectiveMenu ? !effectiveMenu.location.isDigitalOrderingEnabled : false);
 
   const subtotal = useMemo(() => {
     let sum = 0;
@@ -188,6 +204,15 @@ export default function OrderCartPage() {
     return (
       <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
         <PageHeader title="Your cart" subtitle="Your cart is empty." />
+        {clearedForeignCart ? (
+          <div role="status">
+            <Card tone="subtle" className="text-sm text-text-muted">
+              Your saved cart was for a location that isn&apos;t available at
+              this restaurant, so it was cleared. Nothing was ordered or
+              charged.
+            </Card>
+          </div>
+        ) : null}
         <BackLink href="/order/location">Start an order</BackLink>
       </main>
     );

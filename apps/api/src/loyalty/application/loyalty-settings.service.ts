@@ -1,11 +1,20 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import type { LoyaltySettings } from '@mocha-house/contracts';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import type {
+  LoyaltyPointsLabelSettings,
+  LoyaltySettings,
+} from '@mocha-house/contracts';
 import { DEFAULT_MOCHA_BEANS_PER_DOLLAR } from '@mocha-house/domain';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { TenantContext } from '@mocha-house/database';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import { LOYALTY_CONFIGURATION_KEY } from './loyalty.service';
+import { LEGACY_BRAND, type LegacyBrand } from '../../tenancy/legacy-brand';
+import {
+  PointsLabelError,
+  normalizePointsLabel,
+  resolvePointsLabel,
+} from './loyalty-points-label';
 
 // HQ configuration of the standard company-wide Mocha Bean earning rate
 // (Milestone 7B). `loyalty.configure` is CORPORATE-only in the permission
@@ -25,7 +34,82 @@ export class LoyaltySettingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: InternalAuditService,
+    @Inject(LEGACY_BRAND) private readonly legacyBrand: LegacyBrand,
   ) {}
+
+  // SC4f-3b — the business's own name for its loyalty points (presentation
+  // only; balances, earning and redemption are unchanged).
+  async getPointsLabel(
+    authorization: AuthorizationContext,
+    tenant: TenantContext,
+  ): Promise<LoyaltyPointsLabelSettings> {
+    authorization.assertCorporate('loyalty.configure');
+    const config = await this.prisma.loyaltyConfiguration.findUnique({
+      where: {
+        tenantId_key: {
+          tenantId: tenant.tenantId,
+          key: LOYALTY_CONFIGURATION_KEY,
+        },
+      },
+      select: { pointsLabel: true },
+    });
+    const pointsLabel = config?.pointsLabel ?? null;
+    return {
+      pointsLabel,
+      effectivePointsLabel: resolvePointsLabel(
+        pointsLabel,
+        this.legacyBrand.isLegacy(tenant.tenantId),
+      ),
+    };
+  }
+
+  async updatePointsLabel(
+    raw: unknown,
+    actorInternalUserId: string,
+    authorization: AuthorizationContext,
+    tenant: TenantContext,
+  ): Promise<LoyaltyPointsLabelSettings> {
+    authorization.assertCorporate('loyalty.configure');
+    let pointsLabel: string | null;
+    try {
+      pointsLabel = normalizePointsLabel(raw);
+    } catch (error) {
+      if (error instanceof PointsLabelError) {
+        throw new BadRequestException(error.message);
+      }
+      throw error;
+    }
+    await this.ensureConfiguration(tenant);
+    await this.prisma.$transaction(async (tx) => {
+      // Lock the row so concurrent changes audit the true "before" value.
+      await tx.$queryRaw`SELECT id FROM "LoyaltyConfiguration" WHERE "tenantId" = ${tenant.tenantId} AND key = ${LOYALTY_CONFIGURATION_KEY} FOR UPDATE`;
+      const before = await tx.loyaltyConfiguration.findUniqueOrThrow({
+        where: {
+          tenantId_key: {
+            tenantId: tenant.tenantId,
+            key: LOYALTY_CONFIGURATION_KEY,
+          },
+        },
+        select: { pointsLabel: true },
+      });
+      if (before.pointsLabel === pointsLabel) return;
+      await tx.loyaltyConfiguration.update({
+        where: {
+          tenantId_key: {
+            tenantId: tenant.tenantId,
+            key: LOYALTY_CONFIGURATION_KEY,
+          },
+        },
+        data: { pointsLabel },
+      });
+      await this.audit.recordLoyaltyPointsLabelChanged(tx, {
+        actorInternalUserId,
+        before: before.pointsLabel,
+        after: pointsLabel,
+      });
+    });
+    return this.getPointsLabel(authorization, tenant);
+  }
 
   async getSettings(
     authorization: AuthorizationContext,

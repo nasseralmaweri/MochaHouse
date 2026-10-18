@@ -504,8 +504,11 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
   await prisma.giftCardConfiguration.create({
     data: { id: i('gift-config'), tenantId, key: i('config') },
   });
+  // Returns only the id: this fixture also loads databases migrated to
+  // before later columns (such as SC4f-3b's pointsLabel) existed.
   await prisma.loyaltyConfiguration.create({
     data: { id: i('loyalty-config'), tenantId, key: i('config') },
+    select: { id: true },
   });
 }
 

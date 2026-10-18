@@ -2255,6 +2255,9 @@ export interface InternalMeResponse {
   // business's plan does not include.
   authorization: InternalAuthorizationSummary;
   entitlements: InternalEntitlementsSummary;
+  // SC4f-3b — the active business's name for its loyalty points ("Points"
+  // unless the business chose its own). Presentation only.
+  loyaltyPointsLabel: string;
 }
 
 // --- CENTERIVO platform operators (SC1a) -------------------------------
@@ -4194,6 +4197,39 @@ export interface FeatureNotAvailableError {
 // GET /api/v1/storefront/features — no auth. Availability only, for the
 // storefront's own (server-resolved) business: never the plan's name,
 // prices or any other business's data.
+// SC4f-3b — GET /api/v1/storefront/profile. No auth: what a storefront needs
+// to present ITS OWN business (resolved by the server, never named by the
+// browser). Public information only.
+export interface StorefrontProfileResponse {
+  businessName: string;
+  // The business may take orders now: taking sales (not awaiting payment
+  // setup) and at least one active location with online ordering on.
+  // Location-level availability still applies; checkout re-checks
+  // everything.
+  orderingAvailable: boolean;
+  // "Points" unless the business chose its own name. Presentation only.
+  loyaltyPointsLabel: string;
+  // "legacy": the business that keeps the original storefront presentation
+  // (Mocha House), identified by trusted deployment configuration.
+  presentation: "legacy" | "standard";
+}
+
+export const DEFAULT_LOYALTY_POINTS_LABEL = "Points";
+export const LOYALTY_POINTS_LABEL_MAX = 32;
+
+// GET/PUT /api/v1/admin/loyalty/settings/points-label (loyalty.configure).
+export interface LoyaltyPointsLabelSettings {
+  // The business's own label, or null for the default.
+  pointsLabel: string | null;
+  // What customers and staff see.
+  effectivePointsLabel: string;
+}
+
+export interface UpdateLoyaltyPointsLabelRequest {
+  // null or blank restores the default.
+  pointsLabel: string | null;
+}
+
 export interface StorefrontFeaturesResponse {
   features: Record<StorefrontFeatureKey, boolean>;
 }

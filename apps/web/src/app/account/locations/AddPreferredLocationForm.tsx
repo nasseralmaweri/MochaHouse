@@ -1,5 +1,6 @@
 "use client";
 
+import { useNamed } from "@/lib/storefront-profile-context";
 import { useActionState } from "react";
 import type { LocationSummary } from "@mocha-house/contracts";
 import {
@@ -15,6 +16,10 @@ export function AddPreferredLocationForm({
 }: {
   addable: LocationSummary[];
 }) {
+  const allSaved = useNamed(
+    "All {name} locations are already in your list.",
+    "All locations are already in your list.",
+  );
   const [state, formAction, pending] = useActionState(
     addPreferredLocationAction,
     initialState,
@@ -23,7 +28,7 @@ export function AddPreferredLocationForm({
   if (addable.length === 0) {
     return (
       <p className="text-sm text-text-muted">
-        All Mocha House locations are already in your list.
+        {allSaved}
       </p>
     );
   }

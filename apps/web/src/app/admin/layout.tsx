@@ -18,6 +18,8 @@ import {
 import { getAdminBilling } from "@/lib/internal-auth/admin-billing";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { centerivoSans } from "@/components/centerivo/fonts";
+import { PointsLabelProvider } from "@/lib/points-label-context";
+import { pointsLabelOrDefault } from "@/lib/loyalty-label";
 
 export const metadata: Metadata = {
   title: "CENTERIVO",
@@ -103,7 +105,9 @@ export default async function AdminLayout({
           windDown={windDown}
           notice={notice}
         >
-          {children}
+          <PointsLabelProvider label={pointsLabelOrDefault(session.loyaltyPointsLabel)}>
+            {children}
+          </PointsLabelProvider>
         </AdminShell>
       </Suspense>
     </div>

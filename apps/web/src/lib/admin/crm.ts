@@ -3,6 +3,7 @@ import type {
   AdminCustomerSummary,
   CustomerAccountStatus,
 } from "@mocha-house/contracts";
+import { pointsCount } from "@/lib/loyalty-label";
 
 // Plain-language presentation helpers for Admin → Customers (Milestone 8A).
 // Read-only: nothing here implies an action can be taken. The API is the
@@ -61,8 +62,9 @@ export function formatMinorUnits(minorUnits: number, currency: string): string {
   }).format(minorUnits / 100);
 }
 
-export function formatBeans(beans: number): string {
-  return `${beans.toLocaleString("en-US")} Mocha Bean${beans === 1 ? "" : "s"}`;
+// SC4f-3b — in the business's own points name ("12 Points", "1 Point").
+export function formatBeans(beans: number, pointsLabel: string): string {
+  return pointsCount(beans, pointsLabel);
 }
 
 // A short "Jan 5, 2026" date for timeline / list rows.

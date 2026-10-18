@@ -123,8 +123,9 @@ describe("prepareUpdateBonusPromotion", () => {
 
 describe("bonusValueLabel", () => {
   it("describes each bonus type", () => {
-    expect(bonusValueLabel("EXTRA_BEANS", 20)).toBe("+20 Bonus Beans");
-    expect(bonusValueLabel("MULTIPLIER", 2)).toBe("2× Mocha Beans");
+    expect(bonusValueLabel("EXTRA_BEANS", 20, "Mocha Beans")).toBe("+20 bonus Mocha Beans");
+    expect(bonusValueLabel("MULTIPLIER", 2, "Mocha Beans")).toBe("2× Mocha Beans");
+    expect(bonusValueLabel("MULTIPLIER", 3, "Points")).toBe("3× Points");
   });
 });
 

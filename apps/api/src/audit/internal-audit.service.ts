@@ -409,6 +409,29 @@ export class InternalAuditService {
     });
   }
 
+  // SC4f-3b — the business's name for its loyalty points (null = default).
+  async recordLoyaltyPointsLabelChanged(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      before: string | null;
+      after: string | null;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'loyalty.points_label_changed',
+        targetType: 'loyalty_configuration',
+        targetId: 'company',
+        beforeData: { pointsLabel: input.before },
+        afterData: { pointsLabel: input.after },
+        reason: 'Loyalty points display name changed.',
+      },
+    });
+  }
+
   async recordLoyaltyRewardCreated(
     tx: Prisma.TransactionClient,
     input: {

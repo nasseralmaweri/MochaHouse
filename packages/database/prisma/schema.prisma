@@ -2533,6 +2533,9 @@ model LoyaltyConfiguration {
   // per-location, per-segment or time-based. Changing it affects only
   // FUTURE earning; historical EARN ledger entries are never recalculated.
   earningRatePerDollar Int      @default(1)
+  // SC4f-3b — the business's own name for its loyalty points ("Points" when
+  // null; the legacy business keeps "Mocha Beans"). Presentation only.
+  pointsLabel          String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 

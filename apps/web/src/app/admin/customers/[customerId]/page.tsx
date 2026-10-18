@@ -11,6 +11,7 @@ import {
   AdminNotFound,
 } from "@/components/admin/states";
 import { CustomerDetail } from "@/components/admin/CustomerDetail";
+import { pointsLabelOrDefault } from "@/lib/loyalty-label";
 
 // Admin → Customers → detail (Milestone 8A). Read-only aggregated CRM view.
 // `customers.view` gates the page; the "add note" control inside gates
@@ -87,6 +88,7 @@ export default async function AdminCustomerDetailPage({
       {header(title)}
       <CustomerDetail
         detail={result.data}
+        pointsLabel={pointsLabelOrDefault(session.loyaltyPointsLabel)}
         canManageNotes={can(
           session.authorization.capabilities,
           "customers.notes.manage",

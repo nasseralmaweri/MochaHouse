@@ -63,10 +63,12 @@ describe("formatters", () => {
     expect(formatMinorUnits(0, "USD")).toBe("$0.00");
   });
 
-  it("formats bean counts with pluralisation and grouping", () => {
-    expect(formatBeans(1)).toBe("1 Mocha Bean");
-    expect(formatBeans(0)).toBe("0 Mocha Beans");
-    expect(formatBeans(1234)).toBe("1,234 Mocha Beans");
+  it("formats point counts in the business's own name, with pluralisation and grouping", () => {
+    expect(formatBeans(1, "Mocha Beans")).toBe("1 Mocha Bean");
+    expect(formatBeans(0, "Mocha Beans")).toBe("0 Mocha Beans");
+    expect(formatBeans(1234, "Mocha Beans")).toBe("1,234 Mocha Beans");
+    expect(formatBeans(1, "Points")).toBe("1 Point");
+    expect(formatBeans(5, "Stars")).toBe("5 Stars");
   });
 
   it("formats an ISO date", () => {

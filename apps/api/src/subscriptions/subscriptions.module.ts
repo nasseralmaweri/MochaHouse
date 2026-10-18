@@ -4,6 +4,7 @@ import { TenancyModule } from '../tenancy/tenancy.module';
 import { StorefrontFeaturesController } from './api/storefront-features.controller';
 import { EntitlementsService } from './application/entitlements.service';
 import { StorefrontFeaturesService } from './application/storefront-features.service';
+import { StorefrontProfileService } from './application/storefront-profile.service';
 
 // SC2b — customer-facing entitlements. Imported by every module whose
 // public routes, checkout steps or customer reads depend on an optional
@@ -12,7 +13,11 @@ import { StorefrontFeaturesService } from './application/storefront-features.ser
 @Module({
   imports: [PrismaModule, TenancyModule],
   controllers: [StorefrontFeaturesController],
-  providers: [EntitlementsService, StorefrontFeaturesService],
+  providers: [
+    EntitlementsService,
+    StorefrontFeaturesService,
+    StorefrontProfileService,
+  ],
   exports: [StorefrontFeaturesService],
 })
 export class SubscriptionsModule {}

@@ -16,6 +16,7 @@ import {
   singleTenantResolutionProvider,
 } from './single-tenant-resolution.provider';
 import { RequestIdMiddleware } from './request-id.middleware';
+import { LEGACY_BRAND, legacyBrandProvider } from './legacy-brand';
 import {
   STOREFRONT_ROUTING_CONFIG,
   type StorefrontRoutingConfig,
@@ -93,6 +94,8 @@ export const BILLING_WEBHOOK_ROUTES = [
         hosts: StorefrontHostHttpContextResolver,
       ) => (routing.hostRouting ? hosts : single),
     },
+    // SC4f-3b — which business keeps the original storefront presentation.
+    legacyBrandProvider,
     RequestIdMiddleware,
     TenantContextMiddleware,
     TenantDatabase,
@@ -101,6 +104,7 @@ export const BILLING_WEBHOOK_ROUTES = [
   exports: [
     SINGLE_TENANT_RESOLUTION,
     STOREFRONT_ROUTING_CONFIG,
+    LEGACY_BRAND,
     HttpTenantContextResolver,
     TenantDatabase,
   ],

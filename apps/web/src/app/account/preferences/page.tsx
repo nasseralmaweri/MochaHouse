@@ -5,10 +5,12 @@ import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { BackLink } from "@/components/BackLink";
 import { PreferencesForm } from "./PreferencesForm";
+import { named, requireStorefrontProfile } from "@/lib/storefront-profile";
 
 export const dynamic = "force-dynamic";
 
 export default async function PreferencesPage() {
+  const profile = await requireStorefrontProfile();
   const token = await getCustomerSessionToken();
   if (!token) {
     redirect("/account/sign-in");
@@ -35,7 +37,11 @@ export default async function PreferencesPage() {
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
       <PageHeader
         title="Preferences"
-        subtitle="Choose which marketing emails you receive from Mocha House."
+        subtitle={named(
+          profile,
+          "Choose which marketing emails you receive from {name}.",
+          "Choose which marketing emails you receive.",
+        )}
       />
       <PreferencesForm
         initialMarketingEmailOptIn={result.preferences.marketingEmailOptIn}

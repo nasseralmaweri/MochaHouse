@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { pageTitle, requireStorefrontProfile } from "@/lib/storefront-profile";
 import { getPublicJobOpening } from "@/lib/api";
 import {
   employmentTypeLabel,
@@ -20,8 +21,8 @@ export async function generateMetadata({
   const job = await getPublicJobOpening(jobId);
   return {
     title: job
-      ? `Apply · ${job.title} · Careers · Mocha House`
-      : "Careers · Mocha House",
+      ? pageTitle(await requireStorefrontProfile(), `Apply · ${job.title} · Careers`)
+      : pageTitle(await requireStorefrontProfile(), "Careers"),
   };
 }
 

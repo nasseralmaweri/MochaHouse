@@ -23,6 +23,8 @@ import { Button } from "./Button";
 import { ADMIN_FIELD_CLASS, FormField } from "./form";
 import { CampaignImagePicker } from "./CampaignImagePicker";
 import { CampaignFeaturedProductsSelector } from "./CampaignFeaturedProductsSelector";
+import { usePointsLabel } from "@/lib/points-label-context";
+import { singularPoints } from "@/lib/loyalty-label";
 
 function toDateInputValue(iso: string | null): string {
   if (!iso) {
@@ -42,6 +44,8 @@ export function CampaignEditor({
   canManage: boolean;
   canUploadMedia: boolean;
 }) {
+  const pointsLabel = usePointsLabel();
+  const pointLabel = singularPoints(pointsLabel);
   const router = useRouter();
   const [campaign, setCampaign] = useState(initial);
   const [error, setError] = useState<string | null>(null);
@@ -290,7 +294,7 @@ export function CampaignEditor({
                 </select>
               </FormField>
               <FormField
-                label="Bonus Mocha Bean Promotion"
+                label={`Bonus ${pointLabel} Promotion`}
                 htmlFor="edit-campaign-bonus-promotion"
               >
                 <select
@@ -344,7 +348,7 @@ export function CampaignEditor({
             value={campaign.promotion ? campaign.promotion.name : "None"}
           />
           <ReadRow
-            label="Bonus Mocha Bean Promotion"
+            label={`Bonus ${pointLabel} Promotion`}
             value={
               campaign.loyaltyBonusPromotion
                 ? campaign.loyaltyBonusPromotion.name
