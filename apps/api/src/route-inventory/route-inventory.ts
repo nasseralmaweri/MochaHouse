@@ -61,8 +61,13 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'GET /api/v1/admin/getting-started': { scope: 'tenant' },
   'GET /api/v1/admin/catalog/menus': { scope: 'tenant' },
   'GET /api/v1/admin/catalog/menus/:menuId': { scope: 'tenant' },
+  'GET /api/v1/admin/catalog/modifier-groups': { scope: 'tenant' },
+  'GET /api/v1/admin/catalog/modifier-groups/:groupId': { scope: 'tenant' },
   'GET /api/v1/admin/catalog/products': { scope: 'tenant' },
   'GET /api/v1/admin/catalog/products/:productId': { scope: 'tenant' },
+  'GET /api/v1/admin/catalog/products/:productId/modifier-groups': {
+    scope: 'tenant',
+  },
   'GET /api/v1/admin/content': { scope: 'tenant' },
   'GET /api/v1/admin/content/:pageKey': { scope: 'tenant' },
   'GET /api/v1/admin/customers': { scope: 'tenant' },
@@ -143,6 +148,11 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     scope: 'tenant',
   },
   'PATCH /api/v1/admin/catalog/products/:productId': { scope: 'tenant' },
+  // Product Modifier Management — the business's own modifier groups.
+  'PATCH /api/v1/admin/catalog/modifier-groups/:groupId': { scope: 'tenant' },
+  'PATCH /api/v1/admin/catalog/modifier-groups/:groupId/options/:optionId': {
+    scope: 'tenant',
+  },
   'PATCH /api/v1/admin/content/:pageKey': { scope: 'tenant' },
   'PATCH /api/v1/admin/internal-users/:internalUserId/status': {
     scope: 'tenant',
@@ -179,6 +189,13 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/admin/catalog/categories': { scope: 'tenant' },
   'POST /api/v1/admin/catalog/menus/:menuId/products': { scope: 'tenant' },
   'POST /api/v1/admin/catalog/products': { scope: 'tenant' },
+  'POST /api/v1/admin/catalog/modifier-groups': { scope: 'tenant' },
+  'POST /api/v1/admin/catalog/modifier-groups/:groupId/options': {
+    scope: 'tenant',
+  },
+  'POST /api/v1/admin/catalog/products/:productId/modifier-groups': {
+    scope: 'tenant',
+  },
   'POST /api/v1/admin/content/:pageKey/publish': { scope: 'tenant' },
   'POST /api/v1/admin/customers/:customerId/notes': { scope: 'tenant' },
   'POST /api/v1/admin/franchising/inquiries/:inquiryId/notes': {
@@ -249,6 +266,15 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'PUT /api/v1/admin/gift-cards/configuration': { scope: 'tenant' },
   'PUT /api/v1/admin/loyalty/settings': { scope: 'tenant' },
   'PUT /api/v1/admin/loyalty/settings/points-label': { scope: 'tenant' },
+  'PUT /api/v1/admin/catalog/modifier-groups/:groupId/option-order': {
+    scope: 'tenant',
+  },
+  'PUT /api/v1/admin/catalog/products/:productId/modifier-group-order': {
+    scope: 'tenant',
+  },
+  'DELETE /api/v1/admin/catalog/products/:productId/modifier-groups/:groupId': {
+    scope: 'tenant',
+  },
   'PUT /api/v1/admin/notifications/recipients/:purpose': { scope: 'tenant' },
   // --- Location-scoped — Admin routes where a location in the request decides access
   // (AuthorizationContext.assertCanActOnLocation, bounded to the active business).

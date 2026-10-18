@@ -1,6 +1,10 @@
 import { redirect } from "next/navigation";
 import { getInternalSession } from "@/lib/internal-auth/session";
-import { getAdminProduct } from "@/lib/internal-auth/admin-catalog";
+import {
+  getAdminModifierGroups,
+  getAdminProduct,
+  getAdminProductModifiers,
+} from "@/lib/internal-auth/admin-catalog";
 import { can } from "@/lib/admin/capabilities";
 import { formatPrice } from "@/lib/money";
 import { AdminPage, AdminSection } from "@/components/admin/AdminPage";
@@ -14,6 +18,7 @@ import { StatusBadge } from "@/components/admin/StatusBadge";
 import { ButtonLink } from "@/components/admin/Button";
 import { BackLink } from "@/components/BackLink";
 import { Card } from "@/components/Card";
+import { ProductModifiersEditor } from "@/components/admin/ProductModifiersEditor";
 
 // Admin product detail (Milestone 5D-3). Server component, read-only. The
 // "Edit product" action shows only when the viewer can actually edit; the
@@ -89,6 +94,12 @@ export default async function AdminProductDetailPage({
 
   const product = result.product;
   const canEdit = can(capabilities, "catalog.products.edit");
+  // Product Modifier Management — this product's customizations, and (for
+  // editors) the business's groups that could be added.
+  const [modifiers, groups] = await Promise.all([
+    getAdminProductModifiers(product.id),
+    canEdit ? getAdminModifierGroups() : Promise.resolve(null),
+  ]);
 
   return (
     <AdminPage>
@@ -176,6 +187,22 @@ export default async function AdminProductDetailPage({
             </span>
           </div>
         </Card>
+      </AdminSection>
+
+      <AdminSection
+        title="Customizations"
+        description="The choices customers make when ordering this product, in this order."
+      >
+        {modifiers.outcome === "success" ? (
+          <ProductModifiersEditor
+            productId={product.id}
+            attached={modifiers.data.groups}
+            available={groups?.outcome === "success" ? groups.data : null}
+            canEdit={canEdit}
+          />
+        ) : (
+          <AdminErrorState description="Couldn't load this product's customizations just now. Please try again." />
+        )}
       </AdminSection>
 
       <p className="text-xs text-text-muted">Web address: {product.slug}</p>

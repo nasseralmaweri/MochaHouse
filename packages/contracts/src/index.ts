@@ -844,6 +844,124 @@ export interface AdminLocationMenuResponse {
   products: AdminLocationMenuProduct[];
 }
 
+// --- Admin product modifiers (Product Modifier Management) ------------
+// A business's reusable modifier groups ("Size", "Milk") and their options,
+// attached to any number of its products. Reads need `catalog.view`;
+// every change needs `catalog.products.edit` (both CORPORATE-only). Editing
+// a shared group changes every product it is attached to. Prices are
+// integer cents. "Required" is derived: a group is required exactly when
+// its minimum is at least 1.
+export const MODIFIER_MAX_SELECTIONS_LIMIT = 20;
+// Upper bound for an option's price adjustment: $100.00. Never negative.
+export const MODIFIER_MAX_PRICE_ADJUSTMENT_MINOR_UNITS = 10_000;
+// Request-size bounds.
+export const MODIFIER_GROUP_MAX_OPTIONS = 50;
+export const PRODUCT_MAX_MODIFIER_GROUPS = 20;
+
+export interface AdminModifierOption {
+  id: string;
+  name: string;
+  priceAdjustment: number;
+  displayOrder: number;
+  isActive: boolean;
+}
+
+export interface AdminModifierGroupSummary {
+  id: string;
+  name: string;
+  isRequired: boolean;
+  minSelections: number;
+  // null: no upper limit.
+  maxSelections: number | null;
+  isActive: boolean;
+  optionCount: number;
+  activeOptionCount: number;
+  // How many products the group is attached to.
+  productCount: number;
+}
+
+export interface AdminModifierGroupDetail {
+  id: string;
+  name: string;
+  isRequired: boolean;
+  minSelections: number;
+  maxSelections: number | null;
+  isActive: boolean;
+  options: AdminModifierOption[];
+  // Every product the group is attached to: an edit here changes them all.
+  products: { id: string; name: string; isActive: boolean }[];
+}
+
+// POST /api/v1/admin/catalog/modifier-groups. Response 201:
+// `AdminModifierGroupDetail` (no options yet).
+export interface AdminCreateModifierGroupRequest {
+  name: string;
+  minSelections: number;
+  maxSelections: number | null;
+}
+
+// PATCH /api/v1/admin/catalog/modifier-groups/:groupId. Every field is
+// optional. Response: `AdminModifierGroupDetail`.
+export interface AdminUpdateModifierGroupRequest {
+  name?: string;
+  minSelections?: number;
+  maxSelections?: number | null;
+  isActive?: boolean;
+}
+
+// POST /api/v1/admin/catalog/modifier-groups/:groupId/options.
+// Response 201: `AdminModifierGroupDetail`.
+export interface AdminCreateModifierOptionRequest {
+  name: string;
+  priceAdjustment: number;
+}
+
+// PATCH /api/v1/admin/catalog/modifier-groups/:groupId/options/:optionId.
+// Response: `AdminModifierGroupDetail`.
+export interface AdminUpdateModifierOptionRequest {
+  name?: string;
+  priceAdjustment?: number;
+  isActive?: boolean;
+}
+
+// PUT /api/v1/admin/catalog/modifier-groups/:groupId/option-order — every
+// option of the group exactly once, in the new order.
+export interface AdminReorderModifierOptionsRequest {
+  optionIds: string[];
+}
+
+// A group as attached to one product, in the product's order.
+export interface AdminProductModifierGroup {
+  id: string;
+  name: string;
+  isRequired: boolean;
+  minSelections: number;
+  maxSelections: number | null;
+  isActive: boolean;
+  activeOptionCount: number;
+  // How many products share this group (including this one).
+  productCount: number;
+}
+
+// GET /api/v1/admin/catalog/products/:productId/modifier-groups and the
+// response of every product attachment change.
+export interface AdminProductModifiersResponse {
+  productId: string;
+  groups: AdminProductModifierGroup[];
+}
+
+// POST /api/v1/admin/catalog/products/:productId/modifier-groups —
+// attaches the group at the end. Idempotent when already attached.
+export interface AdminAttachModifierGroupRequest {
+  modifierGroupId: string;
+}
+
+// PUT /api/v1/admin/catalog/products/:productId/modifier-group-order —
+// every attached group exactly once, in the new order.
+export interface AdminReorderProductModifierGroupsRequest {
+  modifierGroupIds: string[];
+}
+
 // --- Checkout / orders (Milestone 3, first transaction slice) ----------
 
 export type PaymentAttemptStatus = "PENDING" | "SUCCEEDED" | "DECLINED" | "FAILED";

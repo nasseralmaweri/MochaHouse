@@ -2,6 +2,31 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@mocha-house/database';
 import type { InternalUserStatus } from '@mocha-house/contracts';
 
+// Product Modifier Management — the modifier history actions.
+export type ModifierAuditAction =
+  | 'catalog.modifier_group_created'
+  | 'catalog.modifier_group_updated'
+  | 'catalog.modifier_option_created'
+  | 'catalog.modifier_option_updated'
+  | 'catalog.modifier_options_reordered'
+  | 'catalog.product_modifier_group_attached'
+  | 'catalog.product_modifier_group_detached'
+  | 'catalog.product_modifier_groups_reordered';
+
+const MODIFIER_AUDIT_REASONS: Record<ModifierAuditAction, string> = {
+  'catalog.modifier_group_created': 'Modifier group created.',
+  'catalog.modifier_group_updated': 'Modifier group updated.',
+  'catalog.modifier_option_created': 'Modifier option created.',
+  'catalog.modifier_option_updated': 'Modifier option updated.',
+  'catalog.modifier_options_reordered': 'Modifier options reordered.',
+  'catalog.product_modifier_group_attached':
+    'Modifier group attached to product.',
+  'catalog.product_modifier_group_detached':
+    'Modifier group detached from product.',
+  'catalog.product_modifier_groups_reordered':
+    'Product modifier groups reordered.',
+};
+
 // The write side of the access-control audit foundation (Milestone 5E-3).
 // Small and structured on purpose: callers pass typed input, never SQL, and
 // every write MUST run inside the same transaction as the change it records
@@ -1516,6 +1541,37 @@ export class InternalAuditService {
         beforeData: { menu: null },
         afterData: { name: input.name, slug: input.slug },
         reason: 'Menu created.',
+      },
+    });
+  }
+
+  // --- Product Modifier Management --------------------------------------
+  // One writer for every modifier change, in the SAME transaction as the
+  // change, with the compact before / after of what changed (status and
+  // order changes included). Targets: 'modifier_group', 'modifier_option'
+  // (registered in the relationship inventory) and 'product' for a
+  // product's attachments.
+  async recordModifierChange(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      action: ModifierAuditAction;
+      targetType: 'modifier_group' | 'modifier_option' | 'product';
+      targetId: string;
+      beforeData: Prisma.InputJsonObject;
+      afterData: Prisma.InputJsonObject;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: input.action,
+        targetType: input.targetType,
+        targetId: input.targetId,
+        beforeData: input.beforeData,
+        afterData: input.afterData,
+        reason: MODIFIER_AUDIT_REASONS[input.action],
       },
     });
   }

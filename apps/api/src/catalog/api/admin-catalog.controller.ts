@@ -17,6 +17,16 @@ import type { Response } from 'express';
 import type { AdminUpdateProductRequest } from '@mocha-house/contracts';
 import { CatalogService } from '../application/catalog.service';
 import { CatalogCreationService } from '../application/catalog-creation.service';
+import { ModifierManagementService } from '../application/modifier-management.service';
+import {
+  parseAttachModifierGroup,
+  parseCreateModifierGroup,
+  parseCreateModifierOption,
+  parseReorderModifierOptions,
+  parseReorderProductModifierGroups,
+  parseUpdateModifierGroup,
+  parseUpdateModifierOption,
+} from '../application/modifier-input';
 import {
   parseAddMenuProduct,
   parseAssignLocationMenu,
@@ -60,6 +70,7 @@ export class AdminCatalogController {
   constructor(
     private readonly catalogService: CatalogService,
     private readonly catalogCreation: CatalogCreationService,
+    private readonly modifiers: ModifierManagementService,
   ) {}
 
   // --- Admin catalog creation (S1) ----------------------------------
@@ -367,6 +378,184 @@ export class AdminCatalogController {
       locationId,
       menuId,
       productId,
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  // --- Product Modifier Management -------------------------------------
+  // Groups are master catalog shared by every product (and so every
+  // location): reading needs `catalog.view`, every change needs the
+  // CORPORATE-only `catalog.products.edit`. Bodies are parsed field by
+  // field (modifier-input.ts); the service resolves every id within the
+  // request's own business.
+
+  @RequirePermission('catalog.view')
+  @Get('modifier-groups')
+  listModifierGroups(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.modifiers.listGroups(request.authorization!, tenant);
+  }
+
+  @RequirePermission('catalog.products.edit')
+  @Post('modifier-groups')
+  @HttpCode(HttpStatus.CREATED)
+  createModifierGroup(
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.modifiers.createGroup(
+      parseCreateModifierGroup(body),
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  @RequirePermission('catalog.view')
+  @Get('modifier-groups/:groupId')
+  getModifierGroup(
+    @Param('groupId') groupId: string,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.modifiers.getGroup(groupId, request.authorization!, tenant);
+  }
+
+  @RequirePermission('catalog.products.edit')
+  @Patch('modifier-groups/:groupId')
+  updateModifierGroup(
+    @Param('groupId') groupId: string,
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.modifiers.updateGroup(
+      groupId,
+      parseUpdateModifierGroup(body),
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  @RequirePermission('catalog.products.edit')
+  @Post('modifier-groups/:groupId/options')
+  @HttpCode(HttpStatus.CREATED)
+  createModifierOption(
+    @Param('groupId') groupId: string,
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.modifiers.createOption(
+      groupId,
+      parseCreateModifierOption(body),
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  @RequirePermission('catalog.products.edit')
+  @Patch('modifier-groups/:groupId/options/:optionId')
+  updateModifierOption(
+    @Param('groupId') groupId: string,
+    @Param('optionId') optionId: string,
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.modifiers.updateOption(
+      groupId,
+      optionId,
+      parseUpdateModifierOption(body),
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  @RequirePermission('catalog.products.edit')
+  @Put('modifier-groups/:groupId/option-order')
+  reorderModifierOptions(
+    @Param('groupId') groupId: string,
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.modifiers.reorderOptions(
+      groupId,
+      parseReorderModifierOptions(body),
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  @RequirePermission('catalog.view')
+  @Get('products/:productId/modifier-groups')
+  getProductModifierGroups(
+    @Param('productId') productId: string,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.modifiers.getProductModifiers(
+      productId,
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  @RequirePermission('catalog.products.edit')
+  @Post('products/:productId/modifier-groups')
+  attachProductModifierGroup(
+    @Param('productId') productId: string,
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.modifiers.attachGroup(
+      productId,
+      parseAttachModifierGroup(body),
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  @RequirePermission('catalog.products.edit')
+  @Delete('products/:productId/modifier-groups/:groupId')
+  detachProductModifierGroup(
+    @Param('productId') productId: string,
+    @Param('groupId') groupId: string,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.modifiers.detachGroup(
+      productId,
+      groupId,
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  @RequirePermission('catalog.products.edit')
+  @Put('products/:productId/modifier-group-order')
+  reorderProductModifierGroups(
+    @Param('productId') productId: string,
+    @Body() body: unknown,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.modifiers.reorderProductGroups(
+      productId,
+      parseReorderProductModifierGroups(body),
+      request.internalUser!.id,
       request.authorization!,
       tenant,
     );

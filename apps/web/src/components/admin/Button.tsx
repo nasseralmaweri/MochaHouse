@@ -46,3 +46,32 @@ export function ButtonLink({
     </Link>
   );
 }
+
+// A button that stays focusable while it is briefly unavailable
+// (aria-disabled instead of disabled), so a keyboard or screen-reader user
+// never loses their place when a list action is busy or a row moves to an
+// end. Clicks are ignored while unavailable.
+export function SoftDisabledButton({
+  unavailable,
+  onClick,
+  className = "",
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: Variant;
+  unavailable: boolean;
+}) {
+  return (
+    <Button
+      {...props}
+      aria-disabled={unavailable || undefined}
+      className={`aria-disabled:cursor-not-allowed aria-disabled:bg-surface-subtle aria-disabled:text-text-muted ${className}`}
+      onClick={(event) => {
+        if (unavailable) {
+          event.preventDefault();
+          return;
+        }
+        onClick?.(event);
+      }}
+    />
+  );
+}

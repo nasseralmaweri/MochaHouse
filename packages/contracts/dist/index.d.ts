@@ -310,6 +310,85 @@ export interface AdminLocationMenuResponse {
     };
     products: AdminLocationMenuProduct[];
 }
+export declare const MODIFIER_MAX_SELECTIONS_LIMIT = 20;
+export declare const MODIFIER_MAX_PRICE_ADJUSTMENT_MINOR_UNITS = 10000;
+export declare const MODIFIER_GROUP_MAX_OPTIONS = 50;
+export declare const PRODUCT_MAX_MODIFIER_GROUPS = 20;
+export interface AdminModifierOption {
+    id: string;
+    name: string;
+    priceAdjustment: number;
+    displayOrder: number;
+    isActive: boolean;
+}
+export interface AdminModifierGroupSummary {
+    id: string;
+    name: string;
+    isRequired: boolean;
+    minSelections: number;
+    maxSelections: number | null;
+    isActive: boolean;
+    optionCount: number;
+    activeOptionCount: number;
+    productCount: number;
+}
+export interface AdminModifierGroupDetail {
+    id: string;
+    name: string;
+    isRequired: boolean;
+    minSelections: number;
+    maxSelections: number | null;
+    isActive: boolean;
+    options: AdminModifierOption[];
+    products: {
+        id: string;
+        name: string;
+        isActive: boolean;
+    }[];
+}
+export interface AdminCreateModifierGroupRequest {
+    name: string;
+    minSelections: number;
+    maxSelections: number | null;
+}
+export interface AdminUpdateModifierGroupRequest {
+    name?: string;
+    minSelections?: number;
+    maxSelections?: number | null;
+    isActive?: boolean;
+}
+export interface AdminCreateModifierOptionRequest {
+    name: string;
+    priceAdjustment: number;
+}
+export interface AdminUpdateModifierOptionRequest {
+    name?: string;
+    priceAdjustment?: number;
+    isActive?: boolean;
+}
+export interface AdminReorderModifierOptionsRequest {
+    optionIds: string[];
+}
+export interface AdminProductModifierGroup {
+    id: string;
+    name: string;
+    isRequired: boolean;
+    minSelections: number;
+    maxSelections: number | null;
+    isActive: boolean;
+    activeOptionCount: number;
+    productCount: number;
+}
+export interface AdminProductModifiersResponse {
+    productId: string;
+    groups: AdminProductModifierGroup[];
+}
+export interface AdminAttachModifierGroupRequest {
+    modifierGroupId: string;
+}
+export interface AdminReorderProductModifierGroupsRequest {
+    modifierGroupIds: string[];
+}
 export type PaymentAttemptStatus = "PENDING" | "SUCCEEDED" | "DECLINED" | "FAILED";
 export type OrderStatus = "RECEIVED" | "ACCEPTED" | "PREPARING" | "READY" | "COMPLETED" | "REJECTED" | "CANCELLED";
 export interface GuestContactInput {
