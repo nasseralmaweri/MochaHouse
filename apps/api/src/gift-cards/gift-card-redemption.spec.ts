@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
-import { tenantContextFor } from '@mocha-house/testing';
+import {
+  tenantContextFor,
+  removePaymentRecoveryRecordsForTest,
+} from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { BadRequestException, ConflictException } from '@nestjs/common';
@@ -138,6 +141,16 @@ describe('Gift card redemption at checkout (integration)', () => {
         where: { aggregateType: 'Order', aggregateId: { in: orderIds } },
       });
       await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+      // ESP-03 PR 4 — a payment's saved checkout and reconciliation records
+      // (append-only) go first, through the disposable-only test helper.
+      await removePaymentRecoveryRecordsForTest(
+        (
+          await prisma.paymentAttempt.findMany({
+            where: { id: { in: attemptIds } },
+            select: { id: true },
+          })
+        ).map((a) => a.id),
+      );
       await prisma.paymentAttempt.deleteMany({
         where: { id: { in: attemptIds } },
       });
@@ -614,8 +627,14 @@ describe('Gift card redemption at checkout (integration)', () => {
     const gc = await createGiftCard(150); // split tender -> 250 external charge
     const request = buildRequest({ giftCardCode: gc.code });
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
+    // ESP-03 PR 4 — the first transaction saves the payment attempt with
+    // its checkout (before the charge); the order transaction is the next.
+    const realTransaction = prisma.$transaction.bind(
+      prisma,
+    ) as typeof prisma.$transaction;
     jest
       .spyOn(prisma, '$transaction')
+      .mockImplementationOnce(realTransaction)
       .mockRejectedValueOnce(new Error('Simulated Order transaction failure'));
 
     await expect(
@@ -646,17 +665,29 @@ describe('Gift card redemption at checkout (integration)', () => {
     });
     expect(redemptionTxns).toBe(0);
 
-    // Retry recognizes the reconciliation condition — no second charge, no
-    // decrement.
-    await expect(
-      checkoutService.checkout(
-        request,
-        undefined,
-        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-      ),
-    ).rejects.toBeInstanceOf(ConflictException);
+    // ESP-03 PR 4 — a retry creates the order from the saved checkout: no
+    // second charge, and the card is spent exactly once, by the planned
+    // tender.
+    await checkoutService.checkout(
+      request,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
+    await checkoutService.checkout(
+      request,
+      undefined,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
     expect(chargeSpy).toHaveBeenCalledTimes(1);
-    expect((await reloadCard(gc.id)).balanceMinorUnits).toBe(150);
+    expect((await reloadCard(gc.id)).balanceMinorUnits).toBe(0);
+    expect(
+      await prisma.giftCardTransaction.count({
+        where: { giftCardId: gc.id, type: 'REDEMPTION' },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.order.count({ where: { paymentAttemptId: attempt.id } }),
+    ).toBe(1);
   });
 
   // --- BALANCE CHANGES BETWEEN PLANNING AND LOCKED APPLY -------

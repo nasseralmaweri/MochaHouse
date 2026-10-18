@@ -1,9 +1,13 @@
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
-import { tenantContextFor, enrollTestCustomer } from '@mocha-house/testing';
+import {
+  tenantContextFor,
+  enrollTestCustomer,
+  removePaymentRecoveryRecordsForTest,
+} from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
-import { ConflictException, HttpException } from '@nestjs/common';
+import { HttpException } from '@nestjs/common';
 import { FakePaymentProvider } from '@mocha-house/integrations';
 import type { CheckoutRequest } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -139,6 +143,16 @@ describe('Mocha Beans earning on checkout (integration)', () => {
         where: { aggregateType: 'Order', aggregateId: { in: orderIds } },
       });
       await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+      // ESP-03 PR 4 — a payment's saved checkout and reconciliation records
+      // (append-only) go first, through the disposable-only test helper.
+      await removePaymentRecoveryRecordsForTest(
+        (
+          await prisma.paymentAttempt.findMany({
+            where: { id: { in: attemptIds } },
+            select: { id: true },
+          })
+        ).map((a) => a.id),
+      );
       await prisma.paymentAttempt.deleteMany({
         where: { id: { in: attemptIds } },
       });
@@ -327,8 +341,14 @@ describe('Mocha Beans earning on checkout (integration)', () => {
   it('payment succeeds but the order transaction fails: no Beans, no order', async () => {
     const id = await identity(randomUUID());
     const request = buildRequest();
+    // ESP-03 PR 4 — the first transaction saves the payment attempt with
+    // its checkout (before the charge); the order transaction is the next.
+    const realTransaction = prisma.$transaction.bind(
+      prisma,
+    ) as typeof prisma.$transaction;
     jest
       .spyOn(prisma, '$transaction')
+      .mockImplementationOnce(realTransaction)
       .mockRejectedValueOnce(new Error('Simulated order transaction failure'));
 
     await expect(
@@ -411,15 +431,22 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     expect(await balanceOf(customer.id)).toBe(0);
     expect(await ledgerFor(customer.id)).toHaveLength(0);
 
-    // A retry with the same key recognises the reconciliation condition —
-    // it never charges again, never silently succeeds.
-    await expect(
-      checkoutService.checkout(
-        request,
-        id,
-        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-      ),
-    ).rejects.toBeInstanceOf(ConflictException);
+    // ESP-03 PR 4 — a retry with the same key never charges again: the
+    // missing order is created now from the checkout saved before payment,
+    // and the Beans are earned exactly once.
+    const resumed = await checkoutService.checkout(
+      request,
+      id,
+      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+    );
+    const orders = await prisma.order.findMany({
+      where: { paymentAttemptId: attempt.id },
+    });
+    expect(orders.map((o) => o.id)).toEqual([resumed.orderId]);
+    expect(orders[0].customerId).toBe(customer.id);
+    const earned = await ledgerFor(customer.id);
+    expect(earned).toHaveLength(1);
+    expect(await balanceOf(customer.id)).toBe(earned[0].amount);
   });
 
   it('the ledger enforces exactly one EARN per order', async () => {

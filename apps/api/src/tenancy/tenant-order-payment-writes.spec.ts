@@ -16,6 +16,7 @@ import {
   createTestTenantB,
   removeTestTenantB,
   tenantContextFor,
+  removePaymentRecoveryRecordsForTest,
 } from '@mocha-house/testing';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
@@ -267,6 +268,16 @@ describe('S0D-2C-1 order & payment tenant ownership (integration)', () => {
     await prisma.giftCardPurchase.deleteMany({
       where: { paymentAttemptId: { in: attemptIds } },
     });
+    // ESP-03 PR 4 — a payment's saved checkout and reconciliation records
+    // (append-only) go first, through the disposable-only test helper.
+    await removePaymentRecoveryRecordsForTest(
+      (
+        await prisma.paymentAttempt.findMany({
+          where: { id: { in: attemptIds } },
+          select: { id: true },
+        })
+      ).map((a) => a.id),
+    );
     await prisma.paymentAttempt.deleteMany({
       where: { id: { in: attemptIds } },
     });

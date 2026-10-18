@@ -487,7 +487,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(relationsBetweenBusinessRecords).toHaveLength(98);
+    expect(relationsBetweenBusinessRecords).toHaveLength(99);
     expect(
       relationsBetweenBusinessRecords
         .filter((r) => !isTenantEnforced(r))
@@ -519,6 +519,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'ChecklistInstanceItem.completedByInternalUserId',
       'ChecklistInstanceItem.exceptionByInternalUserId',
       'ChecklistTemplateItem.templateId',
+      'CheckoutSnapshot.paymentAttemptId',
       'CustomerLoyaltyAccount.customerId',
       'CustomerNote.authorInternalUserId',
       'CustomerNote.customerId',
@@ -646,7 +647,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
           byId.get(id)?.nullable !== optional,
       );
     expect(unclassified).toEqual([]);
-    expect(jsonColumns).toHaveLength(7);
+    expect(jsonColumns).toHaveLength(8);
   });
 
   it('has no stale entry: every classified relationship exists in the schema exactly as described', () => {
@@ -732,13 +733,13 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       external: count((r) => r.kind === 'external-identifier'),
       total: TENANT_RELATIONSHIPS.length,
     }).toEqual({
-      compositeWithForeignKey: 98,
+      compositeWithForeignKey: 99,
       compositeWithoutForeignKey: 0,
       historicalSnapshot: 8,
       polymorphic: 4,
-      json: 7,
+      json: 8,
       external: 2,
-      total: 119,
+      total: 121,
     });
     // Optional relationships are present and marked optional.
     const optionalForeignKeys = relationsBetweenBusinessRecords.filter(

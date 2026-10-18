@@ -103,6 +103,8 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     // history, tenant-owned from inception.
     PaymentReconciliationCase: 'tenant',
     PaymentReconciliationEvent: 'tenant',
+    // ESP-03 PR 4 — the saved checkout a payment pays for.
+    CheckoutSnapshot: 'tenant',
     // R1 / S5a — order closure foundation.
     OrderClosure: 'tenant',
     OrderRefundObligation: 'tenant',

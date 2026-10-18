@@ -332,7 +332,10 @@ describe('payment provider states and safe retries (integration)', () => {
       ]);
       const a = await attemptOf(b.idempotencyKey);
       expect(provider.calls).toHaveLength(1);
-      expect(results.filter((r) => r.ok)).toHaveLength(1);
+      // ESP-03 PR 4 — the requests that lost the charge claim are answered
+      // with the one order (created from the saved checkout), never a second
+      // charge or order.
+      expect(results.filter((r) => r.ok).length).toBeGreaterThanOrEqual(1);
       expect(await ordersFor(a.id)).toBe(1);
     });
 

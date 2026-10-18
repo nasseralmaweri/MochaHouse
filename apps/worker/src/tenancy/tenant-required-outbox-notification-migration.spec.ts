@@ -90,7 +90,9 @@ const tenantTables = Object.entries(MODEL_TENANCY)
       // SC3c-3 added the billing contact after this migration.
       model !== 'TenantBillingContact' &&
       // SC4d added location opening hours after this migration.
-      model !== 'LocationOpeningPeriod',
+      model !== 'LocationOpeningPeriod' &&
+      // ESP-03 PR 4 added saved checkouts after this migration.
+      model !== 'CheckoutSnapshot',
   );
 
 const baseUrl = process.env.DATABASE_URL!;

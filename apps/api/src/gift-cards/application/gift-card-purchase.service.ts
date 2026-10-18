@@ -35,6 +35,7 @@ import {
   customerPaymentMessage,
   heldStateOf,
   openReconciliationCase,
+  resolveCaseAsFulfilled,
   HELD_PAYMENT_MESSAGE,
 } from '../../payment/payment-charge';
 import { maskGiftCardCode } from '../infrastructure/gift-card-code';
@@ -79,6 +80,21 @@ import { StorefrontFeaturesService } from '../../subscriptions/application/store
 const RECOVERY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 // A charge claim older than this whose payment was never sent is stranded.
 const STRANDED_CLAIM_MS = 5 * 60 * 1000;
+
+// ESP-03 PR 4 — a second issuance for a purchase that already has its card.
+class GiftCardAlreadyIssuedError extends Error {
+  constructor() {
+    super('This gift-card purchase already has its card.');
+    this.name = 'GiftCardAlreadyIssuedError';
+  }
+}
+
+function issueFailedMessage(purchaseId: string): string {
+  return (
+    `Your payment succeeded but the gift card could not be issued ` +
+    `automatically. Do not pay again — reference ${purchaseId} for support.`
+  );
+}
 
 // The one answer for a key with no purchase the caller may see — unknown,
 // another business's, or (ESP-03 PR 3) not the caller's.
@@ -430,11 +446,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
 
     // An issued card replays its confirmation; the full code while the
     // recovery window is open.
-    if (
-      attempt.status === 'SUCCEEDED' &&
-      purchase.status === 'ISSUED' &&
-      purchase.giftCard
-    ) {
+    if (attempt.status === 'SUCCEEDED' && purchase.giftCard) {
       const code = await this.recoverCode(purchase);
       return this.confirmation(purchase, purchase.giftCard.last4, code);
     }
@@ -452,17 +464,24 @@ export class GiftCardPurchaseService implements OnModuleInit {
     if (heldStateOf(attempt) !== null) {
       throw new ConflictException(HELD_PAYMENT_MESSAGE);
     }
+    // ESP-03 PR 4 — definitively charged, card not issued yet (the first
+    // attempt crashed, failed to write, or is still running): the card is
+    // issued now from the saved purchase, exactly once, for the buyer who
+    // proved (above) they established it. Never charged again.
+    if (
+      attempt.status === 'SUCCEEDED' &&
+      attempt.paymentState === 'SUCCEEDED'
+    ) {
+      return this.issueForPurchase(purchase, attempt);
+    }
+    // A payment from before ESP-03 (no definitive state): unchanged.
     if (
       attempt.reconciliationRequired ||
       purchase.status === 'RECONCILIATION_REQUIRED'
     ) {
-      throw new ConflictException(
-        `Your payment succeeded but the gift card could not be issued ` +
-          `automatically. Do not pay again — reference ${purchase.id} for support.`,
-      );
+      throw new ConflictException(issueFailedMessage(purchase.id));
     }
     if (attempt.status === 'SUCCEEDED') {
-      // Charged, card not issued yet (the issued case replayed above).
       throw new ConflictException(
         'A gift-card purchase with this key is already being processed.',
       );
@@ -536,6 +555,20 @@ export class GiftCardPurchaseService implements OnModuleInit {
       throw new ConflictException(HELD_PAYMENT_MESSAGE);
     }
 
+    return this.issueForPurchase(purchase, attempt);
+  }
+
+  // ESP-03 PR 4 — issues the card for a charged purchase from the saved
+  // purchase row (never from a request), exactly once. Used right after the
+  // charge and again by a retry of a purchase whose card was not issued.
+  // Inside the issuing transaction the purchase row is locked and must not
+  // have a card yet; a second, concurrent issuance therefore rolls back its
+  // card entirely and answers with the card that was issued. On failure the
+  // payment stays SUCCEEDED, flagged for review with an open case.
+  private async issueForPurchase(
+    purchase: PurchaseRow,
+    attempt: { id: string; tenantId: string },
+  ): Promise<PurchaseGiftCardResponse> {
     let displayCode: string;
     let last4: string;
     let codeRetrievableUntil: Date;
@@ -561,22 +594,55 @@ export class GiftCardPurchaseService implements OnModuleInit {
               codeRetrievableUntil,
             },
           });
+          await tx.paymentAttempt.updateMany({
+            where: { id: attempt.id, tenantId: attempt.tenantId },
+            data: { reconciliationRequired: false, fulfilmentStatus: 'DONE' },
+          });
+          await resolveCaseAsFulfilled(tx, attempt.tenantId, attempt.id);
+        },
+        // Locked FIRST, before the card and its ledger row are written (they
+        // reference this purchase, and a later lock would deadlock two
+        // concurrent issuances): only a purchase with no card yet proceeds.
+        async (tx) => {
+          const locked = await tx.$queryRaw<
+            { status: string; giftCardId: string | null }[]
+          >`
+            SELECT status::text AS status, "giftCardId"
+            FROM "GiftCardPurchase"
+            WHERE id = ${purchase.id} AND "tenantId" = ${purchase.tenantId}
+            FOR UPDATE`;
+          if (
+            locked.length !== 1 ||
+            locked[0].status === 'ISSUED' ||
+            locked[0].giftCardId !== null
+          ) {
+            throw new GiftCardAlreadyIssuedError();
+          }
         },
       );
       displayCode = issued.displayCode;
       last4 = issued.last4;
     } catch (error) {
-      await this.markReconciliationRequired(attempt.id, error);
-      await this.prisma.giftCardPurchase
-        .update({
+      // Issued meanwhile by another request for this purchase (this
+      // request's card was rolled back with its write), or this request's
+      // own issuance committed although it saw an error (a lost commit
+      // acknowledgement): a purchase with a card is issued — answer with it,
+      // and record nothing.
+      const current = await this.prisma.giftCardPurchase
+        .findUnique({
           where: { id: purchase.id },
-          data: { status: 'RECONCILIATION_REQUIRED' },
+          include: { giftCard: { select: { last4: true } } },
         })
-        .catch(() => undefined);
-      throw new ConflictException(
-        `Your payment succeeded but the gift card could not be issued ` +
-          `automatically. Do not pay again — reference ${purchase.id} for support.`,
-      );
+        .catch(() => null);
+      if (current?.giftCard) {
+        return this.confirmation(
+          current,
+          current.giftCard.last4,
+          await this.recoverCode(current),
+        );
+      }
+      await this.recordIssueFailure(purchase.id, attempt.id, error);
+      throw new ConflictException(issueFailedMessage(purchase.id));
     }
 
     return {
@@ -590,6 +656,37 @@ export class GiftCardPurchaseService implements OnModuleInit {
       codeRetrievable: true,
       codeRetrievableUntil: codeRetrievableUntil!.toISOString(),
     };
+  }
+
+  // The payment succeeded but the card could not be issued: durably flagged
+  // for review with a reconciliation case (never charged again, never marked
+  // failed). Best effort — logged with the purchase id if it cannot be
+  // written.
+  private async recordIssueFailure(
+    purchaseId: string,
+    paymentAttemptId: string,
+    error: unknown,
+  ): Promise<void> {
+    try {
+      await this.markReconciliationRequired(paymentAttemptId, error);
+      // Never over a purchase that has its card.
+      await this.prisma.giftCardPurchase.updateMany({
+        where: { id: purchaseId, giftCardId: null },
+        data: { status: 'RECONCILIATION_REQUIRED' },
+      });
+    } catch (writeError) {
+      this.logger.error(
+        `gift-card purchase ${purchaseId}: the card could not be issued and the failure could not be recorded (${
+          writeError instanceof Error ? writeError.name : 'unknown error'
+        })`,
+      );
+    }
+    await openReconciliationCase(
+      this.prisma,
+      paymentAttemptId,
+      'FULFILMENT_FAILED',
+      { outcome: 'succeeded' },
+    );
   }
 
   private confirmation(

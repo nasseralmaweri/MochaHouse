@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -42,7 +43,6 @@ import {
   featureNotAvailable,
   salesNotAvailable,
   StorefrontFeaturesService,
-  type StorefrontFeatures,
 } from '../../subscriptions/application/storefront-features.service';
 import {
   GiftCardRedemptionService,
@@ -50,12 +50,22 @@ import {
 } from '../../gift-cards/application/gift-card-redemption.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 import { assertValidCheckoutLines } from './validate-checkout-lines';
+import {
+  buildCheckoutSnapshot,
+  CHECKOUT_SNAPSHOT_VERSION,
+  giftCardPlanOf,
+  readCheckoutSnapshot,
+  UnreadableCheckoutSnapshotError,
+  type CheckoutSnapshotPayload,
+} from './checkout-snapshot';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import {
   chargeAttempt,
   customerPaymentMessage,
   heldStateOf,
   HELD_PAYMENT_MESSAGE,
+  openReconciliationCase,
+  resolveCaseAsFulfilled,
 } from '../../payment/payment-charge';
 import {
   generateOrderAccessToken,
@@ -96,6 +106,30 @@ const ORDER_INCLUDE = {
 
 type PaymentAttemptRow = Prisma.PaymentAttemptGetPayload<Record<string, never>>;
 
+// ESP-03 PR 4 — the payment behind an order must be definitively charged.
+class PaymentNotConfirmedError extends ConflictException {
+  constructor() {
+    super('This payment has not been confirmed.');
+  }
+}
+
+// An attempt saved but never sent to the provider after this long was
+// abandoned by the request that created it (a provider call is bounded far
+// below this).
+const STRANDED_ATTEMPT_MS = 10 * 60 * 1000;
+
+const FULFILMENT_RETRY_MESSAGE =
+  'Your payment was received but your order could not be confirmed just ' +
+  'now. Do not pay again — please try again in a moment.';
+
+function manualReviewMessage(paymentAttemptId: string): string {
+  return (
+    `Your payment was processed but the order could not be completed ` +
+    `automatically. This has been flagged for manual review — do not ` +
+    `submit payment again. Reference ${paymentAttemptId} for support.`
+  );
+}
+
 // Orchestrates the approved Milestone 3 first-transaction-slice sequence:
 // validate idempotency -> reprice the authoritative cart -> durable
 // payment-attempt record -> FakePaymentProvider -> (only on success) a
@@ -106,6 +140,8 @@ type PaymentAttemptRow = Prisma.PaymentAttemptGetPayload<Record<string, never>>;
 // Store Queue slice.
 @Injectable()
 export class CheckoutService {
+  private readonly logger = new Logger(CheckoutService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly locationsService: LocationsService,
@@ -295,12 +331,27 @@ export class CheckoutService {
       );
     }
 
+    // ESP-03 PR 4 — the server-validated checkout, saved in the SAME
+    // transaction as the payment attempt and committed BEFORE the provider
+    // is called. If it cannot be saved, no attempt exists and nothing is
+    // charged. The order is only ever created from this saved checkout.
+    const snapshot = buildCheckoutSnapshot({
+      locationId: request.locationId,
+      lines: request.lines,
+      guest: request.guest,
+      customerId,
+      rewardId,
+      couponCode,
+      giftCardPlan,
+      features,
+    });
     const created = await this.createPaymentAttempt(
       request.idempotencyKey,
       request.locationId,
       chargeAmount,
       priced.currency,
       tenantId,
+      snapshot,
     );
 
     if (!created.wasCreatedByThisRequest) {
@@ -345,6 +396,8 @@ export class CheckoutService {
       );
 
       if (charged.kind === 'declined' || charged.kind === 'failed') {
+        // ESP-03 PR 4 — nothing will be fulfilled: the saved checkout goes.
+        await this.discardSnapshot(attempt);
         // ESP-03 PR 3 — fixed wording; the provider's text stays internal.
         throw new HttpException(
           {
@@ -359,39 +412,166 @@ export class CheckoutService {
       }
     }
 
+    // ESP-03 PR 4 — the order is created from the saved checkout (the same
+    // path any later recovery takes), never from this request directly.
+    return this.fulfilFromSnapshot(attempt);
+  }
+
+  // ESP-03 PR 4 — recovery for a definitively charged payment whose order
+  // does not exist yet (the first attempt crashed, failed to write, or was
+  // interrupted). Finds the payment within the given business only, and
+  // creates its order from the saved checkout exactly once. It NEVER calls
+  // the payment provider. For server-side callers (a later recovery job or
+  // support tool, ESP-03 PR 5); a customer retry with the same key reaches
+  // the same path through replay().
+  async recoverFulfilment(
+    paymentAttemptId: string,
+    tenantId: string,
+  ): Promise<OrderConfirmation> {
+    const attempt = await this.prisma.paymentAttempt.findFirst({
+      where: { id: paymentAttemptId, tenantId },
+    });
+    if (
+      !attempt ||
+      attempt.status !== 'SUCCEEDED' ||
+      attempt.paymentState !== 'SUCCEEDED'
+    ) {
+      // Unknown, another business's, or not definitively charged: an
+      // uncertain payment is never treated as a success.
+      throw new ConflictException('This payment cannot be fulfilled.');
+    }
+    return this.fulfilFromSnapshot(attempt);
+  }
+
+  // ESP-03 PR 4 — creates the order for a charged payment from its saved
+  // checkout, exactly once. Every path locks the PaymentAttempt row first
+  // and returns an order that already exists, so no retry, recovery or
+  // concurrent request can create a second order or repeat a gift-card,
+  // loyalty or promotion effect. On failure the payment stays SUCCEEDED,
+  // is flagged for review with an open reconciliation case, and keeps its
+  // saved checkout for a later recovery.
+  private async fulfilFromSnapshot(
+    attempt: PaymentAttemptRow,
+  ): Promise<OrderConfirmation> {
+    const tenantId = attempt.tenantId;
+    const existing = await this.prisma.order.findUnique({
+      where: { paymentAttemptId: attempt.id },
+      include: ORDER_INCLUDE,
+    });
+    if (existing) {
+      return this.toConfirmation(existing);
+    }
+    const saved = await this.prisma.checkoutSnapshot.findUnique({
+      where: {
+        tenantId_paymentAttemptId: { tenantId, paymentAttemptId: attempt.id },
+      },
+      select: { version: true, payload: true },
+    });
+    if (!saved) {
+      // Fulfilled meanwhile (the saved checkout goes with its order).
+      const order = await this.prisma.order.findUnique({
+        where: { paymentAttemptId: attempt.id },
+        include: ORDER_INCLUDE,
+      });
+      if (order) {
+        return this.toConfirmation(order);
+      }
+      throw new ConflictException(manualReviewMessage(attempt.id));
+    }
+
     let order: OrderWithRelations;
     try {
-      // Milestone 7A — prepare the customer's loyalty account (a
-      // unique-key race is swallowed inside ensureAccountForCustomer, never
-      // surfaced here). This MUST stay INSIDE the post-payment try/catch:
-      // any other failure here is then handled exactly like an
-      // order-transaction failure — the payment stays SUCCEEDED and the
-      // attempt is flagged reconciliationRequired, never silently orphaned.
-      // Guests (customerId null) never earn, so this is skipped for them.
+      const checkout = readCheckoutSnapshot(saved.version, saved.payload);
+      // Milestone 7A — prepare the customer's loyalty account (a unique-key
+      // race is swallowed inside). Inside the failure handling below: a
+      // failure here is handled exactly like an order-transaction failure.
       // SC2b — only when the plan included loyalty at submission.
-      if (customerId !== null && features.loyalty) {
-        await this.loyaltyService.ensureAccountForCustomer(customerId);
+      if (checkout.customerId !== null && checkout.features.loyalty) {
+        await this.loyaltyService.ensureAccountForCustomer(checkout.customerId);
       }
-
-      order = await this.createOrderTransactionally(
-        request,
-        attempt,
-        customerId,
-        rewardId,
-        couponCode,
-        giftCardPlan,
-        features,
-      );
+      order = await this.createOrderTransactionally(attempt, checkout);
     } catch (error) {
-      // Payment already succeeded (the update above committed before this
-      // ever runs) but the order could not be completed — durably record
-      // that as a reconciliation condition rather than letting it exist
-      // only as an inferable "SUCCEEDED with no linked Order" state. No
-      // refund and no automatic retry of the financial effect happens here.
-      await this.markReconciliationRequired(attempt.id, error);
+      // The order transaction may have committed even though this request
+      // saw an error (a lost commit acknowledgement): an existing order is
+      // the answer, and nothing is flagged.
+      const committed = await this.prisma.order
+        .findUnique({
+          where: { paymentAttemptId: attempt.id },
+          include: ORDER_INCLUDE,
+        })
+        .catch(() => null);
+      if (committed) {
+        return this.toConfirmation(committed);
+      }
+      if (!(error instanceof PaymentNotConfirmedError)) {
+        await this.recordFulfilmentFailure(attempt, error);
+      }
       throw error;
     }
     return this.toConfirmation(order);
+  }
+
+  // The payment succeeded but its order could not be created: durably
+  // flagged for review (never silently orphaned, never charged again, never
+  // marked failed) with a reconciliation case. Best effort — if even this
+  // cannot be written, it is logged with the payment's id.
+  private async recordFulfilmentFailure(
+    attempt: PaymentAttemptRow,
+    error: unknown,
+  ): Promise<void> {
+    const reason =
+      error instanceof Error
+        ? error.message
+        : 'Unknown error creating the order after a successful payment.';
+    try {
+      // Never flag a payment whose order exists.
+      const order = await this.prisma.order.findUnique({
+        where: { paymentAttemptId: attempt.id },
+        select: { id: true },
+      });
+      if (order) {
+        return;
+      }
+      await this.prisma.paymentAttempt.updateMany({
+        where: { id: attempt.id, tenantId: attempt.tenantId },
+        data: {
+          reconciliationRequired: true,
+          reconciliationReason: reason.slice(0, 500),
+          reconciliationDetectedAt: new Date(),
+          fulfilmentStatus: 'NEEDS_REVIEW',
+        },
+      });
+    } catch (writeError) {
+      this.logger.error(
+        `payment attempt ${attempt.id}: its order could not be created and the failure could not be recorded (${
+          writeError instanceof Error ? writeError.name : 'unknown error'
+        })`,
+      );
+    }
+    await openReconciliationCase(this.prisma, attempt.id, 'FULFILMENT_FAILED', {
+      outcome: 'succeeded',
+    });
+  }
+
+  // A definitively declined or failed payment needs no saved checkout.
+  // Best effort: a leftover row is harmless (it can never become an order,
+  // because its payment never succeeded).
+  private async discardSnapshot(attempt: PaymentAttemptRow): Promise<void> {
+    try {
+      await this.prisma.checkoutSnapshot.deleteMany({
+        where: { tenantId: attempt.tenantId, paymentAttemptId: attempt.id },
+      });
+      await this.prisma.paymentAttempt.updateMany({
+        where: { id: attempt.id, tenantId: attempt.tenantId },
+        data: { fulfilmentStatus: 'NOT_REQUIRED' },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `payment attempt ${attempt.id}: the saved checkout could not be removed (${
+          error instanceof Error ? error.name : 'unknown error'
+        })`,
+      );
+    }
   }
 
   // Milestone 7C — the read-only checkout reward quote. Signed-in customers
@@ -845,6 +1025,21 @@ export class CheckoutService {
     }
 
     if (attempt.status === 'PENDING') {
+      // ESP-03 PR 4 — saved but never sent to the payment provider long
+      // after it was created: the request that created it stopped before
+      // charging. Nothing was charged and nothing will be; its saved
+      // checkout (guest contact) is removed and the customer starts again.
+      // It is never charged from here.
+      if (
+        attempt.paymentState === 'NOT_SENT' &&
+        Date.now() - attempt.createdAt.getTime() > STRANDED_ATTEMPT_MS
+      ) {
+        await this.discardSnapshot(attempt);
+        throw new ConflictException(
+          'This checkout was interrupted before any payment was taken. ' +
+            'Nothing was charged. Please start a new checkout.',
+        );
+      }
       throw new ConflictException(
         'A checkout with this idempotency key is already being processed.',
       );
@@ -858,36 +1053,53 @@ export class CheckoutService {
       );
     }
 
-    // SUCCEEDED — but the Order isn't necessarily there *yet*. The status
-    // update commits before the order-creation transaction starts, so a
-    // concurrent replay can legitimately observe SUCCEEDED while that
-    // transaction is still in flight. Handled as three distinct cases:
-    if (attempt.reconciliationRequired) {
-      // The order transaction ran and failed — durably recorded, never
-      // charged again, never silently treated as success or failure.
-      throw new ConflictException(
-        `Your payment was processed but the order could not be completed ` +
-          `automatically. This has been flagged for manual review — do not ` +
-          `submit payment again. Reference ${attempt.id} for support.`,
-      );
-    }
-
+    // SUCCEEDED. ESP-03 PR 4 — the order exists (replayed), or it is
+    // created now from the saved checkout: the first attempt crashed, failed
+    // to write, or is still running (the payment row lock makes the two meet
+    // on one order). Never from this retried request, never charged again.
     const order = await this.prisma.order.findUnique({
       where: { paymentAttemptId: attempt.id },
       include: ORDER_INCLUDE,
     });
-
-    if (!order) {
-      // Payment succeeded and the order-creation transaction hasn't
-      // committed (or failed) yet — genuinely still in progress, not an
-      // error. The caller retrying shortly will see either the completed
-      // order or the reconciliationRequired branch above.
-      throw new ConflictException(
-        'A checkout with this idempotency key is already being processed.',
-      );
+    if (order) {
+      return this.toConfirmation(order);
+    }
+    const hasSavedCheckout =
+      attempt.paymentState === 'SUCCEEDED' &&
+      (await this.prisma.checkoutSnapshot.count({
+        where: { tenantId: attempt.tenantId, paymentAttemptId: attempt.id },
+      })) > 0;
+    if (hasSavedCheckout) {
+      try {
+        return await this.fulfilFromSnapshot(attempt);
+      } catch (error) {
+        // Recorded for review by fulfilFromSnapshot. A business reason the
+        // order cannot be created now (the payment is not confirmed, the
+        // saved checkout is unreadable, the price or cart changed) is under
+        // review; anything else (the database briefly unavailable) is worth
+        // a retry. Either way the customer must not pay again.
+        if (
+          error instanceof UnreadableCheckoutSnapshotError ||
+          (error instanceof HttpException && error.getStatus() < 500)
+        ) {
+          throw new ConflictException(manualReviewMessage(attempt.id));
+        }
+        throw new ServiceUnavailableException(FULFILMENT_RETRY_MESSAGE);
+      }
     }
 
-    return this.toConfirmation(order);
+    // A payment from before ESP-03 PR 4 (no saved checkout).
+    if (attempt.reconciliationRequired) {
+      // The order transaction ran and failed — durably recorded, never
+      // charged again, never silently treated as success or failure.
+      throw new ConflictException(manualReviewMessage(attempt.id));
+    }
+
+    // Payment succeeded and the order-creation transaction hasn't committed
+    // (or failed) yet — genuinely still in progress, not an error.
+    throw new ConflictException(
+      'A checkout with this idempotency key is already being processed.',
+    );
   }
 
   private async markReconciliationRequired(
@@ -915,23 +1127,38 @@ export class CheckoutService {
     amount: number,
     currency: string,
     tenantId: string,
+    snapshot: CheckoutSnapshotPayload,
   ): Promise<
     | { wasCreatedByThisRequest: true; attempt: PaymentAttemptRow }
     | { wasCreatedByThisRequest: false; attempt: PaymentAttemptRow }
   > {
     try {
-      const attempt = await this.prisma.paymentAttempt.create({
-        data: {
-          tenantId,
-          idempotencyKey,
-          // The provider actually bound (audit: a simulated payment is
-          // always recorded as such).
-          provider: this.paymentProvider.name,
-          locationId,
-          amount,
-          currency,
-          paymentState: 'NOT_SENT',
-        },
+      // ESP-03 PR 4 — one transaction: the attempt never exists without its
+      // saved checkout, and both are committed before any charge.
+      const attempt = await this.prisma.$transaction(async (tx) => {
+        const row = await tx.paymentAttempt.create({
+          data: {
+            tenantId,
+            idempotencyKey,
+            // The provider actually bound (audit: a simulated payment is
+            // always recorded as such).
+            provider: this.paymentProvider.name,
+            locationId,
+            amount,
+            currency,
+            paymentState: 'NOT_SENT',
+            fulfilmentStatus: 'PENDING',
+          },
+        });
+        await tx.checkoutSnapshot.create({
+          data: {
+            tenantId,
+            paymentAttemptId: row.id,
+            version: CHECKOUT_SNAPSHOT_VERSION,
+            payload: snapshot as unknown as Prisma.InputJsonObject,
+          },
+        });
+        return row;
       });
       return { wasCreatedByThisRequest: true, attempt };
     } catch (error) {
@@ -952,23 +1179,52 @@ export class CheckoutService {
   }
 
   private async createOrderTransactionally(
-    request: CheckoutRequest,
     attempt: PaymentAttemptRow,
-    customerId: string | null,
-    rewardId: string | null,
-    couponCode: string | null,
-    giftCardPlan: GiftCardTenderPlan | null,
-    // SC2b — the decision evaluated before payment (see checkout()). Used
-    // as-is: never re-read here, so a plan change mid-payment cannot make
-    // this transaction disagree with what was charged.
-    features: StorefrontFeatures,
+    // ESP-03 PR 4 — the saved checkout: the ONLY source of what the order
+    // contains. SC2b — its plan features were decided before payment and
+    // are used as-is, so a plan change mid-payment cannot make this
+    // transaction disagree with what was charged.
+    checkout: CheckoutSnapshotPayload,
   ): Promise<OrderWithRelations> {
     const paymentAttemptId = attempt.id;
     // Milestone S0D-2C-1 — the attempt was written under the tenant of the
     // server-validated Location; the Order and everything created with it
     // inherit that ownership.
     const tenantId = attempt.tenantId;
+    const request = {
+      locationId: checkout.locationId,
+      lines: checkout.lines,
+      guest: checkout.guest,
+    };
+    const { customerId, rewardId, couponCode, features } = checkout;
+    const giftCardPlan = giftCardPlanOf(checkout, tenantId);
     return this.prisma.$transaction(async (tx) => {
+      // ESP-03 PR 4 — exactly once. The payment row lock serialises every
+      // path that can create this payment's order (the first attempt, a
+      // retry, a recovery); the payment must be definitively charged, and an
+      // order that already exists is returned as it is.
+      const locked = await tx.$queryRaw<
+        { status: string; paymentState: string | null }[]
+      >`
+        SELECT status::text AS status, "paymentState"
+        FROM "PaymentAttempt"
+        WHERE id = ${paymentAttemptId} AND "tenantId" = ${tenantId}
+        FOR UPDATE`;
+      if (
+        locked.length !== 1 ||
+        locked[0].status !== 'SUCCEEDED' ||
+        locked[0].paymentState !== 'SUCCEEDED'
+      ) {
+        throw new PaymentNotConfirmedError();
+      }
+      const already = await tx.order.findUnique({
+        where: { paymentAttemptId },
+        include: ORDER_INCLUDE,
+      });
+      if (already) {
+        return already;
+      }
+
       // Revalidate against the current catalog state — payment succeeding
       // does not itself guarantee nothing changed in the window since the
       // first repricing pass.
@@ -1238,6 +1494,18 @@ export class CheckoutService {
           ),
         });
       }
+
+      // ESP-03 PR 4 — fulfilled: the saved checkout has served its purpose
+      // and goes in this same transaction; any open case for this payment is
+      // resolved as fulfilled.
+      await tx.checkoutSnapshot.deleteMany({
+        where: { tenantId, paymentAttemptId },
+      });
+      await tx.paymentAttempt.updateMany({
+        where: { id: paymentAttemptId, tenantId },
+        data: { fulfilmentStatus: 'DONE', reconciliationRequired: false },
+      });
+      await resolveCaseAsFulfilled(tx, tenantId, paymentAttemptId);
 
       // Re-fetch so the confirmation sees the redemption snapshot written
       // above (the initial create ran before applyRedemption).

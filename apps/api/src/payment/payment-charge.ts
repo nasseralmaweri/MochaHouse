@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import type { ChargeRequest, PaymentProvider } from '@mocha-house/integrations';
+import type { Prisma } from '@mocha-house/database';
 import type { PrismaService } from '../prisma/prisma.service';
 
 // ESP-03 PR 2 — the ONE place a payment provider is charged for a
@@ -342,6 +343,38 @@ export async function openReconciliationCase(
       );
     }
   }
+}
+
+// ESP-03 PR 4 — a payment whose order (or gift card) now exists no longer
+// needs review: its open case, if any, is resolved as FULFILLED with a
+// SYSTEM event, in the caller's transaction (the one that fulfilled it).
+export async function resolveCaseAsFulfilled(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  paymentAttemptId: string,
+): Promise<void> {
+  const open = await tx.paymentReconciliationCase.findUnique({
+    where: { tenantId_paymentAttemptId: { tenantId, paymentAttemptId } },
+    select: { id: true, status: true },
+  });
+  if (!open || open.status === 'RESOLVED') return;
+  await tx.paymentReconciliationCase.updateMany({
+    where: { id: open.id, tenantId, status: { not: 'RESOLVED' } },
+    data: {
+      status: 'RESOLVED',
+      resolution: 'FULFILLED',
+      resolvedAt: new Date(),
+    },
+  });
+  await tx.paymentReconciliationEvent.create({
+    data: {
+      tenantId,
+      caseId: open.id,
+      actorKind: 'SYSTEM',
+      action: 'RESOLVED',
+      detail: { source: 'fulfilment', resolution: 'FULFILLED' },
+    },
+  });
 }
 
 // What a caller that did NOT win the claim should tell its client, derived

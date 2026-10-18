@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
-import { tenantContextFor } from '@mocha-house/testing';
+import {
+  tenantContextFor,
+  removePaymentRecoveryRecordsForTest,
+} from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { ServiceUnavailableException } from '@nestjs/common';
@@ -122,6 +125,16 @@ describe('gift-card purchase payment safety (integration)', () => {
       where: { id: { in: purchaseIds } },
     });
     await prisma.giftCard.deleteMany({ where: { id: { in: giftCardIds } } });
+    // ESP-03 PR 4 — a payment's saved checkout and reconciliation records
+    // (append-only) go first, through the disposable-only test helper.
+    await removePaymentRecoveryRecordsForTest(
+      (
+        await prisma.paymentAttempt.findMany({
+          where: { id: { in: attemptIds } },
+          select: { id: true },
+        })
+      ).map((a) => a.id),
+    );
     await prisma.paymentAttempt.deleteMany({
       where: { id: { in: attemptIds } },
     });
