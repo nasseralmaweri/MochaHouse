@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   HttpException,
   HttpStatus,
   Inject,
@@ -20,6 +19,7 @@ import {
   GIFT_CARD_CUSTOM_MAX_MINOR_UNITS,
   GIFT_CARD_CUSTOM_MIN_MINOR_UNITS,
   GIFT_CARD_MAX_VALUE_MINOR_UNITS,
+  GIFT_CARD_PURCHASE_NOT_FOUND,
 } from '@mocha-house/contracts';
 import type { PaymentProvider } from '@mocha-house/integrations';
 import { Prisma, type TenantContext } from '@mocha-house/database';
@@ -32,7 +32,9 @@ import type { CustomerIdentity } from '../../customer-auth/infrastructure/custom
 import { PAYMENT_PROVIDER } from '../../payment/payment-provider.token';
 import {
   chargeAttempt,
+  customerPaymentMessage,
   heldStateOf,
+  openReconciliationCase,
   HELD_PAYMENT_MESSAGE,
 } from '../../payment/payment-charge';
 import { maskGiftCardCode } from '../infrastructure/gift-card-code';
@@ -75,6 +77,16 @@ import { StorefrontFeaturesService } from '../../subscriptions/application/store
 // plaintext, never audited, never in the outbox or payment metadata.
 
 const RECOVERY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+// A charge claim older than this whose payment was never sent is stranded.
+const STRANDED_CLAIM_MS = 5 * 60 * 1000;
+
+// The one answer for a key with no purchase the caller may see — unknown,
+// another business's, or (ESP-03 PR 3) not the caller's.
+const NO_PURCHASE_FOR_KEY = {
+  code: GIFT_CARD_PURCHASE_NOT_FOUND,
+  message:
+    'No gift-card purchase was started for this key. Start a new purchase.',
+};
 const EMAIL_MAX_LENGTH = 320;
 const NAME_MAX_LENGTH = 120;
 
@@ -145,10 +157,16 @@ export class GiftCardPurchaseService implements OnModuleInit {
     });
     if (existing) {
       this.assertAttemptOwned(existing, tenant);
+      // ESP-03 PR 3 (R1) — a key whose attempt is not a gift-card intent is
+      // refused before anything else happens (the amount is checked again
+      // once it is validated, below).
+      if (!existing.giftCardPurchase) {
+        this.assertAttachableAttempt(existing, null);
+      }
     }
     if (existing?.giftCardPurchase) {
       this.assertSameIntent(existing.giftCardPurchase, request);
-      return this.intentResponse(existing.giftCardPurchase, null);
+      return this.replayIntent(existing.giftCardPurchase, existing);
     }
     // SC2b — selling a NEW gift card needs the gift-card module in the
     // business's plan: refused before any intent or payment attempt exists.
@@ -202,8 +220,11 @@ export class GiftCardPurchaseService implements OnModuleInit {
       this.assertAttemptOwned(raced, tenant);
       if (raced.giftCardPurchase) {
         this.assertSameIntent(raced.giftCardPurchase, request);
-        return this.intentResponse(raced.giftCardPurchase, null);
+        return this.replayIntent(raced.giftCardPurchase, raced);
       }
+      // ESP-03 PR 3 (R1) — only a fresh, uncharged gift-card attempt for this
+      // exact amount may be built upon; never a checkout's attempt.
+      this.assertAttachableAttempt(raced, amountMinorUnits);
       attempt = { id: raced.id, tenantId: raced.tenantId };
     }
 
@@ -256,6 +277,33 @@ export class GiftCardPurchaseService implements OnModuleInit {
     }
   }
 
+  // ESP-03 PR 3 (R1) — a payment attempt that has no gift-card purchase yet
+  // may only become one when it is a gift-card attempt (no Location), for
+  // the same amount (when known), and has never been charged (NOT_SENT, or
+  // legacy NULL). A checkout's attempt, a different amount, or an attempt
+  // already charging / charged is refused with the same generic conflict as
+  // another business's key, and nothing is created or changed.
+  private assertAttachableAttempt(
+    attempt: {
+      locationId: string | null;
+      amount: number;
+      status: string;
+      paymentState: string | null;
+    },
+    amountMinorUnits: number | null,
+  ): void {
+    const attachable =
+      attempt.locationId === null &&
+      attempt.status === 'PENDING' &&
+      (attempt.paymentState === 'NOT_SENT' || attempt.paymentState === null) &&
+      (amountMinorUnits === null || attempt.amount === amountMinorUnits);
+    if (!attachable) {
+      throw new ConflictException(
+        'This idempotency key cannot be used. Start a new purchase.',
+      );
+    }
+  }
+
   // ESP-03 PR 2 — an idempotency key is bound to the intent that created it.
   // The persisted amount and purchaser contact are compared against the
   // replayed request WITHOUT consulting current configuration (so a config
@@ -278,6 +326,34 @@ export class GiftCardPurchaseService implements OnModuleInit {
         'This idempotency key was already used for a different gift-card purchase. Start a new purchase.',
       );
     }
+  }
+
+  // ESP-03 PR 3 (R3) — step 1 replays only while the purchase is still
+  // waiting for its first payment (a client retrying step 1). Once payment
+  // has started, been taken or needs review, a replay of step 1 answers
+  // with the generic conflict, so step 1 never reveals a payment's state.
+  private replayIntent(
+    purchase: {
+      id: string;
+      status: 'PENDING' | 'ISSUED' | 'RECONCILIATION_REQUIRED';
+      amountMinorUnits: number;
+      currency: string;
+      customerId: string | null;
+      chargeClaimedAt: Date | null;
+    },
+    attempt: { status: string; paymentState: string | null },
+  ): GiftCardPurchaseIntentResponse {
+    const uncharged =
+      purchase.status === 'PENDING' &&
+      purchase.chargeClaimedAt === null &&
+      attempt.status === 'PENDING' &&
+      (attempt.paymentState === 'NOT_SENT' || attempt.paymentState === null);
+    if (!uncharged) {
+      throw new ConflictException(
+        'This idempotency key cannot be used. Start a new purchase.',
+      );
+    }
+    return this.intentResponse(purchase, null);
   }
 
   private intentResponse(
@@ -331,9 +407,7 @@ export class GiftCardPurchaseService implements OnModuleInit {
       !attempt.giftCardPurchase ||
       attempt.tenantId !== tenant.tenantId
     ) {
-      throw new ConflictException(
-        'No gift-card purchase was started for this key. Start a new purchase.',
-      );
+      throw new ConflictException(NO_PURCHASE_FOR_KEY);
     }
     const purchase = attempt.giftCardPurchase;
 
@@ -346,13 +420,30 @@ export class GiftCardPurchaseService implements OnModuleInit {
       customerIdentity,
     );
 
+    // ESP-03 PR 3 (R3) — every state (pending, declined, failed, held,
+    // reconciliation, in progress, issued) is the buyer's business only.
+    // Anyone else gets exactly the answer an unknown key gets, so nothing
+    // about the payment is revealed.
+    if (!authorised) {
+      throw new ConflictException(NO_PURCHASE_FOR_KEY);
+    }
+
+    // An issued card replays its confirmation; the full code while the
+    // recovery window is open.
+    if (
+      attempt.status === 'SUCCEEDED' &&
+      purchase.status === 'ISSUED' &&
+      purchase.giftCard
+    ) {
+      const code = await this.recoverCode(purchase);
+      return this.confirmation(purchase, purchase.giftCard.last4, code);
+    }
+
     // Terminal / in-flight states → replay.
     if (attempt.status === 'DECLINED' || attempt.status === 'FAILED') {
+      const outcome = attempt.status === 'DECLINED' ? 'declined' : 'failed';
       throw new HttpException(
-        {
-          outcome: attempt.status === 'DECLINED' ? 'declined' : 'failed',
-          message: attempt.failureReason ?? 'Payment was not successful.',
-        },
+        { outcome, message: customerPaymentMessage(outcome) },
         HttpStatus.PAYMENT_REQUIRED,
       );
     }
@@ -371,24 +462,14 @@ export class GiftCardPurchaseService implements OnModuleInit {
       );
     }
     if (attempt.status === 'SUCCEEDED') {
-      if (purchase.status !== 'ISSUED' || !purchase.giftCard) {
-        throw new ConflictException(
-          'A gift-card purchase with this key is already being processed.',
-        );
-      }
-      const code = authorised ? await this.recoverCode(purchase) : null;
-      return this.confirmation(purchase, purchase.giftCard.last4, code);
-    }
-
-    // attempt.status === 'PENDING' → the first (charging) call. Enforce the
-    // two-step protocol: the caller must prove they established this intent.
-    if (!authorised) {
-      throw new ForbiddenException(
-        purchase.customerId === null
-          ? 'A valid recovery credential from the first step is required to complete this purchase.'
-          : 'Only the signed-in buyer can complete this purchase.',
+      // Charged, card not issued yet (the issued case replayed above).
+      throw new ConflictException(
+        'A gift-card purchase with this key is already being processed.',
       );
     }
+
+    // attempt.status === 'PENDING' → the first (charging) call, by the
+    // caller who proved (above) they established this intent.
 
     // SC2b — checked again at the charging step, before the claim: the plan
     // may have changed since the intent was created. Nothing has been
@@ -406,6 +487,22 @@ export class GiftCardPurchaseService implements OnModuleInit {
       data: { chargeClaimedAt: new Date() },
     });
     if (claim.count === 0) {
+      // ESP-03 PR 3 — a purchase claimed long ago whose payment was never
+      // sent (the process stopped between the two claims) is stranded:
+      // nothing was charged, but nothing will finish it either. Make it
+      // visible to people; it is never charged here.
+      if (
+        purchase.chargeClaimedAt !== null &&
+        Date.now() - purchase.chargeClaimedAt.getTime() > STRANDED_CLAIM_MS &&
+        heldStateOf(attempt) === null
+      ) {
+        await openReconciliationCase(
+          this.prisma,
+          attempt.id,
+          'CHARGE_CLAIM_STRANDED',
+          { outcome: 'not_sent' },
+        );
+      }
       throw new ConflictException(
         'A gift-card purchase with this key is already being processed.',
       );
@@ -426,8 +523,12 @@ export class GiftCardPurchaseService implements OnModuleInit {
       { allowLegacyNullState: true },
     );
     if (charged.kind === 'declined' || charged.kind === 'failed') {
+      // ESP-03 PR 3 — fixed wording; the provider's text stays internal.
       throw new HttpException(
-        { outcome: charged.kind, message: charged.reason },
+        {
+          outcome: charged.kind,
+          message: customerPaymentMessage(charged.kind),
+        },
         HttpStatus.PAYMENT_REQUIRED,
       );
     }

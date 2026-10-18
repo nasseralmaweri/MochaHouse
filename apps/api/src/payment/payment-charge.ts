@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import type { ChargeRequest, PaymentProvider } from '@mocha-house/integrations';
 import type { PrismaService } from '../prisma/prisma.service';
 
@@ -24,6 +25,13 @@ import type { PrismaService } from '../prisma/prisma.service';
 //     current state, so concurrent callers cannot both win it.
 //   * Rows from before ESP-03 have paymentState NULL and keep the legacy
 //     `status`-driven semantics; this module never guesses their outcome.
+//   * ESP-03 PR 3 — an outcome that is not final (UNKNOWN or
+//     AWAITING_CONFIRMATION), or a result that could not be recorded, opens
+//     a PaymentReconciliationCase (with a SYSTEM "OPENED" event) so the held
+//     payment is visible to people. A provider reference is always kept when
+//     the provider returned one, even if the outcome write itself was lost.
+//     Opening a case is best effort: a failure is logged and never fails the
+//     request (money may already have moved), and the attempt stays held.
 //
 // The legacy `status` column is kept consistent for readers that predate
 // paymentState: it moves to SUCCEEDED / DECLINED / FAILED only on a
@@ -149,7 +157,7 @@ export async function chargeAttempt(
         { kind: 'failed', reason: outcome.reason },
       );
     case 'pending':
-      return settle(
+      return settleHeld(
         prisma,
         attempt.id,
         {
@@ -166,7 +174,7 @@ export async function chargeAttempt(
         },
       );
     default:
-      return settle(
+      return settleHeld(
         prisma,
         attempt.id,
         {
@@ -181,24 +189,159 @@ export async function chargeAttempt(
 // Conditional on the claim still being ours (CHARGING). If something else
 // moved the row (a future reconciler), report the row's real state rather
 // than overwriting it.
+//
+// ESP-03 PR 3 — if that write is lost (another writer moved the row) or
+// throws, the provider's answer is not discarded: its reference is kept when
+// it has one, a reconciliation case is opened, and the caller is told the
+// payment is held. Nothing here charges again.
 async function settle(
   prisma: PrismaService,
   attemptId: string,
   data: Record<string, unknown>,
   result: ChargeDisposition,
 ): Promise<ChargeDisposition> {
-  const done = await prisma.paymentAttempt.updateMany({
-    where: { id: attemptId, paymentState: 'CHARGING' },
-    data,
-  });
-  if (done.count === 1) {
+  let written = false;
+  try {
+    const done = await prisma.paymentAttempt.updateMany({
+      where: { id: attemptId, paymentState: 'CHARGING' },
+      data,
+    });
+    written = done.count === 1;
+  } catch (error) {
+    // The provider reference is not personal data: logged so a payment the
+    // provider took is traceable even if nothing below can be written.
+    logger.error(
+      `payment attempt ${attemptId}: the provider outcome (${result.kind}${
+        typeof data.providerReference === 'string'
+          ? `, reference ${data.providerReference}`
+          : ''
+      }) could not be recorded (${errorName(error)})`,
+    );
+  }
+  if (written) {
     return result;
   }
+  const providerReference =
+    typeof data.providerReference === 'string' ? data.providerReference : null;
+  await keepProviderReference(prisma, attemptId, providerReference);
+  await openReconciliationCase(
+    prisma,
+    attemptId,
+    result.kind === 'succeeded'
+      ? 'PROVIDER_SUCCEEDED_UNRECORDED'
+      : 'PROVIDER_OUTCOME_UNRECORDED',
+    { outcome: result.kind },
+  );
   return {
     kind: 'held',
     state: 'UNKNOWN',
     reason: 'The payment state changed while the charge was in flight.',
   };
+}
+
+// A held outcome (provider pending, or unknown) is recorded like any other;
+// once recorded it also opens a case so a person sees the held payment.
+async function settleHeld(
+  prisma: PrismaService,
+  attemptId: string,
+  data: Record<string, unknown>,
+  result: ChargeDisposition & { kind: 'held' },
+): Promise<ChargeDisposition> {
+  const settled = await settle(prisma, attemptId, data, result);
+  if (settled === result) {
+    const pending = result.state === 'AWAITING_CONFIRMATION';
+    await openReconciliationCase(
+      prisma,
+      attemptId,
+      pending ? 'PROVIDER_AWAITING_CONFIRMATION' : 'PROVIDER_OUTCOME_UNKNOWN',
+      { outcome: pending ? 'pending' : 'unknown' },
+    );
+  }
+  return settled;
+}
+
+const logger = new Logger('PaymentCharge');
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : 'unknown error';
+}
+
+// Keeps the provider's reference for a payment whose result could not be
+// recorded: only fills an empty reference, never replaces one.
+async function keepProviderReference(
+  prisma: PrismaService,
+  attemptId: string,
+  providerReference: string | null,
+): Promise<void> {
+  if (providerReference === null) return;
+  try {
+    await prisma.paymentAttempt.updateMany({
+      where: { id: attemptId, providerReference: null },
+      data: { providerReference },
+    });
+  } catch (error) {
+    logger.error(
+      `payment attempt ${attemptId}: provider reference ${providerReference} could not be kept (${errorName(error)})`,
+    );
+  }
+}
+
+// Opens the attempt's reconciliation case (at most one per attempt, by the
+// table's unique key) with a SYSTEM "OPENED" event, in one transaction. An
+// existing case is left as it is. `detail` holds only fixed codes — never
+// provider text, personal data, keys or tokens.
+export async function openReconciliationCase(
+  prisma: PrismaService,
+  attemptId: string,
+  reasonCode: string,
+  detail: Record<string, string>,
+): Promise<void> {
+  try {
+    await prisma.$transaction(async (tx) => {
+      const attempt = await tx.paymentAttempt.findUnique({
+        where: { id: attemptId },
+        select: { tenantId: true },
+      });
+      if (!attempt) return;
+      const existing = await tx.paymentReconciliationCase.findUnique({
+        where: {
+          tenantId_paymentAttemptId: {
+            tenantId: attempt.tenantId,
+            paymentAttemptId: attemptId,
+          },
+        },
+        select: { id: true },
+      });
+      if (existing) return;
+      const opened = await tx.paymentReconciliationCase.create({
+        data: {
+          tenantId: attempt.tenantId,
+          paymentAttemptId: attemptId,
+          status: 'OPEN',
+          reasonCode,
+        },
+        select: { id: true },
+      });
+      await tx.paymentReconciliationEvent.create({
+        data: {
+          tenantId: attempt.tenantId,
+          caseId: opened.id,
+          actorKind: 'SYSTEM',
+          action: 'OPENED',
+          detail: { source: 'payment-charge', reasonCode, ...detail },
+        },
+      });
+    });
+  } catch (error) {
+    // A concurrent opener won (unique key): the case exists. Anything else
+    // (the database is unavailable) is logged; either way the attempt stays
+    // held and nothing is charged again.
+    if ((error as { code?: unknown } | null)?.code !== 'P2002') {
+      logger.error(
+        `payment attempt ${attemptId}: a reconciliation case could not be opened (${errorName(error)})`,
+      );
+    }
+  }
 }
 
 // What a caller that did NOT win the claim should tell its client, derived
@@ -218,6 +361,20 @@ export function heldStateOf(attempt: {
     return attempt.paymentState;
   }
   return null;
+}
+
+// ESP-03 PR 3 — what a customer is told about a definitive decline or
+// failure. Fixed wording only: the provider's own reason text stays in the
+// attempt's internal failureReason and is never sent to a customer.
+export const PAYMENT_DECLINED_MESSAGE =
+  'Your payment was declined. Nothing was charged. Please try another payment method.';
+export const PAYMENT_FAILED_MESSAGE =
+  'Your payment could not be completed. Nothing was charged. Please try again.';
+
+export function customerPaymentMessage(outcome: 'declined' | 'failed'): string {
+  return outcome === 'declined'
+    ? PAYMENT_DECLINED_MESSAGE
+    : PAYMENT_FAILED_MESSAGE;
 }
 
 export const HELD_PAYMENT_MESSAGE =
