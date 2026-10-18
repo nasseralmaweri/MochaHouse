@@ -242,6 +242,8 @@ export const PLATFORM_PERMISSIONS = [
   // SC4e — onboarding oversight (read-only) and the registration pause.
   "onboarding.view",
   "onboarding.manage",
+  // SC4f-3a — assigning, publishing and unpublishing storefront addresses.
+  "storefront.manage",
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 

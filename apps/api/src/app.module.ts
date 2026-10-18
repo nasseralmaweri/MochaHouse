@@ -31,6 +31,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { PlatformAuthModule } from './platform-auth/platform-auth.module';
 import { PlatformTenantsModule } from './platform-tenants/platform-tenants.module';
 import { PlatformOnboardingModule } from './platform-onboarding/platform-onboarding.module';
+import { PlatformStorefrontModule } from './platform-storefront/platform-storefront.module';
 import { PlatformSubscriptionsModule } from './platform-subscriptions/platform-subscriptions.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { SaasBillingModule } from './saas-billing/saas-billing.module';
@@ -76,6 +77,8 @@ import { OwnerRegistrationModule } from './owner-registration/owner-registration
     // SC1c — the read-only CENTERIVO tenant registry.
     PlatformTenantsModule,
     PlatformOnboardingModule,
+    // SC4f-3a — storefront publishing in the Platform Console.
+    PlatformStorefrontModule,
     // SC2a — CENTERIVO SaaS plans and business subscriptions.
     PlatformSubscriptionsModule,
     // SC4a — business owner self-service registration (off by default).

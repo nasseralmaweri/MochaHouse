@@ -1009,7 +1009,7 @@ export interface PlatformMeResponse {
     operator: PlatformOperatorProfile;
     permissions: PlatformPermission[];
 }
-export declare const PLATFORM_PERMISSIONS: readonly ["billing.prices.manage", "billing.policy.manage", "billing.accounts.manage", "billing.reconciliation.run", "billing.cases.manage", "billing.schedules.release", "billing.complimentary.manage", "billing.adjustments.request", "billing.adjustments.approve", "platform.permissions.manage", "billing.reports.view", "onboarding.view", "onboarding.manage"];
+export declare const PLATFORM_PERMISSIONS: readonly ["billing.prices.manage", "billing.policy.manage", "billing.accounts.manage", "billing.reconciliation.run", "billing.cases.manage", "billing.schedules.release", "billing.complimentary.manage", "billing.adjustments.request", "billing.adjustments.approve", "platform.permissions.manage", "billing.reports.view", "onboarding.view", "onboarding.manage", "storefront.manage"];
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 export interface PlatformOperatorPermissionView {
     permission: PlatformPermission;
@@ -3162,4 +3162,63 @@ export declare function normalizeStorefrontHost(raw: unknown): string | null;
 export declare const RESERVED_STOREFRONT_LABELS: readonly string[];
 export declare function isUsableStorefrontLabel(slug: unknown): boolean;
 export declare function platformStorefrontHost(slug: string, storefrontDomain: string): string | null;
+export type StorefrontHostKind = "PLATFORM_SUBDOMAIN" | "LEGACY" | "CUSTOM";
+export type StorefrontHostAction = "ASSIGNED" | "PUBLISHED" | "UNPUBLISHED";
+export declare const STOREFRONT_PUBLISHING_CHECKS: readonly ["business_active", "billing_authorized", "location_configured", "menu_available"];
+export type StorefrontPublishingCheck = (typeof STOREFRONT_PUBLISHING_CHECKS)[number];
+export declare const STOREFRONT_NOT_ELIGIBLE = "STOREFRONT_NOT_ELIGIBLE";
+export declare const STOREFRONT_HOST_TAKEN = "STOREFRONT_HOST_TAKEN";
+export declare const STOREFRONT_HOST_UNCHANGED = "STOREFRONT_HOST_UNCHANGED";
+export declare const STOREFRONT_SLUG_MISMATCH = "STOREFRONT_SLUG_MISMATCH";
+export declare const STOREFRONT_ASSIGNMENT_UNAVAILABLE = "STOREFRONT_ASSIGNMENT_UNAVAILABLE";
+export interface PlatformStorefrontHostView {
+    id: string;
+    hostname: string;
+    kind: StorefrontHostKind;
+    published: boolean;
+    publishedAt: string | null;
+    live: boolean;
+    createdAt: string;
+}
+export interface PlatformStorefrontHistoryEntry {
+    id: string;
+    action: StorefrontHostAction;
+    hostname: string;
+    reason: string;
+    actorEmail: string;
+    createdAt: string;
+}
+export interface PlatformStorefrontView {
+    tenant: {
+        id: string;
+        name: string;
+        slug: string;
+        status: PlatformTenantStatus;
+    };
+    hostRouting: boolean;
+    hosts: PlatformStorefrontHostView[];
+    eligibility: {
+        eligible: boolean;
+        checks: Array<{
+            key: StorefrontPublishingCheck;
+            passed: boolean;
+        }>;
+    };
+    assignable: {
+        platformHostname: string | null;
+        platformUnavailable: "domain_not_configured" | "slug_not_usable" | "reserved_for_legacy" | "already_assigned" | "taken" | null;
+        legacyHostnames: string[];
+    };
+    history: PlatformStorefrontHistoryEntry[];
+}
+export interface PlatformStorefrontAssignRequest {
+    kind: "PLATFORM_SUBDOMAIN" | "LEGACY";
+    hostname?: string;
+    reason: string;
+    confirmSlug: string;
+}
+export interface PlatformStorefrontChangeRequest {
+    reason: string;
+    confirmSlug: string;
+}
 //# sourceMappingURL=index.d.ts.map

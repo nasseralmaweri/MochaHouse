@@ -435,6 +435,25 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     scope: 'platform',
     note: 'SC4e — pause / resume NEW owner registrations (onboarding.manage, recent sign-in, reason; audited). Cannot enable registration while the deployment flag is off.',
   },
+  // SC4f-3a — storefront publishing (storefront.manage; every change also
+  // needs a recent sign-in, a reason and the business's slug; audited).
+  'GET /api/v1/platform/tenants/:tenantId/storefront': {
+    scope: 'platform',
+    note: "SC4f-3a — a business's storefront addresses, publishing eligibility, routing state and history (storefront.manage).",
+  },
+  'POST /api/v1/platform/tenants/:tenantId/storefront/hosts': {
+    scope: 'platform',
+    note: 'SC4f-3a — assign an approved address: the platform subdomain, or a configured existing Mocha House address (storefront.manage, recent sign-in, reason, slug; audited).',
+  },
+  'POST /api/v1/platform/tenants/:tenantId/storefront/hosts/:hostId/publish': {
+    scope: 'platform',
+    note: 'SC4f-3a — publish an address in the registry after the eligibility checks (storefront.manage, recent sign-in, reason, slug; audited). Not public while host routing is off.',
+  },
+  'POST /api/v1/platform/tenants/:tenantId/storefront/hosts/:hostId/unpublish':
+    {
+      scope: 'platform',
+      note: 'SC4f-3a — unpublish an address (storefront.manage, recent sign-in, reason, slug; audited).',
+    },
   'GET /api/v1/platform/billing/payment-setup': {
     scope: 'platform',
     note: 'SC3e-4 — businesses awaiting payment setup and their deadlines (read-only).',

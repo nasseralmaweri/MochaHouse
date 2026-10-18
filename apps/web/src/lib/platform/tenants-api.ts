@@ -12,6 +12,7 @@ import type {
   PlatformRegistrationControlView,
   PlatformRegistrationListResponse,
   PlatformRevenueReport,
+  PlatformStorefrontView,
   PlatformAdjustableInvoice,
   PlatformAdjustmentListResponse,
   PlatformAdjustmentView,
@@ -215,6 +216,14 @@ export function listPlatformTenantLocations(
 
 // SC4e — onboarding oversight (onboarding.view). The query strings come from
 // lib/platform/onboarding.ts and are re-validated by the API.
+// SC4f-3a — a business's storefront addresses, eligibility and history
+// (storefront.manage).
+export function getTenantStorefront(
+  tenantId: string,
+): Promise<RegistryResult<PlatformStorefrontView>> {
+  return readRegistry(`/tenants/${encodeURIComponent(tenantId)}/storefront`);
+}
+
 export function getRegistrationControl(): Promise<RegistryResult<PlatformRegistrationControlView>> {
   return readRegistry("/onboarding/registration-control");
 }

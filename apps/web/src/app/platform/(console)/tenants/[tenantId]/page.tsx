@@ -146,6 +146,13 @@ export default async function PlatformTenantPage({
             <dt className="text-text-secondary">Last updated</dt>
             <dd className="text-text-primary">{formatRegistryDate(tenant.updatedAt)}</dd>
           </dl>
+          {/* SC4f-3a — storefront addresses and publishing. */}
+          <Link
+            href={`/platform/tenants/${tenant.id}/storefront`}
+            className="w-fit text-sm font-medium text-text-primary underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+          >
+            Storefront addresses and publishing
+          </Link>
         </PlatformCard>
 
         {lifecycle.state !== "ok" ? (

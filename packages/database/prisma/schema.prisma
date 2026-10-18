@@ -188,6 +188,8 @@ model PlatformOperator {
   billingReconciliationCases   BillingReconciliationCase[]       @relation("BillingReconciliationCaseResolver")
   billingGraceExtensions       BillingGraceExtension[]           @relation("BillingGraceExtensionActor")
   registrationControlChanges   RegistrationControlChange[]       @relation("RegistrationControlChangeActor")
+  // SC4f-3a — storefront addresses this operator assigned, published or unpublished.
+  storefrontHostChanges        StorefrontHostChange[]            @relation("StorefrontHostChangeActor")
   billingPlanChanges           BillingPlanChange[]               @relation("BillingPlanChangeActor")
   // SC3e-2 — permissions, complimentary grants and review-case actions.
   permissions                  PlatformOperatorPermission[]      @relation("PlatformOperatorPermissionHolder")
@@ -4067,8 +4069,29 @@ model StorefrontHost {
   updatedAt          DateTime  @updatedAt
 
   tenant Tenant @relation("StorefrontHostTenant", fields: [storefrontTenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // SC4f-3a — who assigned, published and unpublished this address, and why.
+  changes StorefrontHostChange[] @relation("StorefrontHostChangeHost")
 
   @@index([storefrontTenantId])
+}
+
+// SC4f-3a — the append-only history of an approved storefront address:
+// assigned, published, unpublished — by which platform operator, and why.
+// Platform data (no tenantId): it reaches the business only through its
+// StorefrontHost. Never changed, never deleted (database guard).
+model StorefrontHostChange {
+  id                      String   @id @default(uuid(7))
+  storefrontHostId        String
+  action                  String
+  reason                  String
+  actorPlatformOperatorId String
+  createdAt               DateTime @default(now())
+
+  storefrontHost        StorefrontHost   @relation("StorefrontHostChangeHost", fields: [storefrontHostId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actorPlatformOperator PlatformOperator @relation("StorefrontHostChangeActor", fields: [actorPlatformOperatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([storefrontHostId, createdAt])
+  @@index([actorPlatformOperatorId])
 }
 
 // SC3c-3 — the platform billing notification queue (SEPARATE from the

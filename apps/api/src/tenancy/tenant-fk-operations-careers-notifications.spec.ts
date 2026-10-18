@@ -269,6 +269,8 @@ const GLOBAL_TABLES = [
   'RegistrationControlChange',
   // SC4f-1 — approved storefront hostnames (platform data).
   'StorefrontHost',
+  // SC4f-3a — storefront address history (platform data).
+  'StorefrontHostChange',
   '_prisma_migrations',
 ];
 

@@ -3,7 +3,9 @@
 -- NOT a Prisma migration and never run automatically. Ship it as a NEW forward
 -- migration so every environment's history stays linear, and only together
 -- with an API build without SC4f-1 (or with STOREFRONT_HOST_ROUTING_ENABLED
--- off and the registry unused).
+-- off and the registry unused). Since SC4f-3a, roll back
+-- 20261112090000_storefront_publishing first: its address history references
+-- this table, so this rollback fails (changing nothing) while it exists.
 --
 -- It REFUSES to run while any approved storefront hostname exists: the
 -- registry is the record of which business an address belongs to, and

@@ -51,6 +51,8 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     RegistrationControlChange: 'platform',
     // SC4f-1 — approved storefront hostnames (platform data).
     StorefrontHost: 'platform',
+    // SC4f-3a — storefront address history (platform data).
+    StorefrontHostChange: 'platform',
     BillingPlanChange: 'platform',
     // SC3e-1 — the subscription invoice history.
     BillingInvoice: 'platform',

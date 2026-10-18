@@ -93,6 +93,11 @@ export const PLATFORM_AUDIT_ACTIONS = {
   onboardingRegistrationsViewed: 'platform.onboarding.registrations_viewed',
   registrationPaused: 'platform.registration.paused',
   registrationResumed: 'platform.registration.resumed',
+  // SC4f-3a — an approved storefront address assigned to a business, and
+  // published / unpublished (target: the address).
+  storefrontHostAssigned: 'platform.storefront.assigned',
+  storefrontPublished: 'platform.storefront.published',
+  storefrontUnpublished: 'platform.storefront.unpublished',
   // SC4b — a plan offered / withdrawn for self-service (target: the plan),
   // and a business created by its owner (no operator; the identity fields
   // name the owner's login; target: the tenant).
