@@ -155,7 +155,9 @@ describe('CheckoutService (integration)', () => {
     };
   }
 
-  async function testCustomerIdentity(suffix: string): Promise<CustomerIdentity> {
+  async function testCustomerIdentity(
+    suffix: string,
+  ): Promise<CustomerIdentity> {
     const enrolled: CustomerIdentity = {
       provider: 'test',
       subject: `test-customer-${suffix}`,

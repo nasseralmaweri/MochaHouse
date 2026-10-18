@@ -54,7 +54,9 @@ describe('CustomerPreferencesController (integration)', () => {
 
   const prefs = '/api/v1/customers/me/preferences';
 
-  async function token(identifier = `test-4fp-${randomUUID()}@example.com`): Promise<string> {
+  async function token(
+    identifier = `test-4fp-${randomUUID()}@example.com`,
+  ): Promise<string> {
     await enrollTestCustomer(prisma, TENANT_1_MOCHA_HOUSE_ID, {
       provider: 'dev',
       subject: `dev:${identifier}`,
