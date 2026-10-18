@@ -4304,6 +4304,13 @@ export type StorefrontFeatureKey = (typeof STOREFRONT_FEATURE_KEYS)[number];
 // exists for such a module (a job opening, a website-content page) is 404.
 export const FEATURE_NOT_AVAILABLE = "FEATURE_NOT_AVAILABLE";
 
+// ESP-03 PR 3 — the one 409 answer to a gift-card purchase step-2 request
+// for a key with no purchase the caller may see: unknown, another
+// business's, or not the caller's (no valid recovery credential, not the
+// buyer). Identical in every case, so it reveals nothing about a payment;
+// the storefront starts the purchase again.
+export const GIFT_CARD_PURCHASE_NOT_FOUND = "GIFT_CARD_PURCHASE_NOT_FOUND";
+
 export interface FeatureNotAvailableError {
   statusCode: 403;
   error: "Forbidden";

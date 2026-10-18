@@ -3,7 +3,10 @@
 // Adds the request-origin marker header to state-changing /api calls (S3b).
 import { markedFetch as fetch } from "@/lib/security/marked-fetch";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FEATURE_NOT_AVAILABLE } from "@mocha-house/contracts";
+import {
+  FEATURE_NOT_AVAILABLE,
+  GIFT_CARD_PURCHASE_NOT_FOUND,
+} from "@mocha-house/contracts";
 import type {
   GiftCardBalanceResponse,
   GiftCardPublicStatus,
@@ -275,6 +278,14 @@ function PurchasePanel({
         return;
       }
       if (res.status === 409) {
+        // ESP-03 PR 3 — this browser can no longer complete the purchase it
+        // started (for example its recovery credential was lost). Nothing
+        // was charged by this request; start again.
+        if (data && "code" in data && data.code === GIFT_CARD_PURCHASE_NOT_FOUND) {
+          setError("Your purchase session expired. Please start again.");
+          resetPurchaseState();
+          return;
+        }
         setError(
           data && "message" in data && data.message
             ? data.message

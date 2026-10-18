@@ -6,7 +6,6 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   HttpException,
   type ExecutionContext,
 } from '@nestjs/common';
@@ -476,12 +475,11 @@ describe('Customer gift-card purchase (integration)', () => {
     expect(authorised.code).toBe(response.code);
     expect(authorised.codeRetrievable).toBe(true);
 
-    const keyOnly = await purchases.purchase({ idempotencyKey }, undefined, t1);
-    expect(keyOnly.code).toBeNull();
-    expect(keyOnly.codeRetrievable).toBe(false);
-    // ...but the masked confirmation is still returned.
-    expect(keyOnly.purchaseId).toBe(response.purchaseId);
-    expect(keyOnly.last4).toBe(response.last4);
+    // ESP-03 PR 3 — the key alone reveals nothing, not even a masked
+    // confirmation: it is answered like a key with no purchase.
+    await expect(
+      purchases.purchase({ idempotencyKey }, undefined, t1),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('guest recovery: a wrong / low-entropy credential never returns the code', async () => {
@@ -492,15 +490,16 @@ describe('Customer gift-card purchase (integration)', () => {
       'A'.repeat(43),
       hashRecoveryCredential('anything'),
     ]) {
-      const res = await purchases.purchase(
-        {
-          idempotencyKey,
-          recoveryCredential: bad,
-        },
-        undefined,
-        t1,
-      );
-      expect(res.code).toBeNull();
+      await expect(
+        purchases.purchase(
+          {
+            idempotencyKey,
+            recoveryCredential: bad,
+          },
+          undefined,
+          t1,
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
     }
   });
 
@@ -524,26 +523,24 @@ describe('Customer gift-card purchase (integration)', () => {
     );
 
     // An attacker who guessed the weak key but not the credential gets nothing.
-    const attacker = await purchases.purchase(
-      { idempotencyKey: weakKey },
-      undefined,
-      t1,
-    );
-    expect(attacker.code).toBeNull();
+    await expect(
+      purchases.purchase({ idempotencyKey: weakKey }, undefined, t1),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('a different guest purchase credential cannot recover another purchase', async () => {
     const a = await buy();
     const b = await buy();
-    const cross = await purchases.purchase(
-      {
-        idempotencyKey: a.idempotencyKey,
-        recoveryCredential: b.recoveryCredential,
-      },
-      undefined,
-      t1,
-    );
-    expect(cross.code).toBeNull();
+    await expect(
+      purchases.purchase(
+        {
+          idempotencyKey: a.idempotencyKey,
+          recoveryCredential: b.recoveryCredential,
+        },
+        undefined,
+        t1,
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('signed-in purchase: owner recovers without a credential; anonymous and other customers cannot', async () => {
@@ -568,21 +565,14 @@ describe('Customer gift-card purchase (integration)', () => {
     );
     expect(sameOwner.code).toBe(first.code);
 
-    const anon = await purchases.purchase(
-      { idempotencyKey: req.idempotencyKey },
-      undefined,
-      t1,
-    );
-    expect(anon.code).toBeNull();
-    expect(anon.purchaseId).toBe(first.purchaseId);
+    await expect(
+      purchases.purchase({ idempotencyKey: req.idempotencyKey }, undefined, t1),
+    ).rejects.toBeInstanceOf(ConflictException);
 
     const stranger = await signedIn(false);
-    const strangerView = await purchases.purchase(
-      { idempotencyKey: req.idempotencyKey },
-      stranger,
-      t1,
-    );
-    expect(strangerView.code).toBeNull();
+    await expect(
+      purchases.purchase({ idempotencyKey: req.idempotencyKey }, stranger, t1),
+    ).rejects.toBeInstanceOf(ConflictException);
     // The unauthorised probe must not JIT-create a Customer row.
     const strangerRow = await prisma.customer.findUnique({
       where: {
@@ -638,9 +628,17 @@ describe('Customer gift-card purchase (integration)', () => {
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
-    await expect(
-      purchases.purchase({ idempotencyKey: req.idempotencyKey }, undefined, t1),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    // ESP-03 PR 3 — refused exactly like a key with no purchase (409), so an
+    // unauthorised caller learns nothing about the payment.
+    for (const recoveryCredential of [undefined, 'wrong-credential']) {
+      await expect(
+        purchases.purchase(
+          { idempotencyKey: req.idempotencyKey, recoveryCredential },
+          undefined,
+          t1,
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    }
     expect(chargeSpy).not.toHaveBeenCalled();
   });
 
@@ -938,15 +936,18 @@ describe('Customer gift-card purchase (integration)', () => {
     const { idempotencyKey, recoveryCredential } = await buy();
     process.env.GIFT_CARD_PURCHASE_RECOVERY_SECRET = 'rotated-recovery-secret';
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
-    const replay = await purchases.purchase(
-      {
-        idempotencyKey,
-        recoveryCredential,
-      },
-      undefined,
-      t1,
-    );
-    expect(replay.code).toBeNull();
+    // The old credential no longer proves the buyer: answered like a key
+    // with no purchase, never charged.
+    await expect(
+      purchases.purchase(
+        {
+          idempotencyKey,
+          recoveryCredential,
+        },
+        undefined,
+        t1,
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
     expect(chargeSpy).not.toHaveBeenCalled();
   });
 

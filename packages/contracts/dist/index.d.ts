@@ -1972,6 +1972,7 @@ export declare const MODULE_NOT_ENTITLED = "MODULE_NOT_ENTITLED";
 export declare const STOREFRONT_FEATURE_KEYS: readonly ["loyalty", "promotions", "giftcards", "careers", "franchising", "cms"];
 export type StorefrontFeatureKey = (typeof STOREFRONT_FEATURE_KEYS)[number];
 export declare const FEATURE_NOT_AVAILABLE = "FEATURE_NOT_AVAILABLE";
+export declare const GIFT_CARD_PURCHASE_NOT_FOUND = "GIFT_CARD_PURCHASE_NOT_FOUND";
 export interface FeatureNotAvailableError {
     statusCode: 403;
     error: "Forbidden";

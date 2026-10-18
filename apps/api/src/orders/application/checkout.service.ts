@@ -53,6 +53,7 @@ import { assertValidCheckoutLines } from './validate-checkout-lines';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import {
   chargeAttempt,
+  customerPaymentMessage,
   heldStateOf,
   HELD_PAYMENT_MESSAGE,
 } from '../../payment/payment-charge';
@@ -344,8 +345,12 @@ export class CheckoutService {
       );
 
       if (charged.kind === 'declined' || charged.kind === 'failed') {
+        // ESP-03 PR 3 — fixed wording; the provider's text stays internal.
         throw new HttpException(
-          { outcome: charged.kind, message: charged.reason },
+          {
+            outcome: charged.kind,
+            message: customerPaymentMessage(charged.kind),
+          },
           HttpStatus.PAYMENT_REQUIRED,
         );
       }
@@ -846,11 +851,9 @@ export class CheckoutService {
     }
 
     if (attempt.status === 'DECLINED' || attempt.status === 'FAILED') {
+      const outcome = attempt.status === 'DECLINED' ? 'declined' : 'failed';
       throw new HttpException(
-        {
-          outcome: attempt.status === 'DECLINED' ? 'declined' : 'failed',
-          message: attempt.failureReason ?? 'Payment was not successful.',
-        },
+        { outcome, message: customerPaymentMessage(outcome) },
         HttpStatus.PAYMENT_REQUIRED,
       );
     }
