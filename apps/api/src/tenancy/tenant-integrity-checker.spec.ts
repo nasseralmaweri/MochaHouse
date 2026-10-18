@@ -446,6 +446,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     expect(report.uncheckedRows).toBe(0);
     // Only the documented by-design exclusions, none holding unchecked rows.
     expect(report.notCheckable.map((n) => [n.id, n.rows]).sort()).toEqual([
+      ['CheckoutSnapshot.payload', null],
       ['InternalAuditEvent.afterData', null],
       ['InternalAuditEvent.beforeData', null],
       ['NotificationDelivery.providerMessageId', null],
