@@ -28,6 +28,15 @@ const ROLLBACK = join(
 
 jest.setTimeout(180_000);
 
+// The migrations up to and including this one. Later migrations build on
+// the registry (SC4f-3a's address history references it), so their rollbacks
+// run first; this spec tests this migration and its own rollback.
+function throughThisMigration() {
+  const all = listMigrations(MIGRATIONS);
+  const at = all.findIndex((m) => m.name === '20261110090000_storefront_hosts');
+  return all.slice(0, at + 1);
+}
+
 describe('SC4f-1 storefront hosts migration (scratch database)', () => {
   let scratch: ScratchDatabase;
   const query = (text: string, params: unknown[] = []) =>
@@ -60,7 +69,7 @@ describe('SC4f-1 storefront hosts migration (scratch database)', () => {
       process.env.DATABASE_URL!,
       'sc4f1_migration',
     );
-    await applyMigrations(scratch.url, listMigrations(MIGRATIONS));
+    await applyMigrations(scratch.url, throughThisMigration());
   });
 
   afterAll(async () => {
@@ -159,7 +168,7 @@ describe('SC4f-1 storefront hosts migration (scratch database)', () => {
       'sc4f1_rollback_clean',
     );
     try {
-      await applyMigrations(clean.url, listMigrations(MIGRATIONS));
+      await applyMigrations(clean.url, throughThisMigration());
       await applyMigrationSql(clean.url, readFileSync(ROLLBACK, 'utf8'));
       await withScratchClient(clean.url, async (c) => {
         const tables = await c.query(

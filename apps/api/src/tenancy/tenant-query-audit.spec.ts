@@ -100,6 +100,8 @@ describe('Tenant query audit (report-only)', () => {
           'RegistrationControlChange',
           // SC4f-1
           'StorefrontHost',
+          // SC4f-3a
+          'StorefrontHostChange',
         ].sort(),
       );
     });

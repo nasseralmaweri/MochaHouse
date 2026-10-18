@@ -2299,6 +2299,9 @@ export const PLATFORM_PERMISSIONS = [
   // and pausing / resuming new owner registrations.
   "onboarding.view",
   "onboarding.manage",
+  // SC4f-3a — assigning approved storefront addresses to a business, and
+  // publishing / unpublishing them.
+  "storefront.manage",
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 
@@ -6927,4 +6930,103 @@ export function platformStorefrontHost(slug: string, storefrontDomain: string): 
   const domain = normalizeStorefrontHost(storefrontDomain);
   if (!domain || domain === "localhost") return null;
   return normalizeStorefrontHost(`${slug}.${domain}`);
+}
+
+// --- SC4f-3a: storefront publishing (Platform Console) -----------------------
+// Operators holding storefront.manage assign an APPROVED address to a business
+// (its platform subdomain, or — for Mocha House only — an address listed in
+// trusted configuration), then publish or unpublish it, each with a recent
+// sign-in, a written reason and the business's slug typed to confirm.
+// Publishing a registry row does not by itself make a storefront public: the
+// deployment's host routing switch must also be on.
+
+export type StorefrontHostKind = "PLATFORM_SUBDOMAIN" | "LEGACY" | "CUSTOM";
+export type StorefrontHostAction = "ASSIGNED" | "PUBLISHED" | "UNPUBLISHED";
+
+// The publishing checks, in checklist order. Digital ordering is NOT one of
+// them: a published storefront may be browse-only.
+export const STOREFRONT_PUBLISHING_CHECKS = [
+  "business_active",
+  "billing_authorized",
+  "location_configured",
+  "menu_available",
+] as const;
+export type StorefrontPublishingCheck =
+  (typeof STOREFRONT_PUBLISHING_CHECKS)[number];
+
+export const STOREFRONT_NOT_ELIGIBLE = "STOREFRONT_NOT_ELIGIBLE";
+export const STOREFRONT_HOST_TAKEN = "STOREFRONT_HOST_TAKEN";
+export const STOREFRONT_HOST_UNCHANGED = "STOREFRONT_HOST_UNCHANGED";
+export const STOREFRONT_SLUG_MISMATCH = "STOREFRONT_SLUG_MISMATCH";
+export const STOREFRONT_ASSIGNMENT_UNAVAILABLE =
+  "STOREFRONT_ASSIGNMENT_UNAVAILABLE";
+
+export interface PlatformStorefrontHostView {
+  id: string;
+  hostname: string;
+  kind: StorefrontHostKind;
+  // Published in the registry.
+  published: boolean;
+  publishedAt: string | null;
+  // Actually served to the public: published AND host routing switched on.
+  live: boolean;
+  createdAt: string;
+}
+
+export interface PlatformStorefrontHistoryEntry {
+  id: string;
+  action: StorefrontHostAction;
+  hostname: string;
+  reason: string;
+  actorEmail: string;
+  createdAt: string;
+}
+
+// GET /api/v1/platform/tenants/:tenantId/storefront (storefront.manage).
+export interface PlatformStorefrontView {
+  tenant: {
+    id: string;
+    name: string;
+    slug: string;
+    status: PlatformTenantStatus;
+  };
+  // The deployment's host routing switch (STOREFRONT_HOST_ROUTING_ENABLED).
+  // While false, no storefront address is publicly live, published or not.
+  hostRouting: boolean;
+  hosts: PlatformStorefrontHostView[];
+  eligibility: {
+    eligible: boolean;
+    checks: Array<{ key: StorefrontPublishingCheck; passed: boolean }>;
+  };
+  assignable: {
+    // The business's platform subdomain, when it can be assigned now.
+    platformHostname: string | null;
+    // Why not, otherwise.
+    platformUnavailable:
+      | "domain_not_configured"
+      | "slug_not_usable"
+      | "reserved_for_legacy"
+      | "already_assigned"
+      | "taken"
+      | null;
+    // Mocha House only: approved existing addresses not yet assigned.
+    legacyHostnames: string[];
+  };
+  // Most recent first (at most 50).
+  history: PlatformStorefrontHistoryEntry[];
+}
+
+// POST /api/v1/platform/tenants/:tenantId/storefront/hosts
+export interface PlatformStorefrontAssignRequest {
+  kind: "PLATFORM_SUBDOMAIN" | "LEGACY";
+  // LEGACY only: one of the approved addresses.
+  hostname?: string;
+  reason: string;
+  confirmSlug: string;
+}
+
+// POST .../storefront/hosts/:hostId/publish and .../unpublish
+export interface PlatformStorefrontChangeRequest {
+  reason: string;
+  confirmSlug: string;
 }

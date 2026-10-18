@@ -214,6 +214,8 @@ const APPROVED_GLOBAL_MODELS = [
   'RegistrationControlChange',
   // SC4f-1 — approved storefront hostnames (platform data).
   'StorefrontHost',
+  // SC4f-3a — storefront address history (platform data).
+  'StorefrontHostChange',
 ];
 // SC2a review — identifiers issued by an OUTSIDE system (not a record of
 // ours): the SaaS billing provider's ids (SC3a).
@@ -303,6 +305,9 @@ const PLATFORM_AUDIT_TARGET_TYPES = [
   'owner_registration',
   // SC4e — a pause / resume of new registrations (its history row).
   'registration_control',
+  // SC4f-3a — an approved storefront address assigned / published /
+  // unpublished.
+  'storefront_host',
 ];
 const PLATFORM_OPERATOR_MODELS = [
   'PlatformOperator',
@@ -344,6 +349,8 @@ const PLATFORM_OPERATOR_MODELS = [
   'RegistrationControlChange',
   // SC4f-1 — approved storefront hostnames (platform data).
   'StorefrontHost',
+  // SC4f-3a — storefront address history (platform data).
+  'StorefrontHostChange',
 ];
 
 describe('Tenant relationship inventory (Security 4C-1)', () => {
