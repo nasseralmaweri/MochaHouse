@@ -33,6 +33,18 @@ describe('storefrontPublishingConfig', () => {
     });
   });
 
+  it('accepts the legacy business id on its own (it also names the legacy presentation)', () => {
+    expect(
+      storefrontPublishingConfig({
+        LEGACY_STOREFRONT_TENANT_ID: '01a0db02-f800-7000-8000-000000000001',
+      }),
+    ).toEqual({
+      storefrontDomain: null,
+      legacyHostnames: [],
+      legacyTenantId: '01a0db02-f800-7000-8000-000000000001',
+    });
+  });
+
   it('refuses to start with a malformed value rather than accept an unapproved address', () => {
     for (const env of [
       { STOREFRONT_DOMAIN: 'Shops.Centerivo.Test' },
@@ -52,7 +64,8 @@ describe('storefrontPublishingConfig', () => {
         LEGACY_STOREFRONT_HOSTNAMES: 'order.mochahouse.test',
         LEGACY_STOREFRONT_TENANT_ID: '01A0DB02-F800-7000-8000-000000000001',
       },
-      { LEGACY_STOREFRONT_TENANT_ID: '01a0db02-f800-7000-8000-000000000001' },
+      // On its own the setting must still be a canonical id.
+      { LEGACY_STOREFRONT_TENANT_ID: 'mocha-house' },
       // A Mocha House address inside (or above) the platform domain.
       {
         STOREFRONT_DOMAIN: 'mochahouse.test',

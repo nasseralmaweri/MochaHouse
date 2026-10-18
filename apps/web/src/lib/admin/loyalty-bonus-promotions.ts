@@ -30,8 +30,11 @@ export type PrepareBonusPromotionResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: string };
 
-export function bonusTypeLabel(type: LoyaltyBonusPromotionType): string {
-  return type === "EXTRA_BEANS" ? "Extra Beans" : "Multiplier";
+export function bonusTypeLabel(
+  type: LoyaltyBonusPromotionType,
+  pointsLabel: string,
+): string {
+  return type === "EXTRA_BEANS" ? `Extra ${pointsLabel}` : "Multiplier";
 }
 
 // Describe the bonus in one short phrase, e.g. "+20 Bonus Beans" / "2×
@@ -39,10 +42,11 @@ export function bonusTypeLabel(type: LoyaltyBonusPromotionType): string {
 export function bonusValueLabel(
   type: LoyaltyBonusPromotionType,
   value: number,
+  pointsLabel: string,
 ): string {
   return type === "EXTRA_BEANS"
-    ? `+${value} Bonus Beans`
-    : `${value}× Mocha Beans`;
+    ? `+${value} bonus ${pointsLabel}`
+    : `${value}× ${pointsLabel}`;
 }
 
 function parseWhole(raw: string): number | null {
@@ -99,7 +103,7 @@ function validate(values: BonusPromotionFormValues):
     if (bonusValue < EXTRA_BEANS_MIN || bonusValue > EXTRA_BEANS_MAX) {
       return {
         ok: false,
-        error: `Extra Beans must be between ${EXTRA_BEANS_MIN} and ${EXTRA_BEANS_MAX}.`,
+        error: `The extra amount must be between ${EXTRA_BEANS_MIN} and ${EXTRA_BEANS_MAX}.`,
       };
     }
   } else if (bonusValue < MULTIPLIER_MIN || bonusValue > MULTIPLIER_MAX) {

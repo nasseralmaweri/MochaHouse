@@ -19,16 +19,21 @@ import type { MochaBeanLedgerEntryType } from "@mocha-house/contracts";
 import { Card } from "@/components/Card";
 import { LoyaltyTabs } from "@/components/admin/LoyaltyTabs";
 import { MochaBeanAdjustForm } from "@/components/admin/MochaBeanAdjustForm";
+import { adminPointsLabel } from "@/lib/internal-auth/points-label";
+import { singularPoints } from "@/lib/loyalty-label";
 
-const LEDGER_TYPE_LABEL: Record<MochaBeanLedgerEntryType, string> = {
-  EARN: "Earned",
-  BONUS_EARN: "Bonus earned",
-  REDEEM: "Reward redeemed",
-  MANUAL_ADJUSTMENT: "Manual adjustment",
-  REDEEM_REVERSAL: "Reward Beans returned (order closed)",
-  EARN_REVERSAL: "Earned Beans reversed (order closed)",
-  BONUS_EARN_REVERSAL: "Bonus Beans reversed (order closed)",
-};
+function ledgerTypeLabel(type: MochaBeanLedgerEntryType, pointsLabel: string): string {
+  const labels: Record<MochaBeanLedgerEntryType, string> = {
+    EARN: "Earned",
+    BONUS_EARN: "Bonus earned",
+    REDEEM: "Reward redeemed",
+    MANUAL_ADJUSTMENT: "Manual adjustment",
+    REDEEM_REVERSAL: `Reward ${pointsLabel} returned (order closed)`,
+    EARN_REVERSAL: `Earned ${pointsLabel} reversed (order closed)`,
+    BONUS_EARN_REVERSAL: `Bonus ${pointsLabel} reversed (order closed)`,
+  };
+  return labels[type];
+}
 
 // Admin → Loyalty (Milestone 7A). The smallest HQ Mocha Beans surface:
 // look a customer up by email or id, read their balance and the internal
@@ -45,6 +50,7 @@ export default async function AdminLoyaltyPage({
     customerId?: string | string[];
   }>;
 }) {
+  const pointsLabel = await adminPointsLabel();
   const session = await getInternalSession();
   if (!session) {
     redirect("/internal/sign-in");
@@ -53,7 +59,7 @@ export default async function AdminLoyaltyPage({
   const header = (
     <AdminPageHeader
       title="Loyalty"
-      description="Look up a customer's Mocha Bean balance and ledger, and make a manual adjustment."
+      description={`Look up a customer's ${singularPoints(pointsLabel)} balance and ledger, and make a manual adjustment.`}
       breadcrumbs={[{ label: "Loyalty" }]}
     />
   );
@@ -215,6 +221,7 @@ async function CustomerDetail({
   customerId: string;
   canAdjust: boolean;
 }) {
+  const pointsLabel = await adminPointsLabel();
   const result = await getLoyaltyCustomerDetail(customerId);
 
   if (result.outcome === "unauthenticated") {
@@ -242,7 +249,7 @@ async function CustomerDetail({
   const { customer, entries } = result.data;
 
   return (
-    <AdminSection title="Mocha Beans">
+    <AdminSection title={pointsLabel}>
       <Card className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-col gap-0.5">
           <span className="text-base font-semibold text-text-primary">
@@ -256,7 +263,7 @@ async function CustomerDetail({
           <span className="text-2xl font-semibold tracking-tight text-text-primary">
             {customer.balance}
           </span>
-          <span className="text-xs text-text-muted">Mocha Beans</span>
+          <span className="text-xs text-text-muted">{pointsLabel}</span>
         </div>
       </Card>
 
@@ -267,17 +274,17 @@ async function CustomerDetail({
         />
       ) : (
         <p className="text-sm text-text-muted">
-          You have view-only access to loyalty. Adjusting Mocha Beans requires
+          You have view-only access to loyalty. Adjusting {pointsLabel} requires
           the loyalty adjustment permission.
         </p>
       )}
 
       <div className="flex flex-col gap-2">
         <h3 className="text-sm font-semibold text-text-primary">
-          Internal Bean ledger
+          Internal {singularPoints(pointsLabel)} ledger
         </h3>
         {entries.length === 0 ? (
-          <p className="text-sm text-text-muted">No Bean activity yet.</p>
+          <p className="text-sm text-text-muted">No {singularPoints(pointsLabel)} activity yet.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[32rem] border-collapse text-sm">
@@ -299,7 +306,7 @@ async function CustomerDetail({
                       {new Date(entry.createdAt).toLocaleString()}
                     </td>
                     <td className="py-2 pr-3 text-text-secondary">
-                      {LEDGER_TYPE_LABEL[entry.type]}
+                      {ledgerTypeLabel(entry.type, pointsLabel)}
                     </td>
                     <td
                       className={`py-2 pr-3 text-right font-medium ${

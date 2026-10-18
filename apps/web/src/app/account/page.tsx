@@ -7,6 +7,8 @@ import { signOutAction } from "@/lib/auth/actions";
 import { formatPrice } from "@/lib/money";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
+import { requireStorefrontProfile } from "@/lib/storefront-profile";
+import { pointsCount } from "@/lib/loyalty-label";
 
 const STATUS_LABEL: Record<CustomerAccountStatus, string> = {
   ACTIVE: "Active",
@@ -21,6 +23,7 @@ const STATUS_LABEL: Record<CustomerAccountStatus, string> = {
 // Mocha Beans balance; Milestone 7B adds the (display-only) Rewards
 // Catalog. Bean history and redemption remain out of scope.
 export default async function AccountPage() {
+  const profile = await requireStorefrontProfile();
   const session = await getCustomerSession();
   if (!session) {
     redirect("/account/sign-in");
@@ -74,7 +77,7 @@ export default async function AccountPage() {
       <Card tone="subtle" className="flex items-center justify-between gap-4">
         <div className="flex flex-col gap-0.5">
           <span className="text-base font-semibold text-text-primary">
-            Mocha Beans
+            {profile.loyaltyPointsLabel}
           </span>
           <span className="text-sm text-text-secondary">
             {limited
@@ -83,7 +86,7 @@ export default async function AccountPage() {
               ? "Rewards are paused right now. Your balance is kept."
               : summary === null
                 ? "We couldn't load your balance right now."
-                : "Earn Mocha Beans on qualifying purchases."}
+                : `Earn ${profile.loyaltyPointsLabel} on qualifying purchases.`}
           </span>
         </div>
         <span className="text-2xl font-semibold tracking-tight text-text-primary">
@@ -121,7 +124,7 @@ export default async function AccountPage() {
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-0.5">
                     <span className="text-sm font-medium text-text-primary">
-                      {reward.beanCost} Beans
+                      {pointsCount(reward.beanCost, profile.loyaltyPointsLabel)}
                     </span>
                     {mochaBeans !== null ? (
                       <span className="text-xs text-text-muted">

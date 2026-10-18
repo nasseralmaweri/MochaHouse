@@ -1,5 +1,6 @@
 "use client";
 
+import { useNamed } from "@/lib/storefront-profile-context";
 import { useActionState, useState } from "react";
 import {
   updatePreferencesAction,
@@ -14,6 +15,10 @@ export function PreferencesForm({
 }: {
   initialMarketingEmailOptIn: boolean;
 }) {
+  const marketingText = useNamed(
+    "Receive news, seasonal drinks, offers, and other {name} marketing emails.",
+    "Receive news, offers, and other marketing emails.",
+  );
   const [optIn, setOptIn] = useState(initialMarketingEmailOptIn);
   const [state, formAction, pending] = useActionState(
     updatePreferencesAction,
@@ -35,8 +40,7 @@ export function PreferencesForm({
             Marketing emails
           </span>
           <span>
-            Receive news, seasonal drinks, offers, and other Mocha House
-            marketing emails.
+            {marketingText}
           </span>
         </span>
       </label>

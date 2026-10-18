@@ -22,7 +22,7 @@ export type RateParseResult =
 export function parseEarningRate(raw: string): RateParseResult {
   const cleaned = raw.trim();
   if (!/^\d+$/.test(cleaned)) {
-    return { ok: false, error: "Enter a whole number of Mocha Beans." };
+    return { ok: false, error: "Enter a whole number." };
   }
   const value = Number(cleaned);
   if (value < EARNING_RATE_MIN || value > EARNING_RATE_MAX) {
@@ -92,7 +92,7 @@ function validateCommon(values: RewardFormValues):
   }
   const beanCost = parseWholePositive(values.beanCost);
   if (beanCost === null) {
-    return { ok: false, error: "The Bean cost must be a whole number above zero." };
+    return { ok: false, error: "The cost must be a whole number above zero." };
   }
   return {
     ok: true,

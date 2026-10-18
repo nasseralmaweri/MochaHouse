@@ -31,6 +31,7 @@ import {
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { BackLink } from "@/components/BackLink";
+import { usePointsLabel } from "@/lib/points-label-context";
 
 const TONE_CLASS = {
   ok: "text-status-success",
@@ -132,6 +133,7 @@ function GuestSessionGate({ orderId }: { orderId: string }) {
 }
 
 function OrderTracking({ orderId }: { orderId: string }) {
+  const pointsLabel = usePointsLabel();
   const previousStatus = useRef<OrderStatusResponse["status"] | null>(null);
   // Alternates a trailing no-break space so two identical announcements in a
   // row still change the live region and are both spoken.
@@ -302,7 +304,7 @@ function OrderTracking({ orderId }: { orderId: string }) {
           ) : null}
           {status.loyaltyReward ? (
             <div className="flex items-center justify-between text-sm text-status-success">
-              <span>Mocha Beans Reward · {status.loyaltyReward.rewardName}</span>
+              <span>{pointsLabel} Reward · {status.loyaltyReward.rewardName}</span>
               <span>−{formatPrice(status.rewardDiscount, status.currency)}</span>
             </div>
           ) : null}
@@ -353,12 +355,12 @@ function OrderTracking({ orderId }: { orderId: string }) {
           ) : null}
           {status.loyaltyReward ? (
             <p className="text-xs text-text-muted">
-              {status.loyaltyReward.beanCost} Mocha Beans used
+              {status.loyaltyReward.beanCost} {pointsLabel} used
             </p>
           ) : null}
           {status.loyaltyBonus && status.loyaltyBonus.totalBonusBeans > 0 ? (
             <p className="text-xs text-status-success">
-              +{status.loyaltyBonus.totalBonusBeans} bonus Mocha Beans earned
+              +{status.loyaltyBonus.totalBonusBeans} bonus {pointsLabel} earned
             </p>
           ) : null}
         </div>

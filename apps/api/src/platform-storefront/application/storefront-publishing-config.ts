@@ -97,9 +97,15 @@ export function storefrontPublishingConfig(
     }
     legacyTenantId = rawTenant;
   } else if (rawTenant !== '') {
-    throw new StorefrontPublishingConfigError(
-      `${LEGACY_STOREFRONT_TENANT_ID_ENV} is set but no ${LEGACY_STOREFRONT_HOSTNAMES_ENV} are listed.`,
-    );
+    // SC4f-3b: on its own the setting also names the business that keeps
+    // the original storefront presentation (tenancy/legacy-brand.ts); it
+    // must still be a canonical id.
+    if (!CANONICAL_UUID.test(rawTenant)) {
+      throw new StorefrontPublishingConfigError(
+        `${LEGACY_STOREFRONT_TENANT_ID_ENV} must be a canonical business id.`,
+      );
+    }
+    legacyTenantId = rawTenant;
   }
   return {
     storefrontDomain,

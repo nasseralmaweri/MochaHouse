@@ -9,12 +9,14 @@ import {
   AdminForbidden,
 } from "@/components/admin/states";
 import { CustomersBrowser } from "@/components/admin/CustomersBrowser";
+import { adminPointsLabel } from "@/lib/internal-auth/points-label";
 
 // Admin → Customers (Milestone 8A). The HQ CRM directory over authoritative
 // customer data. `customers.view` is CORPORATE-only and the API enforces
 // it; the check here just keeps the page out of the way for anyone who
 // can't use it.
 export default async function AdminCustomersPage() {
+  const pointsLabel = await adminPointsLabel();
   const session = await getInternalSession();
   if (!session) {
     redirect("/internal/sign-in");
@@ -23,7 +25,7 @@ export default async function AdminCustomersPage() {
   const header = (
     <AdminPageHeader
       title="Customers"
-      description="Search the customer directory and open a customer to see their profile, orders, Mocha Beans, gift cards and internal notes."
+      description={`Search the customer directory and open a customer to see their profile, orders, ${pointsLabel}, gift cards and internal notes.`}
       breadcrumbs={[{ label: "Customers" }]}
     />
   );

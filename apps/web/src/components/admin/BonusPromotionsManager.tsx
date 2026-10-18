@@ -22,6 +22,7 @@ import {
 import { ADMIN_FIELD_CLASS, FormField } from "./form";
 import { Button } from "./Button";
 import { Card } from "@/components/Card";
+import { usePointsLabel } from "@/lib/points-label-context";
 
 // HQ Bonus Mocha Beans Promotions management (Milestone 7D). Create / edit /
 // activate / deactivate. The API (`loyalty.configure`, CORPORATE-only)
@@ -34,6 +35,7 @@ export function BonusPromotionsManager({
   initialPromotions: AdminLoyaltyBonusPromotion[];
   options: AdminLoyaltyBonusPromotionOptions;
 }) {
+  const pointsLabel = usePointsLabel();
   const router = useRouter();
   const [mode, setMode] = useState<
     | { kind: "list" }
@@ -93,7 +95,7 @@ export function BonusPromotionsManager({
 
       {initialPromotions.length === 0 ? (
         <p className="text-sm text-text-muted">
-          No bonus promotions yet. Create one to award extra Mocha Beans on
+          No bonus promotions yet. Create one to award extra {pointsLabel} on
           chosen products.
         </p>
       ) : (
@@ -117,8 +119,8 @@ export function BonusPromotionsManager({
                     </span>
                   </span>
                   <span className="text-xs text-text-secondary">
-                    {bonusTypeLabel(promotion.type)} ·{" "}
-                    {bonusValueLabel(promotion.type, promotion.bonusValue)}
+                    {bonusTypeLabel(promotion.type, pointsLabel)} ·{" "}
+                    {bonusValueLabel(promotion.type, promotion.bonusValue, pointsLabel)}
                   </span>
                   <span className="text-xs text-text-muted">
                     {promotion.eligibleProducts.map((p) => p.name).join(", ") ||
@@ -177,6 +179,7 @@ function PromotionForm({
   onCancel: () => void;
   onSaved: () => void;
 }) {
+  const pointsLabel = usePointsLabel();
   const isEdit = promotion !== undefined;
   const [type, setType] = useState<LoyaltyBonusPromotionType>(
     promotion?.type ?? "EXTRA_BEANS",
@@ -273,7 +276,7 @@ function PromotionForm({
                 setError(null);
               }}
             />
-            Extra Beans (flat amount per qualifying item)
+            Extra {pointsLabel} (flat amount per qualifying item)
           </label>
           <label className="flex items-center gap-2 text-sm text-text-primary">
             <input
@@ -290,7 +293,7 @@ function PromotionForm({
         </fieldset>
       ) : (
         <p className="text-xs text-text-muted">
-          Type: {bonusTypeLabel(type)} (cannot be changed)
+          Type: {bonusTypeLabel(type, pointsLabel)} (cannot be changed)
         </p>
       )}
 
@@ -304,12 +307,12 @@ function PromotionForm({
       </FormField>
 
       <FormField
-        label={type === "EXTRA_BEANS" ? "Extra Beans per item" : "Multiplier"}
+        label={type === "EXTRA_BEANS" ? `Extra ${pointsLabel} per item` : "Multiplier"}
         htmlFor="promo-bonus-value"
         hint={
           type === "EXTRA_BEANS"
-            ? "Whole Beans added for every qualifying paid unit, e.g. 20."
-            : "Whole number, 2–10. 2× means the item earns twice its standard Beans."
+            ? `Whole ${pointsLabel} added for every qualifying paid unit, e.g. 20.`
+            : `Whole number, 2–10. 2× means the item earns twice its standard ${pointsLabel}.`
         }
       >
         <input

@@ -88,6 +88,8 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'GET /api/v1/admin/loyalty/customers/:customerId': { scope: 'tenant' },
   'GET /api/v1/admin/loyalty/rewards': { scope: 'tenant' },
   'GET /api/v1/admin/loyalty/settings': { scope: 'tenant' },
+  // SC4f-3b — the business's loyalty points name (loyalty.configure).
+  'GET /api/v1/admin/loyalty/settings/points-label': { scope: 'tenant' },
   'GET /api/v1/admin/marketing/campaigns': { scope: 'tenant' },
   'GET /api/v1/admin/marketing/campaigns/:campaignId': { scope: 'tenant' },
   'GET /api/v1/admin/marketing/campaigns/options': { scope: 'tenant' },
@@ -120,6 +122,9 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'GET /api/v1/catalog/products': { scope: 'tenant' },
   'GET /api/v1/content/:pageKey': { scope: 'tenant' },
   'GET /api/v1/customers/me': { scope: 'tenant' },
+  // SC4f-3b — the storefront's own business name, ordering availability and
+  // loyalty points name (public; resolved business only).
+  'GET /api/v1/storefront/profile': { scope: 'tenant' },
   'GET /api/v1/customers/me/locations': { scope: 'tenant' },
   'GET /api/v1/customers/me/loyalty': { scope: 'tenant' },
   'GET /api/v1/customers/me/orders': { scope: 'tenant' },
@@ -243,6 +248,7 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/orders/reward-eligibility': { scope: 'tenant' },
   'PUT /api/v1/admin/gift-cards/configuration': { scope: 'tenant' },
   'PUT /api/v1/admin/loyalty/settings': { scope: 'tenant' },
+  'PUT /api/v1/admin/loyalty/settings/points-label': { scope: 'tenant' },
   'PUT /api/v1/admin/notifications/recipients/:purpose': { scope: 'tenant' },
   // --- Location-scoped — Admin routes where a location in the request decides access
   // (AuthorizationContext.assertCanActOnLocation, bounded to the active business).

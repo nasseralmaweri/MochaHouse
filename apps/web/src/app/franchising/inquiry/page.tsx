@@ -2,22 +2,37 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PageHeader } from "@/components/PageHeader";
 import { InquiryForm } from "./InquiryForm";
-import { getStorefrontFeatures } from "@/lib/api";
+import { getPublishedFranchisingContent, getStorefrontFeatures } from "@/lib/api";
+import { notFound } from "next/navigation";
+import { pageTitle, requireStorefrontProfile } from "@/lib/storefront-profile";
 import { FeatureUnavailable } from "@/components/FeatureUnavailable";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "Franchise Inquiry · Mocha House",
-  description: "Submit a franchise inquiry to Mocha House.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const profile = await requireStorefrontProfile();
+  return profile.presentation === "legacy"
+    ? {
+        title: "Franchise Inquiry · Mocha House",
+        description: "Submit a franchise inquiry to Mocha House.",
+      }
+    : { title: pageTitle(profile, "Franchise Inquiry") };
+}
 
 // Public franchise inquiry form (Milestone 8D). No account, no file
 // upload, no inquiry id shown on success.
 export default async function FranchisingInquiryPage() {
   // SC2b — this business does not offer franchising (the API refuses an
   // inquiry regardless; this only avoids offering a form that can't work).
-  const features = await getStorefrontFeatures();
+  const [features, profile, cms] = await Promise.all([
+    getStorefrontFeatures(),
+    requireStorefrontProfile(),
+    getPublishedFranchisingContent(),
+  ]);
+  const legacy = profile.presentation === "legacy";
+  // SC4f-3b (J3) — only a business that published its own franchising
+  // content (or Mocha House) offers the inquiry form.
+  if (!cms && !legacy) notFound();
   if (features?.franchising === false) {
     return (
       <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-8">
@@ -38,11 +53,15 @@ export default async function FranchisingInquiryPage() {
         </Link>
         <PageHeader
           title="Franchise Inquiry"
-          subtitle="Tell us a little about yourself and where you're interested in opening a Mocha House."
+          subtitle={
+            legacy
+              ? "Tell us a little about yourself and where you're interested in opening a Mocha House."
+              : "Tell us a little about yourself and where you're interested."
+          }
         />
       </div>
 
-      <InquiryForm />
+      <InquiryForm businessName={profile.businessName} legacy={legacy} />
     </main>
   );
 }

@@ -41,7 +41,15 @@ function Field({
 // through the same-origin proxy (which forwards to the API, the sole
 // authority). investmentRange / timeframe are plain free text — no invented
 // dropdown buckets. Consent wording is fixed and not editable here.
-export function InquiryForm() {
+// SC4f-3b — who may contact the person: the storefront's own business.
+export function InquiryForm({
+  businessName,
+  legacy,
+}: {
+  businessName: string;
+  legacy: boolean;
+}) {
+  const contactName = businessName.trim() || "this business";
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -65,7 +73,7 @@ export function InquiryForm() {
 
     if (!consent) {
       setError(
-        "Please agree that Mocha House may contact you regarding this inquiry.",
+        `Please agree that ${contactName} may contact you regarding this inquiry.`,
       );
       return;
     }
@@ -210,7 +218,11 @@ export function InquiryForm() {
       <Field
         label="Preferred market / area of interest"
         htmlFor="inquiry-market"
-        hint="Where would you like to open a Mocha House? A city, region, or general area is fine."
+        hint={
+          legacy
+            ? "Where would you like to open a Mocha House? A city, region, or general area is fine."
+            : "Where would you like to open a location? A city, region, or general area is fine."
+        }
       >
         <input
           id="inquiry-market"
@@ -284,7 +296,7 @@ export function InquiryForm() {
           required
         />
         <span>
-          I agree that Mocha House may contact me regarding this franchise
+          I agree that {contactName} may contact me regarding this franchise
           inquiry.
         </span>
       </label>

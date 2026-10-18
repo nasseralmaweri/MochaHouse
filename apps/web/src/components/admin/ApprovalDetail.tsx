@@ -22,6 +22,8 @@ import { AdminSection } from "./AdminPage";
 import { StatusBadge } from "./StatusBadge";
 import { Button } from "./Button";
 import { ADMIN_FIELD_CLASS, FormField } from "./form";
+import { usePointsLabel } from "@/lib/points-label-context";
+import { singularPoints } from "@/lib/loyalty-label";
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -48,6 +50,8 @@ export function ApprovalDetail({
   mediaAsset: AdminMediaAsset | null;
   canDecide: boolean;
 }) {
+  const pointsLabel = usePointsLabel();
+  const pointLabel = singularPoints(pointsLabel);
   const router = useRouter();
   const [approvalRequest, setApprovalRequest] = useState(initial);
   const [reason, setReason] = useState("");
@@ -167,7 +171,7 @@ export function ApprovalDetail({
               value={campaign.promotion ? campaign.promotion.name : "None"}
             />
             <Row
-              label="Bonus Mocha Bean Promotion"
+              label={`Bonus ${pointLabel} Promotion`}
               value={
                 campaign.loyaltyBonusPromotion
                   ? campaign.loyaltyBonusPromotion.name

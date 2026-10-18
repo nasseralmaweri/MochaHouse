@@ -8,11 +8,15 @@ import {
 import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/Card";
 import { FeatureUnavailable } from "@/components/FeatureUnavailable";
+import { named, pageTitle, requireStorefrontProfile } from "@/lib/storefront-profile";
 
-export const metadata: Metadata = {
-  title: "Careers · Mocha House",
-  description: "Open positions at Mocha House.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const profile = await requireStorefrontProfile();
+  return {
+    title: pageTitle(profile, "Careers"),
+    description: named(profile, "Open positions at {name}.", "Open positions."),
+  };
+}
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +24,7 @@ export const dynamic = "force-dynamic";
 // published, publicly-visible openings. Applying online is not part of this
 // release.
 export default async function CareersPage() {
+  const profile = await requireStorefrontProfile();
   let jobs: NonNullable<Awaited<ReturnType<typeof getPublicJobOpenings>>>["jobs"] = [];
   let failed = false;
   let unavailable = false;
@@ -38,7 +43,11 @@ export default async function CareersPage() {
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-8">
       <PageHeader
         title="Careers"
-        subtitle={unavailable ? undefined : "Open positions at Mocha House."}
+        subtitle={
+          unavailable
+            ? undefined
+            : named(profile, "Open positions at {name}.", "Open positions.")
+        }
       />
 
       {unavailable ? (

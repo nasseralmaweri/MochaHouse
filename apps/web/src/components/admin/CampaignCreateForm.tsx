@@ -10,6 +10,8 @@ import { Button } from "./Button";
 import { ADMIN_FIELD_CLASS, FormField } from "./form";
 import { CampaignImagePicker } from "./CampaignImagePicker";
 import { CampaignFeaturedProductsSelector } from "./CampaignFeaturedProductsSelector";
+import { usePointsLabel } from "@/lib/points-label-context";
+import { singularPoints } from "@/lib/loyalty-label";
 
 // Admin → Marketing → New campaign (Milestone 8G). A new campaign always
 // starts DRAFT — status changes happen afterward, on the campaign's own
@@ -22,6 +24,8 @@ export function CampaignCreateForm({
   options: AdminCampaignOptions | null;
   canUploadMedia: boolean;
 }) {
+  const pointsLabel = usePointsLabel();
+  const pointLabel = singularPoints(pointsLabel);
   const router = useRouter();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -120,7 +124,7 @@ export function CampaignCreateForm({
 
       <AdminSection
         title="Benefits"
-        description="Optionally link an existing Promotion / Coupon and/or an existing Bonus Mocha Bean Promotion. Each remains fully in charge of its own discount or bonus rules."
+        description={`Optionally link an existing Promotion / Coupon and/or an existing Bonus ${pointLabel} Promotion. Each remains fully in charge of its own discount or bonus rules.`}
       >
         <Card className="flex flex-col gap-3">
           <FormField label="Promotion / Coupon" htmlFor="campaign-promotion">
@@ -140,7 +144,7 @@ export function CampaignCreateForm({
             </select>
           </FormField>
           <FormField
-            label="Bonus Mocha Bean Promotion"
+            label={`Bonus ${pointLabel} Promotion`}
             htmlFor="campaign-bonus-promotion"
           >
             <select

@@ -1,15 +1,23 @@
 import type { Metadata } from "next";
+import { named, pageTitle, requireStorefrontProfile } from "@/lib/storefront-profile";
 import { PageHeader } from "@/components/PageHeader";
 import { GiftCardsClient } from "./GiftCardsClient";
 import { getStorefrontFeatures } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "Gift Cards · Mocha House",
-  description:
-    "Buy a digital Mocha House gift card or check the balance on one you already have.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const profile = await requireStorefrontProfile();
+  return {
+    title: pageTitle(profile, "Gift Cards"),
+    description: named(
+      profile,
+      "Buy a digital {name} gift card or check the balance on one you already have.",
+      "Buy a digital gift card or check the balance on one you already have.",
+    ),
+  };
+}
+
 
 // Milestone 7H — the public customer gift-card page: buy a digital gift
 // card (guest or signed-in) and check a card's balance. All the work runs

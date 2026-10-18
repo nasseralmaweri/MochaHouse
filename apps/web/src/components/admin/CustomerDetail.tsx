@@ -15,6 +15,7 @@ import { Card } from "@/components/Card";
 import { AdminSection } from "./AdminPage";
 import { OrderStatusBadge, StatusBadge } from "./StatusBadge";
 import { CustomerNotesPanel } from "./CustomerNotesPanel";
+import { singularPoints } from "@/lib/loyalty-label";
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -32,9 +33,12 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 export function CustomerDetail({
   detail,
   canManageNotes,
+  pointsLabel,
 }: {
   detail: AdminCustomerDetail;
   canManageNotes: boolean;
+  // SC4f-3b — the business's loyalty points name.
+  pointsLabel: string;
 }) {
   const { customer } = detail;
 
@@ -101,12 +105,12 @@ export function CustomerDetail({
       </AdminSection>
 
       <AdminSection
-        title="Mocha Beans"
-        description={`Balance: ${formatBeans(detail.mochaBeans.balance)}`}
+        title={pointsLabel}
+        description={`Balance: ${formatBeans(detail.mochaBeans.balance, pointsLabel)}`}
       >
         {detail.mochaBeans.recentActivity.length === 0 ? (
           <Card tone="subtle" className="text-sm text-text-secondary">
-            No Mocha Bean activity yet.
+            No {singularPoints(pointsLabel)} activity yet.
           </Card>
         ) : (
           <ul className="flex flex-col gap-1.5">
@@ -127,7 +131,7 @@ export function CustomerDetail({
                   }
                 >
                   {entry.amount >= 0 ? "+" : ""}
-                  {formatBeans(entry.amount)}
+                  {formatBeans(entry.amount, pointsLabel)}
                 </span>
               </li>
             ))}
@@ -152,7 +156,7 @@ export function CustomerDetail({
               >
                 <span className="text-text-primary">{reward.name}</span>
                 <span className="text-text-secondary">
-                  {formatBeans(reward.beanCost)}
+                  {formatBeans(reward.beanCost, pointsLabel)}
                 </span>
               </li>
             ))}

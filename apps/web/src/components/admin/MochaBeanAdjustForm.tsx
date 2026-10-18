@@ -11,6 +11,8 @@ import {
 } from "@/lib/admin/loyalty-adjustment";
 import { ADMIN_FIELD_CLASS, FormField } from "./form";
 import { Button } from "./Button";
+import { usePointsLabel } from "@/lib/points-label-context";
+import { singularPoints } from "@/lib/loyalty-label";
 
 // The HQ manual Mocha Bean adjustment form (Milestone 7A). Rendered only
 // when the viewer holds `loyalty.adjust`. The API is the authority — it
@@ -28,6 +30,8 @@ export function MochaBeanAdjustForm({
   customerId: string;
   currentBalance: number;
 }) {
+  const pointsLabel = usePointsLabel();
+  const pointLabel = singularPoints(pointsLabel);
   const router = useRouter();
 
   const [direction, setDirection] = useState<AdjustmentDirection>("add");
@@ -59,7 +63,7 @@ export function MochaBeanAdjustForm({
     }
     if (wouldGoNegative(currentBalance, prepared.value.deltaBeans)) {
       setError(
-        `That deduction is more than the current balance of ${currentBalance} Mocha Beans.`,
+        `That deduction is more than the current balance of ${currentBalance} ${pointsLabel}.`,
       );
       return;
     }
@@ -70,7 +74,7 @@ export function MochaBeanAdjustForm({
 
     if (result.outcome === "success") {
       setNotice(
-        `Balance is now ${result.detail.customer.balance} Mocha Beans.`,
+        `Balance is now ${result.detail.customer.balance} ${pointsLabel}.`,
       );
       resetAfterSuccess();
       // router.refresh() re-runs the server component for the current URL,
@@ -80,7 +84,7 @@ export function MochaBeanAdjustForm({
     }
 
     if (result.outcome === "forbidden") {
-      setError("You don't have permission to adjust Mocha Beans.");
+      setError(`You don't have permission to adjust ${pointsLabel}.`);
     } else if (result.outcome === "not-found") {
       setError("This customer no longer exists.");
     } else {
@@ -92,7 +96,7 @@ export function MochaBeanAdjustForm({
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border-default bg-surface-subtle px-4 py-4">
       <p className="text-sm font-semibold text-text-primary">
-        Adjust Mocha Beans
+        Adjust {pointsLabel}
       </p>
 
       <fieldset className="flex flex-col gap-2">
@@ -109,7 +113,7 @@ export function MochaBeanAdjustForm({
               setError(null);
             }}
           />
-          Add Beans
+          Add {pointsLabel}
         </label>
         <label className="flex items-center gap-2 text-sm text-text-primary">
           <input
@@ -121,11 +125,11 @@ export function MochaBeanAdjustForm({
               setError(null);
             }}
           />
-          Deduct Beans
+          Deduct {pointsLabel}
         </label>
       </fieldset>
 
-      <FormField label="Amount (Mocha Beans)" htmlFor="bean-amount">
+      <FormField label={`Amount (${pointsLabel})`} htmlFor="bean-amount">
         <input
           id="bean-amount"
           inputMode="numeric"
@@ -141,7 +145,7 @@ export function MochaBeanAdjustForm({
       <FormField
         label="Reason"
         htmlFor="bean-reason"
-        hint="Recorded in the Bean ledger and the internal audit log."
+        hint={`Recorded in the ${pointLabel} ledger and the internal audit log.`}
       >
         <textarea
           id="bean-reason"

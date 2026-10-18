@@ -10,11 +10,13 @@ import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import { AdminErrorState, AdminForbidden } from "@/components/admin/states";
 import { LoyaltyTabs } from "@/components/admin/LoyaltyTabs";
 import { RewardsManager } from "@/components/admin/RewardsManager";
+import { adminPointsLabel } from "@/lib/internal-auth/points-label";
 
 // Admin → Loyalty → Rewards (Milestone 7B). The customer Rewards Catalog.
 // Catalog management only — no redemption. `loyalty.configure` is
 // CORPORATE-only and the API enforces it.
 export default async function AdminLoyaltyRewardsPage() {
+  const pointsLabel = await adminPointsLabel();
   const session = await getInternalSession();
   if (!session) {
     redirect("/internal/sign-in");
@@ -24,7 +26,7 @@ export default async function AdminLoyaltyRewardsPage() {
   const header = (
     <AdminPageHeader
       title="Rewards"
-      description="Rewards customers can redeem with Mocha Beans. Redemption ships in a later slice."
+      description={`Rewards customers can redeem with ${pointsLabel}. Redemption ships in a later slice.`}
       breadcrumbs={[
         { label: "Loyalty", href: "/admin/loyalty" },
         { label: "Rewards" },

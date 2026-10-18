@@ -21,6 +21,8 @@ import { formatPrice } from "@/lib/money";
 import { ADMIN_FIELD_CLASS, FormField } from "./form";
 import { Button } from "./Button";
 import { Card } from "@/components/Card";
+import { usePointsLabel } from "@/lib/points-label-context";
+import { singularPoints } from "@/lib/loyalty-label";
 
 // HQ Rewards Catalog management (Milestone 7B). Create / edit / activate /
 // deactivate. The API (`loyalty.configure`, CORPORATE-only) validates every
@@ -179,6 +181,7 @@ function RewardForm({
   onCancel: () => void;
   onSaved: () => void;
 }) {
+  const pointLabel = singularPoints(usePointsLabel());
   const isEdit = reward !== undefined;
   const [type, setType] = useState<LoyaltyRewardType>(
     reward?.type ?? "FIXED_AMOUNT",
@@ -309,7 +312,7 @@ function RewardForm({
         />
       </FormField>
 
-      <FormField label="Bean cost" htmlFor="reward-bean-cost">
+      <FormField label={`${pointLabel} cost`} htmlFor="reward-bean-cost">
         <input
           id="reward-bean-cost"
           inputMode="numeric"

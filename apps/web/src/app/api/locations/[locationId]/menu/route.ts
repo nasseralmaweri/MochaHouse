@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { storefrontApiFetch } from "@/lib/storefront-context";
+import { LOCATION_NOT_IN_STOREFRONT } from "@/lib/cart-binding";
 
 // SC4f-1 — same-origin proxy for the cart's menu revalidation
 // (getLocationMenuFromBrowser). The cart lives in localStorage, so it must
@@ -54,6 +55,16 @@ export async function GET(
   }
 
   const responseBody = await response.text();
+  // SC4f-3b (J7) — the API answers an empty 200 when the location is not
+  // one this storefront's business offers (another business's, inactive, or
+  // without a menu). Say so with a distinct code, so the cart clears only on
+  // this server decision and never on an outage or an unrelated 404.
+  if (response.ok && responseBody.trim() === "") {
+    return NextResponse.json(
+      { code: LOCATION_NOT_IN_STOREFRONT, message: "This location isn't available here." },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
+    );
+  }
   return new NextResponse(responseBody, {
     status: response.status,
     headers: {

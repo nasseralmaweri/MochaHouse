@@ -1,10 +1,15 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import type { PublicHomePageContent } from "@mocha-house/contracts";
+import type {
+  PublicHomePageContent,
+  StorefrontProfileResponse,
+} from "@mocha-house/contracts";
 import { getPublishedHomeContent } from "@/lib/api";
 import { formatPrice } from "@/lib/money";
 import { Card } from "@/components/Card";
+import { StorefrontFrame } from "@/components/StorefrontFrame";
+import { pageTitle, requireStorefrontProfile } from "@/lib/storefront-profile";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +20,8 @@ const DEFAULT_DESCRIPTION =
 // The safe, code-defined fallback — used whenever nothing has ever been
 // published for "home" (no row, draft-only) or the content API is
 // unreachable/invalid. CMS failure must never break this page.
+// SC4f-3b: this is Mocha House's own copy — only the legacy presentation
+// uses it; every other business gets defaultContent() below.
 const FALLBACK_CONTENT: PublicHomePageContent = {
   hero: {
     headline: "Welcome to Mocha House",
@@ -29,11 +36,35 @@ const FALLBACK_CONTENT: PublicHomePageContent = {
   seo: { pageTitle: null, metaDescription: null },
 };
 
-export async function generateMetadata(): Promise<Metadata> {
-  const content = await getPublishedHomeContent();
+// SC4f-3b (owner decision J4) — a clean default for a business that has not
+// published its own homepage: its name and a way to its menu. No Mocha House
+// copy or imagery.
+function defaultContent(profile: StorefrontProfileResponse): PublicHomePageContent {
   return {
-    title: content?.seo.pageTitle ?? DEFAULT_TITLE,
-    description: content?.seo.metaDescription ?? DEFAULT_DESCRIPTION,
+    hero: {
+      headline: profile.businessName || "Welcome",
+      supportingText: profile.orderingAvailable
+        ? "Browse the menu and order online."
+        : "Browse the menu and find a location near you.",
+      buttonLabel: profile.orderingAvailable ? "Order Online" : "View Menu",
+      backgroundImageUrl: null,
+    },
+    featuredProducts: { heading: "Featured", products: [] },
+    seo: { pageTitle: null, metaDescription: null },
+  };
+}
+
+export async function generateMetadata(): Promise<Metadata> {
+  const [content, profile] = await Promise.all([
+    getPublishedHomeContent(),
+    requireStorefrontProfile(),
+  ]);
+  const legacy = profile.presentation === "legacy";
+  return {
+    title: content?.seo.pageTitle ?? (legacy ? DEFAULT_TITLE : pageTitle(profile)),
+    description:
+      content?.seo.metaDescription ??
+      (legacy ? DEFAULT_DESCRIPTION : defaultContent(profile).hero.supportingText),
   };
 }
 
@@ -44,10 +75,16 @@ export async function generateMetadata(): Promise<Metadata> {
 // server-side from the authoritative catalog (see HomeContentPublicService)
 // — this page never invents product data.
 export default async function HomePage() {
-  const cms = await getPublishedHomeContent();
-  const content = cms ?? FALLBACK_CONTENT;
+  const [cms, profile] = await Promise.all([
+    getPublishedHomeContent(),
+    requireStorefrontProfile(),
+  ]);
+  const legacy = profile.presentation === "legacy";
+  const content =
+    cms ?? (legacy ? FALLBACK_CONTENT : defaultContent(profile));
 
   return (
+    <StorefrontFrame>
     <main className="flex flex-1 flex-col">
       <section className="relative flex min-h-[420px] flex-col items-center justify-center gap-4 overflow-hidden bg-surface-subtle px-6 py-20 text-center sm:min-h-[520px]">
         {content.hero.backgroundImageUrl ? (
@@ -96,6 +133,27 @@ export default async function HomePage() {
           </ul>
         </section>
       ) : null}
+
+      {!legacy && !cms ? (
+        <nav
+          aria-label="Explore"
+          className="mx-auto flex w-full max-w-4xl flex-wrap gap-3 px-4 py-10"
+        >
+          <Link
+            href="/order/location"
+            className="flex min-h-11 items-center rounded-xl border border-border-default px-4 text-sm font-medium text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+          >
+            Locations and menu
+          </Link>
+          <Link
+            href="/account"
+            className="flex min-h-11 items-center rounded-xl border border-border-default px-4 text-sm font-medium text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+          >
+            Your account
+          </Link>
+        </nav>
+      ) : null}
     </main>
+    </StorefrontFrame>
   );
 }

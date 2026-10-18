@@ -602,10 +602,18 @@ async function seedMochaHouseBusinessData(
   // qualifying dollar, which preserves the 7A behaviour exactly; re-seeding
   // never overwrites an HQ-chosen rate. The Rewards Catalog is NOT seeded —
   // HQ creates rewards through the Admin UI.
+  // SC4f-3b — the seeded (development) Mocha House names its points
+  // explicitly; deployments keep "Mocha Beans" through the legacy-brand
+  // configuration, or set the name in Admin → Loyalty → Settings.
   await prisma.loyaltyConfiguration.upsert({
     where: { tenantId_key: { tenantId, key: 'company' } },
     update: {},
-    create: { tenantId, key: 'company', earningRatePerDollar: 1 },
+    create: {
+      tenantId,
+      key: 'company',
+      earningRatePerDollar: 1,
+      pointsLabel: 'Mocha Beans',
+    },
   });
 
   // Milestone 7F — the single company-wide gift-card purchasing

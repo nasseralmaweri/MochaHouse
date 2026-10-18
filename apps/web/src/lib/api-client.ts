@@ -71,6 +71,8 @@ import type {
   UpdateLoyaltyRewardRequest,
   UpdatePromotionRequest,
   UpdateLoyaltySettingsRequest,
+  UpdateLoyaltyPointsLabelRequest,
+  LoyaltyPointsLabelSettings,
   AdminUpdateInternalUserStatusRequest,
   AdminUpdateLocationRequest,
   AdminUpdateProductRequest,
@@ -92,6 +94,7 @@ import type {
   StoreOrderSummary,
 } from "@mocha-house/contracts";
 import { parseLocationMenuResponse } from "@/lib/menu";
+import { LOCATION_NOT_IN_STOREFRONT } from "@/lib/cart-binding";
 
 // Browser-safe counterpart to lib/api.ts's getLocationMenu. The cart lives
 // in localStorage (browser-only), so /order/cart must revalidate it from
@@ -99,6 +102,17 @@ import { parseLocationMenuResponse } from "@/lib/menu";
 // through this app's own /api/locations/:id/menu route, never the API
 // directly, so the web server can attach the signed storefront context and
 // the prices are always those of the storefront the shopper is on.
+// SC4f-3b (owner decision J7) — the saved cart's location is not one of
+// THIS storefront's (another business's, or no longer available). The
+// storefront resolves the business on the server, so this is the server
+// telling the cart it does not belong here.
+export class CartLocationNotHereError extends Error {
+  constructor() {
+    super("This cart's location is not available at this storefront.");
+    this.name = "CartLocationNotHereError";
+  }
+}
+
 export async function getLocationMenuFromBrowser(
   locationId: string,
 ): Promise<LocationMenuResponse | null> {
@@ -107,6 +121,14 @@ export async function getLocationMenuFromBrowser(
     { cache: "no-store" },
   );
 
+  if (response.status === 404) {
+    // Only the storefront's own answer clears the cart; any other 404
+    // (a missing route, an upstream page) is an ordinary failure.
+    const body = (await response.json().catch(() => null)) as { code?: unknown } | null;
+    if (body?.code === LOCATION_NOT_IN_STOREFRONT) {
+      throw new CartLocationNotHereError();
+    }
+  }
   if (!response.ok) {
     throw new Error(`Failed to load location menu (${response.status}).`);
   }
@@ -1655,6 +1677,17 @@ export function updateLoyaltySettingsFromBrowser(
   input: UpdateLoyaltySettingsRequest,
 ): Promise<LoyaltyConfigureResult<LoyaltySettings>> {
   return loyaltyConfigureRequest<LoyaltySettings>("settings", "PUT", input);
+}
+
+// SC4f-3b — the business's loyalty points name (presentation only).
+export function updateLoyaltyPointsLabelFromBrowser(
+  input: UpdateLoyaltyPointsLabelRequest,
+): Promise<LoyaltyConfigureResult<LoyaltyPointsLabelSettings>> {
+  return loyaltyConfigureRequest<LoyaltyPointsLabelSettings>(
+    "settings/points-label",
+    "PUT",
+    input,
+  );
 }
 
 export function createLoyaltyRewardFromBrowser(

@@ -253,4 +253,15 @@ describe("storefrontApiFetch and the menu proxy", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(await res.json()).toEqual({ code: "STOREFRONT_NOT_FOUND" });
   });
+
+  it("names a location this storefront does not offer (the API's empty answer) with its own code", async () => {
+    fetchMock.mockImplementation(async () => new Response("", { status: 200 }));
+    const res = await menuRoute.GET(
+      new Request("http://bravo.shop.test/api/locations/l/menu") as never,
+      { params: Promise.resolve({ locationId: "l" }) },
+    );
+    expect(res.status).toBe(404);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect((await res.json()).code).toBe("LOCATION_NOT_IN_STOREFRONT");
+  });
 });

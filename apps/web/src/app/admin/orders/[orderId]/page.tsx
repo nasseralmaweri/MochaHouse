@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/admin/Button";
 import { ORDER_STATUS_LABEL } from "@/components/admin/StatusBadge";
 import { useAdminContext } from "@/components/admin/AdminContext";
+import { usePointsLabel } from "@/lib/points-label-context";
 
 const NEXT_ACTION_LABEL: Record<OrderStatus, string | null> = {
   RECEIVED: "Accept",
@@ -97,6 +98,7 @@ function OrderDetail({
   locationId: string;
   locationName: string;
 }) {
+  const pointsLabel = usePointsLabel();
   const [order, setOrder] = useState<StoreOrderDetail | null>(null);
   const [state, setState] = useState<
     "loading" | "ok" | "not-found" | "forbidden" | "error"
@@ -285,7 +287,7 @@ function OrderDetail({
           {order.loyaltyReward ? (
             <div className="flex items-center justify-between text-sm text-status-success">
               <span>
-                Mocha Beans Reward · {order.loyaltyReward.rewardName}
+                {pointsLabel} Reward · {order.loyaltyReward.rewardName}
                 {order.loyaltyReward.rewardType === "FREE_ITEM" &&
                 order.loyaltyReward.freeItemName
                   ? ` (free ${order.loyaltyReward.freeItemName})`
@@ -304,13 +306,13 @@ function OrderDetail({
           </div>
           {order.loyaltyReward ? (
             <p className="text-xs text-text-muted">
-              {order.loyaltyReward.beanCost} Mocha Beans used
+              {order.loyaltyReward.beanCost} {pointsLabel} used
             </p>
           ) : null}
           {order.loyaltyBonus && order.loyaltyBonus.totalBonusBeans > 0 ? (
             <div className="flex flex-col gap-0.5">
               <p className="text-xs font-medium text-status-success">
-                +{order.loyaltyBonus.totalBonusBeans} bonus Mocha Beans
+                +{order.loyaltyBonus.totalBonusBeans} bonus {pointsLabel}
               </p>
               {order.loyaltyBonus.items.map((item, i) => (
                 <p key={i} className="text-xs text-text-muted">

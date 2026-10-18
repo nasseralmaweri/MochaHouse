@@ -7,6 +7,7 @@ import type {
   AdminLoyaltyCustomerSearchResponse,
   AdminLoyaltyRewardsResponse,
   LoyaltySettings,
+  LoyaltyPointsLabelSettings,
 } from "@mocha-house/contracts";
 import { getInternalSessionToken } from "./session";
 import { internalAuthHeaders } from "./active-business";
@@ -150,6 +151,11 @@ async function configureGet<T>(path: string): Promise<ConfigureReadResult<T>> {
 
 export function getLoyaltySettings() {
   return configureGet<LoyaltySettings>("settings");
+}
+
+// SC4f-3b — the business's loyalty points name.
+export function getLoyaltyPointsLabel() {
+  return configureGet<LoyaltyPointsLabelSettings>("settings/points-label");
 }
 
 export function getAdminLoyaltyRewards() {

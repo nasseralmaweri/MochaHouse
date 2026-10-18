@@ -3,6 +3,7 @@ import type { LocationSummary } from "@mocha-house/contracts";
 import { getLocations } from "@/lib/api";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
+import { named, requireStorefrontProfile } from "@/lib/storefront-profile";
 
 // Location availability and digital-ordering state are admin-mutable at
 // runtime, so this page must be rendered per-request, not baked in at
@@ -10,13 +11,26 @@ import { PageHeader } from "@/components/PageHeader";
 export const dynamic = "force-dynamic";
 
 export default async function OrderLocationPage() {
+  const profile = await requireStorefrontProfile();
   const locations = await getLocations();
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
       <PageHeader
         title="Choose a location"
-        subtitle="Select a Mocha House location to start your order."
+        subtitle={
+          profile.orderingAvailable
+            ? named(
+                profile,
+                "Select a {name} location to start your order.",
+                "Select a location to start your order.",
+              )
+            : named(
+                profile,
+                "Browse {name}'s locations and menus. Online ordering isn't available right now.",
+                "Browse locations and menus. Online ordering isn't available right now.",
+              )
+        }
       />
 
       {locations.length === 0 ? (
@@ -27,7 +41,10 @@ export default async function OrderLocationPage() {
         <ul className="flex flex-col gap-3">
           {locations.map((location) => (
             <li key={location.id}>
-              <LocationListItem location={location} />
+              <LocationListItem
+                location={location}
+                businessOrdering={profile.orderingAvailable}
+              />
             </li>
           ))}
         </ul>
@@ -36,8 +53,16 @@ export default async function OrderLocationPage() {
   );
 }
 
-function LocationListItem({ location }: { location: LocationSummary }) {
-  const available = location.isDigitalOrderingEnabled;
+// SC4f-3b (owner decision J6) — every location can be browsed; only those
+// taking online orders (while the business takes orders) offer ordering.
+function LocationListItem({
+  location,
+  businessOrdering,
+}: {
+  location: LocationSummary;
+  businessOrdering: boolean;
+}) {
+  const available = location.isDigitalOrderingEnabled && businessOrdering;
 
   const card = (
     <Card
@@ -54,14 +79,6 @@ function LocationListItem({ location }: { location: LocationSummary }) {
       <OrderingStatusBadge available={available} />
     </Card>
   );
-
-  if (!available) {
-    return (
-      <div aria-disabled="true" className="cursor-not-allowed">
-        {card}
-      </div>
-    );
-  }
 
   return (
     <Link
@@ -82,7 +99,7 @@ function OrderingStatusBadge({ available }: { available: boolean }) {
           : "bg-surface-card text-text-muted"
       }`}
     >
-      {available ? "Ordering available" : "Ordering unavailable"}
+      {available ? "Ordering available" : "Browse menu"}
     </span>
   );
 }

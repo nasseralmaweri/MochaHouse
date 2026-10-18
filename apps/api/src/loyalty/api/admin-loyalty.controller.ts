@@ -16,6 +16,7 @@ import type {
   CreateLoyaltyRewardRequest,
   UpdateLoyaltyBonusPromotionRequest,
   UpdateLoyaltyRewardRequest,
+  UpdateLoyaltyPointsLabelRequest,
   UpdateLoyaltySettingsRequest,
 } from '@mocha-house/contracts';
 import type { TenantContext } from '@mocha-house/database';
@@ -115,6 +116,32 @@ export class AdminLoyaltyController {
   ) {
     return this.settings.updateEarningRate(
       body?.earningRatePerDollar,
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  // --- SC4f-3b: the business's name for its loyalty points ----
+
+  @RequirePermission('loyalty.configure')
+  @Get('settings/points-label')
+  getPointsLabel(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.settings.getPointsLabel(request.authorization!, tenant);
+  }
+
+  @RequirePermission('loyalty.configure')
+  @Put('settings/points-label')
+  updatePointsLabel(
+    @Body() body: UpdateLoyaltyPointsLabelRequest,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.settings.updatePointsLabel(
+      body?.pointsLabel,
       request.internalUser!.id,
       request.authorization!,
       tenant,
