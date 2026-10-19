@@ -9,6 +9,8 @@ import {
   CHECKOUT_RESOURCE_UNAVAILABLE,
   CHECKOUT_SESSION_EXPIRED,
   CHECKOUT_SESSION_INVALID,
+  type CheckoutPaymentRequiredResponse,
+  type CheckoutPaymentSimulationOutcome,
   type CheckoutQuoteResponse,
   type CouponQuoteStatus,
   type LocationMenuResponse,
@@ -19,10 +21,13 @@ import { normalizeGiftCardCodeInput } from "@/lib/checkout/gift-card";
 import {
   getCheckoutQuoteFromBrowser,
   CartLocationNotHereError,
+  checkCheckoutPaymentFromBrowser,
   getLocationMenuFromBrowser,
+  simulateCheckoutPaymentFromBrowser,
   startCheckoutSessionFromBrowser,
   submitCheckoutFromBrowser,
   type BrowserCheckoutRequest,
+  type CheckoutResult,
 } from "@/lib/api-client";
 import { formatPrice } from "@/lib/money";
 import { Card } from "@/components/Card";
@@ -34,6 +39,32 @@ import { pointsCount } from "@/lib/loyalty-label";
 
 const inputClassName =
   "rounded-xl border border-border-default bg-surface-card px-4 py-3 text-base text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
+
+// ESP-04 M2 — what the customer sees while a two-step payment waits.
+const PAYMENT_STATE_MESSAGE: Record<
+  CheckoutPaymentRequiredResponse["payment"]["state"],
+  string
+> = {
+  REQUIRES_CUSTOMER_ACTION: "Complete your payment to place your order.",
+  REQUIRES_PAYMENT_METHOD:
+    "Your payment didn't go through. Try again or use another payment method — you won't be charged twice.",
+  PROCESSING:
+    "Your payment is being processed. Do not pay again — check back in a moment.",
+};
+
+// DEVELOPMENT ONLY — the two-step fake provider's simulator (never shown in a
+// production build; the server refuses it there too).
+const SIMULATOR_ENABLED = process.env.NODE_ENV !== "production";
+const SIMULATED_OUTCOMES: ReadonlyArray<{
+  outcome: CheckoutPaymentSimulationOutcome;
+  label: string;
+}> = [
+  { outcome: "succeed", label: "Pay" },
+  { outcome: "decline", label: "Decline" },
+  { outcome: "process", label: "Processing" },
+  { outcome: "unknown", label: "No answer" },
+  { outcome: "cancel", label: "Cancel" },
+];
 
 const COUPON_MESSAGE: Record<CouponQuoteStatus, string> = {
   applied: "Coupon applied.",
@@ -97,12 +128,21 @@ export default function CheckoutPage() {
   // retry of it belong to. Its token never reaches this page (an HttpOnly
   // cookie on this site holds it). IN_PROGRESS: a payment for this checkout
   // is being confirmed, so ordering is paused (never a second charge).
+  // ESP-04 M2 — PAYMENT_REQUIRED: a two-step payment waits for the customer;
+  // a reload resumes that same payment (the server is asked where it stands).
   const [checkoutState, setCheckoutState] = useState<
-    "loading" | "OPEN" | "IN_PROGRESS" | "error"
+    "loading" | "OPEN" | "IN_PROGRESS" | "PAYMENT_REQUIRED" | "error"
   >("loading");
+  const [pendingPayment, setPendingPayment] = useState<
+    CheckoutPaymentRequiredResponse["payment"] | null
+  >(null);
+  const [paymentBusy, setPaymentBusy] = useState(false);
+  const [paymentNotice, setPaymentNotice] = useState<string | null>(null);
+  const paymentInFlightRef = useRef(false);
   const [sessionNotice, setSessionNotice] = useState<string | null>(null);
   const [sessionRefresh, setSessionRefresh] = useState(0);
   const [completedOrderId, setCompletedOrderId] = useState<string | null>(null);
+  const [paymentResume, setPaymentResume] = useState(0);
 
   useEffect(() => {
     if (!cart.isHydrated || !cart.locationId) {
@@ -122,12 +162,28 @@ export default function CheckoutPage() {
         setCompletedOrderId(result.session.orderId);
         return;
       }
+      if (result.session.state === "PAYMENT_REQUIRED") {
+        // Resume the payment this checkout already started (never a new one).
+        setCheckoutState("PAYMENT_REQUIRED");
+        setPaymentResume((n) => n + 1);
+        return;
+      }
+      setPendingPayment(null);
       setCheckoutState(result.session.state === "OPEN" ? "OPEN" : "IN_PROGRESS");
     });
     return () => {
       cancelled = true;
     };
   }, [cart.isHydrated, cart.locationId, sessionRefresh]);
+
+  // ESP-04 M2 — a reloaded page whose checkout has a payment waiting asks
+  // the server where that payment stands and shows it.
+  useEffect(() => {
+    if (paymentResume === 0) return;
+    void checkPayment();
+    // checkPayment reads only refs and stable setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentResume]);
 
   useEffect(() => {
     if (!completedOrderId) return;
@@ -298,6 +354,74 @@ export default function CheckoutPage() {
   const amountDue =
     quote?.amountDueAfterGiftCardMinorUnits ?? total - giftCardApplied;
 
+  function showPendingPayment(
+    payment: CheckoutPaymentRequiredResponse["payment"],
+  ) {
+    setPendingPayment(payment);
+    setPaymentNotice(null);
+    setCheckoutState("PAYMENT_REQUIRED");
+  }
+
+  // ESP-04 M2 — what the server answered about this checkout's payment.
+  function applyPaymentResult(result: CheckoutResult) {
+    if (result.outcome === "success") {
+      cart.clearCart();
+      router.push(
+        `/order/confirmation/${encodeURIComponent(result.confirmation.orderId)}`,
+      );
+      return;
+    }
+    if (result.outcome === "payment-required") {
+      showPendingPayment(result.payment);
+      return;
+    }
+    if (result.outcome === "declined" || result.outcome === "failed") {
+      // Definitively not paid: this checkout may be placed again.
+      setPendingPayment(null);
+      setPaymentNotice(null);
+      setSubmitError(result.message);
+      setSessionRefresh((n) => n + 1);
+      return;
+    }
+    if (result.outcome === "conflict") {
+      // Not known yet (or no longer waiting): re-read where this checkout
+      // stands. Never a new payment.
+      setPaymentNotice(result.message);
+      if (result.code !== null) setSessionRefresh((n) => n + 1);
+      return;
+    }
+    setPaymentNotice(
+      "message" in result ? result.message : "Please try again.",
+    );
+  }
+
+  async function checkPayment() {
+    if (!cart.locationId || paymentInFlightRef.current) return;
+    paymentInFlightRef.current = true;
+    setPaymentBusy(true);
+    const result = await checkCheckoutPaymentFromBrowser(cart.locationId);
+    paymentInFlightRef.current = false;
+    setPaymentBusy(false);
+    applyPaymentResult(result);
+  }
+
+  async function simulatePayment(outcome: CheckoutPaymentSimulationOutcome) {
+    if (!cart.locationId || paymentInFlightRef.current) return;
+    paymentInFlightRef.current = true;
+    setPaymentBusy(true);
+    const accepted = await simulateCheckoutPaymentFromBrowser(
+      cart.locationId,
+      outcome,
+    );
+    paymentInFlightRef.current = false;
+    setPaymentBusy(false);
+    if (!accepted) {
+      setPaymentNotice("The payment simulator could not do that just now.");
+    }
+    // Whatever was simulated, the outcome is read back from the server.
+    await checkPayment();
+  }
+
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     void placeOrder(false);
@@ -340,6 +464,10 @@ export default function CheckoutPage() {
     inFlightRef.current = false;
     setSubmitting(false);
 
+    if (result.outcome === "payment-required") {
+      showPendingPayment(result.payment);
+      return;
+    }
     if (result.outcome === "success") {
       cart.clearCart();
       router.push(
@@ -441,6 +569,58 @@ export default function CheckoutPage() {
             </button>
           </Card>
         </div>
+      ) : null}
+
+      {checkoutState === "PAYMENT_REQUIRED" ? (
+        <section aria-labelledby="payment-heading">
+          <Card
+            tone="subtle"
+            className="flex flex-col gap-3 text-sm text-text-primary"
+          >
+            <h2 id="payment-heading" className="font-semibold">
+              {pendingPayment
+                ? `Payment — ${formatPrice(pendingPayment.amountMinorUnits, pendingPayment.currency)}`
+                : "Payment"}
+            </h2>
+            <p role="status">
+              {pendingPayment
+                ? PAYMENT_STATE_MESSAGE[pendingPayment.state]
+                : "Loading your payment…"}
+            </p>
+            {paymentNotice ? (
+              <p role="alert" className="text-status-warning">
+                {paymentNotice}
+              </p>
+            ) : null}
+            {SIMULATOR_ENABLED &&
+            pendingPayment?.provider === "fake-two-step" ? (
+              <div className="flex flex-col gap-2">
+                <p className="text-text-muted">Development payment simulator</p>
+                <div className="flex flex-wrap gap-2">
+                  {SIMULATED_OUTCOMES.map(({ outcome, label }) => (
+                    <button
+                      key={outcome}
+                      type="button"
+                      disabled={paymentBusy}
+                      onClick={() => void simulatePayment(outcome)}
+                      className="flex min-h-11 items-center justify-center rounded-xl border border-border-default px-4 py-2 text-sm font-semibold text-text-primary disabled:text-text-muted"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              disabled={paymentBusy}
+              onClick={() => void checkPayment()}
+              className="flex min-h-11 items-center justify-center rounded-xl border border-border-default px-4 py-3 text-base font-semibold text-text-primary disabled:text-text-muted"
+            >
+              {paymentBusy ? "Checking…" : "Check payment status"}
+            </button>
+          </Card>
+        </section>
       ) : null}
 
       {checkoutState === "error" && sessionNotice ? (

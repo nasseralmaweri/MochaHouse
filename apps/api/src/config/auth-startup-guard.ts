@@ -182,9 +182,11 @@ export function authConfigProblems(env: Env = process.env): string[] {
         );
       }
     }
-    if ((env.PAYMENT_PROVIDER ?? '').trim().toLowerCase() === 'fake') {
+    // ESP-04 M2 — both simulated providers (one-step and two-step).
+    const paymentProvider = (env.PAYMENT_PROVIDER ?? '').trim().toLowerCase();
+    if (paymentProvider === 'fake' || paymentProvider === 'fake-two-step') {
       problems.push(
-        `PAYMENT_PROVIDER=fake is not allowed in a production-like environment (${signal}).`,
+        `PAYMENT_PROVIDER=${paymentProvider} is not allowed in a production-like environment (${signal}).`,
       );
     }
     const missing = COGNITO_VARS.filter((name) => !isSet(env, name));

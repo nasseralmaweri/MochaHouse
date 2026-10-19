@@ -1327,6 +1327,12 @@ model PaymentAttempt {
   //   paymentState      NOT_SENT | CHARGING | AWAITING_CONFIRMATION | UNKNOWN |
   //                     SUCCEEDED | DECLINED | FAILED   (the provider side;
   //                     an unknown outcome is NEVER recorded as FAILED)
+  //                     ESP-03 PR 6: ABANDONED (never sent; status FAILED).
+  //                     ESP-04 M2: REQUIRES_CUSTOMER_ACTION — a two-step
+  //                     payment intent waiting for its customer to confirm:
+  //                     live (status PENDING), never a held / unknown
+  //                     outcome, and always naming the intent
+  //                     (providerReference) — CHECK.
   //   fulfilmentStatus  NOT_REQUIRED | PENDING | DONE | NEEDS_REVIEW
   //                     (our side: the order / gift card for a SUCCEEDED payment)
   // The migration backfills ONLY rows that clearly need attention (stuck
