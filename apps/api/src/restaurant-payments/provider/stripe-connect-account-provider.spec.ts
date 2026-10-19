@@ -16,10 +16,17 @@ import {
 // idempotency), what is read back, test-mode enforcement, and verification
 // of classic and v2 (thin) events.
 
-const SECRET = 'whsec_connectsecret1234567890ab';
+// Webhook signing keys for the SDK's own HMAC: plain test strings, not in
+// Stripe's secret format and never valid credentials.
+const SECRET = 'test-only-connect-signing-key-not-a-stripe-secret';
+// Test-only stand-ins in Stripe's credential FORMATS (the resolver validates
+// formats), assembled at run time so no complete credential-shaped string
+// exists in source. Each is visibly fake ("TESTONLY") and can never be a
+// valid Stripe credential.
+const fake = (prefix: string): string => `${prefix}_${'TESTONLY'.repeat(3)}`;
 
 function setup() {
-  const stripe = new Stripe('sk_test_offline1234567890', {
+  const stripe = new Stripe(fake('sk_test'), {
     apiVersion: STRIPE_CONNECT_API_VERSION,
   });
   const create = jest.fn();
@@ -226,7 +233,7 @@ describe('ESP-04 M1 Stripe Connect provider (offline)', () => {
         type: 'account.updated',
         livemode: false,
       },
-      'whsec_someoneelse1234567890abcd',
+      'test-only-other-signing-key-not-a-stripe-secret',
     );
     expect(() => provider.verifyEvent(forged)).toThrow(
       ConnectEventVerificationError,

@@ -13,8 +13,13 @@ import { StripeConnectAccountProvider } from './stripe-connect-account-provider'
 // its own, test mode only, never in production, and never with SaaS
 // billing's credentials.
 
-const KEY = 'sk_test_connectkey1234567890';
-const SECRET = 'whsec_connectsecret1234567890ab';
+// Test-only stand-ins in Stripe's credential FORMATS (the resolver validates
+// formats), assembled at run time so no complete credential-shaped string
+// exists in source. Each is visibly fake ("TESTONLY") and can never be a
+// valid Stripe credential.
+const fake = (prefix: string): string => `${prefix}_${'TESTONLY'.repeat(3)}`;
+const KEY = fake('sk_test');
+const SECRET = fake('whsec');
 
 describe('ESP-04 M1 Connect provider mode', () => {
   it('is disabled unless configured', () => {
@@ -44,13 +49,13 @@ describe('ESP-04 M1 Connect provider mode', () => {
   it.each([
     [
       'a live secret key, in any mode',
-      { STRIPE_CONNECT_SECRET_KEY: 'sk_live_abcdefghijklmnop' },
+      { STRIPE_CONNECT_SECRET_KEY: fake('sk_live') },
     ],
     [
       'a live restricted key',
       {
         RESTAURANT_PAYMENTS_PROVIDER: 'stripe',
-        STRIPE_CONNECT_SECRET_KEY: 'rk_live_abcdefghijklmnop',
+        STRIPE_CONNECT_SECRET_KEY: fake('rk_live'),
       },
     ],
     ['an unknown mode', { RESTAURANT_PAYMENTS_PROVIDER: 'paypal' }],
@@ -78,7 +83,7 @@ describe('ESP-04 M1 Connect provider mode', () => {
       'a publishable key',
       {
         RESTAURANT_PAYMENTS_PROVIDER: 'stripe',
-        STRIPE_CONNECT_SECRET_KEY: 'pk_test_abcdefghijklmnop',
+        STRIPE_CONNECT_SECRET_KEY: fake('pk_test'),
         STRIPE_CONNECT_WEBHOOK_SECRET: SECRET,
       },
     ],
