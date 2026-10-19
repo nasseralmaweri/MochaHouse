@@ -36,10 +36,15 @@ until a verified provider outcome exists (there is no provider verifier yet).
   if the process stops. No database transaction is held open across the
   work, so no timeout can separate the work from its lock. A second caller
   is told the payment is busy and writes nothing.
-- **Price validation.** The order transaction reprices against the current
-  menu, discounts and gift-card tender. If anything changed since the charge,
-  the recovery fails as `FULFILMENT_REJECTED`, the case stays open, and the
-  sweeper does not retry it. Support can retry after fixing the cause.
+- **Frozen checkout (ESP-03 PR 7).** The order transaction creates the
+  order from the frozen checkout after verifying its arithmetic against the
+  payment; it never re-prices. If the order cannot be created (a promotion
+  limit reached, Beans or a gift card no longer covering the frozen amount,
+  a suspended business or a location no longer taking orders, or a frozen
+  checkout that does not match the payment), the recovery fails as
+  `FULFILMENT_REJECTED`, the case stays open, and the sweeper does not retry
+  it. Support can retry after fixing the cause. Version-1 saved checkouts
+  are still re-priced, and a price change rejects them the same way.
 - **Gift cards.** The card is issued from the purchase row. The code never
   leaves recovery: the buyer retrieves it through their own authorised replay
   within the existing seven-day window.
@@ -61,8 +66,8 @@ until a verified provider outcome exists (there is no provider verifier yet).
 - **Backoff:** every automatic attempt counts from the moment it starts,
   including one that was interrupted. After n attempts it waits
   5 min × 2^(n−1) from the latest attempt, capped at 6 hours. After 5
-  attempts it stops, and the case shows **Needs attention**. A failure that a retry cannot fix (a pricing change,
-  an unreadable saved checkout) is not retried automatically.
+  attempts it stops, and the case shows **Needs attention**. A failure that a retry cannot fix (an exhausted
+  promotion limit, a suspended business, an unreadable saved checkout) is not retried automatically.
 - A recovery that started but recorded no outcome for 5 minutes (the process
   stopped) is no longer shown as in progress. It counts as one attempt.
 

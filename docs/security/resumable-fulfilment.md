@@ -50,8 +50,11 @@ own transaction. So retries and concurrent recoveries can't create a second
 order or spend a gift card, reward or coupon twice. The payment provider is
 never called.
 
-**Pricing:** until frozen pricing arrives (ESP-03 PR 7), the order is
-re-priced from the live menu with the existing check against the amount
+**Pricing:** since ESP-03 PR 7 the saved checkout is frozen (version 2):
+the order is created from the frozen prices, discounts and earnings, never
+re-priced, after its arithmetic is verified against the payment (see
+`frozen-checkout.md`). A version-1 saved checkout (a payment from before
+PR 7) is still re-priced from the live menu and checked against the amount
 charged. If they disagree, nothing is created or changed: the payment stays
 `SUCCEEDED`, flagged for review with an open case, and keeps its saved
 checkout. Once the price matches again, recovery completes.
@@ -104,10 +107,10 @@ ESP-03 PR 5 (the resolver) must:
   (`REFUNDED_EXTERNALLY` or `NOT_CHARGED`);
 - remove rows for never-sent attempts that nobody retried.
 
-**Known limit until frozen pricing (ESP-03 PR 7):** the order is checked
-against the amount charged as a total. A compensating change between two
-prices can keep the total equal while individual line prices differ from what
-the customer saw.
+**Version-1 saved checkouts only:** the order is checked against the amount
+charged as a total. A compensating change between two prices can keep the
+total equal while individual line prices differ from what the customer saw.
+Version-2 (frozen) checkouts verify every line (ESP-03 PR 7).
 
 The rollback refuses while any saved checkout remains, so data still needed
 for an order is never dropped.

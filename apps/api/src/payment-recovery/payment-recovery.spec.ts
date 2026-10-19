@@ -923,21 +923,14 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
     });
   });
 
-  describe('a pricing change', () => {
+  // ESP-03 PR 7 — a price change no longer blocks a frozen checkout; a
+  // location that stopped taking online orders still does (D5).
+  describe('an operational restriction', () => {
     it('fails the recovery for review (no automatic retry), keeps the case open, and never changes the order', async () => {
       const { attempt } = await chargedWithoutOrder();
-      await prisma.locationProductPriceOverride.upsert({
-        where: {
-          locationId_menuId_productId: { locationId, menuId, productId },
-        },
-        create: {
-          tenantId: TENANT_1_MOCHA_HOUSE_ID,
-          locationId,
-          menuId,
-          productId,
-          price: 9_999,
-        },
-        update: { price: 9_999 },
+      await prisma.location.update({
+        where: { id: locationId },
+        data: { isDigitalOrderingEnabled: false },
       });
       try {
         const failed = await recovery.recoverOne(
@@ -965,11 +958,12 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
           },
         });
       } finally {
-        await prisma.locationProductPriceOverride.deleteMany({
-          where: { locationId, menuId, productId },
+        await prisma.location.update({
+          where: { id: locationId },
+          data: { isDigitalOrderingEnabled: true },
         });
       }
-      // Once the price matches what was charged, a support recovery completes.
+      // Once the location takes orders again, a support recovery completes.
       expect(
         await recovery.recoverOne(attempt.id, TENANT_1_MOCHA_HOUSE_ID, {
           trigger: 'platform_support',

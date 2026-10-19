@@ -335,7 +335,8 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
         t1,
       );
       expect(seenDuringCharge).toMatchObject({
-        version: 1,
+        // ESP-03 PR 7 — frozen (version 2).
+        version: 2,
         tenantId: TENANT_1_MOCHA_HOUSE_ID,
         payload: {
           locationId,
@@ -549,20 +550,11 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
       expect(provider.calls).toHaveLength(1);
     });
 
-    it('a pricing change keeps the payment for review and never changes the order', async () => {
+    it('an operational restriction keeps the payment for review and never changes the order (ESP-03 PR 7, D5)', async () => {
       const { request, attempt } = await chargedWithoutOrder();
-      await prisma.locationProductPriceOverride.upsert({
-        where: {
-          locationId_menuId_productId: { locationId, menuId, productId },
-        },
-        create: {
-          tenantId: TENANT_1_MOCHA_HOUSE_ID,
-          locationId,
-          menuId,
-          productId,
-          price: 9_999,
-        },
-        update: { price: 9_999 },
+      await prisma.location.update({
+        where: { id: locationId },
+        data: { isDigitalOrderingEnabled: false },
       });
       try {
         const retry = await outcomeOf(() =>
@@ -584,17 +576,51 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
         expect(await snapshotOf(attempt.id)).not.toBeNull();
         expect((await caseOf(attempt.id))?.status).toBe('OPEN');
       } finally {
-        await prisma.locationProductPriceOverride.deleteMany({
-          where: { locationId, menuId, productId },
+        await prisma.location.update({
+          where: { id: locationId },
+          data: { isDigitalOrderingEnabled: true },
         });
       }
-      // Once the price matches what was charged again, recovery completes.
+      // Once the location takes orders again, recovery completes.
       const recovered = await checkout.recoverFulfilment(
         attempt.id,
         TENANT_1_MOCHA_HOUSE_ID,
       );
       expect(recovered.orderId).toBe((await ordersFor(attempt.id))[0].id);
       expect(provider.calls).toHaveLength(1);
+    });
+
+    it('a price change after payment is fulfilled at the frozen price, never re-priced (ESP-03 PR 7)', async () => {
+      const { attempt } = await chargedWithoutOrder();
+      await prisma.locationProductPriceOverride.upsert({
+        where: {
+          locationId_menuId_productId: { locationId, menuId, productId },
+        },
+        create: {
+          tenantId: TENANT_1_MOCHA_HOUSE_ID,
+          locationId,
+          menuId,
+          productId,
+          price: 9_999,
+        },
+        update: { price: 9_999 },
+      });
+      try {
+        const recovered = await checkout.recoverFulfilment(
+          attempt.id,
+          TENANT_1_MOCHA_HOUSE_ID,
+        );
+        const [order] = await ordersFor(attempt.id);
+        expect(recovered.orderId).toBe(order.id);
+        // The order is exactly what was charged.
+        expect(order.subtotal).toBe(attempt.amount);
+        expect(order.subtotal).not.toBe(9_999);
+        expect(provider.calls).toHaveLength(1);
+      } finally {
+        await prisma.locationProductPriceOverride.deleteMany({
+          where: { locationId, menuId, productId },
+        });
+      }
     });
   });
 

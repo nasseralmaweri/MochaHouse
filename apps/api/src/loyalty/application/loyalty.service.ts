@@ -81,36 +81,58 @@ export class LoyaltyService {
   // only ever called once per order creation, so there is no second call to
   // race it.
   async earnForOrder(input: EarnForOrderInput): Promise<void> {
-    const {
+    const { tx, tenantId, customerId, orderId } = input;
+    const beans = await this.planEarning(
       tx,
       tenantId,
-      customerId,
-      orderId,
-      qualifyingSubtotalMinorUnits,
-      currency,
-    } = input;
+      input.qualifyingSubtotalMinorUnits,
+      input.currency,
+    );
+    await this.applyEarning(tx, { tenantId, customerId, orderId, beans });
+  }
 
+  // ESP-03 PR 7 — the standard Beans an order earns, computed (read-only)
+  // from the CURRENT earning rate. A frozen checkout computes it before the
+  // charge and applies exactly that at fulfilment.
+  async planEarning(
+    db: Prisma.TransactionClient | PrismaService,
+    tenantId: string,
+    qualifyingSubtotalMinorUnits: number,
+    currency: string,
+  ): Promise<number> {
     // 7A earns on USD merchandise only — no currency conversion.
     if (currency !== 'USD') {
-      return;
+      return 0;
     }
-
     // Milestone 7B — the earning rate is the HQ-configured company-wide
-    // value, read at earn time. A missing configuration row (fresh install)
-    // falls back to the 7A default of 1 Bean / $1, preserving behaviour.
-    // Historical EARN entries are never recalculated when the rate changes;
-    // this snapshot is what this one order earns.
-    const config = await tx.loyaltyConfiguration.findUnique({
+    // value. A missing configuration row (fresh install) falls back to the
+    // 7A default of 1 Bean / $1, preserving behaviour. Historical EARN
+    // entries are never recalculated when the rate changes.
+    const config = await db.loyaltyConfiguration.findUnique({
       where: { tenantId_key: { tenantId, key: LOYALTY_CONFIGURATION_KEY } },
       select: { earningRatePerDollar: true },
     });
     const ratePerDollar =
       config?.earningRatePerDollar ?? DEFAULT_MOCHA_BEANS_PER_DOLLAR;
-
-    const beans = mochaBeansForQualifyingSpend(
-      qualifyingSubtotalMinorUnits,
-      ratePerDollar,
+    return Math.max(
+      0,
+      mochaBeansForQualifyingSpend(qualifyingSubtotalMinorUnits, ratePerDollar),
     );
+  }
+
+  // Writes computed standard Beans inside the order transaction: the EARN
+  // ledger entry (exactly once per order by its unique key) and the balance
+  // increment. Nothing is written for zero.
+  async applyEarning(
+    tx: Prisma.TransactionClient,
+    input: {
+      tenantId: string;
+      customerId: string;
+      orderId: string;
+      beans: number;
+    },
+  ): Promise<void> {
+    const { tenantId, customerId, orderId, beans } = input;
     if (beans <= 0) {
       // Sub-$1 qualifying spend earns nothing; don't write an empty entry.
       return;
