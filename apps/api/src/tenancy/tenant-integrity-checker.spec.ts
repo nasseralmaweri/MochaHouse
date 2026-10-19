@@ -441,8 +441,9 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     expect(summarize(report)).toEqual([]);
     expect(report.violations).toBe(0);
     expect(report.warnings).toBe(0);
-    // ESP-03 PR 8 added FinancialHold (5 composite foreign keys).
-    expect(report.relationshipsChecked).toBe(122);
+    // ESP-03 PR 8 added FinancialHold (5 composite foreign keys); ESP-04 M1
+    // TenantPaymentAccount (1).
+    expect(report.relationshipsChecked).toBe(123);
     expect(report.verdict).toBe('clean');
     expect(report.uncheckedRows).toBe(0);
     // Only the documented by-design exclusions, none holding unchecked rows.
@@ -456,6 +457,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
       ['OutboxEvent.payload', null],
       ['PaymentReconciliationEvent.detail', null],
       ['PaymentReconciliationNote.authorPlatformOperatorId', null],
+      ['TenantPaymentAccount.externalAccountId', null],
     ]);
     expect(formatTenantIntegrityReport(report)).toMatch(/^Verdict: CLEAN/);
   });
@@ -720,8 +722,8 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     it('summarizes violations by relationship type', () => {
       expect(report.byKind).toEqual({
         'composite-fk-candidate': {
-          relationships: 108,
-          checked: 108,
+          relationships: 109,
+          checked: 109,
           violations: 8,
           warnings: 0,
         },
@@ -744,7 +746,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
           warnings: 0,
         },
         'external-identifier': {
-          relationships: 3,
+          relationships: 4,
           checked: 0,
           violations: 0,
           warnings: 0,

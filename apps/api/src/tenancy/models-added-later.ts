@@ -18,6 +18,7 @@ import {
 //   CheckoutSnapshot             ESP-03 PR 4
 //   CheckoutSession              ESP-03 PR 6
 //   FinancialHold                ESP-03 PR 8
+//   TenantPaymentAccount         ESP-04 M1
 //   PaymentReconciliationNote    ESP-03 PR 5
 export const MODELS_ADDED_LATER: ReadonlySet<string> = new Set([
   'NotificationRecipient',
@@ -30,6 +31,7 @@ export const MODELS_ADDED_LATER: ReadonlySet<string> = new Set([
   'CheckoutSnapshot',
   'CheckoutSession',
   'FinancialHold',
+  'TenantPaymentAccount',
   'PaymentReconciliationNote',
 ]);
 

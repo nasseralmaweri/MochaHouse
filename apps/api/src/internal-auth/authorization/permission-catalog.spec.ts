@@ -22,6 +22,8 @@ describe('internal permission catalog', () => {
         'locations.manage_digital_ordering',
         'orders.manage_status',
         'orders.view',
+        // ESP-04 M1 — the restaurant's own Stripe account (owner).
+        'payments.connect',
         // R1 / S5b
         'orders.cancel',
         // Milestone 5E-1

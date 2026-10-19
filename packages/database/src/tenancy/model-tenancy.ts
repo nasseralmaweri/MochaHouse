@@ -41,6 +41,9 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     BillingPolicy: 'platform',
     BillingTrialClaim: 'platform',
     BillingProviderEvent: 'platform',
+    // ESP-04 M1 — verified restaurant-payments (Connect) webhook events: an
+    // event can name an account of no business here.
+    RestaurantPaymentProviderEvent: "platform",
     // SC3b — Checkout sessions we created and review-only reconciliation
     // cases.
     BillingCheckoutSession: 'platform',
@@ -109,6 +112,8 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     CheckoutSession: 'tenant',
     // ESP-03 PR 8 — pre-charge financial holds.
     FinancialHold: "tenant",
+    // ESP-04 M1 — restaurant payment accounts (Stripe Connect).
+    TenantPaymentAccount: "tenant",
     // ESP-03 PR 5 — platform support's append-only notes on a case.
     PaymentReconciliationNote: 'tenant',
     // R1 / S5a — order closure foundation.

@@ -354,6 +354,13 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Set up CENTERIVO subscription payment',
     definition: 'Set up CENTERIVO subscription payment',
   },
+  // ESP-04 M1 — the restaurant's own customer-payment account.
+  'payments.connect': {
+    group: 'Payments',
+    effectiveAll: "Connect the restaurant's Stripe account (owner)",
+    effectiveScoped: "Connect the restaurant's Stripe account (owner)",
+    definition: "Connect the restaurant's Stripe account (owner)",
+  },
 };
 
 const GROUP_ORDER = [
@@ -373,6 +380,7 @@ const GROUP_ORDER = [
   'Approvals',
   'Reports',
   'Billing',
+  'Payments',
   'Administration',
 ];
 
@@ -423,6 +431,7 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'reports.view',
   'billing.view',
   'billing.manage',
+  'payments.connect',
   'users.view',
   'roles.view',
   'audit.view',

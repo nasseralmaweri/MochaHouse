@@ -40,6 +40,7 @@ export type TenantOwnedModel = Exclude<
   | 'BillingPolicy'
   | 'BillingTrialClaim'
   | 'BillingProviderEvent'
+  | "RestaurantPaymentProviderEvent"
   | 'BillingCheckoutSession'
   | 'BillingReconciliationCase'
   | 'BillingGraceExtension'
@@ -193,6 +194,7 @@ export const TENANT_MODEL_KEYS: Readonly<
   CheckoutSnapshot: ["id"],
   CheckoutSession: ["id"],
   FinancialHold: ["id"],
+  TenantPaymentAccount: ["id"],
   PaymentReconciliationNote: ["id"],
   OperationsTask: ["id"],
   Order: ["id"],
@@ -495,6 +497,19 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     nullable: true,
     hasForeignKey: true,
     onDelete: 'Restrict',
+    tenantEnforced: true,
+  },
+  // ESP-04 M1 — the owner who connected a business's payment account is one
+  // of its own staff (composite foreign key).
+  {
+    id: "TenantPaymentAccount.connectedByInternalUserId",
+    kind: "composite-fk-candidate",
+    model: "TenantPaymentAccount",
+    column: "connectedByInternalUserId",
+    target: "InternalUser",
+    nullable: false,
+    hasForeignKey: true,
+    onDelete: "Restrict",
     tenantEnforced: true,
   },
   // ESP-03 PR 8 — a financial hold, its payment attempt and the promotion,
@@ -1556,6 +1571,8 @@ const POLYMORPHIC_REFERENCES: readonly PolymorphicReference[] = [
       loyalty_configuration: 'company',
       // SC3c-2 — billing recovery started by a staff member.
       billing_subscription: 'company',
+      // ESP-04 M1 — the restaurant's own payment account (owner actions).
+      payment_account: "company",
     },
     keyedTargets: {
       notification_recipient: {
@@ -1686,6 +1703,16 @@ const EXTERNAL_IDENTIFIERS: readonly ExternalIdentifier[] = [
     column: 'providerMessageId',
     nullable: true,
     system: 'email provider',
+  },
+  // ESP-04 M1 — the restaurant's connected account at Stripe (acct_…): an id
+  // issued by the payment processor, unique per business.
+  {
+    id: "TenantPaymentAccount.externalAccountId",
+    kind: "external-identifier",
+    model: "TenantPaymentAccount",
+    column: "externalAccountId",
+    nullable: true,
+    system: "payment processor",
   },
   {
     id: 'OrderRefundObligation.processorRefundId',

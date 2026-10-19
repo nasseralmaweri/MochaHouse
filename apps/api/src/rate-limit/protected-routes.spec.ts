@@ -15,6 +15,8 @@ import { PlatformPlansController } from '../platform-subscriptions/api/platform-
 import { PlatformTenantSubscriptionController } from '../platform-subscriptions/api/platform-tenant-subscription.controller';
 import type { PolicyName } from './rate-limit.config';
 import { PlatformBillingController } from '../saas-billing/api/platform-billing.controller';
+import { AdminPaymentsController } from '../restaurant-payments/api/admin-payments.controller';
+import { ConnectWebhookController } from '../restaurant-payments/api/connect-webhook.controller';
 import { PlatformAdjustmentsController } from '../saas-billing/api/platform-adjustments.controller';
 import { PlatformRevenueController } from '../saas-billing/api/platform-revenue.controller';
 import { PlatformPermissionsController } from '../platform-auth/api/platform-permissions.controller';
@@ -246,6 +248,17 @@ const PROTECTED: ReadonlyArray<{
     controller: BillingWebhookController,
     method: 'receive',
     policy: 'billing-webhook',
+  },
+  // ESP-04 M1 — the restaurant's Stripe account (owner) and Connect webhooks.
+  ...(['onboarding', 'refresh'] as const).map((method) => ({
+    controller: AdminPaymentsController,
+    method,
+    policy: 'payments-onboarding' as const,
+  })),
+  {
+    controller: ConnectWebhookController,
+    method: 'receive',
+    policy: 'payments-connect-webhook',
   },
   // ESP-03 PR 5 — payment case support actions.
   ...(['recover', 'addNote'] as const).map((method) => ({

@@ -55,6 +55,16 @@ export const BILLING_WEBHOOK_ROUTES = [
   { path: 'api/v1/billing/webhooks/{*path}', method: RequestMethod.POST },
 ];
 
+// ESP-04 M1 — restaurant-payments (Stripe Connect) webhooks: likewise no
+// tenant (the business is found from OUR stored connected-account id), and a
+// suspended business's account events must still arrive.
+export const RESTAURANT_PAYMENTS_WEBHOOK_ROUTES = [
+  {
+    path: 'api/v1/restaurant-payments/webhooks/{*path}',
+    method: RequestMethod.POST,
+  },
+];
+
 // Milestone S0C — the API's tenant foundation. Importing this module:
 //   - validates SINGLE_TENANT_ID against the Tenant table at startup
 //     (startup fails otherwise);
@@ -120,6 +130,7 @@ export class TenancyModule implements NestModule {
         ...MEMBER_TENANT_ROUTES,
         ...PLATFORM_ROUTES,
         ...BILLING_WEBHOOK_ROUTES,
+        ...RESTAURANT_PAYMENTS_WEBHOOK_ROUTES,
       )
       .forRoutes({ path: '{*path}', method: RequestMethod.ALL });
   }

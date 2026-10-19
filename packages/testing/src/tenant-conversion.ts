@@ -77,6 +77,9 @@ export const TENANT_ID_REQUIRED_MODELS: readonly string[] = [
   // ESP-03 PR 8 — pre-charge financial holds: a brand-new model, tenantId
   // required from inception.
   "FinancialHold",
+  // ESP-04 M1 — restaurant payment accounts: a brand-new model, tenantId
+  // required from inception.
+  "TenantPaymentAccount",
   // ESP-03 PR 5 — platform support's notes on a reconciliation case: a
   // brand-new model, tenantId required from inception.
   'PaymentReconciliationNote',

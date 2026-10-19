@@ -23,6 +23,8 @@ function files(dir: string): string[] {
 
 const RESTAURANT_PAYMENT_DIRS = [
   'payment',
+  // ESP-04 M1 — the restaurant's own Stripe (Connect) accounts.
+  'restaurant-payments',
   'orders',
   'gift-cards',
   'loyalty',
@@ -33,7 +35,7 @@ const RESTAURANT_PAYMENT_DIRS = [
 // naming a restaurant-payment directory at any depth, with or without a
 // trailing path.
 const RESTAURANT_SPECIFIER =
-  /(?:from|require\(|import\()\s*['"][^'"]*(?:^|\/)(?:payment|orders|gift-cards|loyalty|promotions|checkout|refunds?)(?:\/[^'"]*)?['"]/;
+  /(?:from|require\(|import\()\s*['"][^'"]*(?:^|\/)(?:payment|restaurant-payments|orders|gift-cards|loyalty|promotions|checkout|refunds?)(?:\/[^'"]*)?['"]/;
 
 const FORBIDDEN_IN_BILLING = [
   RESTAURANT_SPECIFIER,
@@ -73,12 +75,16 @@ describe('SaaS billing is separate from restaurant payments (SC3a)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // SC3b — the Stripe SDK is the SaaS billing account's client only: no other
-  // module (in particular no restaurant payment code) imports it, so a
-  // future restaurant processor can never share this client or its keys.
-  it('only saas-billing imports the Stripe SDK', () => {
+  // SC3b — the Stripe SDK is imported only by saas-billing and (ESP-04 M1,
+  // decision A5) restaurant-payments, each building its OWN client from its
+  // OWN key (restaurant-payments refuses the billing key and webhook secret
+  // at startup) — and, by the two tests above, neither imports the other.
+  // No other module touches Stripe.
+  it('only saas-billing and restaurant-payments import the Stripe SDK', () => {
+    const RESTAURANT_STRIPE = join(SRC, 'restaurant-payments');
     const offenders = files(SRC)
       .filter((file) => !file.startsWith(BILLING + sep))
+      .filter((file) => !file.startsWith(RESTAURANT_STRIPE + sep))
       .filter((file) =>
         /(?:from|require\(|import\()\s*['"]stripe(?:\/[^'"]*)?['"]/.test(
           readFileSync(file, 'utf8'),

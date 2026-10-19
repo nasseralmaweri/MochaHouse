@@ -50,6 +50,35 @@ async function actorTenantId(
 
 @Injectable()
 export class InternalAuditService {
+  // ESP-04 M1 — the owner connected the restaurant's own payment account
+  // (Stripe Connect) or opened its hosted onboarding. Records WHICH account —
+  // never the provider's onboarding URL (a bearer link).
+  async recordPaymentAccountAction(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      action: 'payments.account_created' | 'payments.onboarding_opened';
+      paymentAccountId: string;
+      externalAccountId: string;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: input.action,
+        // The business's own payment account (a whole-business target).
+        targetType: 'payment_account',
+        targetId: 'company',
+        afterData: {
+          paymentAccountId: input.paymentAccountId,
+          externalAccountId: input.externalAccountId,
+        },
+        reason: 'Restaurant payment account',
+      },
+    });
+  }
+
   // SC3c-2 — a billing-recovery action a staff member started: a restart
   // Checkout, a hosted invoice payment page, or a Customer Portal session.
   // Records WHICH invoice / Checkout — never the provider's page URL (a

@@ -27,9 +27,9 @@ describe('S0D-1 tenant columns — schema introspection', () => {
     await moduleRef.close();
   });
 
-  it('covers exactly the 74 tenant-owned models', () => {
-    // ESP-03 PR 8 added FinancialHold.
-    expect(tenantTables).toHaveLength(74);
+  it('covers exactly the 75 tenant-owned models', () => {
+    // ESP-03 PR 8 added FinancialHold; ESP-04 M1 TenantPaymentAccount.
+    expect(tenantTables).toHaveLength(75);
     expect(tenantTables).not.toContain('Tenant');
   });
 
