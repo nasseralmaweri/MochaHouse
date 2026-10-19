@@ -14,6 +14,7 @@ import type {
 } from '@mocha-house/contracts';
 import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { heldOnLoyaltyAccount } from '../../payment/financial-holds';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import { LoyaltyService, isUniqueConstraintViolation } from './loyalty.service';
@@ -234,6 +235,20 @@ export class LoyaltyAdminService {
           throw new ConflictException(
             `That deduction would take the balance below zero (current balance ${balanceBefore} Mocha Beans).`,
           );
+        }
+        // ESP-03 PR 8 — Beans held by payments in progress are not available
+        // to deduct (read under the account lock above).
+        if (deltaBeans < 0) {
+          const held = await heldOnLoyaltyAccount(
+            tx,
+            tenant.tenantId,
+            account.id,
+          );
+          if (balanceAfter < held) {
+            throw new ConflictException(
+              `That deduction would take the balance below the ${held} Mocha Beans reserved for orders being paid (current balance ${balanceBefore} Mocha Beans).`,
+            );
+          }
         }
 
         await tx.mochaBeanLedgerEntry.create({

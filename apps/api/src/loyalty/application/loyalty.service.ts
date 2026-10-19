@@ -6,6 +6,7 @@ import {
   mochaBeansForQualifyingSpend,
 } from '@mocha-house/domain';
 import { PrismaService } from '../../prisma/prisma.service';
+import { heldOnLoyaltyAccount } from '../../payment/financial-holds';
 
 // The single company-wide loyalty configuration is a keyed singleton.
 export const LOYALTY_CONFIGURATION_KEY = 'company';
@@ -165,6 +166,23 @@ export class LoyaltyService {
 
   // The current Mocha Bean balance for a customer. 0 (not an error) when
   // the customer has never earned or been adjusted — no account row yet.
+  // ESP-03 PR 8 — the Beans a customer can spend now: the balance minus
+  // what their payments in progress hold.
+  async getAvailableBalanceForCustomer(
+    customerId: string,
+    tenantId: string,
+  ): Promise<number> {
+    const account = await this.prisma.customerLoyaltyAccount.findFirst({
+      where: { customerId, tenantId },
+      select: { id: true, balance: true },
+    });
+    if (!account) return 0;
+    return (
+      account.balance -
+      (await heldOnLoyaltyAccount(this.prisma, tenantId, account.id))
+    );
+  }
+
   async getBalanceForCustomer(customerId: string): Promise<number> {
     const account = await this.prisma.customerLoyaltyAccount.findUnique({
       where: { customerId },

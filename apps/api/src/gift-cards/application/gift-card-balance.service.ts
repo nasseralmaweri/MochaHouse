@@ -4,6 +4,7 @@ import type {
   GiftCardPublicStatus,
 } from '@mocha-house/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
+import { heldOnGiftCard } from '../../payment/financial-holds';
 import type { TenantContext } from '@mocha-house/database';
 import {
   canonicalizeGiftCardCode,
@@ -39,6 +40,7 @@ export class GiftCardBalanceService {
         tenantId: tenant.tenantId,
       },
       select: {
+        id: true,
         last4: true,
         status: true,
         balanceMinorUnits: true,
@@ -48,14 +50,19 @@ export class GiftCardBalanceService {
     if (!card) {
       return { found: false };
     }
+    // ESP-03 PR 8 — what can be spent now: the balance minus what payments
+    // in progress hold on this card.
+    const available =
+      card.balanceMinorUnits -
+      (await heldOnGiftCard(this.prisma, tenant.tenantId, card.id));
 
     return {
       found: true,
       maskedCode: maskGiftCardCode(card.last4),
       last4: card.last4,
-      balanceMinorUnits: card.balanceMinorUnits,
+      balanceMinorUnits: available,
       currency: card.currency,
-      status: publicStatus(card.status, card.balanceMinorUnits),
+      status: publicStatus(card.status, available),
     };
   }
 }

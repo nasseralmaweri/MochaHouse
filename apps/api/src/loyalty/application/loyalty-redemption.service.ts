@@ -14,6 +14,7 @@ import {
 } from '@mocha-house/domain';
 import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { heldOnLoyaltyAccount } from '../../payment/financial-holds';
 import { assertAccountTenant } from './loyalty.service';
 
 // Milestone 7C — Mocha Bean reward redemption at checkout. This service
@@ -85,9 +86,9 @@ export class LoyaltyRedemptionService {
     regularContext?: RegularDiscountContext,
   ): Promise<{ balance: number; rewards: CheckoutRewardOption[] }> {
     const [account, rewards] = await Promise.all([
-      this.prisma.customerLoyaltyAccount.findUnique({
-        where: { customerId },
-        select: { balance: true },
+      this.prisma.customerLoyaltyAccount.findFirst({
+        where: { customerId, tenantId },
+        select: { id: true, balance: true },
       }),
       // The storefront business's own rewards only.
       this.prisma.loyaltyReward.findMany({
@@ -99,7 +100,12 @@ export class LoyaltyRedemptionService {
         orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
       }),
     ]);
-    const balance = account?.balance ?? 0;
+    // ESP-03 PR 8 — available: the balance minus the Beans held by this
+    // customer's payments in progress.
+    const balance = account
+      ? account.balance -
+        (await heldOnLoyaltyAccount(this.prisma, tenantId, account.id))
+      : 0;
 
     const options: CheckoutRewardOption[] = [];
     for (const reward of rewards) {

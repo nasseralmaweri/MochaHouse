@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { heldOnGiftCard } from '../../payment/financial-holds';
 import {
   canonicalizeGiftCardCode,
   hashGiftCardCode,
@@ -97,7 +98,12 @@ export class GiftCardRedemptionService {
     if (card.currency !== orderCurrency) {
       return { outcome: 'currency_mismatch', last4: card.last4 };
     }
-    if (card.balanceMinorUnits <= 0) {
+    // ESP-03 PR 8 — available: the balance minus what payments in progress
+    // hold on this card (re-checked under lock when the attempt is created).
+    const available =
+      card.balanceMinorUnits -
+      (await heldOnGiftCard(this.prisma, card.tenantId, card.id));
+    if (available <= 0) {
       return { outcome: 'no_balance', last4: card.last4 };
     }
 
@@ -106,7 +112,7 @@ export class GiftCardRedemptionService {
       tenantId: card.tenantId,
       giftCardId: card.id,
       last4: card.last4,
-      balanceMinorUnits: card.balanceMinorUnits,
+      balanceMinorUnits: available,
       currency: card.currency,
     };
   }

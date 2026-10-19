@@ -441,7 +441,8 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     expect(summarize(report)).toEqual([]);
     expect(report.violations).toBe(0);
     expect(report.warnings).toBe(0);
-    expect(report.relationshipsChecked).toBe(117);
+    // ESP-03 PR 8 added FinancialHold (5 composite foreign keys).
+    expect(report.relationshipsChecked).toBe(122);
     expect(report.verdict).toBe('clean');
     expect(report.uncheckedRows).toBe(0);
     // Only the documented by-design exclusions, none holding unchecked rows.
@@ -719,8 +720,8 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     it('summarizes violations by relationship type', () => {
       expect(report.byKind).toEqual({
         'composite-fk-candidate': {
-          relationships: 103,
-          checked: 103,
+          relationships: 108,
+          checked: 108,
           violations: 8,
           warnings: 0,
         },

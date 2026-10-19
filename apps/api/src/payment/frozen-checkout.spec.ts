@@ -8,6 +8,7 @@ import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import {
   TEST_TENANT_B_ID,
   createTestTenantB,
+  removeFinancialHoldsForTest,
   removePaymentRecoveryRecordsForTest,
   removeTestTenantB,
   tenantContextFor,
@@ -900,6 +901,9 @@ describe('ESP-03 PR 7 frozen checkout (integration)', () => {
     it('a promotion deleted meanwhile keeps the payment for review', async () => {
       const { code, promotion } = await coupon(100);
       const { attempt } = await chargedWithoutOrder(body({ couponCode: code }));
+      // ESP-03 PR 8 — a promotion with a hold cannot be deleted; as for a
+      // payment from before PR 8 (no hold), the deletion goes through.
+      await removeFinancialHoldsForTest({ promotionIds: [promotion.id] });
       await prisma.promotion.delete({ where: { id: promotion.id } });
       expect((await outcomeOf(() => recover(attempt.id))).ok).toBe(false);
       await expectKeptForReview(attempt.id);

@@ -17,6 +17,10 @@ import type {
 import { Prisma } from '@mocha-house/database';
 import type { TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  heldOnPromotion,
+  highestCustomerCommitment,
+} from '../../payment/financial-holds';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import { normalizeCouponCode } from './coupon-code';
@@ -411,6 +415,43 @@ export class PromotionsAdminService {
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      // ESP-03 PR 8 — a limit is never set below what is already used plus
+      // what payments in progress hold, read under the promotion's lock (the
+      // same lock reservations take).
+      const newTotal = data.totalRedemptionLimit;
+      const newPerCustomer = data.perCustomerRedemptionLimit;
+      if (typeof newTotal === 'number' || typeof newPerCustomer === 'number') {
+        const [locked] = await tx.$queryRaw<{ redemptionCount: number }[]>`
+          SELECT "redemptionCount" FROM "Promotion"
+           WHERE id = ${promotionId} AND "tenantId" = ${tenant.tenantId}
+           FOR UPDATE`;
+        if (typeof newTotal === 'number') {
+          const held = await heldOnPromotion(
+            tx,
+            tenant.tenantId,
+            promotionId,
+            null,
+          );
+          const committed = (locked?.redemptionCount ?? 0) + held.total;
+          if (newTotal < committed) {
+            throw new ConflictException(
+              `The total redemption limit can't be lower than ${committed}: the redemptions already used plus those reserved for orders being paid.`,
+            );
+          }
+        }
+        if (typeof newPerCustomer === 'number') {
+          const committed = await highestCustomerCommitment(
+            tx,
+            tenant.tenantId,
+            promotionId,
+          );
+          if (newPerCustomer < committed) {
+            throw new ConflictException(
+              `The per-customer redemption limit can't be lower than ${committed}: one customer has already used or reserved that many.`,
+            );
+          }
+        }
+      }
       await tx.promotion.update({ where: { id: promotionId }, data });
 
       if (nextProductIds !== null) {

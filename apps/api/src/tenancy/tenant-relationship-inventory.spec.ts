@@ -490,7 +490,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(relationsBetweenBusinessRecords).toHaveLength(103);
+    // ESP-03 PR 8 added FinancialHold (5 composite foreign keys).
+    expect(relationsBetweenBusinessRecords).toHaveLength(108);
     expect(
       relationsBetweenBusinessRecords
         .filter((r) => !isTenantEnforced(r))
@@ -530,6 +531,11 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'CustomerNote.customerId',
       'CustomerPreferredLocation.customerId',
       'CustomerPreferredLocation.locationId',
+      'FinancialHold.customerId',
+      'FinancialHold.giftCardId',
+      'FinancialHold.loyaltyAccountId',
+      'FinancialHold.paymentAttemptId',
+      'FinancialHold.promotionId',
       'FranchiseInquiryNote.authorInternalUserId',
       'FranchiseInquiryNote.franchiseInquiryId',
       'GiftCardPurchase.customerId',
@@ -740,13 +746,13 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       external: count((r) => r.kind === 'external-identifier'),
       total: TENANT_RELATIONSHIPS.length,
     }).toEqual({
-      compositeWithForeignKey: 103,
+      compositeWithForeignKey: 108,
       compositeWithoutForeignKey: 0,
       historicalSnapshot: 8,
       polymorphic: 4,
       json: 8,
       external: 3,
-      total: 126,
+      total: 131,
     });
     // Optional relationships are present and marked optional.
     const optionalForeignKeys = relationsBetweenBusinessRecords.filter(

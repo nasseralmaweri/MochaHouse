@@ -255,6 +255,9 @@ export class PaymentRecoveryService implements OnModuleInit, OnModuleDestroy {
     this.sweeping = true;
     try {
       const result = await withSessionLock(SWEEP_LOCK_KEY, async () => {
+        // ESP-03 PR 8 — payments that were never sent are closed first, so
+        // their financial holds do not stay reserved.
+        await this.checkout.abandonStrandedUnsentAttempts(now);
         const due = await this.dueCandidates(now);
         const outcomes: RecoveryOutcome[] = [];
         for (const candidate of due) {

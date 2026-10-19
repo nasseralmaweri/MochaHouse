@@ -59,6 +59,11 @@ until a verified provider outcome exists (there is no provider verifier yet).
   finish on its own.
 - Only one sweep runs at a time: an in-process flag, plus an advisory lock
   across processes.
+- ESP-03 PR 8: each sweep first closes, as ABANDONED, at most 50 food-order
+  payments saved but never sent to the provider more than ten minutes ago.
+  This uses the same conditional update from NOT_SENT that the charge claim
+  needs, so nothing can have been charged. The database releases their
+  financial holds in that same statement.
 - Payments set aside for people (attempts used up, or a failure a retry
   cannot fix) are excluded in the database query itself, and the scan pages
   through candidates. They can never fill the scan and stop recovery for

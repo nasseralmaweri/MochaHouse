@@ -4,6 +4,7 @@ import {
   tenantContextFor,
   enrollTestCustomer,
   removePaymentRecoveryRecordsForTest,
+  removeFinancialHoldsForTest,
 } from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
@@ -117,6 +118,9 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     // 'test-loyalty-' subject prefix. Deleting them cascades their
     // CustomerLoyaltyAccount and every MochaBeanLedgerEntry (EARN rows
     // included), so this must happen BEFORE the orders are removed.
+    // ESP-03 PR 8 — financial holds reference the promotions, gift cards
+    // and customers removed below (test-only removal).
+    await removeFinancialHoldsForTest({ tenantIds: [TENANT_1_MOCHA_HOUSE_ID] });
     await prisma.customer.deleteMany({
       where: {
         externalProvider: 'test',
