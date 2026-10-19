@@ -116,9 +116,15 @@ jobs:
           NODE_ENV: test
       - name: API tests (all suites except tenant isolation and route inventory)
         working-directory: apps/api
-        run: >-
-          pnpm test --forceExit
-          --testPathIgnorePatterns "/node_modules/" "src/tenancy/" "src/route-inventory/"
+        # Two sequential Jest processes (shards), each in band against the
+        # one disposable database: a single process retains roughly 40 MB of
+        # heap per integration suite and reached Node's default heap limit.
+        # Both shards always run; the step fails if either fails.
+        run: |
+          status=0
+          pnpm test --forceExit --shard=1/2 --testPathIgnorePatterns "/node_modules/" "src/tenancy/" "src/route-inventory/" || status=1
+          pnpm test --forceExit --shard=2/2 --testPathIgnorePatterns "/node_modules/" "src/tenancy/" "src/route-inventory/" || status=1
+          exit $status
 
   tenant-isolation:
     name: Tenant isolation and route inventory
