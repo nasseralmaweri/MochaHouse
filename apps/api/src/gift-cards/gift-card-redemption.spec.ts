@@ -3,6 +3,7 @@ import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import {
   tenantContextFor,
   removePaymentRecoveryRecordsForTest,
+  removeFinancialHoldsForTest,
 } from '@mocha-house/testing';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
@@ -418,6 +419,11 @@ describe('Gift card redemption at checkout (integration)', () => {
       expect(card.balanceMinorUnits).toBe(9_800);
       expect(await ledgerSum(gc.id)).toBe(9_800);
     } finally {
+      // ESP-03 PR 8 — financial holds reference the promotions, gift cards
+      // and customers removed below (test-only removal).
+      await removeFinancialHoldsForTest({
+        tenantIds: [TENANT_1_MOCHA_HOUSE_ID],
+      });
       await prisma.promotion.deleteMany({ where: { id: promotion.id } });
       await prisma.loyaltyReward.deleteMany({ where: { id: reward.id } });
     }
@@ -716,7 +722,7 @@ describe('Gift card redemption at checkout (integration)', () => {
 
   // --- BALANCE CHANGES BETWEEN PLANNING AND LOCKED APPLY -------
 
-  it('the card is corrected below the planned tender mid-flight: rollback + reconciliationRequired, planned tender never reduced', async () => {
+  it('the card is corrected below the planned tender mid-flight: refused before any charge, planned tender never reduced (ESP-03 PR 8)', async () => {
     const gc = await createGiftCard(1000); // plans a 400 tender (full cover)
     const request = buildRequest({ giftCardCode: gc.code });
 
@@ -743,16 +749,17 @@ describe('Gift card redemption at checkout (integration)', () => {
       ),
     ).rejects.toBeInstanceOf(ConflictException);
 
-    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
-      orderBy: { createdAt: 'desc' },
-      where: attemptsOfCheckout(request.clientRef),
-    });
-    expect(attempt.status).toBe('SUCCEEDED');
-    expect(attempt.reconciliationRequired).toBe(true);
+    // ESP-03 PR 8 — the drop lands before the payment attempt reserves the
+    // card: the reservation (balance minus holds, under the card's lock)
+    // refuses, so no attempt exists and nothing was charged.
+    expect(
+      await prisma.paymentAttempt.count({
+        where: attemptsOfCheckout(request.clientRef),
+      }),
+    ).toBe(0);
 
-    // The order transaction rolled back — the injected balance drop to 100
-    // stands, but NO redemption was recorded and the planned 400 was never
-    // partially applied.
+    // The injected balance drop to 100 stands, but NO redemption was
+    // recorded and the planned 400 was never partially applied.
     const card = await reloadCard(gc.id);
     expect(card.balanceMinorUnits).toBe(100);
     const redemptions = await prisma.orderGiftCardRedemption.count({

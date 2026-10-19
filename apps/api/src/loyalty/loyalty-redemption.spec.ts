@@ -2,6 +2,7 @@ import 'dotenv/config';
 import {
   tenantContextFor,
   removePaymentRecoveryRecordsForTest,
+  removeFinancialHoldsForTest,
 } from '@mocha-house/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
@@ -165,6 +166,9 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
 
   afterAll(async () => {
     // Customers -> cascades CustomerLoyaltyAccount + all ledger entries.
+    // ESP-03 PR 8 — financial holds reference the promotions, gift cards
+    // and customers removed below (test-only removal).
+    await removeFinancialHoldsForTest({ tenantIds: [TENANT_1_MOCHA_HOUSE_ID] });
     await prisma.customer.deleteMany({
       where: {
         externalProvider: 'test',
@@ -693,14 +697,18 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     const balance = await balanceOf(customerId);
     expect(balance).toBeGreaterThanOrEqual(0); // never negative
 
-    // The loser's payment was captured but flagged for reconciliation.
-    const reconciled = await prisma.paymentAttempt.findMany({
-      where: {
-        ...checkoutAttemptsOfThisSuite(),
-        reconciliationRequired: true,
-      },
-    });
-    expect(reconciled.length).toBeGreaterThanOrEqual(1);
+    // ESP-03 PR 8 — the loser is refused BEFORE any charge: the winner had
+    // already reserved the Beans, so the loser never got a payment attempt
+    // and nothing needs reconciliation. The winner's hold was consumed once.
+    expect(
+      await prisma.financialHold.findMany({
+        where: {
+          kind: 'LOYALTY_REDEMPTION',
+          loyaltyAccount: { customerId },
+        },
+        select: { status: true },
+      }),
+    ).toEqual([{ status: 'CONSUMED' }]);
   });
 
   // --- PAYMENT SAFETY ---------------------------------------

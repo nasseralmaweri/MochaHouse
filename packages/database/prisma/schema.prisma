@@ -78,6 +78,7 @@ model Tenant {
   paymentReconciliationNotes           PaymentReconciliationNote[]
   checkoutSnapshots                    CheckoutSnapshot[]
   checkoutSessions                     CheckoutSession[]
+  financialHolds                       FinancialHold[]
   paymentReconciliationEvents          PaymentReconciliationEvent[]
   orderClosures                        OrderClosure[]
   orderRefundObligations               OrderRefundObligation[]
@@ -1184,15 +1185,17 @@ model Customer {
   // Milestone S0D-1 / S0D-2B-1 — the owning tenant. REQUIRED since
   // S0D-2B-1: a Customer is only ever created by the JIT resolver, from the
   // request's explicit TenantContext. No default.
-  tenantId String
-  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  tenantId       String
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // Security 4C-2 — composite tenant key: lets child tables reference
+  // (tenantId, id) so the database itself can refuse a cross-business link
+  // (composite foreign keys arrive in Security 4C-3).
+  // ESP-03 PR 8 — per-customer promotion redemptions reserved.
+  financialHolds FinancialHold[]
 
   // SC4f-2 — one CENTERIVO login may hold ONE profile per business (owner
   // decision G1): the login is unique within a business, never across them.
   @@unique([tenantId, externalProvider, externalSubject])
-  // Security 4C-2 — composite tenant key: lets child tables reference
-  // (tenantId, id) so the database itself can refuse a cross-business link
-  // (composite foreign keys arrive in Security 4C-3).
   @@unique([tenantId, id])
   @@index([tenantId])
 }
@@ -1378,6 +1381,9 @@ model PaymentAttempt {
   // Security 4C-2 — composite tenant key: lets child tables reference
   // (tenantId, id) so the database itself can refuse a cross-business link
   // (composite foreign keys arrive in Security 4C-3).
+  // ESP-03 PR 8 — what this payment reserved before the charge.
+  financialHolds FinancialHold[]
+
   @@unique([tenantId, id])
   // ESP-03 PR 7 — payment keys are unique per business too (the global
   // unique key on idempotencyKey is kept).
@@ -1429,6 +1435,50 @@ model CheckoutSnapshot {
 
   @@unique([tenantId, id])
   @@unique([tenantId, paymentAttemptId])
+  @@index([tenantId])
+}
+
+// ESP-03 PR 8 — a pre-charge financial hold: what a payment reserved before
+// it was sent to the provider, in the same transaction as the attempt and its
+// frozen checkout. One per kind per attempt:
+//   PROMOTION_REDEMPTION  one redemption (amount 1) of promotionId, with
+//                         customerId when its limit is per customer;
+//   LOYALTY_REDEMPTION    amount Mocha Beans of loyaltyAccountId;
+//   GIFT_CARD_TENDER      amount (minor units) of giftCardId.
+// Available = balance or limit minus every ACTIVE hold. ACTIVE -> CONSUMED
+// when the order is created (payment SUCCEEDED), or ACTIVE -> RELEASED once
+// the payment is DECLINED or FAILED (releaseReason DECLINED / FAILED /
+// ABANDONED). Kept while the payment is charging, held, unknown or paid but
+// unfulfilled. Never deleted. The migration's CHECKs, partial indexes and
+// guard trigger enforce all of this.
+model FinancialHold {
+  id               String                  @id @default(uuid(7))
+  paymentAttemptId String
+  paymentAttempt   PaymentAttempt          @relation(fields: [tenantId, paymentAttemptId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  // PROMOTION_REDEMPTION | LOYALTY_REDEMPTION | GIFT_CARD_TENDER (CHECK).
+  kind             String
+  // ACTIVE | CONSUMED | RELEASED (CHECK).
+  status           String                  @default("ACTIVE")
+  amount           Int
+  promotionId      String?
+  promotion        Promotion?              @relation(fields: [tenantId, promotionId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  customerId       String?
+  customer         Customer?               @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  loyaltyAccountId String?
+  loyaltyAccount   CustomerLoyaltyAccount? @relation(fields: [tenantId, loyaltyAccountId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  giftCardId       String?
+  giftCard         GiftCard?               @relation(fields: [tenantId, giftCardId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  // DECLINED | FAILED | ABANDONED, only when RELEASED (CHECK).
+  releaseReason    String?
+  createdAt        DateTime                @default(now())
+  consumedAt       DateTime?
+  releasedAt       DateTime?
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([paymentAttemptId, kind])
   @@index([tenantId])
 }
 
@@ -2561,6 +2611,9 @@ model CustomerLoyaltyAccount {
   // Security 4C-2 — composite tenant key: lets child tables reference
   // (tenantId, id) so the database itself can refuse a cross-business link
   // (composite foreign keys arrive in Security 4C-3).
+  // ESP-03 PR 8 — Mocha Beans reserved by payments in progress.
+  financialHolds FinancialHold[]
+
   @@unique([tenantId, id])
   // Security 4C-4 — the one-to-one composite relation needs its key
   // unique together with tenantId (the column alone already is).
@@ -3109,13 +3162,15 @@ model Promotion {
   // phase 2: every write supplies it explicitly (root writes from the
   // request's TenantContext, child writes from a validated parent). No
   // default.
-  tenantId String
-  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-
-  @@unique([tenantId, code])
+  tenantId       String
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   // Security 4C-2 — composite tenant key: lets child tables reference
   // (tenantId, id) so the database itself can refuse a cross-business link
   // (composite foreign keys arrive in Security 4C-3).
+  // ESP-03 PR 8 — redemptions reserved by payments in progress.
+  financialHolds FinancialHold[]
+
+  @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([kind, isActive])
   @@index([isActive])
@@ -3364,6 +3419,9 @@ model GiftCard {
   // Security 4C-2 — composite tenant key: lets child tables reference
   // (tenantId, id) so the database itself can refuse a cross-business link
   // (composite foreign keys arrive in Security 4C-3).
+  // ESP-03 PR 8 — amounts reserved by payments in progress.
+  financialHolds FinancialHold[]
+
   @@unique([tenantId, id])
   @@index([status])
   @@index([tenantId])

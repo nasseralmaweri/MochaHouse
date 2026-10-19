@@ -7371,3 +7371,6 @@ export const CHECKOUT_SESSION_EXPIRED = "CHECKOUT_SESSION_EXPIRED";
 export const CHECKOUT_CHANGED_DURING_PAYMENT = "CHECKOUT_CHANGED_DURING_PAYMENT";
 // The session's payment is complete; a new order needs a new checkout.
 export const CHECKOUT_ALREADY_COMPLETED = "CHECKOUT_ALREADY_COMPLETED";
+// ESP-03 PR 8 — a promotion redemption, Mocha Beans or gift-card balance the
+// order needs is no longer available (nothing was charged; review the order).
+export const CHECKOUT_RESOURCE_UNAVAILABLE = "CHECKOUT_RESOURCE_UNAVAILABLE";

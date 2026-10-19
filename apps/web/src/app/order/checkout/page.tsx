@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   CHECKOUT_ALREADY_COMPLETED,
   CHECKOUT_CHANGED_DURING_PAYMENT,
+  CHECKOUT_RESOURCE_UNAVAILABLE,
   CHECKOUT_SESSION_EXPIRED,
   CHECKOUT_SESSION_INVALID,
   type CheckoutQuoteResponse,
@@ -369,6 +370,14 @@ export default function CheckoutPage() {
         result.code === CHECKOUT_SESSION_EXPIRED
       ) {
         setSubmitError(`${result.message}`);
+        return;
+      }
+      if (result.code === CHECKOUT_RESOURCE_UNAVAILABLE) {
+        // ESP-03 PR 8 — an offer, Beans or gift-card balance was taken by
+        // another order first. Nothing was charged: re-read the quote so the
+        // customer reviews the corrected total.
+        setQuoteRefresh((n) => n + 1);
+        setSubmitError(result.message);
         return;
       }
       if (

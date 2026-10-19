@@ -18,6 +18,7 @@ import {
 } from '@mocha-house/contracts';
 import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { heldOnGiftCard } from '../../payment/financial-holds';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import {
@@ -328,6 +329,16 @@ export class GiftCardsAdminService {
           throw new ConflictException(
             `That deduction would take the balance below $0.00 (current balance ${formatUsd(balanceBefore)}).`,
           );
+        }
+        // ESP-03 PR 8 — an amount held by payments in progress is not
+        // available to deduct (read under the card lock above).
+        if (deltaMinorUnits < 0) {
+          const held = await heldOnGiftCard(tx, tenant.tenantId, giftCardId);
+          if (balanceAfter < held) {
+            throw new ConflictException(
+              `That deduction would take the balance below the ${formatUsd(held)} reserved for orders being paid (current balance ${formatUsd(balanceBefore)}).`,
+            );
+          }
         }
         if (balanceAfter > GIFT_CARD_MAX_VALUE_MINOR_UNITS) {
           throw new ConflictException(

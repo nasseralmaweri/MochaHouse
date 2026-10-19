@@ -2,6 +2,7 @@ import 'dotenv/config';
 import {
   tenantContextFor,
   removePaymentRecoveryRecordsForTest,
+  removeFinancialHoldsForTest,
 } from '@mocha-house/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
@@ -167,6 +168,9 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
   });
 
   afterAll(async () => {
+    // ESP-03 PR 8 — financial holds reference the promotions, gift cards
+    // and customers removed below (test-only removal).
+    await removeFinancialHoldsForTest({ tenantIds: [TENANT_1_MOCHA_HOUSE_ID] });
     await prisma.customer.deleteMany({
       where: {
         externalProvider: 'test',

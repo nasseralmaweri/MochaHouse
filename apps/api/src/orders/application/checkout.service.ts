@@ -92,6 +92,12 @@ import {
   resolveCaseAsFulfilled,
 } from '../../payment/payment-charge';
 import {
+  consumeHoldsForOrder,
+  prepareHoldsForOrder,
+  reserveFinancialHolds,
+  type HoldRequest,
+} from '../../payment/financial-holds';
+import {
   generateOrderAccessToken,
   generateOrderNumber,
 } from '../infrastructure/order-identifiers';
@@ -372,8 +378,13 @@ export class CheckoutService {
         tenantId,
         regularRewardContext(regularPlan, merchandiseAfterRegular),
       );
-      const balance =
-        await this.loyaltyService.getBalanceForCustomer(customerId);
+      // ESP-03 PR 8 — what is available: the balance minus the Beans held
+      // by this customer's payments in progress (re-checked under lock when
+      // the payment attempt is created).
+      const balance = await this.loyaltyService.getAvailableBalanceForCustomer(
+        customerId,
+        tenantId,
+      );
       if (balance < prePaymentPlan.beanCost) {
         throw new ConflictException(
           `You don't have enough Mocha Beans for this reward ` +
@@ -498,6 +509,14 @@ export class CheckoutService {
       priced.currency,
       tenantId,
       snapshot,
+      // ESP-03 PR 8 — reserved with the attempt, before any charge.
+      holdRequestOf(
+        customerId,
+        features,
+        regularPlan,
+        prePaymentPlan,
+        giftCardPlan,
+      ),
     );
 
     if (!created.wasCreatedByThisRequest) {
@@ -581,6 +600,33 @@ export class CheckoutService {
   // the payment provider. For server-side callers (a later recovery job or
   // support tool, ESP-03 PR 5); a customer retry with the same key reaches
   // the same path through replay().
+  // ESP-03 PR 8 — food-order payments saved but never sent to the provider
+  // long after they were created (the request stopped before charging):
+  // each is closed as ABANDONED by the conditional update from NOT_SENT —
+  // the state the charge claim also needs, so nothing can have been or will
+  // be charged — and its financial holds are released in that same
+  // transaction. Run by the recovery sweep, a bounded batch at a time.
+  async abandonStrandedUnsentAttempts(
+    now: Date = new Date(),
+    limit = 50,
+  ): Promise<number> {
+    const stranded = await this.prisma.paymentAttempt.findMany({
+      where: {
+        status: 'PENDING',
+        paymentState: 'NOT_SENT',
+        checkoutSessionId: { not: null },
+        createdAt: { lt: new Date(now.getTime() - STRANDED_ATTEMPT_MS) },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+    });
+    let abandoned = 0;
+    for (const attempt of stranded) {
+      if (await this.abandonIfNeverSent(attempt)) abandoned += 1;
+    }
+    return abandoned;
+  }
+
   async recoverFulfilment(
     paymentAttemptId: string,
     tenantId: string,
@@ -1352,6 +1398,8 @@ export class CheckoutService {
   private async abandonIfNeverSent(
     attempt: PaymentAttemptRow,
   ): Promise<boolean> {
+    // ESP-03 PR 8 — the database releases its financial holds in this same
+    // statement (it was never sent, so nothing can have been charged).
     const abandoned = await this.prisma.paymentAttempt.updateMany({
       where: {
         id: attempt.id,
@@ -1516,6 +1564,7 @@ export class CheckoutService {
     currency: string,
     tenantId: string,
     snapshot: SavedCheckout,
+    holds: HoldRequest,
   ): Promise<
     | { wasCreatedByThisRequest: true; attempt: PaymentAttemptRow }
     | { wasCreatedByThisRequest: false; attempt: PaymentAttemptRow }
@@ -1570,6 +1619,12 @@ export class CheckoutService {
             payload: snapshot as unknown as Prisma.InputJsonObject,
           },
         });
+        // ESP-03 PR 8 — the promotion redemption, gift-card amount and Mocha
+        // Beans this payment will spend, reserved under their locks in this
+        // same transaction. Anything no longer available rolls everything
+        // back (no attempt, no saved checkout, no hold) and nothing is
+        // charged.
+        await reserveFinancialHolds(tx, tenantId, row.id, holds);
         return { wasCreatedByThisRequest: true as const, attempt: row };
       });
     } catch (error) {
@@ -1880,6 +1935,19 @@ export class CheckoutService {
         },
       });
 
+      // ESP-03 PR 8 — what this payment reserved must be exactly what the
+      // order applies below (a payment from before PR 8 reserves it now,
+      // against what other payments hold); otherwise the order is not
+      // created and the payment is kept for review.
+      const holds = holdRequestOf(
+        customerId,
+        features,
+        regularPlan,
+        plan,
+        giftCardPlan,
+      );
+      await prepareHoldsForOrder(tx, tenantId, paymentAttemptId, holds);
+
       // Milestone 7E — the regular Promotion/Coupon: the immutable snapshot
       // plus the concurrency-safe conditional increments of the total and
       // per-customer redemption counters. Applies to guest orders too
@@ -2014,6 +2082,10 @@ export class CheckoutService {
           });
         }
       }
+
+      // ESP-03 PR 8 — the reservations are spent: consumed exactly once, in
+      // this same transaction.
+      await consumeHoldsForOrder(tx, tenantId, paymentAttemptId);
 
       // ESP-03 PR 4 — fulfilled: the saved checkout has served its purpose
       // and goes in this same transaction; any open case for this payment is
@@ -2199,6 +2271,39 @@ function regularRewardContext(
 // regular Promotion/Coupon and/or a FREE_ITEM Mocha Bean reward — passed to
 // 7D bonus earning so those exact units earn no bonus. The same index may
 // appear twice (a promotion and a reward each freed a unit of that line).
+// ESP-03 PR 8 — what a payment reserves, and what its order spends: the
+// promotion redemption (with the customer, null for a guest), the gift-card
+// tender and the reward's Mocha Beans (only for a member with loyalty in
+// the plan — exactly when the order transaction redeems it).
+function holdRequestOf(
+  customerId: string | null,
+  features: { loyalty: boolean },
+  regularPlan: RegularDiscountPlan | null,
+  rewardPlan: RedemptionPlan | null,
+  giftCardPlan: GiftCardTenderPlan | null,
+): HoldRequest {
+  return {
+    promotion: regularPlan
+      ? { promotionId: regularPlan.promotionId, customerId }
+      : null,
+    giftCard:
+      giftCardPlan && giftCardPlan.plannedTenderMinorUnits > 0
+        ? {
+            giftCardId: giftCardPlan.giftCardId,
+            currency: giftCardPlan.currency,
+            amount: giftCardPlan.plannedTenderMinorUnits,
+          }
+        : null,
+    loyalty:
+      rewardPlan &&
+      rewardPlan.beanCost > 0 &&
+      customerId !== null &&
+      features.loyalty
+        ? { customerId, beanCost: rewardPlan.beanCost }
+        : null,
+  };
+}
+
 function freedUnitLineIndices(
   regularPlan: RegularDiscountPlan | null,
   rewardPlan: RedemptionPlan | null,

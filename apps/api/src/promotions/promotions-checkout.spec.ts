@@ -2,6 +2,7 @@ import 'dotenv/config';
 import {
   tenantContextFor,
   removePaymentRecoveryRecordsForTest,
+  removeFinancialHoldsForTest,
 } from '@mocha-house/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
@@ -222,7 +223,14 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       await prisma.orderPromotionRedemption.deleteMany({
         where: { sourcePromotionId: { in: promotionIds } },
       });
-      await prisma.promotion.deleteMany({ where: { id: { in: promotionIds } } });
+      // ESP-03 PR 8 — financial holds reference the promotions, gift cards
+      // and customers removed below (test-only removal).
+      await removeFinancialHoldsForTest({
+        tenantIds: [TENANT_1_MOCHA_HOUSE_ID],
+      });
+      await prisma.promotion.deleteMany({
+        where: { id: { in: promotionIds } },
+      });
       promotionIds.length = 0;
     }
     await prisma.loyaltyBonusPromotion.deleteMany({
@@ -235,6 +243,9 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     await prisma.orderPromotionRedemption.deleteMany({
       where: { sourcePromotionId: { in: promotionIds } },
     });
+    // ESP-03 PR 8 — financial holds reference the promotions, gift cards
+    // and customers removed below (test-only removal).
+    await removeFinancialHoldsForTest({ tenantIds: [TENANT_1_MOCHA_HOUSE_ID] });
     await prisma.customer.deleteMany({
       where: {
         externalProvider: 'test',

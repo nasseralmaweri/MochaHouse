@@ -107,6 +107,8 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     CheckoutSnapshot: 'tenant',
     // ESP-03 PR 6 — server-owned checkout sessions.
     CheckoutSession: 'tenant',
+    // ESP-03 PR 8 — pre-charge financial holds.
+    FinancialHold: "tenant",
     // ESP-03 PR 5 — platform support's append-only notes on a case.
     PaymentReconciliationNote: 'tenant',
     // R1 / S5a — order closure foundation.

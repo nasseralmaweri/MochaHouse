@@ -16,6 +16,7 @@ import {
 type RegularDiscountOk = Extract<RegularDiscountResult, { ok: true }>;
 import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
+import { heldOnPromotion } from '../../payment/financial-holds';
 import { normalizeCouponCode } from './coupon-code';
 
 // Milestone 7E — the checkout-time resolution and application of the ONE
@@ -388,9 +389,16 @@ export class PromotionCheckoutService {
     promotion: PromotionRow,
     customerId: string | null,
   ): Promise<string | null> {
+    // ESP-03 PR 8 — redemptions held by payments in progress count as used.
+    const held = await heldOnPromotion(
+      db,
+      promotion.tenantId,
+      promotion.id,
+      customerId,
+    );
     if (
       promotion.totalRedemptionLimit !== null &&
-      promotion.redemptionCount >= promotion.totalRedemptionLimit
+      promotion.redemptionCount + held.total >= promotion.totalRedemptionLimit
     ) {
       return 'total';
     }
@@ -402,8 +410,8 @@ export class PromotionCheckoutService {
         select: { usedCount: true },
       });
       if (
-        usage !== null &&
-        usage.usedCount >= promotion.perCustomerRedemptionLimit
+        (usage?.usedCount ?? 0) + held.customer >=
+        promotion.perCustomerRedemptionLimit
       ) {
         return 'per_customer';
       }

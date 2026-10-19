@@ -10,6 +10,7 @@ import {
   TEST_TENANT_B_ID,
   createTestTenantB,
   removeTestTenantB,
+  removeFinancialHoldsForTest,
 } from '@mocha-house/testing';
 import { AppModule } from '../app.module';
 import { PrismaService } from '../prisma/prisma.service';
@@ -380,6 +381,11 @@ describe('Checkout financial isolation (integration)', () => {
         });
         await del('giftCardTransaction', { giftCardId: F.a.giftCardId });
         await del('order', { id: { in: orders } });
+        // ESP-03 PR 8 — financial holds reference the promotions, gift cards
+        // and customers removed below (test-only removal).
+        await removeFinancialHoldsForTest({
+          tenantIds: [TENANT_1_MOCHA_HOUSE_ID, TEST_TENANT_B_ID],
+        });
         await del('paymentAttempt', { id: { in: attempts } });
         // ESP-03 PR 6 — this business's checkout sessions (after their attempts).
         await del('checkoutSession', { locationId: F.a.locationId });

@@ -74,6 +74,9 @@ export const TENANT_ID_REQUIRED_MODELS: readonly string[] = [
   // ESP-03 PR 6 — server-owned checkout sessions: a brand-new model,
   // tenantId required from inception.
   'CheckoutSession',
+  // ESP-03 PR 8 — pre-charge financial holds: a brand-new model, tenantId
+  // required from inception.
+  "FinancialHold",
   // ESP-03 PR 5 — platform support's notes on a reconciliation case: a
   // brand-new model, tenantId required from inception.
   'PaymentReconciliationNote',

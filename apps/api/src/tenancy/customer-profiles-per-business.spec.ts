@@ -15,6 +15,7 @@ import {
   TEST_TENANT_B_NAME,
   createTestTenantB,
   removeTestTenantB,
+  removeFinancialHoldsForTest,
 } from '@mocha-house/testing';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
@@ -208,6 +209,11 @@ describe('SC4f-2 customer profiles per restaurant (integration)', () => {
 
   afterAll(async () => {
     try {
+      // ESP-03 PR 8 — financial holds reference the promotions, gift cards
+      // and customers removed below (test-only removal).
+      await removeFinancialHoldsForTest({
+        tenantIds: [TENANT_1_MOCHA_HOUSE_ID],
+      });
       await prisma.customer.deleteMany({
         where: { externalSubject: { in: createdSubjects } },
       });
