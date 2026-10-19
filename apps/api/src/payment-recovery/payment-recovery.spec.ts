@@ -10,7 +10,6 @@ import type {
   ChargeResult,
   PaymentProvider,
 } from '@mocha-house/integrations';
-import type { CheckoutRequest } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisModule } from '../redis/redis.module';
@@ -38,6 +37,15 @@ import {
   type RecoveryOutcome,
 } from './application/payment-recovery.service';
 import { PlatformPaymentCasesService } from './application/platform-payment-cases.service';
+import {
+  attemptsOfCheckout,
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../test/checkout-session';
+import {
+  createGiftIntent,
+  purchaseGiftCard,
+} from '../../test/checkout-session';
 
 // ESP-03 PR 5 — payment reconciliation and automatic recovery, on real
 // services and a real disposable database. The provider is a controlled
@@ -258,8 +266,10 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
 
   beforeEach(() => provider.reset());
 
-  const body = (overrides: Partial<CheckoutRequest> = {}): CheckoutRequest => ({
-    idempotencyKey: `pr5_${randomUUID()}`,
+  const body = (
+    overrides: Partial<LabelledCheckoutRequest> = {},
+  ): LabelledCheckoutRequest => ({
+    clientRef: `pr5_${randomUUID()}`,
     locationId,
     guest: { name: 'Recovery Guest', phone: '5551238888' },
     lines: [
@@ -272,7 +282,10 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
     ...overrides,
   });
   const attemptOf = (key: string) =>
-    prisma.paymentAttempt.findUniqueOrThrow({ where: { idempotencyKey: key } });
+    prisma.paymentAttempt.findFirstOrThrow({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(key),
+    });
   const ordersFor = (paymentAttemptId: string) =>
     prisma.order.findMany({ where: { paymentAttemptId } });
   const caseOf = (paymentAttemptId: string) =>
@@ -311,10 +324,10 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
   // failure inside the order transaction): flagged, with an open case.
   async function chargedWithoutOrder(request = body()) {
     const first = await withFailingWrites('Order', () =>
-      outcomeOf(() => checkout.checkout(request, undefined, t1)),
+      outcomeOf(() => submitCheckout(checkout, request, undefined, t1)),
     );
     expect(first.ok).toBe(false);
-    const attempt = await attemptOf(request.idempotencyKey);
+    const attempt = await attemptOf(request.clientRef);
     expect(attempt).toMatchObject({
       status: 'SUCCEEDED',
       paymentState: 'SUCCEEDED',
@@ -329,11 +342,11 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
   async function heldPayment(request = body()) {
     provider.behavior = async () => ({ outcome: 'unknown', reason: 'x' });
     const first = await outcomeOf(() =>
-      checkout.checkout(request, undefined, t1),
+      submitCheckout(checkout, request, undefined, t1),
     );
     expect(first.status).toBe(409);
     provider.reset();
-    const attempt = await attemptOf(request.idempotencyKey);
+    const attempt = await attemptOf(request.clientRef);
     expect(attempt.paymentState).toBe('UNKNOWN');
     return { request, attempt };
   }
@@ -373,7 +386,7 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
       const orders = await ordersFor(attempt.id);
       expect(orders).toHaveLength(1);
       expect(provider.calls).toHaveLength(1);
-      expect(await attemptOf(request.idempotencyKey)).toMatchObject({
+      expect(await attemptOf(request.clientRef)).toMatchObject({
         status: 'SUCCEEDED',
         paymentState: 'SUCCEEDED',
         fulfilmentStatus: 'DONE',
@@ -417,7 +430,7 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
       expect(JSON.stringify(resolved!.events)).not.toContain('Recovery Guest');
 
       // A late customer retry sees the same order and is not charged.
-      const replay = await checkout.checkout(request, undefined, t1);
+      const replay = await submitCheckout(checkout, request, undefined, t1);
       expect(replay.orderId).toBe(orders[0].id);
       expect(provider.calls).toHaveLength(1);
       // A further recovery finds it fulfilled and writes nothing new.
@@ -442,10 +455,10 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
           },
           { table: 'PaymentReconciliationCase' },
         ],
-        () => outcomeOf(() => checkout.checkout(request, undefined, t1)),
+        () => outcomeOf(() => submitCheckout(checkout, request, undefined, t1)),
       );
       expect(first.ok).toBe(false);
-      const attempt = await attemptOf(request.idempotencyKey);
+      const attempt = await attemptOf(request.clientRef);
       expect(await caseOf(attempt.id)).toBeNull();
 
       await sweepUntil(async () => (await ordersFor(attempt.id)).length > 0);
@@ -507,8 +520,8 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
             trigger: 'platform_support',
           }),
         ),
-        outcomeOf(() => checkout.checkout(request, undefined, t1)),
-        outcomeOf(() => checkout.checkout(request, undefined, t1)),
+        outcomeOf(() => submitCheckout(checkout, request, undefined, t1)),
+        outcomeOf(() => submitCheckout(checkout, request, undefined, t1)),
       ]);
       const recoveries = results.slice(0, 4) as RecoveryOutcome[];
       for (const r of recoveries) {
@@ -591,7 +604,7 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
     it('while the payment is unknown: the retry is told to wait; recovery refuses; nothing is charged again', async () => {
       const { request, attempt } = await heldPayment();
       const retry = await outcomeOf(() =>
-        checkout.checkout(request, undefined, t1),
+        submitCheckout(checkout, request, undefined, t1),
       );
       expect(retry.status).toBe(409);
       expect(retry.response).toMatchObject({ message: HELD_PAYMENT_MESSAGE });
@@ -615,10 +628,10 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
 
     it('after a confirmed success: the retry returns the same order and is not charged', async () => {
       const request = body();
-      const first = await checkout.checkout(request, undefined, t1);
+      const first = await submitCheckout(checkout, request, undefined, t1);
       const retries = await Promise.all(
         Array.from({ length: 3 }, () =>
-          checkout.checkout(request, undefined, t1),
+          submitCheckout(checkout, request, undefined, t1),
         ),
       );
       expect(new Set(retries.map((r) => r.orderId))).toEqual(
@@ -638,25 +651,26 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
           providerReference: `ctl_${req.idempotencyKey}`,
         };
       };
-      const first = checkout.checkout(request, undefined, t1);
+      const first = submitCheckout(checkout, request, undefined, t1);
       // Wait until the attempt is charging.
       for (let i = 0; i < 50; i++) {
-        const row = await prisma.paymentAttempt.findUnique({
-          where: { idempotencyKey: request.idempotencyKey },
+        const row = await prisma.paymentAttempt.findFirst({
+          orderBy: { createdAt: 'desc' },
+          where: attemptsOfCheckout(request.clientRef),
         });
         if (row?.paymentState === 'CHARGING') break;
         await new Promise((r) => setTimeout(r, 50));
       }
       const retry = await outcomeOf(() =>
-        checkout.checkout(request, undefined, t1),
+        submitCheckout(checkout, request, undefined, t1),
       );
       expect(retry.status).toBe(409);
       release();
       const confirmed = await first;
       expect(provider.calls).toHaveLength(1);
-      expect(
-        await ordersFor((await attemptOf(request.idempotencyKey)).id),
-      ).toEqual([expect.objectContaining({ id: confirmed.orderId })]);
+      expect(await ordersFor((await attemptOf(request.clientRef)).id)).toEqual([
+        expect.objectContaining({ id: confirmed.orderId }),
+      ]);
     });
 
     it('while the payment is under recovery: the retry meets the same single order', async () => {
@@ -665,7 +679,7 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
         recovery.recoverOne(attempt.id, TENANT_1_MOCHA_HOUSE_ID, {
           trigger: 'automatic',
         }),
-        outcomeOf(() => checkout.checkout(request, undefined, t1)),
+        outcomeOf(() => submitCheckout(checkout, request, undefined, t1)),
       ]);
       expect(['recovered', 'already_fulfilled']).toContain(recovered.kind);
       const orders = await ordersFor(attempt.id);
@@ -680,9 +694,10 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
   describe('gift-card issuance recovery', () => {
     it('a charged purchase whose card was not issued gets exactly one card, without the code ever leaving recovery', async () => {
       const idempotencyKey = randomUUID();
-      const intent = await purchases.createIntent(
+      const intent = await createGiftIntent(
+        purchases,
         {
-          idempotencyKey,
+          clientRef: idempotencyKey,
           amountMinorUnits: 2500,
           purchaserEmail: 'pr5-buyer@example.test',
           purchaserName: 'PR5 Buyer',
@@ -691,9 +706,10 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
         t1,
       );
       const buy = () =>
-        purchases.purchase(
+        purchaseGiftCard(
+          purchases,
           {
-            idempotencyKey,
+            clientRef: idempotencyKey,
             recoveryCredential: intent.recoveryCredential ?? undefined,
           },
           undefined,

@@ -63,6 +63,7 @@ export const REASON_LABEL: Record<string, string> = {
   FULFILMENT_FAILED: "Payment succeeded, order or gift card could not be created",
   FULFILMENT_INCOMPLETE: "Payment succeeded, order or gift card was never created",
   CHARGE_CLAIM_STRANDED: "Payment was started but never sent to the provider",
+  CHARGE_STRANDED: "The charge started but its outcome was never recorded",
   PROVIDER_OUTCOME_UNKNOWN: "The provider's answer is unknown",
   PROVIDER_AWAITING_CONFIRMATION: "The provider has not confirmed the payment yet",
   PROVIDER_OUTCOME_UNRECORDED: "The provider's answer could not be recorded",

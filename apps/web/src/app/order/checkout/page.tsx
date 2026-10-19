@@ -3,11 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type {
-  CheckoutQuoteResponse,
-  CheckoutRequest,
-  CouponQuoteStatus,
-  LocationMenuResponse,
+import {
+  CHECKOUT_ALREADY_COMPLETED,
+  CHECKOUT_CHANGED_DURING_PAYMENT,
+  CHECKOUT_SESSION_EXPIRED,
+  CHECKOUT_SESSION_INVALID,
+  type CheckoutQuoteResponse,
+  type CouponQuoteStatus,
+  type LocationMenuResponse,
 } from "@mocha-house/contracts";
 import { priceCart } from "@mocha-house/domain";
 import { useCart } from "@/lib/cart/store";
@@ -16,7 +19,9 @@ import {
   getCheckoutQuoteFromBrowser,
   CartLocationNotHereError,
   getLocationMenuFromBrowser,
+  startCheckoutSessionFromBrowser,
   submitCheckoutFromBrowser,
+  type BrowserCheckoutRequest,
 } from "@/lib/api-client";
 import { formatPrice } from "@/lib/money";
 import { Card } from "@/components/Card";
@@ -86,8 +91,48 @@ export default function CheckoutPage() {
   // longer offers a coupon or reward, so the quote is re-read from the server.
   const [quoteRefresh, setQuoteRefresh] = useState(0);
   const inFlightRef = useRef(false);
-  const idempotencyKeyRef = useRef<string | null>(null);
-  const rotateKeyOnNextSubmitRef = useRef(true);
+
+  // ESP-03 PR 6 — the server-owned checkout session this order and every
+  // retry of it belong to. Its token never reaches this page (an HttpOnly
+  // cookie on this site holds it). IN_PROGRESS: a payment for this checkout
+  // is being confirmed, so ordering is paused (never a second charge).
+  const [checkoutState, setCheckoutState] = useState<
+    "loading" | "OPEN" | "IN_PROGRESS" | "error"
+  >("loading");
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
+  const [sessionRefresh, setSessionRefresh] = useState(0);
+  const [completedOrderId, setCompletedOrderId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!cart.isHydrated || !cart.locationId) {
+      return;
+    }
+    let cancelled = false;
+    startCheckoutSessionFromBrowser(cart.locationId).then((result) => {
+      if (cancelled) return;
+      if (result.kind === "error") {
+        setCheckoutState("error");
+        setSessionNotice(result.message);
+        return;
+      }
+      setSessionNotice(null);
+      if (result.session.state === "COMPLETED" && result.session.orderId) {
+        // Paid earlier, but the confirmation never reached this page.
+        setCompletedOrderId(result.session.orderId);
+        return;
+      }
+      setCheckoutState(result.session.state === "OPEN" ? "OPEN" : "IN_PROGRESS");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cart.isHydrated, cart.locationId, sessionRefresh]);
+
+  useEffect(() => {
+    if (!completedOrderId) return;
+    cart.clearCart();
+    router.push(`/order/confirmation/${encodeURIComponent(completedOrderId)}`);
+  }, [completedOrderId, cart, router]);
 
   useEffect(() => {
     if (!cart.isHydrated || !cart.locationId) {
@@ -261,7 +306,7 @@ export default function CheckoutPage() {
   // join prompt. The server honours it only for a login that has not joined
   // this restaurant; a guest order carries no reward.
   async function placeOrder(asGuest: boolean) {
-    if (inFlightRef.current || orderingDisabled) {
+    if (inFlightRef.current || orderingDisabled || checkoutState !== "OPEN") {
       return;
     }
     inFlightRef.current = true;
@@ -270,13 +315,7 @@ export default function CheckoutPage() {
     setJoinPrompt(null);
     setAccountLink(null);
 
-    if (rotateKeyOnNextSubmitRef.current || !idempotencyKeyRef.current) {
-      idempotencyKeyRef.current = crypto.randomUUID();
-      rotateKeyOnNextSubmitRef.current = false;
-    }
-
-    const request: CheckoutRequest = {
-      idempotencyKey: idempotencyKeyRef.current,
+    const request: BrowserCheckoutRequest = {
       locationId: cart.locationId as string,
       guest: {
         name: guestName.trim(),
@@ -319,8 +358,26 @@ export default function CheckoutPage() {
       // Signed in to an account here: guest checkout is not available.
       setAccountLink({ href: "/account", label: "Go to your account" });
     }
-    if (result.outcome === "declined" || result.outcome === "failed") {
-      rotateKeyOnNextSubmitRef.current = true;
+    if (result.outcome === "conflict") {
+      // ESP-03 PR 6 — re-read where this checkout stands: a payment being
+      // confirmed pauses ordering; a completed one opens its confirmation;
+      // an expired or refreshed checkout starts a new session (the customer
+      // reviews and places the order again — nothing was charged).
+      setSessionRefresh((n) => n + 1);
+      if (
+        result.code === CHECKOUT_SESSION_INVALID ||
+        result.code === CHECKOUT_SESSION_EXPIRED
+      ) {
+        setSubmitError(`${result.message}`);
+        return;
+      }
+      if (
+        result.code === CHECKOUT_ALREADY_COMPLETED ||
+        result.code === CHECKOUT_CHANGED_DURING_PAYMENT
+      ) {
+        setSubmitError(result.message);
+        return;
+      }
     }
     if (result.outcome === "unavailable") {
       // Nothing was charged. Drop the coupon and reward the business no
@@ -356,6 +413,40 @@ export default function CheckoutPage() {
           We couldn&apos;t confirm current pricing. You can still try to place
           your order — it will be validated when you submit.
         </Card>
+      ) : null}
+
+      {checkoutState === "IN_PROGRESS" ? (
+        <div role="status">
+          <Card tone="subtle" className="flex flex-col gap-2 text-sm text-text-primary">
+            <p className="font-semibold">Your payment is being confirmed.</p>
+            <p>
+              Do not pay again. Your order will appear as soon as the payment is
+              confirmed. If it takes a while, contact the restaurant.
+            </p>
+            <button
+              type="button"
+              onClick={() => setSessionRefresh((n) => n + 1)}
+              className="flex min-h-11 items-center justify-center rounded-xl border border-border-default px-4 py-3 text-base font-semibold text-text-primary"
+            >
+              Check again
+            </button>
+          </Card>
+        </div>
+      ) : null}
+
+      {checkoutState === "error" && sessionNotice ? (
+        <div role="alert">
+          <Card tone="subtle" className="flex flex-col gap-2 text-sm text-status-warning">
+            <p>{sessionNotice}</p>
+            <button
+              type="button"
+              onClick={() => setSessionRefresh((n) => n + 1)}
+              className="flex min-h-11 items-center justify-center rounded-xl border border-border-default px-4 py-3 text-base font-semibold text-text-primary"
+            >
+              Try again
+            </button>
+          </Card>
+        </div>
       ) : null}
 
       {orderingDisabled ? (
@@ -688,7 +779,7 @@ export default function CheckoutPage() {
 
         <button
           type="submit"
-          disabled={submitting || cartBlocked || orderingDisabled}
+          disabled={submitting || cartBlocked || orderingDisabled || checkoutState !== "OPEN"}
           className="flex min-h-11 items-center justify-center rounded-xl bg-status-success/10 px-4 py-3 text-base font-semibold text-status-success disabled:bg-surface-subtle disabled:text-text-muted"
         >
           {submitting

@@ -216,7 +216,11 @@ describe('ESP-03 PR 1: payment recovery database foundation', () => {
           WHERE contype = 'c'
             AND (conname LIKE 'PaymentAttempt\\_%'
               OR conname LIKE 'PaymentReconciliationCase\\_%'
-              OR conname LIKE 'PaymentReconciliationEvent\\_%')`,
+              OR conname LIKE 'PaymentReconciliationEvent\\_%')
+            -- ESP-03 PR 6's later checks have their own suite.
+            AND conname NOT IN ('PaymentAttempt_requestFingerprint_check',
+              'PaymentAttempt_checkout_session_check',
+              'PaymentAttempt_abandoned_check')`,
       );
       expect(checks.map((c) => c.n).sort()).toEqual([
         'PaymentAttempt_fulfilmentStatus_check',

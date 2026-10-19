@@ -21,6 +21,11 @@ jest.mock("@/lib/auth/session", () => ({
 import * as adminRoute from "./internal/admin/[...path]/route";
 import * as mediaRoute from "./internal/admin/media/route";
 import * as checkoutRoute from "./checkout/route";
+import { serializeCheckoutSessions } from "@/lib/security/checkout-session";
+
+// ESP-03 PR 6 — a checkout carries its session in the HttpOnly checkout cookie.
+const CHECKOUT_BODY = JSON.stringify({ locationId: "loc-1" });
+const CHECKOUT_COOKIE = `mh_checkout=${serializeCheckoutSessions([["loc-1", `cs_${"A".repeat(43)}`]])}`;
 
 const ORIGIN = "http://shop.test";
 const fetchMock = jest.fn();
@@ -186,9 +191,9 @@ describe("media upload proxy", () => {
 
 describe("checkout proxy", () => {
   it("accepts same-origin checkout (signed in and guest)", async () => {
-    for (const cookie of ["mh_customer_session=ctok", ""]) {
+    for (const cookie of [`mh_customer_session=ctok; ${CHECKOUT_COOKIE}`, CHECKOUT_COOKIE]) {
       const res = await checkoutRoute.POST(
-        req("POST", "/api/checkout", { ...sameOrigin, cookie }, "{}"),
+        req("POST", "/api/checkout", { ...sameOrigin, cookie }, CHECKOUT_BODY),
       );
       expect(res.status).toBe(200);
     }

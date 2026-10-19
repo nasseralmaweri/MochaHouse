@@ -15,10 +15,7 @@ import type {
   ChargeResult,
   PaymentProvider,
 } from '@mocha-house/integrations';
-import {
-  GIFT_CARD_PURCHASE_NOT_FOUND,
-  type CheckoutRequest,
-} from '@mocha-house/contracts';
+import { GIFT_CARD_PURCHASE_NOT_FOUND } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisModule } from '../redis/redis.module';
@@ -40,6 +37,15 @@ import { CheckoutService } from '../orders/application/checkout.service';
 import { GiftCardPurchaseService } from '../gift-cards/application/gift-card-purchase.service';
 import { GIFT_CARD_CONFIGURATION_KEY } from '../gift-cards/application/gift-card-configuration.service';
 import { hashRecoveryCredential } from '../gift-cards/infrastructure/gift-card-recovery-credential';
+import {
+  attemptsOfCheckout,
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../test/checkout-session';
+import {
+  createGiftIntent,
+  purchaseGiftCard,
+} from '../../test/checkout-session';
 
 // ESP-03 PR 3 — payment hardening, processor-neutral. Real services and a
 // real disposable database; the provider is a controlled double so every
@@ -209,9 +215,9 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
 
   beforeEach(() => provider.reset());
 
-  const checkoutBody = (idempotencyKey = `ph_${randomUUID()}`) =>
+  const checkoutBody = (clientRef = `ph_${randomUUID()}`) =>
     ({
-      idempotencyKey,
+      clientRef,
       locationId,
       guest: { name: 'Hardening Guest', phone: '5551230000' },
       lines: [
@@ -221,10 +227,13 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
           selections: [{ groupId: sizeGroupId, optionIds: [mediumOptionId] }],
         },
       ],
-    }) satisfies CheckoutRequest;
+    }) satisfies LabelledCheckoutRequest;
 
   const attemptOf = (key: string) =>
-    prisma.paymentAttempt.findUniqueOrThrow({ where: { idempotencyKey: key } });
+    prisma.paymentAttempt.findFirstOrThrow({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(key),
+    });
   const casesFor = (paymentAttemptId: string) =>
     prisma.paymentReconciliationCase.findMany({
       where: { paymentAttemptId },
@@ -245,29 +254,36 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
         provider.behavior = async () => ({ outcome, reason: MARKER });
         const body = checkoutBody();
         const first = await outcomeOf(() =>
-          checkout.checkout(body, undefined, t1),
+          submitCheckout(checkout, body, undefined, t1),
         );
         expect(first.status).toBe(402);
         expect(first.response).toEqual({ outcome, message });
-        const replay = await outcomeOf(() =>
-          checkout.checkout(body, undefined, t1),
+        expect((await attemptOf(body.clientRef)).failureReason).toBe(MARKER);
+        // ESP-03 PR 6 — a definitive decline or failure ends that attempt;
+        // trying again in the same checkout is a NEW attempt (one more
+        // charge request), answered with the same fixed wording.
+        const retry = await outcomeOf(() =>
+          submitCheckout(checkout, body, undefined, t1),
         );
-        expect(replay.response).toEqual({ outcome, message });
-        expect(provider.calls).toHaveLength(1);
-        expect((await attemptOf(body.idempotencyKey)).failureReason).toBe(
-          MARKER,
-        );
+        expect(retry.response).toEqual({ outcome, message });
+        expect(provider.calls).toHaveLength(2);
+        expect(
+          await prisma.paymentAttempt.count({
+            where: attemptsOfCheckout(body.clientRef),
+          }),
+        ).toBe(2);
       },
     );
 
     it('a declined gift-card purchase answers the buyer with fixed wording', async () => {
       provider.behavior = async () => ({ outcome: 'declined', reason: MARKER });
       const req = intent();
-      const i = await purchases.createIntent(req, undefined, t1);
+      const i = await createGiftIntent(purchases, req, undefined, t1);
       const run = () =>
-        purchases.purchase(
+        purchaseGiftCard(
+          purchases,
           {
-            idempotencyKey: req.idempotencyKey,
+            clientRef: req.clientRef,
             recoveryCredential: i.recoveryCredential ?? undefined,
           },
           undefined,
@@ -293,13 +309,15 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
       };
       const body = checkoutBody();
       for (let i = 0; i < 3; i++) {
-        const r = await outcomeOf(() => checkout.checkout(body, undefined, t1));
+        const r = await outcomeOf(() =>
+          submitCheckout(checkout, body, undefined, t1),
+        );
         expect(r.status).toBe(409);
         expect(r.response).toMatchObject({ message: HELD_PAYMENT_MESSAGE });
         expectNoProviderText(r.response);
       }
       expect(provider.calls).toHaveLength(1);
-      const attempt = await attemptOf(body.idempotencyKey);
+      const attempt = await attemptOf(body.clientRef);
       expect(attempt.paymentState).toBe('UNKNOWN');
       const cases = await casesFor(attempt.id);
       expect(cases).toHaveLength(1);
@@ -329,13 +347,15 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
         providerReference: `pend_${req.idempotencyKey}`,
       });
       const body = checkoutBody();
-      const r = await outcomeOf(() => checkout.checkout(body, undefined, t1));
+      const r = await outcomeOf(() =>
+        submitCheckout(checkout, body, undefined, t1),
+      );
       expect(r.status).toBe(409);
-      const attempt = await attemptOf(body.idempotencyKey);
+      const attempt = await attemptOf(body.clientRef);
       expect(attempt).toMatchObject({
         paymentState: 'AWAITING_CONFIRMATION',
         status: 'PENDING',
-        providerReference: `pend_${body.idempotencyKey}`,
+        providerReference: `pend_${attempt.idempotencyKey}`,
       });
       const cases = await casesFor(attempt.id);
       expect(cases.map((c) => c.reasonCode)).toEqual([
@@ -354,19 +374,21 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
         return { outcome: 'unknown', reason: MARKER };
       };
       const body = checkoutBody();
-      const first = outcomeOf(() => checkout.checkout(body, undefined, t1));
+      const first = outcomeOf(() =>
+        submitCheckout(checkout, body, undefined, t1),
+      );
       // Let the first request claim the charge, then pile on.
       await new Promise((resolve) => setTimeout(resolve, 150));
       const others = Promise.all(
         Array.from({ length: 4 }, () =>
-          outcomeOf(() => checkout.checkout(body, undefined, t1)),
+          outcomeOf(() => submitCheckout(checkout, body, undefined, t1)),
         ),
       );
       release();
       const results = [await first, ...(await others)];
       expect(results.every((r) => r.status === 409)).toBe(true);
       expect(provider.calls).toHaveLength(1);
-      const attempt = await attemptOf(body.idempotencyKey);
+      const attempt = await attemptOf(body.clientRef);
       expect(await casesFor(attempt.id)).toHaveLength(1);
     });
 
@@ -375,11 +397,12 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
         throw new Error(MARKER);
       };
       const req = intent();
-      const i = await purchases.createIntent(req, undefined, t1);
+      const i = await createGiftIntent(purchases, req, undefined, t1);
       const r = await outcomeOf(() =>
-        purchases.purchase(
+        purchaseGiftCard(
+          purchases,
           {
-            idempotencyKey: req.idempotencyKey,
+            clientRef: req.clientRef,
             recoveryCredential: i.recoveryCredential ?? undefined,
           },
           undefined,
@@ -387,7 +410,7 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
         ),
       );
       expect(r.status).toBe(409);
-      const attempt = await attemptOf(req.idempotencyKey);
+      const attempt = await attemptOf(req.clientRef);
       expect((await casesFor(attempt.id)).map((c) => c.reasonCode)).toEqual([
         'PROVIDER_OUTCOME_UNKNOWN',
       ]);
@@ -408,10 +431,12 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
         });
         return { outcome: 'succeeded', providerReference: 'ref_lost_write' };
       };
-      const r = await outcomeOf(() => checkout.checkout(body, undefined, t1));
+      const r = await outcomeOf(() =>
+        submitCheckout(checkout, body, undefined, t1),
+      );
       expect(r.status).toBe(409);
       expect(r.response).toMatchObject({ message: HELD_PAYMENT_MESSAGE });
-      const attempt = await attemptOf(body.idempotencyKey);
+      const attempt = await attemptOf(body.clientRef);
       expect(attempt.providerReference).toBe('ref_lost_write');
       expect(attempt.paymentState).toBe('UNKNOWN');
       const cases = await casesFor(attempt.id);
@@ -422,7 +447,7 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
       expect(
         await prisma.order.count({ where: { paymentAttemptId: attempt.id } }),
       ).toBe(0);
-      await outcomeOf(() => checkout.checkout(body, undefined, t1));
+      await outcomeOf(() => submitCheckout(checkout, body, undefined, t1));
       expect(provider.calls).toHaveLength(1);
     });
 
@@ -451,20 +476,22 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
           outcome: 'succeeded',
           providerReference: 'ref_write_failed',
         });
-        const r = await outcomeOf(() => checkout.checkout(body, undefined, t1));
+        const r = await outcomeOf(() =>
+          submitCheckout(checkout, body, undefined, t1),
+        );
         expect(r.status).toBe(409);
         expect(r.response).toMatchObject({ message: HELD_PAYMENT_MESSAGE });
       } finally {
         spy.mockRestore();
       }
-      const attempt = await attemptOf(body.idempotencyKey);
+      const attempt = await attemptOf(body.clientRef);
       expect(attempt.providerReference).toBe('ref_write_failed');
       // The claim stands: still held, never charged again.
       expect(attempt.paymentState).toBe('CHARGING');
       expect((await casesFor(attempt.id)).map((c) => c.reasonCode)).toEqual([
         'PROVIDER_SUCCEEDED_UNRECORDED',
       ]);
-      await outcomeOf(() => checkout.checkout(body, undefined, t1));
+      await outcomeOf(() => submitCheckout(checkout, body, undefined, t1));
       expect(provider.calls).toHaveLength(1);
     });
   });
@@ -473,7 +500,7 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
 
   function intent(extra: Record<string, unknown> = {}) {
     return {
-      idempotencyKey: randomUUID(),
+      clientRef: randomUUID(),
       amountMinorUnits: 2500,
       purchaserEmail: 'ph-buyer@example.test',
       purchaserName: 'PH Buyer',
@@ -493,7 +520,7 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
     prisma.paymentAttempt.create({
       data: {
         tenantId: data.tenantId ?? TENANT_1_MOCHA_HOUSE_ID,
-        idempotencyKey: randomUUID(),
+        idempotencyKey: `gc_test_${randomUUID()}`,
         provider: provider.name,
         locationId: data.locationId ?? null,
         amount: data.amount ?? 2500,
@@ -504,91 +531,58 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
       },
     });
 
-  describe('gift-card key reuse', () => {
-    const unchanged = async (id: string, before: object) => {
-      const after = await prisma.paymentAttempt.findUniqueOrThrow({
-        where: { id },
-        include: { giftCardPurchase: true },
-      });
-      expect(after).toMatchObject(before);
-      expect(after.giftCardPurchase).toBeNull();
-    };
-
-    it("never turns a food-order checkout's payment into a gift-card purchase", async () => {
-      const key = randomUUID();
-      await checkout.checkout(checkoutBody(key), undefined, t1);
-      const before = await attemptOf(key);
-      const r = await outcomeOf(() =>
-        purchases.createIntent(intent({ idempotencyKey: key }), undefined, t1),
-      );
-      expect(r.status).toBe(409);
-      await unchanged(before.id, {
-        status: 'SUCCEEDED',
-        locationId,
-        amount: before.amount,
-      });
-    });
-
-    it.each([
-      ['with a Location', { locationId: 'LOCATION' }],
-      ['for a different amount', { amount: 5000 }],
-      ['already charging', { paymentState: 'CHARGING' }],
-      ['held as unknown', { paymentState: 'UNKNOWN' }],
-      ['already charged', { status: 'SUCCEEDED', paymentState: 'SUCCEEDED' }],
-    ] as const)(
-      'refuses a key whose payment attempt is %s, creating and changing nothing',
-      async (_label, shape) => {
-        const attempt = await bareAttempt({
-          ...(shape as Parameters<typeof bareAttempt>[0]),
-          locationId: 'locationId' in shape ? locationId : null,
-        });
-        const r = await outcomeOf(() =>
+  // ESP-03 PR 6 — gift-card payment keys are generated by the server; a
+  // client can no longer name (and so never reuse) a payment attempt.
+  describe('server-generated gift-card payment keys', () => {
+    it('a client-chosen payment key is refused on both steps, creating and charging nothing', async () => {
+      const before = await prisma.giftCardPurchase.count();
+      for (const call of [
+        () =>
           purchases.createIntent(
-            intent({ idempotencyKey: attempt.idempotencyKey }),
+            { ...intent(), idempotencyKey: randomUUID() } as never,
             undefined,
             t1,
           ),
-        );
-        expect(r.status).toBe(409);
+        () =>
+          purchases.purchase(
+            { idempotencyKey: randomUUID() } as never,
+            undefined,
+            t1,
+          ),
+      ]) {
+        const r = await outcomeOf(call);
+        expect(r.status).toBe(400);
         expect(r.response).toMatchObject({
-          message: 'This idempotency key cannot be used. Start a new purchase.',
+          code: 'CLIENT_PAYMENT_KEY_NOT_ACCEPTED',
         });
-        await unchanged(attempt.id, {
-          amount: attempt.amount,
-          status: attempt.status,
-          paymentState: attempt.paymentState,
-        });
-        expect(provider.calls).toHaveLength(0);
-      },
-    );
-
-    it('still completes an uncharged gift-card attempt for the same amount (an interrupted first step)', async () => {
-      const attempt = await bareAttempt();
-      const i = await purchases.createIntent(
-        intent({ idempotencyKey: attempt.idempotencyKey }),
-        undefined,
-        t1,
-      );
-      expect(i.amountMinorUnits).toBe(2500);
-      const purchase = await prisma.giftCardPurchase.findUniqueOrThrow({
-        where: { paymentAttemptId: attempt.id },
-      });
-      expect(purchase.tenantId).toBe(TENANT_1_MOCHA_HOUSE_ID);
+      }
+      expect(await prisma.giftCardPurchase.count()).toBe(before);
+      expect(provider.calls).toHaveLength(0);
     });
 
-    it("refuses another business's key on both steps with answers that reveal nothing", async () => {
-      const bAttempt = await bareAttempt({ tenantId: TEST_TENANT_B_ID });
-      const created = await outcomeOf(() =>
-        purchases.createIntent(
-          intent({ idempotencyKey: bAttempt.idempotencyKey }),
-          undefined,
-          t1,
-        ),
-      );
-      expect(created.status).toBe(409);
-      // Business B's own started purchase, with its own recovery credential.
+    it('every intent is a new purchase with its own server-generated key, never a food-order payment', async () => {
+      const first = await createGiftIntent(purchases, intent(), undefined, t1);
+      const second = await createGiftIntent(purchases, intent(), undefined, t1);
+      expect(second.purchaseId).not.toBe(first.purchaseId);
+      const attempts = await prisma.paymentAttempt.findMany({
+        where: {
+          giftCardPurchase: {
+            id: { in: [first.purchaseId, second.purchaseId] },
+          },
+        },
+      });
+      expect(attempts).toHaveLength(2);
+      for (const attempt of attempts) {
+        expect(attempt.idempotencyKey).toMatch(/^gc_[A-Za-z0-9_-]{43}$/);
+        expect(attempt.locationId).toBeNull();
+        expect(attempt.checkoutSessionId).toBeNull();
+      }
+      expect(provider.calls).toHaveLength(0);
+    });
+
+    it("refuses another business's purchase on step 2 exactly like an unknown one, revealing nothing", async () => {
       const bPaid = await bareAttempt({ tenantId: TEST_TENANT_B_ID });
-      await prisma.giftCardPurchase.create({
+      const bPurchase = await prisma.giftCardPurchase.create({
         data: {
           tenantId: TEST_TENANT_B_ID,
           paymentAttemptId: bPaid.id,
@@ -598,24 +592,25 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
           recoveryCredentialHash: hashRecoveryCredential('b-credential'),
         },
       });
-      const unknownKey = await outcomeOf(() =>
-        purchases.purchase({ idempotencyKey: randomUUID() }, undefined, t1),
+      const unknown = await outcomeOf(() =>
+        purchases.purchase({ purchaseId: randomUUID() }, undefined, t1),
       );
       const foreign = await outcomeOf(() =>
         purchases.purchase(
-          {
-            idempotencyKey: bPaid.idempotencyKey,
-            recoveryCredential: 'b-credential',
-          },
+          { purchaseId: bPurchase.id, recoveryCredential: 'b-credential' },
           undefined,
           t1,
         ),
       );
-      expect(foreign).toEqual(unknownKey);
-      expect(unknownKey.response).toMatchObject({
+      expect(foreign).toEqual(unknown);
+      expect(unknown.response).toMatchObject({
         code: GIFT_CARD_PURCHASE_NOT_FOUND,
       });
-      await unchanged(bAttempt.id, { tenantId: TEST_TENANT_B_ID });
+      expect(
+        await prisma.paymentAttempt.findUniqueOrThrow({
+          where: { id: bPaid.id },
+        }),
+      ).toMatchObject({ status: 'PENDING', paymentState: 'NOT_SENT' });
       expect(provider.calls).toHaveLength(0);
     });
   });
@@ -625,17 +620,18 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
   describe('unauthorised callers learn nothing about a payment', () => {
     const unknownKeyAnswer = () =>
       outcomeOf(() =>
-        purchases.purchase({ idempotencyKey: randomUUID() }, undefined, t1),
+        purchaseGiftCard(purchases, { clientRef: randomUUID() }, undefined, t1),
       );
 
     async function started() {
       const req = intent();
-      const i = await purchases.createIntent(req, undefined, t1);
+      const i = await createGiftIntent(purchases, req, undefined, t1);
       const asBuyer = () =>
         outcomeOf(() =>
-          purchases.purchase(
+          purchaseGiftCard(
+            purchases,
             {
-              idempotencyKey: req.idempotencyKey,
+              clientRef: req.clientRef,
               recoveryCredential: i.recoveryCredential ?? undefined,
             },
             undefined,
@@ -644,15 +640,17 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
         );
       const asStranger = async () => [
         await outcomeOf(() =>
-          purchases.purchase(
-            { idempotencyKey: req.idempotencyKey },
+          purchaseGiftCard(
+            purchases,
+            { clientRef: req.clientRef },
             undefined,
             t1,
           ),
         ),
         await outcomeOf(() =>
-          purchases.purchase(
-            { idempotencyKey: req.idempotencyKey, recoveryCredential: 'wrong' },
+          purchaseGiftCard(
+            purchases,
+            { clientRef: req.clientRef, recoveryCredential: 'wrong' },
             undefined,
             t1,
           ),
@@ -684,7 +682,7 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
 
       provider.reset();
       const reconciling = await started();
-      const attempt = await bareAttemptFor(reconciling.req.idempotencyKey);
+      const attempt = await bareAttemptFor(reconciling.req.clientRef);
       await prisma.paymentAttempt.update({
         where: { id: attempt.id },
         data: {
@@ -715,34 +713,34 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
       expect(provider.calls).toHaveLength(1);
     });
 
-    it('step 1 replays only while the purchase still waits for its first payment', async () => {
+    it('step 1 never reveals a payment: repeating it after a purchase is paid only starts a new, separate purchase', async () => {
       const req = intent();
-      const i = await purchases.createIntent(req, undefined, t1);
-      // A client retrying step 1 before paying gets the same intent back.
-      const replay = await purchases.createIntent(req, undefined, t1);
-      expect(replay.purchaseId).toBe(i.purchaseId);
-      expect(replay.status).toBe('PENDING');
-      // Once paid, step 1 reveals nothing about the payment.
-      await purchases.purchase(
+      const i = await createGiftIntent(purchases, req, undefined, t1);
+      await purchaseGiftCard(
+        purchases,
         {
-          idempotencyKey: req.idempotencyKey,
+          clientRef: req.clientRef,
           recoveryCredential: i.recoveryCredential ?? undefined,
         },
         undefined,
         t1,
       );
-      const after = await outcomeOf(() =>
-        purchases.createIntent(req, undefined, t1),
+      // ESP-03 PR 6 — no client key: step 1 cannot name the paid purchase.
+      const again = await createGiftIntent(
+        purchases,
+        { ...req, clientRef: randomUUID() },
+        undefined,
+        t1,
       );
-      expect(after.status).toBe(409);
-      expect(JSON.stringify(after.response)).not.toContain('ISSUED');
-      expect(JSON.stringify(after.response)).not.toContain(i.purchaseId);
+      expect(again.purchaseId).not.toBe(i.purchaseId);
+      expect(again.status).toBe('PENDING');
+      expect(JSON.stringify(again)).not.toContain('ISSUED');
     });
 
     it('a stranded charge claim (payment never sent) opens a case on retry and is never charged', async () => {
       const req = intent();
-      const i = await purchases.createIntent(req, undefined, t1);
-      const attempt = await bareAttemptFor(req.idempotencyKey);
+      const i = await createGiftIntent(purchases, req, undefined, t1);
+      const attempt = await bareAttemptFor(req.clientRef);
       // The process stopped between the purchase claim and the payment claim.
       await prisma.giftCardPurchase.update({
         where: { paymentAttemptId: attempt.id },
@@ -750,9 +748,10 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
       });
       const run = () =>
         outcomeOf(() =>
-          purchases.purchase(
+          purchaseGiftCard(
+            purchases,
             {
-              idempotencyKey: req.idempotencyKey,
+              clientRef: req.clientRef,
               recoveryCredential: i.recoveryCredential ?? undefined,
             },
             undefined,
@@ -770,16 +769,17 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
 
     it('a fresh claim in flight is not treated as stranded', async () => {
       const req = intent();
-      const i = await purchases.createIntent(req, undefined, t1);
-      const attempt = await bareAttemptFor(req.idempotencyKey);
+      const i = await createGiftIntent(purchases, req, undefined, t1);
+      const attempt = await bareAttemptFor(req.clientRef);
       await prisma.giftCardPurchase.update({
         where: { paymentAttemptId: attempt.id },
         data: { chargeClaimedAt: new Date() },
       });
       const r = await outcomeOf(() =>
-        purchases.purchase(
+        purchaseGiftCard(
+          purchases,
           {
-            idempotencyKey: req.idempotencyKey,
+            clientRef: req.clientRef,
             recoveryCredential: i.recoveryCredential ?? undefined,
           },
           undefined,
@@ -800,8 +800,9 @@ describe('ESP-03 PR 3 payment hardening (integration)', () => {
     });
 
     const bareAttemptFor = (key: string) =>
-      prisma.paymentAttempt.findUniqueOrThrow({
-        where: { idempotencyKey: key },
+      prisma.paymentAttempt.findFirstOrThrow({
+        orderBy: { createdAt: 'desc' },
+        where: attemptsOfCheckout(key),
       });
   });
 });

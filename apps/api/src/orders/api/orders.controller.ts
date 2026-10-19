@@ -15,6 +15,7 @@ import {
 import type {
   CheckoutQuoteRequest,
   CheckoutRequest,
+  CheckoutSessionRequest,
 } from '@mocha-house/contracts';
 import { OptionalCustomerAuthGuard } from '../../customer-auth/infrastructure/optional-customer-auth.guard';
 import type { CustomerAuthenticatedRequest } from '../../customer-auth/infrastructure/customer-identity';
@@ -48,6 +49,26 @@ export class OrdersController {
     @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.checkoutService.checkout(
+      body,
+      request.customerIdentity,
+      tenant,
+    );
+  }
+
+  // ESP-03 PR 6 — start (or resume) the server-owned checkout session that a
+  // food-order payment and all of its retries are bound to. Guest-friendly;
+  // never charges. 200: it may return an existing session.
+  @UseGuards(OptionalCustomerAuthGuard, RateLimitGuard)
+  @RateLimit('checkout-quote')
+  @Header('Cache-Control', 'no-store')
+  @Post('checkout-sessions')
+  @HttpCode(HttpStatus.OK)
+  startSession(
+    @Body() body: CheckoutSessionRequest,
+    @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.checkoutService.startSession(
       body,
       request.customerIdentity,
       tenant,

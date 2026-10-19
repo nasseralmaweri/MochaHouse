@@ -155,8 +155,9 @@ describe('SC4f-2 customer profiles per restaurant (integration)', () => {
       .post('/api/v1/orders')
       .set(at(host));
     if (who) req.set('Authorization', `Bearer ${who.token}`);
+    // ESP-03 PR 6 — no payment key: the profile and location are checked
+    // before the checkout session (the location does not exist).
     return req.send({
-      idempotencyKey: randomUUID(),
       locationId: randomUUID(),
       guest: { name: 'Guest', phone: '5550000000', email: null },
       lines: [{ productId: randomUUID(), quantity: 1, selections: [] }],

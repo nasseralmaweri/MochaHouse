@@ -34,6 +34,10 @@ import { OrdersController } from '../orders/api/orders.controller';
 import { CheckoutService } from '../orders/application/checkout.service';
 import { signInternalDevJwt } from '../internal-auth/infrastructure/internal-dev-jwt';
 import { firstFreeSlug } from './application/catalog-creation.service';
+import {
+  httpCheckoutBody,
+  withStatusExpectation,
+} from '../../test/checkout-session';
 
 // S1 — Admin creation of categories and products, and menu placement, over
 // real HTTP: validation at the boundary, corporate-only authorization,
@@ -282,6 +286,10 @@ describe('S1 Admin catalog creation (integration)', () => {
       where: { roleId: { in: roleIds } },
     });
     await prisma.internalRole.deleteMany({ where: { id: { in: roleIds } } });
+    // ESP-03 PR 6 — this suite's checkout sessions reference the location.
+    await prisma.checkoutSession.deleteMany({
+      where: { locationId: locationId },
+    });
     await prisma.location.deleteMany({ where: { id: locationId } });
     await prisma.product.deleteMany({ where: { id: bProductId } });
     await prisma.category.deleteMany({ where: { id: bCategoryId } });
@@ -809,17 +817,24 @@ describe('S1 Admin catalog creation (integration)', () => {
         isAvailable: true,
       });
 
+      // ESP-03 PR 6 — each submission is a new checkout session.
       const checkout = (extra: Record<string, unknown> = {}) =>
+        withStatusExpectation(submitOrder(extra));
+      const submitOrder = async (extra: Record<string, unknown> = {}) =>
         request(app.getHttpServer())
           .post('/api/v1/orders')
-          .send({
-            idempotencyKey: `s1_${randomUUID()}`,
-            locationId,
-            guest: { name: 'S1 Guest', phone: '5551234567' },
-            lines: [{ productId: product.id, quantity: 2, selections: [] }],
-            ...extra,
-          });
-      const placed = (await checkout().expect(201)).body as OrderConfirmation;
+          .send(
+            await httpCheckoutBody(app.getHttpServer(), {
+              clientRef: `s1_${randomUUID()}`,
+              locationId,
+              guest: { name: 'S1 Guest', phone: '5551234567' },
+              lines: [{ productId: product.id, quantity: 2, selections: [] }],
+              ...extra,
+            }),
+          );
+      const placedRes = await checkout();
+      expect(placedRes.status).toBe(201);
+      const placed = placedRes.body as OrderConfirmation;
       const order = await prisma.order.findUniqueOrThrow({
         where: { id: placed.orderId },
         include: { lines: true },
@@ -875,12 +890,14 @@ describe('S1 Admin catalog creation (integration)', () => {
       const placed = (
         await request(app.getHttpServer())
           .post('/api/v1/orders')
-          .send({
-            idempotencyKey,
-            locationId,
-            guest: { name: 'S1 Guest', phone: '5551234567' },
-            lines: [{ productId: product.id, quantity: 3, selections: [] }],
-          })
+          .send(
+            await httpCheckoutBody(app.getHttpServer(), {
+              clientRef: idempotencyKey,
+              locationId,
+              guest: { name: 'S1 Guest', phone: '5551234567' },
+              lines: [{ productId: product.id, quantity: 3, selections: [] }],
+            }),
+          )
           .expect(201)
       ).body as OrderConfirmation;
 
@@ -910,15 +927,17 @@ describe('S1 Admin catalog creation (integration)', () => {
         beans: await prisma.mochaBeanLedgerEntry.count(),
       }).toEqual(ledgerBefore);
 
-      // Replaying the same idempotency key returns the same order.
+      // Replaying the same checkout session returns the same order.
       const replay = await request(app.getHttpServer())
         .post('/api/v1/orders')
-        .send({
-          idempotencyKey,
-          locationId,
-          guest: { name: 'S1 Guest', phone: '5551234567' },
-          lines: [{ productId: product.id, quantity: 3, selections: [] }],
-        });
+        .send(
+          await httpCheckoutBody(app.getHttpServer(), {
+            clientRef: idempotencyKey,
+            locationId,
+            guest: { name: 'S1 Guest', phone: '5551234567' },
+            lines: [{ productId: product.id, quantity: 3, selections: [] }],
+          }),
+        );
       expect(replay.body).toMatchObject({ orderId: placed.orderId });
     });
   });

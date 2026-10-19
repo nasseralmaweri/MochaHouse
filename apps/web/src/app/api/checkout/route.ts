@@ -13,7 +13,19 @@ import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 import { CUSTOMER_SESSION_COOKIE } from "@/lib/auth/session";
 import { signedClientIpHeaders } from "@/lib/client-ip-forwarding";
 import { passthroughHeaders } from "@/lib/rate-limit-message";
-import { CUSTOMER_NOT_ENROLLED } from "@mocha-house/contracts";
+import {
+  CHECKOUT_SESSION_INVALID,
+  CLIENT_PAYMENT_KEY_NOT_ACCEPTED,
+  CUSTOMER_NOT_ENROLLED,
+} from "@mocha-house/contracts";
+import {
+  CHECKOUT_SESSION_COOKIE,
+  isValidLocationId,
+  parseCheckoutSessions,
+  tokenForLocation,
+  withoutCheckoutSession,
+  writeCheckoutSessions,
+} from "@/lib/security/checkout-session";
 
 // SC4f-2 — refusal when a signed-in customer asks to check out as a guest
 // but has (or may have) an account at this restaurant.
@@ -54,7 +66,42 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (untrusted) return untrusted as NextResponse;
 
   let token = request.cookies.get(CUSTOMER_SESSION_COOKIE)?.value;
-  const body = await request.text();
+
+  // ESP-03 PR 6 — the browser never sends (or sees) a payment key or the
+  // checkout-session token. An out-of-date page that still sends a key is
+  // refused before anything happens; otherwise this checkout's session token
+  // is taken from the HttpOnly cookie and added here.
+  let submitted: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(await request.text());
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    submitted = parsed as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ message: "Your cart could not be placed." }, { status: 400 });
+  }
+  if (Object.prototype.hasOwnProperty.call(submitted, "idempotencyKey")) {
+    return NextResponse.json(
+      {
+        code: CLIENT_PAYMENT_KEY_NOT_ACCEPTED,
+        message:
+          "This checkout page is out of date. Refresh the page and place your order again — nothing was charged.",
+      },
+      { status: 400 },
+    );
+  }
+  const sessions = parseCheckoutSessions(request.cookies.get(CHECKOUT_SESSION_COOKIE)?.value);
+  const locationId = isValidLocationId(submitted.locationId) ? submitted.locationId : null;
+  const checkoutToken = locationId ? tokenForLocation(sessions, locationId) : null;
+  if (!locationId || !checkoutToken) {
+    return NextResponse.json(
+      {
+        code: CHECKOUT_SESSION_INVALID,
+        message: "Your checkout needs to be refreshed. Refresh the page and place your order again.",
+      },
+      { status: 409 },
+    );
+  }
+  const body = JSON.stringify({ ...submitted, checkoutToken });
 
   if (token && request.nextUrl.searchParams.get("as") === "guest") {
     let me: Response;
@@ -137,6 +184,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // confirmation URL never needs to carry it. (The response body is unchanged,
   // so existing clients keep working.)
   if (response.ok) {
+    // This checkout is complete: the next order here is a new checkout.
+    writeCheckoutSessions(result.cookies, withoutCheckoutSession(sessions, locationId));
     try {
       const confirmation = JSON.parse(responseBody) as {
         orderId?: unknown;

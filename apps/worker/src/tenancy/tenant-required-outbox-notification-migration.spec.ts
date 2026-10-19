@@ -93,6 +93,8 @@ const tenantTables = Object.entries(MODEL_TENANCY)
       model !== 'LocationOpeningPeriod' &&
       // ESP-03 PR 4 added saved checkouts after this migration.
       model !== 'CheckoutSnapshot' &&
+      // ESP-03 PR 6 added checkout sessions after this migration.
+      model !== 'CheckoutSession' &&
       // ESP-03 PR 5 added support notes after this migration.
       model !== 'PaymentReconciliationNote',
   );

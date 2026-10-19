@@ -10,9 +10,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
-import { FakePaymentProvider } from '@mocha-house/integrations';
 import type {
-  CheckoutRequest,
   CustomerOrderDetail,
   CustomerOrderSummary,
 } from '@mocha-house/contracts';
@@ -32,6 +30,11 @@ import { CustomerOrdersService } from '../application/customer-orders.service';
 import { CustomerReorderService } from '../application/customer-reorder.service';
 import { PaymentModule } from '../../payment/payment.module';
 import { CustomerOrdersController } from './customer-orders.controller';
+import {
+  checkoutAttemptsOfThisSuite,
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../../test/checkout-session';
 
 // Full HTTP integration test for the authenticated customer order-history
 // surface (Milestone 4B): CustomerAuthGuard + CustomerOrdersController +
@@ -112,7 +115,7 @@ describe('CustomerOrdersController (integration)', () => {
 
   afterAll(async () => {
     const attempts = await prisma.paymentAttempt.findMany({
-      where: { idempotencyKey: { startsWith: 'test_' } },
+      where: checkoutAttemptsOfThisSuite(),
       select: { id: true },
     });
     const attemptIds = attempts.map((a) => a.id);
@@ -160,10 +163,10 @@ describe('CustomerOrdersController (integration)', () => {
   });
 
   function buildCheckoutRequest(
-    overrides: Partial<CheckoutRequest> = {},
-  ): CheckoutRequest {
+    overrides: Partial<LabelledCheckoutRequest> = {},
+  ): LabelledCheckoutRequest {
     return {
-      idempotencyKey: `test_${randomUUID()}`,
+      clientRef: `test_${randomUUID()}`,
       locationId,
       guest: { name: 'Test Guest', phone: '5551234567' },
       lines: [
@@ -218,17 +221,20 @@ describe('CustomerOrdersController (integration)', () => {
     const identifierA = `test-${randomUUID()}@example.com`;
     const identifierB = `test-${randomUUID()}@example.com`;
 
-    const orderA = await checkoutService.checkout(
+    const orderA = await submitCheckout(
+      checkoutService,
       buildCheckoutRequest(),
       await identityFor(identifierA),
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
-    const orderB = await checkoutService.checkout(
+    const orderB = await submitCheckout(
+      checkoutService,
       buildCheckoutRequest(),
       await identityFor(identifierB),
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
-    const guestOrder = await checkoutService.checkout(
+    const guestOrder = await submitCheckout(
+      checkoutService,
       buildCheckoutRequest(),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -249,7 +255,8 @@ describe('CustomerOrdersController (integration)', () => {
 
   it('returns the historical order snapshot (items, prices, status) for the owning customer', async () => {
     const identifier = `test-${randomUUID()}@example.com`;
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       buildCheckoutRequest(),
       await identityFor(identifier),
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -272,7 +279,8 @@ describe('CustomerOrdersController (integration)', () => {
   it("returns 404 (never another customer's order) when the order belongs to someone else", async () => {
     const identifierOwner = `test-${randomUUID()}@example.com`;
     const identifierIntruder = `test-${randomUUID()}@example.com`;
-    const ownerOrder = await checkoutService.checkout(
+    const ownerOrder = await submitCheckout(
+      checkoutService,
       buildCheckoutRequest(),
       await identityFor(identifierOwner),
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -286,7 +294,8 @@ describe('CustomerOrdersController (integration)', () => {
 
   it('returns 404 for a guest order requested through the authenticated history endpoint', async () => {
     const identifier = `test-${randomUUID()}@example.com`;
-    const guestOrder = await checkoutService.checkout(
+    const guestOrder = await submitCheckout(
+      checkoutService,
       buildCheckoutRequest(),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),

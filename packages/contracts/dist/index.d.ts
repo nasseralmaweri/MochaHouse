@@ -406,7 +406,7 @@ export interface CheckoutLineInput {
     selections: CheckoutLineSelectionInput[];
 }
 export interface CheckoutRequest {
-    idempotencyKey: string;
+    checkoutToken: string;
     locationId: string;
     guest: GuestContactInput;
     lines: CheckoutLineInput[];
@@ -2222,7 +2222,6 @@ export interface GiftCardPurchaseOptions {
     currency: string;
 }
 export interface CreateGiftCardPurchaseIntentRequest {
-    idempotencyKey: string;
     amountMinorUnits: number;
     purchaserEmail: string;
     purchaserName?: string | null;
@@ -2237,7 +2236,7 @@ export interface GiftCardPurchaseIntentResponse {
     recoveryCredential: string | null;
 }
 export interface PurchaseGiftCardRequest {
-    idempotencyKey: string;
+    purchaseId: string;
     recoveryCredential?: string | null;
 }
 export interface PurchaseGiftCardResponse {
@@ -3404,4 +3403,20 @@ export declare const PAYMENT_RECOVERY_NOT_CONFIRMED = "PAYMENT_RECOVERY_NOT_CONF
 export declare const PAYMENT_RECOVERY_NOTHING_TO_RECOVER = "PAYMENT_RECOVERY_NOTHING_TO_RECOVER";
 export declare const PAYMENT_RECOVERY_IN_PROGRESS = "PAYMENT_RECOVERY_IN_PROGRESS";
 export declare const PAYMENT_RECOVERY_CASE_RESOLVED = "PAYMENT_RECOVERY_CASE_RESOLVED";
+export interface CheckoutSessionRequest {
+    locationId: string;
+    checkoutToken?: string | null;
+}
+export type CheckoutSessionState = "OPEN" | "IN_PROGRESS" | "COMPLETED";
+export interface CheckoutSessionResponse {
+    checkoutToken: string;
+    state: CheckoutSessionState;
+    acceptsNewPaymentsUntil: string;
+    confirmation: OrderConfirmation | null;
+}
+export declare const CLIENT_PAYMENT_KEY_NOT_ACCEPTED = "CLIENT_PAYMENT_KEY_NOT_ACCEPTED";
+export declare const CHECKOUT_SESSION_INVALID = "CHECKOUT_SESSION_INVALID";
+export declare const CHECKOUT_SESSION_EXPIRED = "CHECKOUT_SESSION_EXPIRED";
+export declare const CHECKOUT_CHANGED_DURING_PAYMENT = "CHECKOUT_CHANGED_DURING_PAYMENT";
+export declare const CHECKOUT_ALREADY_COMPLETED = "CHECKOUT_ALREADY_COMPLETED";
 //# sourceMappingURL=index.d.ts.map

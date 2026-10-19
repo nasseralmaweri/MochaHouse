@@ -10,9 +10,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
-import { FakePaymentProvider } from '@mocha-house/integrations';
 import type {
-  CheckoutRequest,
   InternalMeResponse,
   LoyaltyPointsLabelSettings,
   LoyaltySettings,
@@ -30,6 +28,11 @@ import type { CustomerIdentity } from '../customer-auth/infrastructure/customer-
 import { LoyaltyModule } from './loyalty.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 import { GiftCardsModule } from '../gift-cards/gift-cards.module';
+import {
+  checkoutAttemptsOfThisSuite,
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../test/checkout-session';
 
 type Scope = { scopeType: 'CORPORATE' | 'LOCATION'; scopeId: string | null };
 
@@ -123,9 +126,9 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
     });
   }
 
-  function checkoutRequest(): CheckoutRequest {
+  function checkoutRequest(): LabelledCheckoutRequest {
     return {
-      idempotencyKey: `${KEY_PREFIX}${randomUUID()}`,
+      clientRef: `${KEY_PREFIX}${randomUUID()}`,
       locationId,
       guest: { name: 'Settings Guest', phone: '5551234567' },
       lines: [
@@ -293,7 +296,7 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
   afterAll(async () => {
     await setRate(1);
     const attempts = await prisma.paymentAttempt.findMany({
-      where: { idempotencyKey: { startsWith: KEY_PREFIX } },
+      where: checkoutAttemptsOfThisSuite(),
       select: { id: true },
     });
     const attemptIds = attempts.map((a) => a.id);
@@ -345,6 +348,8 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
       await prisma.internalRole.deleteMany({ where: { id } });
     }
     await prisma.internalUser.deleteMany({ where: { id: { in: userIds } } });
+    // ESP-03 PR 6 — this suite's checkout sessions reference the location.
+    await prisma.checkoutSession.deleteMany({ where: { locationId: locId } });
     await prisma.location.deleteMany({ where: { id: locId } });
     await app.close();
     process.env = { ...originalEnv };
@@ -487,7 +492,8 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
     const id = await identity(randomUUID());
 
     // Earn at rate 1: $12.00 -> 12 Beans.
-    const first = await checkoutService.checkout(
+    const first = await submitCheckout(
+      checkoutService,
       checkoutRequest(),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -508,7 +514,8 @@ describe('HQ loyalty settings — earning rate (integration)', () => {
     await putSettings('hq', { earningRatePerDollar: 3 }).expect(200);
 
     // A NEW order earns at the new rate: $12.00 -> 36 Beans.
-    await checkoutService.checkout(
+    await submitCheckout(
+      checkoutService,
       checkoutRequest(),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),

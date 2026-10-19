@@ -11,8 +11,6 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import { FakePaymentProvider } from '@mocha-house/integrations';
-import type { CheckoutRequest } from '@mocha-house/contracts';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsModule } from '../../locations/locations.module';
@@ -26,6 +24,10 @@ import { CheckoutService } from './checkout.service';
 import { AdminOrdersService } from './admin-orders.service';
 import { PaymentModule } from '../../payment/payment.module';
 import { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
+import {
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../../test/checkout-session';
 
 // This suite exercises AdminOrdersService's own logic (store-queue
 // visibility, location cross-checks, status advancement, concurrency). The
@@ -175,10 +177,10 @@ describe('AdminOrdersService (integration)', () => {
   });
 
   function buildCheckoutRequest(
-    overrides: Partial<CheckoutRequest> = {},
-  ): CheckoutRequest {
+    overrides: Partial<LabelledCheckoutRequest> = {},
+  ): LabelledCheckoutRequest {
     return {
-      idempotencyKey: `admin_orders_spec_${randomUUID()}`,
+      clientRef: `admin_orders_spec_${randomUUID()}`,
       locationId,
       guest: { name: 'Store Test Guest', phone: '5556660000' },
       lines: [
@@ -193,7 +195,8 @@ describe('AdminOrdersService (integration)', () => {
   }
 
   async function createOrder() {
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       buildCheckoutRequest(),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -203,7 +206,8 @@ describe('AdminOrdersService (integration)', () => {
   }
 
   it('appears in the store queue immediately, without any processed outbox event', async () => {
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       buildCheckoutRequest(),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),

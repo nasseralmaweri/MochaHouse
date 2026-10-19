@@ -8,7 +8,6 @@ import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { FakePaymentProvider } from '@mocha-house/integrations';
-import type { CheckoutRequest } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { LocationsModule } from '../locations/locations.module';
@@ -22,6 +21,12 @@ import type { CustomerIdentity } from '../customer-auth/infrastructure/customer-
 import { LoyaltyModule } from './loyalty.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 import { GiftCardsModule } from '../gift-cards/gift-cards.module';
+import {
+  attemptsOfCheckout,
+  checkoutAttemptsOfThisSuite,
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../test/checkout-session';
 
 // Milestone 7C — Mocha Bean reward redemption at checkout, exercised through
 // the real CheckoutService against local Postgres. A dedicated test
@@ -168,7 +173,7 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     });
 
     const attempts = await prisma.paymentAttempt.findMany({
-      where: { idempotencyKey: { startsWith: KEY_PREFIX } },
+      where: checkoutAttemptsOfThisSuite(),
       select: { id: true },
     });
     const attemptIds = attempts.map((a) => a.id);
@@ -218,6 +223,10 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     });
     await prisma.category.deleteMany({
       where: { id: { in: [drinksCategoryId, foodCategoryId] } },
+    });
+    // ESP-03 PR 6 — this suite's checkout sessions reference the location.
+    await prisma.checkoutSession.deleteMany({
+      where: { locationId: locationId },
     });
     await prisma.location.deleteMany({ where: { id: locationId } });
     await prisma.$disconnect();
@@ -346,11 +355,11 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
   }
 
   function req(
-    lines: CheckoutRequest['lines'],
-    over: Partial<CheckoutRequest> = {},
-  ): CheckoutRequest {
+    lines: LabelledCheckoutRequest['lines'],
+    over: Partial<LabelledCheckoutRequest> = {},
+  ): LabelledCheckoutRequest {
     return {
-      idempotencyKey: `${KEY_PREFIX}${randomUUID()}`,
+      clientRef: `${KEY_PREFIX}${randomUUID()}`,
       locationId,
       guest: { name: 'Redeem Guest', phone: '5551234567' },
       lines,
@@ -375,7 +384,8 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     const rewardId = await makeFixedReward(100, 500); // $5 off, 100 Beans
 
     // Cart: 1 latte ($5) + 1 muffin ($4) = $9.00 gross
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId), line(muffinId)], { loyaltyRewardId: rewardId }),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -417,7 +427,8 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     const rewardId = await makeFixedReward(100, 500); // $5 off
 
     // Cart: 1 pastry ($3.00) — reward value ($5) exceeds it.
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(pastryId)], { loyaltyRewardId: rewardId }),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -449,7 +460,8 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     const customerId = await customerIdFor(id);
     const rewardId = await makeFreeItemReward(150, { productIds: [latteId] });
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId), line(pastryId)], { loyaltyRewardId: rewardId }),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -479,7 +491,8 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
 
     // Cart: pastry ($3, food), muffin ($4, food), latte ($5, drinks).
     // Eligible food items: pastry & muffin -> free the cheaper (pastry $3).
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(pastryId), line(muffinId), line(latteId)], {
         loyaltyRewardId: rewardId,
       }),
@@ -496,7 +509,8 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     const rewardId = await makeFreeItemReward(150, { productIds: [muffinId] });
 
     // 3 muffins @ $4 = $12 gross; one free -> $8 net
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(muffinId, 3)], { loyaltyRewardId: rewardId }),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -514,7 +528,8 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
 
     const request = req([line(pastryId)], { loyaltyRewardId: rewardId });
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -522,8 +537,9 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
 
     // No payment attempt, no order, no deduction.
-    const attempt = await prisma.paymentAttempt.findUnique({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirst({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(request.clientRef),
     });
     expect(attempt).toBeNull();
     expect(await balanceOf(customerId)).toBe(200);
@@ -536,15 +552,17 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     const request = req([line(latteId)], { loyaltyRewardId: rewardId });
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
 
-    const attempt = await prisma.paymentAttempt.findUnique({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirst({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(request.clientRef),
     });
     expect(attempt).toBeNull();
   });
@@ -561,7 +579,8 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     });
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(latteId)], { loyaltyRewardId: rewardId }),
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -577,14 +596,16 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
 
     const request = req([line(latteId)], { loyaltyRewardId: rewardId });
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toBeInstanceOf(ConflictException);
-    const attempt = await prisma.paymentAttempt.findUnique({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirst({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(request.clientRef),
     });
     expect(attempt).toBeNull();
     expect(await balanceOf(customerId)).toBe(40);
@@ -594,7 +615,8 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     const id = identity(randomUUID());
     await grantBeans(id, 200);
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(latteId)], { loyaltyRewardId: randomUUID() }),
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -613,12 +635,14 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
       loyaltyRewardId: rewardId,
     });
 
-    const first = await checkoutService.checkout(
+    const first = await submitCheckout(
+      checkoutService,
       request,
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
-    const second = await checkoutService.checkout(
+    const second = await submitCheckout(
+      checkoutService,
       request,
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -645,12 +669,14 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     const rewardId = await makeFixedReward(100, 300);
 
     const results = await Promise.allSettled([
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(latteId)], { loyaltyRewardId: rewardId }),
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(latteId)], { loyaltyRewardId: rewardId }),
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -670,7 +696,7 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     // The loser's payment was captured but flagged for reconciliation.
     const reconciled = await prisma.paymentAttempt.findMany({
       where: {
-        idempotencyKey: { startsWith: KEY_PREFIX },
+        ...checkoutAttemptsOfThisSuite(),
         reconciliationRequired: true,
       },
     });
@@ -686,7 +712,8 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     const rewardId = await makeFixedReward(100, 200);
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(latteId)], {
           loyaltyRewardId: rewardId,
           guest: {
@@ -725,15 +752,17 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
       .mockRejectedValueOnce(new Error('Simulated order transaction failure'));
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toThrow('Simulated order transaction failure');
 
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(request.clientRef),
     });
     expect(attempt.status).toBe('SUCCEEDED');
     expect(attempt.reconciliationRequired).toBe(true);
@@ -756,7 +785,8 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     await grantBeans(id, 300);
     const rewardId = await makeFixedReward(100, 500);
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId), line(muffinId)], { loyaltyRewardId: rewardId }),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -808,7 +838,8 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
       const rewardId = await makeFixedReward(100, 500);
 
       // gross $9, -$5 => net $4 => 4 whole dollars * rate 2 = 8 Beans
-      await checkoutService.checkout(
+      await submitCheckout(
+        checkoutService,
         req([line(latteId), line(muffinId)], { loyaltyRewardId: rewardId }),
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -831,7 +862,8 @@ describe('Mocha Bean reward redemption at checkout (integration)', () => {
     await grantBeans(id, 100);
     const customerId = await customerIdFor(id);
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),

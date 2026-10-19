@@ -9,7 +9,6 @@ import type {
   ChargeResult,
   PaymentProvider,
 } from '@mocha-house/integrations';
-import type { CheckoutRequest } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisModule } from '../redis/redis.module';
@@ -26,6 +25,15 @@ import { chargeAttempt } from './payment-charge';
 import { CheckoutService } from '../orders/application/checkout.service';
 import { GiftCardPurchaseService } from '../gift-cards/application/gift-card-purchase.service';
 import { GIFT_CARD_CONFIGURATION_KEY } from '../gift-cards/application/gift-card-configuration.service';
+import {
+  attemptsOfCheckout,
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../test/checkout-session';
+import {
+  createGiftIntent,
+  purchaseGiftCard,
+} from '../../test/checkout-session';
 
 // ESP-03 PR 2 — payment provider states and safe retries. Real services and a
 // real disposable database; the provider is a controlled double so a throw, a
@@ -178,8 +186,8 @@ describe('payment provider states and safe retries (integration)', () => {
 
   beforeEach(() => provider.reset());
 
-  const checkoutBody = (): CheckoutRequest => ({
-    idempotencyKey: `ps_${randomUUID()}`,
+  const checkoutBody = (): LabelledCheckoutRequest => ({
+    clientRef: `ps_${randomUUID()}`,
     locationId,
     guest: { name: 'State Guest', phone: '5551230000' },
     lines: [
@@ -192,7 +200,10 @@ describe('payment provider states and safe retries (integration)', () => {
   });
 
   const attemptOf = (key: string) =>
-    prisma.paymentAttempt.findUniqueOrThrow({ where: { idempotencyKey: key } });
+    prisma.paymentAttempt.findFirstOrThrow({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(key),
+    });
   const ordersFor = (attemptId: string) =>
     prisma.order.count({ where: { paymentAttemptId: attemptId } });
 
@@ -204,29 +215,44 @@ describe('payment provider states and safe retries (integration)', () => {
         return { outcome: 'succeeded', providerReference: 'ref_1' };
       };
       const b = checkoutBody();
-      await checkout.checkout(b, undefined, t1);
-      const a = await attemptOf(b.idempotencyKey);
+      await submitCheckout(checkout, b, undefined, t1);
+      const a = await attemptOf(b.clientRef);
       expect(stateDuringCharge).toBe('CHARGING');
       expect(a.status).toBe('SUCCEEDED');
       expect(a.paymentState).toBe('SUCCEEDED');
       expect(await ordersFor(a.id)).toBe(1);
       expect(provider.calls).toHaveLength(1);
-      expect(provider.calls[0].idempotencyKey).toBe(b.idempotencyKey);
+      expect(provider.calls[0].idempotencyKey).toMatch(
+        /^ck_[A-Za-z0-9_-]{43}$/,
+      );
     });
 
-    it('a decline is DECLINED and replays as 402 without a second charge', async () => {
+    it('a decline is DECLINED; retrying the same checkout is one new attempt (ESP-03 PR 6), the declined one untouched', async () => {
       provider.behavior = async () => ({
         outcome: 'declined',
         reason: 'Card declined.',
       });
       const b = checkoutBody();
-      const first = await outcomeOf(() => checkout.checkout(b, undefined, t1));
-      const replay = await outcomeOf(() => checkout.checkout(b, undefined, t1));
-      const a = await attemptOf(b.idempotencyKey);
+      const first = await outcomeOf(() =>
+        submitCheckout(checkout, b, undefined, t1),
+      );
+      const replay = await outcomeOf(() =>
+        submitCheckout(checkout, b, undefined, t1),
+      );
+      const attempts = await prisma.paymentAttempt.findMany({
+        where: attemptsOfCheckout(b.clientRef),
+        orderBy: { createdAt: 'asc' },
+      });
       expect(first.status).toBe(402);
       expect(replay.status).toBe(402);
-      expect([a.status, a.paymentState]).toEqual(['DECLINED', 'DECLINED']);
-      expect(provider.calls).toHaveLength(1);
+      expect(attempts.map((a) => [a.status, a.paymentState])).toEqual([
+        ['DECLINED', 'DECLINED'],
+        ['DECLINED', 'DECLINED'],
+      ]);
+      expect(provider.calls).toHaveLength(2);
+      expect(provider.calls[0].idempotencyKey).not.toBe(
+        provider.calls[1].idempotencyKey,
+      );
     });
 
     it('a definitive provider failure is FAILED', async () => {
@@ -236,9 +262,10 @@ describe('payment provider states and safe retries (integration)', () => {
       });
       const b = checkoutBody();
       expect(
-        (await outcomeOf(() => checkout.checkout(b, undefined, t1))).status,
+        (await outcomeOf(() => submitCheckout(checkout, b, undefined, t1)))
+          .status,
       ).toBe(402);
-      const a = await attemptOf(b.idempotencyKey);
+      const a = await attemptOf(b.clientRef);
       expect([a.status, a.paymentState]).toEqual(['FAILED', 'FAILED']);
     });
 
@@ -247,18 +274,22 @@ describe('payment provider states and safe retries (integration)', () => {
         throw new Error('socket hang up');
       };
       const b = checkoutBody();
-      const first = await outcomeOf(() => checkout.checkout(b, undefined, t1));
+      const first = await outcomeOf(() =>
+        submitCheckout(checkout, b, undefined, t1),
+      );
       expect(first.status).toBe(409);
-      const a = await attemptOf(b.idempotencyKey);
+      const a = await attemptOf(b.clientRef);
       expect(a.paymentState).toBe('UNKNOWN');
       expect(a.status).toBe('PENDING');
 
       // The provider "recovers": a retry of the same key must still not charge.
       provider.reset();
-      const retry = await outcomeOf(() => checkout.checkout(b, undefined, t1));
+      const retry = await outcomeOf(() =>
+        submitCheckout(checkout, b, undefined, t1),
+      );
       expect(retry.status).toBe(409);
       expect(provider.calls).toHaveLength(0);
-      expect((await attemptOf(b.idempotencyKey)).paymentState).toBe('UNKNOWN');
+      expect((await attemptOf(b.clientRef)).paymentState).toBe('UNKNOWN');
       expect(await ordersFor(a.id)).toBe(0);
     });
 
@@ -296,9 +327,13 @@ describe('payment provider states and safe retries (integration)', () => {
         providerReference: 'ref_pending',
       });
       const b = checkoutBody();
-      const first = await outcomeOf(() => checkout.checkout(b, undefined, t1));
-      const replay = await outcomeOf(() => checkout.checkout(b, undefined, t1));
-      const a = await attemptOf(b.idempotencyKey);
+      const first = await outcomeOf(() =>
+        submitCheckout(checkout, b, undefined, t1),
+      );
+      const replay = await outcomeOf(() =>
+        submitCheckout(checkout, b, undefined, t1),
+      );
+      const a = await attemptOf(b.clientRef);
       expect(first.status).toBe(409);
       expect(replay.status).toBe(409);
       expect(a.status).toBe('PENDING');
@@ -312,8 +347,8 @@ describe('payment provider states and safe retries (integration)', () => {
       provider.behavior = async () =>
         ({ outcome: 'weird' }) as unknown as ChargeResult;
       const b = checkoutBody();
-      await outcomeOf(() => checkout.checkout(b, undefined, t1));
-      expect((await attemptOf(b.idempotencyKey)).paymentState).toBe('UNKNOWN');
+      await outcomeOf(() => submitCheckout(checkout, b, undefined, t1));
+      expect((await attemptOf(b.clientRef)).paymentState).toBe('UNKNOWN');
     });
 
     it('concurrent requests with one key charge the provider exactly once', async () => {
@@ -326,11 +361,11 @@ describe('payment provider states and safe retries (integration)', () => {
       };
       const b = checkoutBody();
       const results = await Promise.all([
-        outcomeOf(() => checkout.checkout(b, undefined, t1)),
-        outcomeOf(() => checkout.checkout(b, undefined, t1)),
-        outcomeOf(() => checkout.checkout(b, undefined, t1)),
+        outcomeOf(() => submitCheckout(checkout, b, undefined, t1)),
+        outcomeOf(() => submitCheckout(checkout, b, undefined, t1)),
+        outcomeOf(() => submitCheckout(checkout, b, undefined, t1)),
       ]);
-      const a = await attemptOf(b.idempotencyKey);
+      const a = await attemptOf(b.clientRef);
       expect(provider.calls).toHaveLength(1);
       // ESP-03 PR 4 — the requests that lost the charge claim are answered
       // with the one order (created from the saved checkout), never a second
@@ -346,60 +381,71 @@ describe('payment provider states and safe retries (integration)', () => {
       };
       const b = checkoutBody();
       await Promise.all([
-        outcomeOf(() => checkout.checkout(b, undefined, t1)),
-        outcomeOf(() => checkout.checkout(b, undefined, t1)),
+        outcomeOf(() => submitCheckout(checkout, b, undefined, t1)),
+        outcomeOf(() => submitCheckout(checkout, b, undefined, t1)),
       ]);
       expect(provider.calls).toHaveLength(1);
-      expect((await attemptOf(b.idempotencyKey)).paymentState).toBe('UNKNOWN');
+      expect((await attemptOf(b.clientRef)).paymentState).toBe('UNKNOWN');
     });
 
     it('a key reused for a different Location is refused and does not reveal the original', async () => {
       const b = checkoutBody();
-      await checkout.checkout(b, undefined, t1);
+      await submitCheckout(checkout, b, undefined, t1);
       const reused = await outcomeOf(() =>
-        checkout.checkout({ ...b, locationId: otherLocationId }, undefined, t1),
+        submitCheckout(
+          checkout,
+          { ...b, locationId: otherLocationId },
+          undefined,
+          t1,
+        ),
       );
       expect(reused.status).toBe(409);
       expect(provider.calls).toHaveLength(1);
     });
 
-    it('a legacy NULL-state PENDING attempt is held, never charged and never guessed', async () => {
-      const b = checkoutBody();
-      const legacy = await prisma.paymentAttempt.create({
-        data: {
-          tenantId: TENANT_1_MOCHA_HOUSE_ID,
-          idempotencyKey: b.idempotencyKey,
-          provider: provider.name,
-          locationId,
-          amount: 500,
-          currency: 'USD',
-        },
-      });
-      expect(legacy.paymentState).toBeNull();
-      const result = await outcomeOf(() => checkout.checkout(b, undefined, t1));
-      expect(result.status).toBe(409);
-      expect(provider.calls).toHaveLength(0);
-      const after = await attemptOf(b.idempotencyKey);
-      expect([after.status, after.paymentState]).toEqual(['PENDING', null]);
-    });
-
-    it('a legacy NULL-state DECLINED attempt still replays as declined', async () => {
-      const b = checkoutBody();
-      await prisma.paymentAttempt.create({
-        data: {
-          tenantId: TENANT_1_MOCHA_HOUSE_ID,
-          idempotencyKey: b.idempotencyKey,
-          provider: 'fake',
-          locationId,
-          amount: 500,
-          currency: 'USD',
-          status: 'DECLINED',
-          failureReason: 'Old decline.',
-        },
-      });
-      const result = await outcomeOf(() => checkout.checkout(b, undefined, t1));
-      expect(result.status).toBe(402);
-      expect(provider.calls).toHaveLength(0);
+    it('a legacy attempt (from before checkout sessions) can never be reached by a client: refused before anything happens, never charged, never changed', async () => {
+      for (const legacyState of [
+        { status: 'PENDING' as const },
+        { status: 'DECLINED' as const, failureReason: 'Old decline.' },
+      ]) {
+        const legacy = await prisma.paymentAttempt.create({
+          data: {
+            tenantId: TENANT_1_MOCHA_HOUSE_ID,
+            idempotencyKey: `legacy_${randomUUID()}`,
+            provider: provider.name,
+            locationId,
+            amount: 500,
+            currency: 'USD',
+            ...legacyState,
+          },
+        });
+        const { clientRef: _ref, ...rest } = checkoutBody();
+        void _ref;
+        const result = await outcomeOf(() =>
+          checkout.checkout(
+            {
+              ...rest,
+              idempotencyKey: legacy.idempotencyKey,
+            } as never,
+            undefined,
+            t1,
+          ),
+        );
+        expect(result.status).toBe(400);
+        expect(result.response).toMatchObject({
+          code: 'CLIENT_PAYMENT_KEY_NOT_ACCEPTED',
+        });
+        expect(provider.calls).toHaveLength(0);
+        expect(
+          await prisma.paymentAttempt.findUniqueOrThrow({
+            where: { id: legacy.id },
+          }),
+        ).toMatchObject({
+          status: legacy.status,
+          paymentState: null,
+          updatedAt: legacy.updatedAt,
+        });
+      }
     });
 
     it('another tenant cannot replay or observe an attempt held for this tenant', async () => {
@@ -407,11 +453,11 @@ describe('payment provider states and safe retries (integration)', () => {
         throw new Error('timeout');
       };
       const b = checkoutBody();
-      await outcomeOf(() => checkout.checkout(b, undefined, t1));
+      await outcomeOf(() => submitCheckout(checkout, b, undefined, t1));
       provider.reset();
       const t2 = tenantContextFor('01a0db02-f800-7000-8000-0000000000ff');
       const foreign = await outcomeOf(() =>
-        checkout.checkout(b, undefined, t2),
+        submitCheckout(checkout, b, undefined, t2),
       );
       expect(foreign.ok).toBe(false);
       expect(provider.calls).toHaveLength(0);
@@ -421,15 +467,16 @@ describe('payment provider states and safe retries (integration)', () => {
 
   describe('gift-card purchase', () => {
     const intent = (extra: Record<string, unknown> = {}) => ({
-      idempotencyKey: randomUUID(),
+      clientRef: randomUUID(),
       amountMinorUnits: 2500,
       purchaserEmail: 'ps-buyer@example.test',
       purchaserName: 'PS Buyer',
       ...extra,
     });
     const run = (key: string, credential: string | null) =>
-      purchases.purchase(
-        { idempotencyKey: key, recoveryCredential: credential ?? undefined },
+      purchaseGiftCard(
+        purchases,
+        { clientRef: key, recoveryCredential: credential ?? undefined },
         undefined,
         t1,
       );
@@ -441,48 +488,46 @@ describe('payment provider states and safe retries (integration)', () => {
         return { outcome: 'succeeded', providerReference: 'gc_ref' };
       };
       const req = intent();
-      const i = await purchases.createIntent(req, undefined, t1);
-      const done = await run(req.idempotencyKey, i.recoveryCredential);
+      const i = await createGiftIntent(purchases, req, undefined, t1);
+      const done = await run(req.clientRef, i.recoveryCredential);
       expect(done.status).toBe('ISSUED');
       expect(stateDuringCharge).toBe('CHARGING');
-      expect((await attemptOf(req.idempotencyKey)).paymentState).toBe(
-        'SUCCEEDED',
-      );
+      expect((await attemptOf(req.clientRef)).paymentState).toBe('SUCCEEDED');
       expect(provider.calls).toHaveLength(1);
     });
 
     it('a provider exception is UNKNOWN and a same-key replay never charges again', async () => {
       const req = intent();
-      const i = await purchases.createIntent(req, undefined, t1);
+      const i = await createGiftIntent(purchases, req, undefined, t1);
       provider.behavior = async () => {
         throw new Error('timeout');
       };
       const first = await outcomeOf(() =>
-        run(req.idempotencyKey, i.recoveryCredential),
+        run(req.clientRef, i.recoveryCredential),
       );
       expect(first.status).toBe(409);
       provider.reset();
       const retry = await outcomeOf(() =>
-        run(req.idempotencyKey, i.recoveryCredential),
+        run(req.clientRef, i.recoveryCredential),
       );
       expect(retry.status).toBe(409);
       expect(provider.calls).toHaveLength(0);
-      const a = await attemptOf(req.idempotencyKey);
+      const a = await attemptOf(req.clientRef);
       expect([a.status, a.paymentState]).toEqual(['PENDING', 'UNKNOWN']);
     });
 
     it('a pending result is AWAITING_CONFIRMATION and issues no card', async () => {
       const req = intent();
-      const i = await purchases.createIntent(req, undefined, t1);
+      const i = await createGiftIntent(purchases, req, undefined, t1);
       provider.behavior = async () => ({
         outcome: 'pending',
         reason: 'Awaiting bank.',
       });
       const first = await outcomeOf(() =>
-        run(req.idempotencyKey, i.recoveryCredential),
+        run(req.clientRef, i.recoveryCredential),
       );
       expect(first.status).toBe(409);
-      const a = await attemptOf(req.idempotencyKey);
+      const a = await attemptOf(req.clientRef);
       expect(a.paymentState).toBe('AWAITING_CONFIRMATION');
       const purchase = await prisma.giftCardPurchase.findUniqueOrThrow({
         where: { paymentAttemptId: a.id },
@@ -493,14 +538,14 @@ describe('payment provider states and safe retries (integration)', () => {
 
     it('a decline is DECLINED (402) and replays without a second charge', async () => {
       const req = intent();
-      const i = await purchases.createIntent(req, undefined, t1);
+      const i = await createGiftIntent(purchases, req, undefined, t1);
       provider.behavior = async () => ({ outcome: 'declined', reason: 'No.' });
       expect(
-        (await outcomeOf(() => run(req.idempotencyKey, i.recoveryCredential)))
+        (await outcomeOf(() => run(req.clientRef, i.recoveryCredential)))
           .status,
       ).toBe(402);
       expect(
-        (await outcomeOf(() => run(req.idempotencyKey, i.recoveryCredential)))
+        (await outcomeOf(() => run(req.clientRef, i.recoveryCredential)))
           .status,
       ).toBe(402);
       expect(provider.calls).toHaveLength(1);
@@ -508,7 +553,7 @@ describe('payment provider states and safe retries (integration)', () => {
 
     it('concurrent same-key purchases charge once', async () => {
       const req = intent();
-      const i = await purchases.createIntent(req, undefined, t1);
+      const i = await createGiftIntent(purchases, req, undefined, t1);
       provider.behavior = async (r) => {
         await new Promise((res) => setTimeout(res, 60));
         return {
@@ -517,55 +562,53 @@ describe('payment provider states and safe retries (integration)', () => {
         };
       };
       const results = await Promise.all([
-        outcomeOf(() => run(req.idempotencyKey, i.recoveryCredential)),
-        outcomeOf(() => run(req.idempotencyKey, i.recoveryCredential)),
+        outcomeOf(() => run(req.clientRef, i.recoveryCredential)),
+        outcomeOf(() => run(req.clientRef, i.recoveryCredential)),
       ]);
       expect(provider.calls).toHaveLength(1);
       expect(results.filter((r) => r.ok)).toHaveLength(1);
     });
 
-    it('replaying the intent with different amount, email or name is refused', async () => {
+    it('step 1 never replays: each intent is its own uncharged purchase, whatever it repeats', async () => {
       const req = intent();
-      await purchases.createIntent(req, undefined, t1);
-      for (const changed of [
-        { amountMinorUnits: 5000 },
-        { purchaserEmail: 'someone-else@example.test' },
-        { purchaserName: 'Someone Else' },
-      ]) {
-        const r = await outcomeOf(() =>
-          purchases.createIntent({ ...req, ...changed }, undefined, t1),
-        );
-        expect(r.status).toBe(409);
+      const a = await createGiftIntent(purchases, req, undefined, t1);
+      const b = await createGiftIntent(
+        purchases,
+        { ...req, clientRef: randomUUID() },
+        undefined,
+        t1,
+      );
+      expect(b.purchaseId).not.toBe(a.purchaseId);
+      for (const id of [a.purchaseId, b.purchaseId]) {
+        expect(
+          await prisma.giftCardPurchase.findUniqueOrThrow({ where: { id } }),
+        ).toMatchObject({ status: 'PENDING', chargeClaimedAt: null });
       }
-      // The identical request still replays.
-      await expect(
-        purchases.createIntent(req, undefined, t1),
-      ).resolves.toBeDefined();
+      expect(provider.calls).toHaveLength(0);
     });
 
     it('a pre-ESP-03 intent (NULL state, never claimed) can still be charged once', async () => {
       const req = intent();
-      const i = await purchases.createIntent(req, undefined, t1);
+      const i = await createGiftIntent(purchases, req, undefined, t1);
       await prisma.paymentAttempt.update({
-        where: { idempotencyKey: req.idempotencyKey },
+        where: { id: (await attemptOf(req.clientRef)).id },
         data: { paymentState: null },
       });
-      const done = await run(req.idempotencyKey, i.recoveryCredential);
+      const done = await run(req.clientRef, i.recoveryCredential);
       expect(done.status).toBe('ISSUED');
       expect(provider.calls).toHaveLength(1);
-      expect((await attemptOf(req.idempotencyKey)).paymentState).toBe(
-        'SUCCEEDED',
-      );
+      expect((await attemptOf(req.clientRef)).paymentState).toBe('SUCCEEDED');
     });
 
     it('another tenant cannot complete or observe the purchase', async () => {
       const req = intent();
-      const i = await purchases.createIntent(req, undefined, t1);
+      const i = await createGiftIntent(purchases, req, undefined, t1);
       const t2 = tenantContextFor('01a0db02-f800-7000-8000-0000000000ff');
       const r = await outcomeOf(() =>
-        purchases.purchase(
+        purchaseGiftCard(
+          purchases,
           {
-            idempotencyKey: req.idempotencyKey,
+            clientRef: req.clientRef,
             recoveryCredential: i.recoveryCredential ?? undefined,
           },
           undefined,

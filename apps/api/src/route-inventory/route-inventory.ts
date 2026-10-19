@@ -262,6 +262,8 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/gift-cards/purchase-intents': { scope: 'tenant' },
   'POST /api/v1/orders': { scope: 'tenant' },
   'POST /api/v1/orders/checkout-quote': { scope: 'tenant' },
+  // ESP-03 PR 6 — start or resume a server-owned checkout session.
+  'POST /api/v1/orders/checkout-sessions': { scope: 'tenant' },
   'POST /api/v1/orders/reward-eligibility': { scope: 'tenant' },
   'PUT /api/v1/admin/gift-cards/configuration': { scope: 'tenant' },
   'PUT /api/v1/admin/loyalty/settings': { scope: 'tenant' },

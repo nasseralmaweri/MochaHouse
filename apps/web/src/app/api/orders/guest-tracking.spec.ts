@@ -15,6 +15,11 @@ import {
   GUEST_SESSION_COOKIE,
   serializeGuestSession,
 } from "@/lib/security/guest-session";
+import { serializeCheckoutSessions } from "@/lib/security/checkout-session";
+
+// ESP-03 PR 6 — a checkout carries its session in the HttpOnly checkout cookie.
+const CHECKOUT_BODY = JSON.stringify({ locationId: "loc-1" });
+const CHECKOUT_COOKIE = `mh_checkout=${serializeCheckoutSessions([["loc-1", `cs_${"A".repeat(43)}`]])}`;
 
 const ORIGIN = "http://shop.test";
 const ORDER_A = "ordA1234";
@@ -256,7 +261,14 @@ describe("POST /api/checkout starts the guest session", () => {
     accessToken: TOKEN_A,
   };
   const checkout = () =>
-    checkoutRoute.POST(req("POST", "/api/checkout", sameOrigin, "{}"));
+    checkoutRoute.POST(
+      req(
+        "POST",
+        "/api/checkout",
+        { ...sameOrigin, cookie: CHECKOUT_COOKIE },
+        CHECKOUT_BODY,
+      ),
+    );
 
   it("sets the cookie and leaves the response body unchanged for existing clients", async () => {
     fetchMock.mockResolvedValue(apiOk(confirmation));
@@ -269,12 +281,16 @@ describe("POST /api/checkout starts the guest session", () => {
     expect(setCookie).toMatch(/SameSite=lax/i);
   });
 
-  it("sets no cookie when the order was not placed, or the body is not a confirmation", async () => {
+  it("sets no guest cookie when the order was not placed, or the body is not a confirmation", async () => {
+    const guestCookie = async () =>
+      ((await checkout()).headers.get("set-cookie") ?? "").includes(
+        `${GUEST_SESSION_COOKIE}=`,
+      );
     fetchMock.mockResolvedValueOnce(new Response("{}", { status: 402 }));
-    expect((await checkout()).headers.get("set-cookie")).toBeNull();
+    expect(await guestCookie()).toBe(false);
     fetchMock.mockResolvedValueOnce(apiOk({ orderId: ORDER_A }));
-    expect((await checkout()).headers.get("set-cookie")).toBeNull();
+    expect(await guestCookie()).toBe(false);
     fetchMock.mockResolvedValueOnce(new Response("<html>", { status: 200 }));
-    expect((await checkout()).headers.get("set-cookie")).toBeNull();
+    expect(await guestCookie()).toBe(false);
   });
 });

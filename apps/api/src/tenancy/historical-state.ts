@@ -22,6 +22,8 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'OrderRefundObligation',
   // ESP-03 PR 4 — saved checkouts (20261115090000).
   'CheckoutSnapshot',
+  // ESP-03 PR 6 — checkout sessions (20261117090000).
+  'CheckoutSession',
   // ESP-03 PR 5 — support notes on reconciliation cases (20261116090000).
   'PaymentReconciliationNote',
   // SC1a — CENTERIVO platform operators (20261022090000).
@@ -79,7 +81,13 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
 export const COLUMNS_ADDED_AFTER_4C: Readonly<
   Record<string, readonly string[]>
 > = {
-  PaymentAttempt: ['paymentState', 'fulfilmentStatus'],
+  PaymentAttempt: [
+    'paymentState',
+    'fulfilmentStatus',
+    // ESP-03 PR 6 (20261117090000).
+    'checkoutSessionId',
+    'requestFingerprint',
+  ],
   // SC3c-3 — verified-email stamps (20261029090000).
   InternalUser: ['verifiedEmail', 'emailVerifiedAt'],
   // SC4d — the location profile (20261108090000).

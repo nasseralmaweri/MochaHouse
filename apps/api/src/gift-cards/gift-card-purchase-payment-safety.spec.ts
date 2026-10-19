@@ -4,7 +4,6 @@ import {
   tenantContextFor,
   removePaymentRecoveryRecordsForTest,
 } from '@mocha-house/testing';
-import { randomUUID } from 'node:crypto';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { ServiceUnavailableException } from '@nestjs/common';
 import type { CreateGiftCardPurchaseIntentRequest } from '@mocha-house/contracts';
@@ -31,13 +30,11 @@ describe('gift-card purchase payment safety (integration)', () => {
   let disabledPurchases: GiftCardPurchaseService;
   const t1 = tenantContextFor(TENANT_1_MOCHA_HOUSE_ID);
   const originalEnv = { ...process.env };
-  const idempotencyKeys = new Set<string>();
+  // ESP-03 PR 6 — purchases this file established (keys are server-generated).
+  const establishedPurchaseIds = new Set<string>();
 
   function intentRequest(): CreateGiftCardPurchaseIntentRequest {
-    const idempotencyKey = randomUUID();
-    idempotencyKeys.add(idempotencyKey);
     return {
-      idempotencyKey,
       amountMinorUnits: 2500,
       purchaserEmail: 'gcp-safety@example.com',
       purchaserName: 'GCP Safety',
@@ -101,7 +98,7 @@ describe('gift-card purchase payment safety (integration)', () => {
   afterAll(async () => {
     process.env.NODE_ENV = 'development';
     const attempts = await prisma.paymentAttempt.findMany({
-      where: { idempotencyKey: { in: [...idempotencyKeys] } },
+      where: { giftCardPurchase: { id: { in: [...establishedPurchaseIds] } } },
       select: { id: true },
     });
     const attemptIds = attempts.map((a) => a.id);
@@ -146,28 +143,26 @@ describe('gift-card purchase payment safety (integration)', () => {
   it('with no provider configured, createIntent is refused and records nothing', async () => {
     const request = intentRequest();
     const purchasesBefore = await prisma.giftCardPurchase.count();
+    const attemptsBefore = await prisma.paymentAttempt.count();
 
     await expect(
       disabledPurchases.createIntent(request, undefined, t1),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
 
-    expect(
-      await prisma.paymentAttempt.count({
-        where: { idempotencyKey: request.idempotencyKey },
-      }),
-    ).toBe(0);
+    expect(await prisma.paymentAttempt.count()).toBe(attemptsBefore);
     expect(await prisma.giftCardPurchase.count()).toBe(purchasesBefore);
   });
 
   it('an intent made while payment was available cannot be completed once it is not — no claim, no card', async () => {
     const request = intentRequest();
     const intent = await fakePurchases.createIntent(request, undefined, t1);
+    establishedPurchaseIds.add(intent.purchaseId);
     const cardsBefore = await prisma.giftCard.count();
 
     await expect(
       disabledPurchases.purchase(
         {
-          idempotencyKey: request.idempotencyKey,
+          purchaseId: intent.purchaseId,
           recoveryCredential: intent.recoveryCredential,
         },
         undefined,
@@ -175,8 +170,8 @@ describe('gift-card purchase payment safety (integration)', () => {
       ),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
 
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      where: { giftCardPurchase: { id: intent.purchaseId } },
       include: { giftCardPurchase: true },
     });
     expect(attempt.status).toBe('PENDING');
@@ -188,8 +183,10 @@ describe('gift-card purchase payment safety (integration)', () => {
   it('simulated provider bound in production: createIntent and purchase are both refused, no card issued', async () => {
     const pending = intentRequest();
     const intent = await fakePurchases.createIntent(pending, undefined, t1);
+    establishedPurchaseIds.add(intent.purchaseId);
     const fresh = intentRequest();
     const cardsBefore = await prisma.giftCard.count();
+    const purchasesBefore = await prisma.giftCardPurchase.count();
 
     process.env.NODE_ENV = 'production';
     try {
@@ -199,7 +196,7 @@ describe('gift-card purchase payment safety (integration)', () => {
       await expect(
         fakePurchases.purchase(
           {
-            idempotencyKey: pending.idempotencyKey,
+            purchaseId: intent.purchaseId,
             recoveryCredential: intent.recoveryCredential,
           },
           undefined,
@@ -210,13 +207,10 @@ describe('gift-card purchase payment safety (integration)', () => {
       process.env.NODE_ENV = 'development';
     }
 
-    expect(
-      await prisma.paymentAttempt.count({
-        where: { idempotencyKey: fresh.idempotencyKey },
-      }),
-    ).toBe(0);
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey: pending.idempotencyKey },
+    // The refused fresh intent recorded nothing.
+    expect(await prisma.giftCardPurchase.count()).toBe(purchasesBefore);
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      where: { giftCardPurchase: { id: intent.purchaseId } },
       include: { giftCardPurchase: true },
     });
     expect(attempt.status).toBe('PENDING');
@@ -227,17 +221,18 @@ describe('gift-card purchase payment safety (integration)', () => {
   it('development with the simulated provider still issues a card, recording the provider honestly', async () => {
     const request = intentRequest();
     const intent = await fakePurchases.createIntent(request, undefined, t1);
+    establishedPurchaseIds.add(intent.purchaseId);
     const response = await fakePurchases.purchase(
       {
-        idempotencyKey: request.idempotencyKey,
+        purchaseId: intent.purchaseId,
         recoveryCredential: intent.recoveryCredential,
       },
       undefined,
       t1,
     );
     expect(response.last4).toHaveLength(4);
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      where: { giftCardPurchase: { id: intent.purchaseId } },
     });
     expect(attempt.status).toBe('SUCCEEDED');
     expect(attempt.provider).toBe('fake');

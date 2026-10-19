@@ -13,7 +13,6 @@ import {
   HttpException,
 } from '@nestjs/common';
 import { FakePaymentProvider } from '@mocha-house/integrations';
-import type { CheckoutRequest } from '@mocha-house/contracts';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsModule } from '../../locations/locations.module';
@@ -27,6 +26,12 @@ import { CheckoutService } from './checkout.service';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import { PaymentModule } from '../../payment/payment.module';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
+import {
+  attemptsOfCheckout,
+  checkoutAttemptsOfThisSuite,
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../../test/checkout-session';
 
 // Integration test against the real local Postgres instance (see
 // infrastructure/local/compose.yml + apps/api/.env), exercising the full
@@ -97,7 +102,7 @@ describe('CheckoutService (integration)', () => {
     // so repeated runs don't accumulate permanent data, without touching
     // the seeded dearborn-heights/drip-coffee catalog fixture.
     const attempts = await prisma.paymentAttempt.findMany({
-      where: { idempotencyKey: { startsWith: 'test_' } },
+      where: checkoutAttemptsOfThisSuite(),
       select: { id: true },
     });
     const attemptIds = attempts.map((a) => a.id);
@@ -152,10 +157,10 @@ describe('CheckoutService (integration)', () => {
   });
 
   function buildRequest(
-    overrides: Partial<CheckoutRequest> = {},
-  ): CheckoutRequest {
+    overrides: Partial<LabelledCheckoutRequest> = {},
+  ): LabelledCheckoutRequest {
     return {
-      idempotencyKey: `test_${randomUUID()}`,
+      clientRef: `test_${randomUUID()}`,
       locationId,
       guest: { name: 'Test Guest', phone: '5551234567' },
       lines: [
@@ -186,7 +191,8 @@ describe('CheckoutService (integration)', () => {
   it('associates an authenticated checkout with the resolved Customer id (Milestone 4B)', async () => {
     const identity = await testCustomerIdentity(randomUUID());
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       buildRequest(),
       identity,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -210,7 +216,8 @@ describe('CheckoutService (integration)', () => {
   });
 
   it('guest checkout (no customer identity) still creates an Order with customerId null', async () => {
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       buildRequest(),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -225,12 +232,14 @@ describe('CheckoutService (integration)', () => {
   it('resolves the same Customer across repeated authenticated checkouts by the same identity', async () => {
     const identity = await testCustomerIdentity(randomUUID());
 
-    const first = await checkoutService.checkout(
+    const first = await submitCheckout(
+      checkoutService,
       buildRequest(),
       identity,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
-    const second = await checkoutService.checkout(
+    const second = await submitCheckout(
+      checkoutService,
       buildRequest(),
       identity,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -249,7 +258,8 @@ describe('CheckoutService (integration)', () => {
   it('creates a durable order, history row, and outbox event on a successful payment', async () => {
     const request = buildRequest();
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -265,7 +275,9 @@ describe('CheckoutService (integration)', () => {
       include: { statusHistory: true, paymentAttempt: true, lines: true },
     });
     expect(order.paymentAttempt.status).toBe('SUCCEEDED');
-    expect(order.paymentAttempt.idempotencyKey).toBe(request.idempotencyKey);
+    expect(order.paymentAttempt.idempotencyKey).toMatch(
+      /^ck_[A-Za-z0-9_-]{43}$/,
+    );
     expect(order.statusHistory).toHaveLength(1);
     expect(order.statusHistory[0].status).toBe('RECEIVED');
     expect(order.lines).toHaveLength(1);
@@ -285,7 +297,8 @@ describe('CheckoutService (integration)', () => {
     // TS contract (e.g. a hand-crafted HTTP request), it's never read.
     (request.lines[0] as unknown as Record<string, unknown>).unitPrice = 1;
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -302,15 +315,17 @@ describe('CheckoutService (integration)', () => {
     });
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toBeInstanceOf(HttpException);
 
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(request.clientRef),
     });
     expect(attempt.status).toBe('DECLINED');
 
@@ -326,15 +341,17 @@ describe('CheckoutService (integration)', () => {
     });
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
 
-    const attempt = await prisma.paymentAttempt.findUnique({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirst({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(request.clientRef),
     });
     expect(attempt).toBeNull();
   });
@@ -342,12 +359,14 @@ describe('CheckoutService (integration)', () => {
   it('is idempotent: resubmitting the same idempotency key never charges or creates a second order', async () => {
     const request = buildRequest();
 
-    const first = await checkoutService.checkout(
+    const first = await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
-    const second = await checkoutService.checkout(
+    const second = await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -357,12 +376,12 @@ describe('CheckoutService (integration)', () => {
     expect(second.accessToken).toBe(first.accessToken);
 
     const attempts = await prisma.paymentAttempt.count({
-      where: { idempotencyKey: request.idempotencyKey },
+      where: attemptsOfCheckout(request.clientRef),
     });
     expect(attempts).toBe(1);
 
     const orders = await prisma.order.count({
-      where: { paymentAttempt: { idempotencyKey: request.idempotencyKey } },
+      where: { paymentAttempt: attemptsOfCheckout(request.clientRef) },
     });
     expect(orders).toBe(1);
   });
@@ -375,13 +394,15 @@ describe('CheckoutService (integration)', () => {
     const request = buildRequest();
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
 
-    const first = await checkoutService.checkout(
+    const first = await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     // The "lost response" retry — identical request, identical key.
-    const retryAfterSimulatedLostResponse = await checkoutService.checkout(
+    const retryAfterSimulatedLostResponse = await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -392,17 +413,17 @@ describe('CheckoutService (integration)', () => {
     expect(chargeSpy).toHaveBeenCalledTimes(1);
 
     const attempts = await prisma.paymentAttempt.count({
-      where: { idempotencyKey: request.idempotencyKey },
+      where: attemptsOfCheckout(request.clientRef),
     });
     expect(attempts).toBe(1);
 
     const orders = await prisma.order.count({
-      where: { paymentAttempt: { idempotencyKey: request.idempotencyKey } },
+      where: { paymentAttempt: attemptsOfCheckout(request.clientRef) },
     });
     expect(orders).toBe(1);
   });
 
-  it('replays the same declined result on a resubmitted key instead of charging again', async () => {
+  it('a definitive decline ends that attempt: retrying the same checkout is ONE new attempt (ESP-03 PR 6), declined again here', async () => {
     const request = buildRequest({
       guest: {
         name: 'Decline Guest',
@@ -411,36 +432,40 @@ describe('CheckoutService (integration)', () => {
     });
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toBeInstanceOf(HttpException);
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toBeInstanceOf(HttpException);
 
-    const attempts = await prisma.paymentAttempt.count({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempts = await prisma.paymentAttempt.findMany({
+      where: attemptsOfCheckout(request.clientRef),
     });
-    expect(attempts).toBe(1);
+    expect(attempts.map((a) => a.status)).toEqual(['DECLINED', 'DECLINED']);
   });
 
   it('rejects concurrent duplicate submissions under the same idempotency key without double-charging', async () => {
     const request = buildRequest();
 
     const results = await Promise.allSettled([
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -457,7 +482,7 @@ describe('CheckoutService (integration)', () => {
     }
 
     const orders = await prisma.order.count({
-      where: { paymentAttempt: { idempotencyKey: request.idempotencyKey } },
+      where: { paymentAttempt: attemptsOfCheckout(request.clientRef) },
     });
     expect(orders).toBe(1);
   });
@@ -479,15 +504,17 @@ describe('CheckoutService (integration)', () => {
       .mockRejectedValueOnce(new Error('Simulated Order transaction failure'));
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toThrow('Simulated Order transaction failure');
 
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(request.clientRef),
     });
     // The payment truthfully succeeded — this must never be relabeled
     // DECLINED/FAILED just because the order couldn't be created.
@@ -507,7 +534,8 @@ describe('CheckoutService (integration)', () => {
 
     // ESP-03 PR 4 — retrying with the same key never charges again: the
     // missing order is created now from the checkout saved before payment.
-    const resumed = await checkoutService.checkout(
+    const resumed = await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -530,7 +558,8 @@ describe('CheckoutService (integration)', () => {
 
   it('exposes order status only to the holder of the correct access token', async () => {
     const request = buildRequest();
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),

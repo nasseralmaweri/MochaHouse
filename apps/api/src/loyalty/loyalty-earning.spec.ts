@@ -9,7 +9,6 @@ import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { HttpException } from '@nestjs/common';
 import { FakePaymentProvider } from '@mocha-house/integrations';
-import type { CheckoutRequest } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { LocationsModule } from '../locations/locations.module';
@@ -24,6 +23,12 @@ import { LoyaltyModule } from './loyalty.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 import { GiftCardsModule } from '../gift-cards/gift-cards.module';
 import { LoyaltyService } from './application/loyalty.service';
+import {
+  attemptsOfCheckout,
+  checkoutAttemptsOfThisSuite,
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../test/checkout-session';
 
 // Milestone 7A — Mocha Beans earning integrated into the real checkout
 // transaction, against the local Postgres instance. Requires the seed to
@@ -120,7 +125,7 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     });
 
     const attempts = await prisma.paymentAttempt.findMany({
-      where: { idempotencyKey: { startsWith: KEY_PREFIX } },
+      where: checkoutAttemptsOfThisSuite(),
       select: { id: true },
     });
     const attemptIds = attempts.map((a) => a.id);
@@ -166,10 +171,10 @@ describe('Mocha Beans earning on checkout (integration)', () => {
   });
 
   function buildRequest(
-    overrides: Partial<CheckoutRequest> = {},
-  ): CheckoutRequest {
+    overrides: Partial<LabelledCheckoutRequest> = {},
+  ): LabelledCheckoutRequest {
     return {
-      idempotencyKey: `${KEY_PREFIX}${randomUUID()}`,
+      clientRef: `${KEY_PREFIX}${randomUUID()}`,
       locationId,
       guest: { name: 'Loyalty Guest', phone: '5551234567' },
       lines: [
@@ -220,7 +225,8 @@ describe('Mocha Beans earning on checkout (integration)', () => {
   it('an authenticated checkout earns floor(subtotal/100) Beans, once', async () => {
     const id = await identity(randomUUID());
     // 3 x medium drip coffee = 3 x $4.00 = $12.00 -> 12 Beans.
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       buildRequest({
         lines: [
           {
@@ -260,7 +266,8 @@ describe('Mocha Beans earning on checkout (integration)', () => {
   });
 
   it('a guest checkout earns no Beans and creates no loyalty account', async () => {
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       buildRequest(),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -276,12 +283,14 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     const id = await identity(randomUUID());
     const request = buildRequest();
 
-    const first = await checkoutService.checkout(
+    const first = await submitCheckout(
+      checkoutService,
       request,
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
-    const second = await checkoutService.checkout(
+    const second = await submitCheckout(
+      checkoutService,
       request,
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -314,7 +323,8 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     });
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -352,15 +362,17 @@ describe('Mocha Beans earning on checkout (integration)', () => {
       .mockRejectedValueOnce(new Error('Simulated order transaction failure'));
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toThrow('Simulated order transaction failure');
 
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(request.clientRef),
     });
     expect(attempt.status).toBe('SUCCEEDED');
     expect(attempt.reconciliationRequired).toBe(true);
@@ -393,7 +405,8 @@ describe('Mocha Beans earning on checkout (integration)', () => {
       );
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -401,8 +414,9 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     ).rejects.toThrow('Simulated loyalty account preparation failure');
     expect(spy).toHaveBeenCalledTimes(1);
 
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(request.clientRef),
     });
     // The payment truthfully succeeded — must never be relabeled, and the
     // invariant "after payment capture: an Order exists OR
@@ -434,7 +448,8 @@ describe('Mocha Beans earning on checkout (integration)', () => {
     // ESP-03 PR 4 — a retry with the same key never charges again: the
     // missing order is created now from the checkout saved before payment,
     // and the Beans are earned exactly once.
-    const resumed = await checkoutService.checkout(
+    const resumed = await submitCheckout(
+      checkoutService,
       request,
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -451,7 +466,8 @@ describe('Mocha Beans earning on checkout (integration)', () => {
 
   it('the ledger enforces exactly one EARN per order', async () => {
     const id = await identity(randomUUID());
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       buildRequest(),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
