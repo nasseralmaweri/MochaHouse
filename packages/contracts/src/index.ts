@@ -7364,7 +7364,10 @@ export interface CheckoutSessionRequest {
 //   taken and its order is still being created: do NOT pay again.
 // COMPLETED — paid and the order exists (`confirmation` is included, for
 //   this session's holder only).
-export type CheckoutSessionState = "OPEN" | "IN_PROGRESS" | "COMPLETED";
+// ESP-04 M2 — PAYMENT_REQUIRED: a two-step payment is waiting for its customer
+// to confirm it (resume it: POST /orders/checkout-sessions/payment).
+export type CheckoutSessionState =
+  "OPEN" | "IN_PROGRESS" | "PAYMENT_REQUIRED" | "COMPLETED";
 
 export interface CheckoutSessionResponse {
   // Returned to API clients; the web storefront's server keeps it in an
@@ -7387,6 +7390,86 @@ export const CHECKOUT_ALREADY_COMPLETED = "CHECKOUT_ALREADY_COMPLETED";
 // ESP-03 PR 8 — a promotion redemption, Mocha Beans or gift-card balance the
 // order needs is no longer available (nothing was charged; review the order).
 export const CHECKOUT_RESOURCE_UNAVAILABLE = "CHECKOUT_RESOURCE_UNAVAILABLE";
+
+// --- ESP-04 M2: two-step checkout payments ---------------------------------------
+// With a provider that takes payments in two steps, POST /api/v1/orders
+// answers either
+//   200 OrderConfirmation                  — COMPLETED (unchanged: the
+//                                            one-step fake, zero-charge
+//                                            orders, a completed checkout);
+//   202 CheckoutPaymentRequiredResponse    — PAYMENT_REQUIRED: the payment
+//                                            intent exists and waits for the
+//                                            customer to confirm it.
+// After confirming, the client asks the server to CHECK the payment
+// (POST /api/v1/orders/checkout-sessions/payment); the server reads the
+// outcome from the payment provider — never from the browser — and answers
+// the same way (200 order, 202 still waiting), 402 when it did not go
+// through, or 409 while the outcome is not known yet.
+
+// What the customer still has to do (or wait for):
+//   REQUIRES_CUSTOMER_ACTION  confirm the payment;
+//   REQUIRES_PAYMENT_METHOD   the last attempt was refused — try again (the
+//                             same payment, e.g. another card);
+//   PROCESSING                the provider is working on it — do not pay
+//                             again; check back.
+export type CheckoutPaymentState =
+  "REQUIRES_CUSTOMER_ACTION" | "REQUIRES_PAYMENT_METHOD" | "PROCESSING";
+
+export interface CheckoutPaymentRequiredResponse {
+  outcome: "PAYMENT_REQUIRED";
+  payment: {
+    // The provider the browser confirms with (e.g. "fake-two-step").
+    provider: string;
+    state: CheckoutPaymentState;
+    // What the browser needs to confirm this payment with the provider —
+    // fetched fresh from the provider on every answer so a reload resumes the
+    // SAME payment; never stored by the server. Null when nothing is needed.
+    clientSecret: string | null;
+    // The frozen amount being paid, for display only.
+    amountMinorUnits: number;
+    currency: string;
+  };
+}
+
+// The checkout outcome as a client sees it after reading the HTTP status.
+export type CheckoutSubmitResult =
+  | { outcome: "COMPLETED"; confirmation: OrderConfirmation }
+  | CheckoutPaymentRequiredResponse;
+
+// POST /api/v1/orders/checkout-sessions/payment — check this checkout's
+// payment with the provider. Carries only the session; never an amount, a
+// payment reference or an account.
+export interface CheckoutPaymentCheckRequest {
+  locationId: string;
+  checkoutToken: string;
+}
+
+// POST /api/v1/orders/checkout-sessions/payment/simulate — DEVELOPMENT AND
+// TESTS ONLY (refused unless the two-step fake provider is configured and the
+// environment is not production-like). What the "customer" did with this
+// checkout's fake payment; never an amount, a reference or an account.
+export const SIMULATED_PAYMENT_OUTCOMES = [
+  "succeed",
+  "decline",
+  "process",
+  "cancel",
+  "unknown",
+] as const;
+export type CheckoutPaymentSimulationOutcome =
+  (typeof SIMULATED_PAYMENT_OUTCOMES)[number];
+export interface CheckoutPaymentSimulationRequest {
+  locationId: string;
+  checkoutToken: string;
+  outcome: CheckoutPaymentSimulationOutcome;
+}
+
+// Refusal codes.
+// No payment of this checkout is waiting for its customer.
+export const CHECKOUT_NO_PAYMENT_IN_PROGRESS =
+  "CHECKOUT_NO_PAYMENT_IN_PROGRESS";
+// The payment simulator is not available here.
+export const PAYMENT_SIMULATION_NOT_AVAILABLE =
+  "PAYMENT_SIMULATION_NOT_AVAILABLE";
 
 // --- ESP-04 M1: restaurant payment account (Stripe Connect) -------------------
 // The restaurant's OWN Stripe account for customer payments — never

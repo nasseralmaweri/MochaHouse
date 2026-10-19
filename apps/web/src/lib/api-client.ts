@@ -14,6 +14,8 @@ import {
   type AdminCreateMenuResponse,
   type AdminLocationProfileRequest,
   type AdminSetOpeningHoursRequest,
+  type CheckoutPaymentRequiredResponse,
+  type CheckoutPaymentSimulationOutcome,
   type GettingStartedStepKey,
 } from "@mocha-house/contracts";
 import type {
@@ -152,6 +154,13 @@ export async function getLocationMenuFromBrowser(
 // app/api/checkout/route.ts.
 export type CheckoutResult =
   | { outcome: "success"; confirmation: OrderConfirmation }
+  // ESP-04 M2 — a two-step payment now waits for the customer to confirm it
+  // (or for the provider): nothing is final yet, and the page resumes this
+  // same payment (never a new one) until the server reads its outcome.
+  | {
+      outcome: "payment-required";
+      payment: CheckoutPaymentRequiredResponse["payment"];
+    }
   | { outcome: "declined" | "failed"; message: string }
   | { outcome: "invalid"; message: string }
   | { outcome: "conflict"; message: string; code: string | null }
@@ -263,6 +272,89 @@ export async function submitCheckoutFromBrowser(
     return {
       outcome: "network-error",
       message: "Could not reach the server. Check your connection and try again.",
+    };
+  }
+  return readCheckoutResponse(response);
+}
+
+// ESP-04 M2 — ask the server what happened to this checkout's two-step
+// payment. The server reads the outcome from the payment provider; this page
+// only ever reports what the server answers. Sends the location only (the
+// checkout session is in an HttpOnly cookie).
+export async function checkCheckoutPaymentFromBrowser(
+  locationId: string,
+): Promise<CheckoutResult> {
+  let response: Response;
+  try {
+    response = await fetch("/api/checkout/payment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locationId }),
+    });
+  } catch {
+    return {
+      outcome: "network-error",
+      message:
+        "Could not reach the server. Your payment was not affected — check again in a moment.",
+    };
+  }
+  return readCheckoutResponse(response);
+}
+
+// ESP-04 M2 — DEVELOPMENT ONLY: play the customer's part with the two-step
+// fake payment provider. True when the simulator accepted it (the page then
+// checks the payment); false when it is not available or nothing is waiting.
+export async function simulateCheckoutPaymentFromBrowser(
+  locationId: string,
+  outcome: CheckoutPaymentSimulationOutcome,
+): Promise<boolean> {
+  try {
+    const response = await fetch("/api/checkout/payment/simulate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locationId, outcome }),
+    });
+    return response.status === 204;
+  } catch {
+    return false;
+  }
+}
+
+function isPaymentRequired(
+  body: unknown,
+): body is CheckoutPaymentRequiredResponse {
+  if (!body || typeof body !== "object") return false;
+  const candidate = body as {
+    outcome?: unknown;
+    payment?: Record<string, unknown> | null;
+  };
+  const payment = candidate.payment;
+  return (
+    candidate.outcome === "PAYMENT_REQUIRED" &&
+    !!payment &&
+    typeof payment.provider === "string" &&
+    (payment.state === "REQUIRES_CUSTOMER_ACTION" ||
+      payment.state === "REQUIRES_PAYMENT_METHOD" ||
+      payment.state === "PROCESSING") &&
+    (payment.clientSecret === null ||
+      typeof payment.clientSecret === "string") &&
+    typeof payment.amountMinorUnits === "number" &&
+    typeof payment.currency === "string"
+  );
+}
+
+async function readCheckoutResponse(
+  response: Response,
+): Promise<CheckoutResult> {
+  if (response.status === 202) {
+    const body: unknown = await response.json().catch(() => null);
+    if (isPaymentRequired(body)) {
+      return { outcome: "payment-required", payment: body.payment };
+    }
+    return {
+      outcome: "network-error",
+      message:
+        "We couldn't load your payment just now. Do not pay again — please refresh the page.",
     };
   }
 

@@ -10,12 +10,18 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import type {
+  CheckoutPaymentCheckRequest,
+  CheckoutPaymentSimulationRequest,
   CheckoutQuoteRequest,
   CheckoutRequest,
   CheckoutSessionRequest,
+  CheckoutSubmitResult,
+  OrderConfirmation,
 } from '@mocha-house/contracts';
 import { OptionalCustomerAuthGuard } from '../../customer-auth/infrastructure/optional-customer-auth.guard';
 import type { CustomerAuthenticatedRequest } from '../../customer-auth/infrastructure/customer-identity';
@@ -42,13 +48,62 @@ export class OrdersController {
   // with an invalid/expired one.
   @UseGuards(OptionalCustomerAuthGuard, RateLimitGuard)
   @RateLimit('checkout')
+  //
+  // ESP-04 M2 — 201 with the order (unchanged), or 202 with
+  // CheckoutPaymentRequiredResponse when a two-step payment now waits for
+  // the customer to confirm it.
   @Post()
-  checkout(
+  async checkout(
     @Body() body: CheckoutRequest,
     @Req() request: CustomerAuthenticatedRequest,
     @CurrentTenantContext() tenant: TenantContext,
+    @Res({ passthrough: true }) response: Response,
   ) {
-    return this.checkoutService.checkout(
+    const result = await this.checkoutService.submit(
+      body,
+      request.customerIdentity,
+      tenant,
+    );
+    return answer(result, response);
+  }
+
+  // ESP-04 M2 — check this checkout's two-step payment with the payment
+  // provider (never the browser's word): 200 with the order, 202 while it
+  // waits for the customer or the provider, 402 when it did not go through,
+  // 409 while the outcome is not known. The body names only the session.
+  @UseGuards(OptionalCustomerAuthGuard, RateLimitGuard)
+  @RateLimit('checkout')
+  @Header('Cache-Control', 'no-store')
+  @Post('checkout-sessions/payment')
+  @HttpCode(HttpStatus.OK)
+  async checkPayment(
+    @Body() body: CheckoutPaymentCheckRequest,
+    @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.checkoutService.checkPayment(
+      body,
+      request.customerIdentity,
+      tenant,
+    );
+    return answer(result, response);
+  }
+
+  // ESP-04 M2 — DEVELOPMENT AND TESTS ONLY: the payment simulator for the
+  // two-step fake provider. 404 everywhere else (see
+  // CheckoutService.simulatePayment).
+  @UseGuards(OptionalCustomerAuthGuard, RateLimitGuard)
+  @RateLimit('checkout')
+  @Header('Cache-Control', 'no-store')
+  @Post('checkout-sessions/payment/simulate')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async simulatePayment(
+    @Body() body: CheckoutPaymentSimulationRequest,
+    @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ): Promise<void> {
+    await this.checkoutService.simulatePayment(
       body,
       request.customerIdentity,
       tenant,
@@ -127,6 +182,19 @@ export class OrdersController {
     await this.rateLimits.releaseOnSuccess(request);
     return status;
   }
+}
+
+// ESP-04 M2 — a completed checkout answers with its order exactly as before;
+// a payment waiting for its customer answers 202.
+function answer(
+  result: CheckoutSubmitResult,
+  response: Response,
+): OrderConfirmation | CheckoutSubmitResult {
+  if (result.outcome === 'COMPLETED') {
+    return result.confirmation;
+  }
+  response.status(HttpStatus.ACCEPTED);
+  return result;
 }
 
 // Header wins; a repeated header or query parameter (array) is not a usable

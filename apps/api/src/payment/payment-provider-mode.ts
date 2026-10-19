@@ -15,7 +15,11 @@ import { productionSignal } from '@mocha-house/database';
 //     payments on.
 //   - Any other value is a startup error (there is no live processor yet).
 // Error messages name the variable, never its value.
-export type PaymentProviderMode = 'fake' | 'unavailable';
+// ESP-04 M2 — 'fake-two-step': the development fake that takes food-order
+// payments in two steps (create an intent, the customer confirms, the server
+// checks the provider), for exercising the two-step checkout. Development
+// and tests only, exactly like 'fake'.
+export type PaymentProviderMode = 'fake' | 'fake-two-step' | 'unavailable';
 
 export class PaymentConfigurationError extends Error {
   constructor(message: string) {
@@ -31,19 +35,19 @@ export function resolvePaymentProviderMode(
   if (value === undefined || value === '' || value === 'disabled') {
     return 'unavailable';
   }
-  if (value === 'fake') {
+  if (value === 'fake' || value === 'fake-two-step') {
     // The same production-like classifier as the startup validation and the
     // dev auth gates (config/dev-auth-context.ts): NODE_ENV and the
     // deployment variables, so "staging" or APP_ENV=production refuse too.
     if (productionSignal(env) !== null) {
       throw new PaymentConfigurationError(
-        'PAYMENT_PROVIDER=fake is not allowed in production, staging or live environments: simulated payments would be recorded as paid. ' +
+        `PAYMENT_PROVIDER=${value} is not allowed in production, staging or live environments: simulated payments would be recorded as paid. ` +
           'Leave PAYMENT_PROVIDER unset (online payment disabled) until a live payment provider is integrated.',
       );
     }
-    return 'fake';
+    return value;
   }
   throw new PaymentConfigurationError(
-    'PAYMENT_PROVIDER has an unsupported value. Use "fake" (development and tests only) or leave it unset to disable online payment.',
+    'PAYMENT_PROVIDER has an unsupported value. Use "fake" or "fake-two-step" (development and tests only) or leave it unset to disable online payment.',
   );
 }

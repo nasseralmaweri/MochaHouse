@@ -1,6 +1,7 @@
 import { Logger, Module } from '@nestjs/common';
 import {
   FakePaymentProvider,
+  FakeTwoStepPaymentProvider,
   UnavailablePaymentProvider,
   type PaymentProvider,
 } from '@mocha-house/integrations';
@@ -20,8 +21,14 @@ import { resolvePaymentProviderMode } from './payment-provider-mode';
 export function createPaymentProvider(
   env: Record<string, string | undefined> = process.env,
 ): PaymentProvider {
-  if (resolvePaymentProviderMode(env) === 'fake') {
+  const mode = resolvePaymentProviderMode(env);
+  if (mode === 'fake') {
     return new FakePaymentProvider();
+  }
+  // ESP-04 M2 — two-step food-order payments (intent + customer confirmation);
+  // gift-card purchases still use its one-step charge.
+  if (mode === 'fake-two-step') {
+    return new FakeTwoStepPaymentProvider();
   }
   new Logger('PaymentModule').warn(
     'No payment provider is configured: online payment is disabled.',

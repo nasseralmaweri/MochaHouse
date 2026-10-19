@@ -220,7 +220,9 @@ describe('ESP-03 PR 1: payment recovery database foundation', () => {
             -- ESP-03 PR 6's later checks have their own suite.
             AND conname NOT IN ('PaymentAttempt_requestFingerprint_check',
               'PaymentAttempt_checkout_session_check',
-              'PaymentAttempt_abandoned_check')`,
+              'PaymentAttempt_abandoned_check',
+              -- ESP-04 M2's check has its own suite too.
+              'PaymentAttempt_customer_action_check')`,
       );
       expect(checks.map((c) => c.n).sort()).toEqual([
         'PaymentAttempt_fulfilmentStatus_check',

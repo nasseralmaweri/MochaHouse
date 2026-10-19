@@ -1,14 +1,9 @@
 import { storefrontApiFetch } from "@/lib/storefront-context";
 import { NextRequest, NextResponse } from "next/server";
 import {
-  GUEST_SESSION_COOKIE,
-  guestSessionCookieOptions,
-  isValidAccessToken,
-  isValidOrderId,
-  parseGuestSession,
-  serializeGuestSession,
-  withGuestOrder,
-} from "@/lib/security/guest-session";
+  isPlacedOrder,
+  rememberPlacedOrder,
+} from "@/lib/checkout/completed-checkout";
 import { rejectUntrustedOrigin } from "@/lib/security/request-origin";
 import { CUSTOMER_SESSION_COOKIE } from "@/lib/auth/session";
 import { signedClientIpHeaders } from "@/lib/client-ip-forwarding";
@@ -23,8 +18,6 @@ import {
   isValidLocationId,
   parseCheckoutSessions,
   tokenForLocation,
-  withoutCheckoutSession,
-  writeCheckoutSessions,
 } from "@/lib/security/checkout-session";
 
 // SC4f-2 — refusal when a signed-in customer asks to check out as a guest
@@ -180,36 +173,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   });
 
   // R1 / S3c — a placed order starts the guest tracking session HERE, on the
-  // server: the access token goes into the HttpOnly guest-session cookie so the
-  // confirmation URL never needs to carry it. (The response body is unchanged,
-  // so existing clients keep working.)
-  if (response.ok) {
-    // This checkout is complete: the next order here is a new checkout.
-    writeCheckoutSessions(result.cookies, withoutCheckoutSession(sessions, locationId));
-    try {
-      const confirmation = JSON.parse(responseBody) as {
-        orderId?: unknown;
-        accessToken?: unknown;
-      };
-      if (
-        isValidOrderId(confirmation.orderId) &&
-        isValidAccessToken(confirmation.accessToken)
-      ) {
-        result.cookies.set(
-          GUEST_SESSION_COOKIE,
-          serializeGuestSession(
-            withGuestOrder(
-              parseGuestSession(request.cookies.get(GUEST_SESSION_COOKIE)?.value),
-              confirmation.orderId,
-              confirmation.accessToken,
-            ),
-          ),
-          guestSessionCookieOptions(),
-        );
-      }
-    } catch {
-      // Not JSON: nothing to bootstrap; the response is passed through as is.
-    }
+  // server (see rememberPlacedOrder). ESP-04 M2 — a 202 (a two-step payment
+  // waiting for its customer) keeps this checkout, so a reload resumes the
+  // same payment.
+  if (isPlacedOrder(response)) {
+    rememberPlacedOrder(result, responseBody, request, sessions, locationId);
   }
   return result;
 }
