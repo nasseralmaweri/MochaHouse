@@ -244,6 +244,10 @@ export const PLATFORM_PERMISSIONS = [
   "onboarding.manage",
   // SC4f-3a — assigning, publishing and unpublishing storefront addresses.
   "storefront.manage",
+  // ESP-03 PR 5 — payment reconciliation support (read; recover and notes).
+  // Never moves money: a recovery only completes an already-charged payment.
+  "payments.reconciliation.view",
+  "payments.reconciliation.manage",
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 

@@ -1089,7 +1089,7 @@ export interface PlatformMeResponse {
     operator: PlatformOperatorProfile;
     permissions: PlatformPermission[];
 }
-export declare const PLATFORM_PERMISSIONS: readonly ["billing.prices.manage", "billing.policy.manage", "billing.accounts.manage", "billing.reconciliation.run", "billing.cases.manage", "billing.schedules.release", "billing.complimentary.manage", "billing.adjustments.request", "billing.adjustments.approve", "platform.permissions.manage", "billing.reports.view", "onboarding.view", "onboarding.manage", "storefront.manage"];
+export declare const PLATFORM_PERMISSIONS: readonly ["billing.prices.manage", "billing.policy.manage", "billing.accounts.manage", "billing.reconciliation.run", "billing.cases.manage", "billing.schedules.release", "billing.complimentary.manage", "billing.adjustments.request", "billing.adjustments.approve", "platform.permissions.manage", "billing.reports.view", "onboarding.view", "onboarding.manage", "storefront.manage", "payments.reconciliation.view", "payments.reconciliation.manage"];
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 export interface PlatformOperatorPermissionView {
     permission: PlatformPermission;
@@ -3317,4 +3317,91 @@ export interface PlatformStorefrontChangeRequest {
     reason: string;
     confirmSlug: string;
 }
+export declare const PAYMENT_CASE_CATEGORIES: readonly ["NEEDS_ATTENTION", "RECOVERY_IN_PROGRESS", "RECOVERED", "AWAITING_PAYMENT_OUTCOME", "CLOSED"];
+export type PaymentCaseCategory = (typeof PAYMENT_CASE_CATEGORIES)[number];
+export type PaymentCaseStatus = "OPEN" | "IN_REVIEW" | "RESOLVED";
+export type PaymentCasePurchaseKind = "ORDER" | "GIFT_CARD" | "UNKNOWN";
+export interface PlatformPaymentCaseRecovery {
+    recoverable: boolean;
+    automaticAttempts: number;
+    lastFailure: string | null;
+    lastFailureAt: string | null;
+    nextAutomaticAttemptAt: string | null;
+}
+export interface PlatformPaymentCaseSummary {
+    id: string;
+    tenant: {
+        id: string;
+        name: string;
+    };
+    status: PaymentCaseStatus;
+    category: PaymentCaseCategory;
+    reasonCode: string;
+    resolution: string | null;
+    purchaseKind: PaymentCasePurchaseKind;
+    payment: {
+        id: string;
+        amountMinorUnits: number;
+        currency: string;
+        status: string;
+        paymentState: string | null;
+        fulfilmentStatus: string | null;
+        providerReference: string | null;
+    };
+    order: {
+        id: string;
+        orderNumber: string;
+    } | null;
+    giftCardPurchase: {
+        id: string;
+        issued: boolean;
+    } | null;
+    recovery: PlatformPaymentCaseRecovery;
+    createdAt: string;
+    updatedAt: string;
+    resolvedAt: string | null;
+}
+export interface PlatformPaymentCaseListResponse {
+    cases: PlatformPaymentCaseSummary[];
+    automaticRecoveryEnabled: boolean;
+    truncated: boolean;
+}
+export interface PlatformPaymentCaseEvent {
+    id: string;
+    action: string;
+    actor: "SYSTEM" | "RESTAURANT_STAFF";
+    detail: Record<string, string | number | boolean>;
+    createdAt: string;
+}
+export interface PlatformPaymentCaseNote {
+    id: string;
+    body: string;
+    authorEmail: string;
+    createdAt: string;
+}
+export interface PlatformPaymentCaseDetail {
+    case: PlatformPaymentCaseSummary;
+    events: PlatformPaymentCaseEvent[];
+    notes: PlatformPaymentCaseNote[];
+    automaticRecoveryEnabled: boolean;
+}
+export interface PlatformPaymentCaseRecoverRequest {
+    reason: string;
+}
+export type PaymentRecoveryResult = "RECOVERED" | "ALREADY_FULFILLED" | "FAILED";
+export interface PlatformPaymentCaseRecoverResponse {
+    result: PaymentRecoveryResult;
+    failure: string | null;
+    detail: PlatformPaymentCaseDetail;
+}
+export interface PlatformPaymentCaseNoteRequest {
+    body: string;
+}
+export declare const PAYMENT_CASE_NOTE_MAX_LENGTH = 1000;
+export declare const PAYMENT_CASE_REASON_MIN_LENGTH = 10;
+export declare const PAYMENT_CASE_REASON_MAX_LENGTH = 500;
+export declare const PAYMENT_RECOVERY_NOT_CONFIRMED = "PAYMENT_RECOVERY_NOT_CONFIRMED";
+export declare const PAYMENT_RECOVERY_NOTHING_TO_RECOVER = "PAYMENT_RECOVERY_NOTHING_TO_RECOVER";
+export declare const PAYMENT_RECOVERY_IN_PROGRESS = "PAYMENT_RECOVERY_IN_PROGRESS";
+export declare const PAYMENT_RECOVERY_CASE_RESOLVED = "PAYMENT_RECOVERY_CASE_RESOLVED";
 //# sourceMappingURL=index.d.ts.map

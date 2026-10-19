@@ -92,7 +92,9 @@ const tenantTables = Object.entries(MODEL_TENANCY)
       // SC4d added location opening hours after this migration.
       model !== 'LocationOpeningPeriod' &&
       // ESP-03 PR 4 added saved checkouts after this migration.
-      model !== 'CheckoutSnapshot',
+      model !== 'CheckoutSnapshot' &&
+      // ESP-03 PR 5 added support notes after this migration.
+      model !== 'PaymentReconciliationNote',
   );
 
 const baseUrl = process.env.DATABASE_URL!;

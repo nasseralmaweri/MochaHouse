@@ -32,6 +32,7 @@ import { PlatformAuthModule } from './platform-auth/platform-auth.module';
 import { PlatformTenantsModule } from './platform-tenants/platform-tenants.module';
 import { PlatformOnboardingModule } from './platform-onboarding/platform-onboarding.module';
 import { PlatformStorefrontModule } from './platform-storefront/platform-storefront.module';
+import { PaymentRecoveryModule } from './payment-recovery/payment-recovery.module';
 import { PlatformSubscriptionsModule } from './platform-subscriptions/platform-subscriptions.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { SaasBillingModule } from './saas-billing/saas-billing.module';
@@ -79,6 +80,9 @@ import { OwnerRegistrationModule } from './owner-registration/owner-registration
     PlatformOnboardingModule,
     // SC4f-3a — storefront publishing in the Platform Console.
     PlatformStorefrontModule,
+    // ESP-03 PR 5 — payment reconciliation support and automatic recovery
+    // (the sweeper is OFF unless PAYMENT_AUTO_RECOVERY_ENABLED=1).
+    PaymentRecoveryModule,
     // SC2a — CENTERIVO SaaS plans and business subscriptions.
     PlatformSubscriptionsModule,
     // SC4a — business owner self-service registration (off by default).

@@ -75,6 +75,7 @@ model Tenant {
   customerPreferredLocations           CustomerPreferredLocation[]
   paymentAttempts                      PaymentAttempt[]
   paymentReconciliationCases           PaymentReconciliationCase[]
+  paymentReconciliationNotes           PaymentReconciliationNote[]
   checkoutSnapshots                    CheckoutSnapshot[]
   paymentReconciliationEvents          PaymentReconciliationEvent[]
   orderClosures                        OrderClosure[]
@@ -1427,6 +1428,8 @@ model PaymentReconciliationCase {
   updatedAt DateTime @updatedAt
 
   events PaymentReconciliationEvent[]
+  // ESP-03 PR 5 — platform support's append-only investigation notes.
+  notes  PaymentReconciliationNote[]
 
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -1442,6 +1445,28 @@ model PaymentReconciliationCase {
 // why this is not InternalAuditEvent, whose actor is required. `detail` is a
 // small JSON object that must never hold personal data, secrets, codes,
 // tokens, idempotency keys or raw provider payloads.
+// ESP-03 PR 5 — an internal investigation note on a reconciliation case,
+// written by a CENTERIVO platform support operator. Append-only (a database
+// trigger refuses UPDATE and DELETE). The operator is a plain value, never a
+// foreign key: platform records are not referenced from business records.
+// Read only through the Platform Console (payments.reconciliation.view);
+// never shown to the business or its customers.
+model PaymentReconciliationNote {
+  id                       String                    @id @default(uuid(7))
+  caseId                   String
+  reconciliationCase       PaymentReconciliationCase @relation(fields: [tenantId, caseId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  authorPlatformOperatorId String
+  // 1–1000 characters, at least one not whitespace (CHECK).
+  body                     String
+  createdAt                DateTime                  @default(now())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, caseId])
+}
+
 model PaymentReconciliationEvent {
   id                  String                    @id @default(uuid(7))
   caseId              String

@@ -13,12 +13,14 @@ describe("platform console navigation", () => {
       "Plans",
       "Subscriptions",
       "Billing",
+      // ESP-03 PR 5
+      "Payments",
       "Support",
       "Settings",
     ]);
   });
 
-  it("only Overview, Tenants, (SC4e) Onboarding, (SC2a) Plans and (SC3b) Billing are links; everything else is marked as not available", () => {
+  it("only Overview, Tenants, (SC4e) Onboarding, (SC2a) Plans and (SC3b) Billing and (ESP-03 PR 5) Payments are links; everything else is marked as not available", () => {
     expect(
       PLATFORM_NAV_ITEMS.filter(isAvailable).map((item) => item.href),
     ).toEqual([
@@ -27,6 +29,7 @@ describe("platform console navigation", () => {
       "/platform/onboarding",
       "/platform/plans",
       "/platform/billing",
+      "/platform/payments",
     ]);
   });
 

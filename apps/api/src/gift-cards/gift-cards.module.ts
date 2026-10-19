@@ -69,6 +69,8 @@ import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
     SubscriptionsModule,
     GiftCardRedemptionService,
     GiftCardCustomerSummaryService,
+    // ESP-03 PR 5 — payment recovery (recoverIssuance; never charges).
+    GiftCardPurchaseService,
   ],
 })
 export class GiftCardsModule {}

@@ -1321,7 +1321,9 @@ export class CheckoutService {
         }
       }
       if (!orderNumber) {
-        throw new ConflictException(
+        // ESP-03 PR 5 — transient (a retry draws new numbers): a 503, so a
+        // retry or a recovery treats it as worth trying again.
+        throw new ServiceUnavailableException(
           'Could not allocate an order number. Please try again.',
         );
       }
@@ -1505,7 +1507,9 @@ export class CheckoutService {
         where: { id: paymentAttemptId, tenantId },
         data: { fulfilmentStatus: 'DONE', reconciliationRequired: false },
       });
-      await resolveCaseAsFulfilled(tx, tenantId, paymentAttemptId);
+      await resolveCaseAsFulfilled(tx, tenantId, paymentAttemptId, {
+        orderId: order.id,
+      });
 
       // Re-fetch so the confirmation sees the redemption snapshot written
       // above (the initial create ran before applyRedemption).

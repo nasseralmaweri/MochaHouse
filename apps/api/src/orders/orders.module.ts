@@ -67,6 +67,8 @@ import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
   // unchanged. CustomerOrdersService — exported (Milestone 8A) so CrmModule
   // can project a customer's order history into the HQ CRM view; it reads
   // the same authoritative Order table, customerId-scoped and read-only.
-  exports: [PaymentModule, CustomerOrdersService],
+  // CheckoutService — ESP-03 PR 5, for payment recovery (recoverFulfilment;
+  // never charges).
+  exports: [PaymentModule, CustomerOrdersService, CheckoutService],
 })
 export class OrdersModule {}

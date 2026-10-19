@@ -7,6 +7,7 @@ import type { PlatformOperatorProfile } from "@mocha-house/contracts";
 import { CenterivoWordmark } from "@/components/centerivo/Wordmark";
 import {
   IconAdministration,
+  IconAlert,
   IconBusiness,
   IconChecklist,
   IconClose,
@@ -33,6 +34,7 @@ const ICONS: Record<PlatformNavKey, typeof IconHome> = {
   plans: IconPromotions,
   subscriptions: IconOrders,
   billing: IconReports,
+  payments: IconAlert,
   support: IconInfo,
   settings: IconAdministration,
 };

@@ -2423,6 +2423,10 @@ export const PLATFORM_PERMISSIONS = [
   // SC4f-3a — assigning approved storefront addresses to a business, and
   // publishing / unpublishing them.
   "storefront.manage",
+  // ESP-03 PR 5 — restaurant payment reconciliation cases: read them, and
+  // trigger a safe recovery / record internal notes.
+  "payments.reconciliation.view",
+  "payments.reconciliation.manage",
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 
@@ -7191,3 +7195,132 @@ export interface PlatformStorefrontChangeRequest {
   reason: string;
   confirmSlug: string;
 }
+
+// --- ESP-03 PR 5: payment reconciliation support (Platform Console) -------------
+// Restaurant payment reconciliation cases, read by CENTERIVO platform support
+// (payments.reconciliation.view) and acted on — a safe recovery attempt, an
+// internal note — with payments.reconciliation.manage plus a recent sign-in.
+// A recovery NEVER charges again: it only creates the missing order (or issues
+// the missing gift card) of a payment already confirmed as SUCCEEDED. Nothing
+// here can invent a payment, a refund or an outcome the payment provider has
+// not confirmed. No card data, gift-card codes or customer contact details are
+// ever part of these views.
+
+export const PAYMENT_CASE_CATEGORIES = [
+  // Payment confirmed, order / gift card still missing, and no recovery is
+  // running: support should look (failed, exhausted or waiting recovery).
+  "NEEDS_ATTENTION",
+  // A recovery attempt is running right now.
+  "RECOVERY_IN_PROGRESS",
+  // Resolved: the order or gift card exists.
+  "RECOVERED",
+  // The payment's outcome is not confirmed (held, unknown, never sent):
+  // nothing can be recovered until the provider's outcome is verified.
+  "AWAITING_PAYMENT_OUTCOME",
+  // Resolved for another documented reason.
+  "CLOSED",
+] as const;
+export type PaymentCaseCategory = (typeof PAYMENT_CASE_CATEGORIES)[number];
+
+export type PaymentCaseStatus = "OPEN" | "IN_REVIEW" | "RESOLVED";
+export type PaymentCasePurchaseKind = "ORDER" | "GIFT_CARD" | "UNKNOWN";
+
+export interface PlatformPaymentCaseRecovery {
+  // A saved checkout (or a gift-card purchase without its card) exists, so a
+  // recovery can be attempted.
+  recoverable: boolean;
+  automaticAttempts: number;
+  lastFailure: string | null;
+  lastFailureAt: string | null;
+  // Automatic recovery switched on and a further automatic attempt is due at
+  // this time; null when none will be made.
+  nextAutomaticAttemptAt: string | null;
+}
+
+export interface PlatformPaymentCaseSummary {
+  id: string;
+  tenant: { id: string; name: string };
+  status: PaymentCaseStatus;
+  category: PaymentCaseCategory;
+  reasonCode: string;
+  resolution: string | null;
+  purchaseKind: PaymentCasePurchaseKind;
+  payment: {
+    id: string;
+    amountMinorUnits: number;
+    currency: string;
+    status: string;
+    paymentState: string | null;
+    fulfilmentStatus: string | null;
+    providerReference: string | null;
+  };
+  order: { id: string; orderNumber: string } | null;
+  giftCardPurchase: { id: string; issued: boolean } | null;
+  recovery: PlatformPaymentCaseRecovery;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+}
+
+// GET /api/v1/platform/payment-cases
+export interface PlatformPaymentCaseListResponse {
+  cases: PlatformPaymentCaseSummary[];
+  automaticRecoveryEnabled: boolean;
+  // More cases matched than were returned (narrow the filters).
+  truncated: boolean;
+}
+
+export interface PlatformPaymentCaseEvent {
+  id: string;
+  action: string;
+  // SYSTEM, or RESTAURANT_STAFF for a restaurant user's action (never named).
+  actor: "SYSTEM" | "RESTAURANT_STAFF";
+  // Fixed machine codes and record references only.
+  detail: Record<string, string | number | boolean>;
+  createdAt: string;
+}
+
+export interface PlatformPaymentCaseNote {
+  id: string;
+  body: string;
+  authorEmail: string;
+  createdAt: string;
+}
+
+// GET /api/v1/platform/payment-cases/:caseId
+export interface PlatformPaymentCaseDetail {
+  case: PlatformPaymentCaseSummary;
+  events: PlatformPaymentCaseEvent[];
+  notes: PlatformPaymentCaseNote[];
+  automaticRecoveryEnabled: boolean;
+}
+
+// POST /api/v1/platform/payment-cases/:caseId/recover
+export interface PlatformPaymentCaseRecoverRequest {
+  reason: string;
+}
+export type PaymentRecoveryResult =
+  | "RECOVERED"
+  | "ALREADY_FULFILLED"
+  | "FAILED";
+export interface PlatformPaymentCaseRecoverResponse {
+  result: PaymentRecoveryResult;
+  failure: string | null;
+  detail: PlatformPaymentCaseDetail;
+}
+
+// POST /api/v1/platform/payment-cases/:caseId/notes
+export interface PlatformPaymentCaseNoteRequest {
+  body: string;
+}
+
+export const PAYMENT_CASE_NOTE_MAX_LENGTH = 1000;
+export const PAYMENT_CASE_REASON_MIN_LENGTH = 10;
+export const PAYMENT_CASE_REASON_MAX_LENGTH = 500;
+
+// Refusal codes (409) of a recovery request.
+export const PAYMENT_RECOVERY_NOT_CONFIRMED = "PAYMENT_RECOVERY_NOT_CONFIRMED";
+export const PAYMENT_RECOVERY_NOTHING_TO_RECOVER =
+  "PAYMENT_RECOVERY_NOTHING_TO_RECOVER";
+export const PAYMENT_RECOVERY_IN_PROGRESS = "PAYMENT_RECOVERY_IN_PROGRESS";
+export const PAYMENT_RECOVERY_CASE_RESOLVED = "PAYMENT_RECOVERY_CASE_RESOLVED";

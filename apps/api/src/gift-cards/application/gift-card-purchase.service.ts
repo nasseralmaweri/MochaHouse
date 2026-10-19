@@ -558,6 +558,41 @@ export class GiftCardPurchaseService implements OnModuleInit {
     return this.issueForPurchase(purchase, attempt);
   }
 
+  // ESP-03 PR 5 — server-side recovery (the automatic recovery sweeper or a
+  // platform support request) for a definitively charged purchase whose card
+  // was not issued. Finds the payment within the given business only and
+  // issues the card exactly once through the same path a buyer's retry uses.
+  // It NEVER calls the payment provider and NEVER returns the code: the buyer
+  // retrieves it through their own authorised replay within the window.
+  async recoverIssuance(
+    paymentAttemptId: string,
+    tenantId: string,
+  ): Promise<{ giftCardPurchaseId: string }> {
+    const attempt = await this.prisma.paymentAttempt.findFirst({
+      where: { id: paymentAttemptId, tenantId },
+      include: {
+        giftCardPurchase: {
+          include: { giftCard: { select: { last4: true } } },
+        },
+      },
+    });
+    if (
+      !attempt ||
+      !attempt.giftCardPurchase ||
+      attempt.status !== 'SUCCEEDED' ||
+      attempt.paymentState !== 'SUCCEEDED'
+    ) {
+      // Unknown, another business's, not a gift-card purchase, or not
+      // definitively charged: an uncertain payment is never a success.
+      throw new ConflictException('This payment cannot be fulfilled.');
+    }
+    const purchase = attempt.giftCardPurchase;
+    if (purchase.giftCardId === null) {
+      await this.issueForPurchase(purchase, attempt);
+    }
+    return { giftCardPurchaseId: purchase.id };
+  }
+
   // ESP-03 PR 4 — issues the card for a charged purchase from the saved
   // purchase row (never from a request), exactly once. Used right after the
   // charge and again by a retry of a purchase whose card was not issued.
@@ -598,7 +633,9 @@ export class GiftCardPurchaseService implements OnModuleInit {
             where: { id: attempt.id, tenantId: attempt.tenantId },
             data: { reconciliationRequired: false, fulfilmentStatus: 'DONE' },
           });
-          await resolveCaseAsFulfilled(tx, attempt.tenantId, attempt.id);
+          await resolveCaseAsFulfilled(tx, attempt.tenantId, attempt.id, {
+            giftCardPurchaseId: purchase.id,
+          });
         },
         // Locked FIRST, before the card and its ledger row are written (they
         // reference this purchase, and a later lock would deadlock two

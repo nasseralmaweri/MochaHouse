@@ -22,6 +22,8 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'OrderRefundObligation',
   // ESP-03 PR 4 — saved checkouts (20261115090000).
   'CheckoutSnapshot',
+  // ESP-03 PR 5 — support notes on reconciliation cases (20261116090000).
+  'PaymentReconciliationNote',
   // SC1a — CENTERIVO platform operators (20261022090000).
   'PlatformOperator',
   'PlatformAuditEvent',

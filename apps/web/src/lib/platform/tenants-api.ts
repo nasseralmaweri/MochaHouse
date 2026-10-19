@@ -13,6 +13,8 @@ import type {
   PlatformRegistrationListResponse,
   PlatformRevenueReport,
   PlatformStorefrontView,
+  PlatformPaymentCaseDetail,
+  PlatformPaymentCaseListResponse,
   PlatformAdjustableInvoice,
   PlatformAdjustmentListResponse,
   PlatformAdjustmentView,
@@ -222,6 +224,20 @@ export function getTenantStorefront(
   tenantId: string,
 ): Promise<RegistryResult<PlatformStorefrontView>> {
   return readRegistry(`/tenants/${encodeURIComponent(tenantId)}/storefront`);
+}
+
+// ESP-03 PR 5 — restaurant payment reconciliation cases
+// (payments.reconciliation.view).
+export function listPaymentCases(
+  query: string,
+): Promise<RegistryResult<PlatformPaymentCaseListResponse>> {
+  return readRegistry(`/payment-cases?${query}`);
+}
+
+export function getPaymentCase(
+  caseId: string,
+): Promise<RegistryResult<PlatformPaymentCaseDetail>> {
+  return readRegistry(`/payment-cases/${encodeURIComponent(caseId)}`);
 }
 
 export function getRegistrationControl(): Promise<RegistryResult<PlatformRegistrationControlView>> {
