@@ -56,16 +56,45 @@ export interface ApplyBonusForOrderInput {
   orderLevelDiscounts: OrderLevelDiscountBucket[];
 }
 
+// ESP-03 PR 7 — a computed bonus: what a frozen checkout earns at fulfilment.
+export interface LoyaltyBonusPlan {
+  totalBonusBeans: number;
+  items: {
+    sourcePromotionId: string;
+    promotionName: string;
+    promotionType: BonusPromotionInput['type'];
+    bonusValue: number;
+    productId: string;
+    productName: string;
+    qualifyingUnits: number;
+    qualifyingSpendMinorUnits: number;
+    standardBeansForItem: number;
+    bonusBeans: number;
+  }[];
+}
+
 @Injectable()
 export class LoyaltyBonusService {
   constructor(private readonly prisma: PrismaService) {}
 
   async applyBonusForOrder(input: ApplyBonusForOrderInput): Promise<void> {
+    const { tx, tenantId, customerId, orderId } = input;
+    const plan = await this.planBonusForOrder(tx, input);
+    if (plan) {
+      await this.applyBonusPlan(tx, { tenantId, customerId, orderId, plan });
+    }
+  }
+
+  // ESP-03 PR 7 — the bonus an order would earn, computed (read-only) from
+  // the CURRENT bonus promotions and earning rate. A frozen checkout
+  // computes it before the charge and applies exactly that at fulfilment;
+  // null when no bonus applies.
+  async planBonusForOrder(
+    db: Prisma.TransactionClient | PrismaService,
+    input: Omit<ApplyBonusForOrderInput, 'tx' | 'customerId' | 'orderId'>,
+  ): Promise<LoyaltyBonusPlan | null> {
     const {
-      tx,
       tenantId,
-      customerId,
-      orderId,
       locationId,
       currency,
       pricedLines,
@@ -75,20 +104,19 @@ export class LoyaltyBonusService {
 
     // Bonus Beans are earned on USD merchandise only, mirroring earnForOrder.
     if (currency !== 'USD') {
-      return;
+      return null;
     }
 
     const productIds = [...new Set(pricedLines.map((l) => l.productId))];
     if (productIds.length === 0) {
-      return;
+      return null;
     }
 
-    // CURRENT authoritative promotion state, evaluated at order time — a
-    // promotion HQ deactivated, re-dated, or de-targeted before this
-    // transaction finalises does not apply. The customer never reserves a
-    // bonus merely by seeing it.
+    // CURRENT authoritative promotion state — a promotion HQ deactivated,
+    // re-dated, or de-targeted before this is computed does not apply. The
+    // customer never reserves a bonus merely by seeing it.
     const now = new Date();
-    const promotions = await tx.loyaltyBonusPromotion.findMany({
+    const promotions = await db.loyaltyBonusPromotion.findMany({
       where: {
         tenantId,
         isActive: true,
@@ -111,10 +139,10 @@ export class LoyaltyBonusService {
     });
 
     if (promotions.length === 0) {
-      return;
+      return null;
     }
 
-    const config = await tx.loyaltyConfiguration.findUnique({
+    const config = await db.loyaltyConfiguration.findUnique({
       where: { tenantId_key: { tenantId, key: LOYALTY_CONFIGURATION_KEY } },
       select: { earningRatePerDollar: true },
     });
@@ -145,9 +173,39 @@ export class LoyaltyBonusService {
     });
 
     if (result.totalBonusBeans <= 0) {
-      return;
+      return null;
     }
+    return {
+      totalBonusBeans: result.totalBonusBeans,
+      items: result.items.map((item) => ({
+        sourcePromotionId: item.sourcePromotionId,
+        promotionName: item.promotionName,
+        promotionType: item.promotionType,
+        bonusValue: item.bonusValue,
+        productId: item.productId,
+        productName: item.productName,
+        qualifyingUnits: item.qualifyingUnits,
+        qualifyingSpendMinorUnits: item.qualifyingSpendMinorUnits,
+        standardBeansForItem: item.standardBeansForItem,
+        bonusBeans: item.bonusBeans,
+      })),
+    };
+  }
 
+  // Writes a computed bonus, inside the order transaction: the
+  // OrderLoyaltyBonus snapshot, the single positive BONUS_EARN ledger entry
+  // and the balance increment (exactly once per order by their unique keys).
+  async applyBonusPlan(
+    tx: Prisma.TransactionClient,
+    input: {
+      tenantId: string;
+      customerId: string;
+      orderId: string;
+      plan: LoyaltyBonusPlan;
+    },
+  ): Promise<void> {
+    const { tenantId, customerId, orderId, plan } = input;
+    if (plan.totalBonusBeans <= 0) return;
     const account = await tx.customerLoyaltyAccount.findUniqueOrThrow({
       where: { customerId },
       select: { id: true, tenantId: true },
@@ -158,24 +216,11 @@ export class LoyaltyBonusService {
       data: {
         tenantId,
         orderId,
-        totalBonusBeans: result.totalBonusBeans,
+        totalBonusBeans: plan.totalBonusBeans,
         // Security 4C-4 — items take their tenantId from this bonus through
         // the composite (tenantId, orderLoyaltyBonusId) key; Prisma does not
         // accept one in a nested create.
-        items: {
-          create: result.items.map((item) => ({
-            sourcePromotionId: item.sourcePromotionId,
-            promotionName: item.promotionName,
-            promotionType: item.promotionType,
-            bonusValue: item.bonusValue,
-            productId: item.productId,
-            productName: item.productName,
-            qualifyingUnits: item.qualifyingUnits,
-            qualifyingSpendMinorUnits: item.qualifyingSpendMinorUnits,
-            standardBeansForItem: item.standardBeansForItem,
-            bonusBeans: item.bonusBeans,
-          })),
-        },
+        items: { create: plan.items.map((item) => ({ ...item })) },
       },
     });
 
@@ -184,14 +229,14 @@ export class LoyaltyBonusService {
         tenantId,
         loyaltyAccountId: account.id,
         type: 'BONUS_EARN',
-        amount: result.totalBonusBeans,
+        amount: plan.totalBonusBeans,
         orderId,
       },
     });
 
     await tx.customerLoyaltyAccount.update({
       where: { id: account.id },
-      data: { balance: { increment: result.totalBonusBeans } },
+      data: { balance: { increment: plan.totalBonusBeans } },
     });
   }
 }

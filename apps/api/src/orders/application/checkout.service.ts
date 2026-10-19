@@ -70,11 +70,17 @@ import {
 } from './checkout-session';
 import {
   buildCheckoutSnapshot,
-  CHECKOUT_SNAPSHOT_VERSION,
   giftCardPlanOf,
-  readCheckoutSnapshot,
+  FROZEN_CHECKOUT_SNAPSHOT_VERSION,
+  FrozenCheckoutMismatchError,
+  LEGACY_CHECKOUT_SNAPSHOT_VERSION,
+  freezeCheckout,
+  readSavedCheckout,
+  verifyFrozenCheckout,
+  type FrozenCheckout,
+  type FrozenLine,
+  type SavedCheckout,
   UnreadableCheckoutSnapshotError,
-  type CheckoutSnapshotPayload,
 } from './checkout-snapshot';
 import { PAYMENT_PROVIDER } from '../infrastructure/payment-provider.token';
 import {
@@ -417,20 +423,73 @@ export class CheckoutService {
       );
     }
 
+    // ESP-03 PR 7 — the loyalty Beans this order earns (standard and
+    // bonus), computed now from the frozen prices and discounts and applied
+    // only when the order is created. Nothing for a guest, or when the plan
+    // does not include loyalty.
+    let loyalty: FrozenCheckout['loyalty'] = null;
+    if (customerId !== null && features.loyalty) {
+      const rewardDiscount = prePaymentPlan?.discountMinorUnits ?? 0;
+      loyalty = {
+        earnBeans: await this.loyaltyService.planEarning(
+          this.prisma,
+          tenantId,
+          priced.subtotal - regularDiscount - rewardDiscount,
+          priced.currency,
+        ),
+        bonus: await this.bonusService.planBonusForOrder(this.prisma, {
+          tenantId,
+          locationId: request.locationId,
+          currency: priced.currency,
+          pricedLines: priced.lines.map((line) => ({
+            productId: line.productId,
+            productName: line.productName,
+            unitPrice: line.unitPrice,
+            quantity: line.quantity,
+          })),
+          freeUnitLineIndices: freedUnitLineIndices(
+            regularPlan,
+            prePaymentPlan,
+          ),
+          orderLevelDiscounts: orderLevelDiscountBuckets(
+            regularPlan,
+            regularDiscount,
+            prePaymentPlan,
+            rewardDiscount,
+          ),
+        }),
+      };
+    }
+
     // ESP-03 PR 4 — the server-validated checkout, saved in the SAME
     // transaction as the payment attempt and committed BEFORE the provider
     // is called. If it cannot be saved, no attempt exists and nothing is
     // charged. The order is only ever created from this saved checkout.
-    const snapshot = buildCheckoutSnapshot({
-      locationId: request.locationId,
-      lines: request.lines,
-      guest: request.guest,
-      customerId,
-      rewardId,
-      couponCode,
-      giftCardPlan,
-      features,
-    });
+    // ESP-03 PR 7 — frozen (version 2): the priced lines, discounts, reward,
+    // loyalty earnings, gift-card tender and the amount charged; the order
+    // is created from exactly this, never re-priced.
+    const snapshot: SavedCheckout = {
+      ...buildCheckoutSnapshot({
+        locationId: request.locationId,
+        lines: request.lines,
+        guest: request.guest,
+        customerId,
+        rewardId,
+        couponCode,
+        giftCardPlan,
+        features,
+      }),
+      frozen: freezeCheckout({
+        currency: priced.currency,
+        lines: priced.lines,
+        subtotal: priced.subtotal,
+        regularPlan,
+        rewardPlan: prePaymentPlan,
+        giftCardTender,
+        charge: chargeAmount,
+        loyalty,
+      }),
+    };
     const created = await this.createPaymentAttempt(
       session,
       fingerprint,
@@ -586,7 +645,7 @@ export class CheckoutService {
 
     let order: OrderWithRelations;
     try {
-      const checkout = readCheckoutSnapshot(saved.version, saved.payload);
+      const checkout = readSavedCheckout(saved.version, saved.payload);
       // Milestone 7A — prepare the customer's loyalty account (a unique-key
       // race is swallowed inside). Inside the failure handling below: a
       // failure here is handled exactly like an order-transaction failure.
@@ -1456,7 +1515,7 @@ export class CheckoutService {
     amount: number,
     currency: string,
     tenantId: string,
-    snapshot: CheckoutSnapshotPayload,
+    snapshot: SavedCheckout,
   ): Promise<
     | { wasCreatedByThisRequest: true; attempt: PaymentAttemptRow }
     | { wasCreatedByThisRequest: false; attempt: PaymentAttemptRow }
@@ -1505,7 +1564,9 @@ export class CheckoutService {
           data: {
             tenantId,
             paymentAttemptId: row.id,
-            version: CHECKOUT_SNAPSHOT_VERSION,
+            version: snapshot.frozen
+              ? FROZEN_CHECKOUT_SNAPSHOT_VERSION
+              : LEGACY_CHECKOUT_SNAPSHOT_VERSION,
             payload: snapshot as unknown as Prisma.InputJsonObject,
           },
         });
@@ -1531,7 +1592,7 @@ export class CheckoutService {
     // contains. SC2b — its plan features were decided before payment and
     // are used as-is, so a plan change mid-payment cannot make this
     // transaction disagree with what was charged.
-    checkout: CheckoutSnapshotPayload,
+    checkout: SavedCheckout,
   ): Promise<OrderWithRelations> {
     const paymentAttemptId = attempt.id;
     // Milestone S0D-2C-1 — the attempt was written under the tenant of the
@@ -1572,87 +1633,163 @@ export class CheckoutService {
         return already;
       }
 
-      // Revalidate against the current catalog state — payment succeeding
-      // does not itself guarantee nothing changed in the window since the
-      // first repricing pass.
-      const menu = await this.locationsService.findMenu(
-        request.locationId,
-        tenantId,
-        tx,
-      );
-      if (!menu) {
-        throw new ConflictException(
-          `Payment succeeded but this location is no longer orderable. ` +
-            `Reference ${paymentAttemptId} for support.`,
-        );
-      }
-
-      const priced = priceCart(menu, request.lines);
-      if (!priced.ok) {
-        throw new ConflictException(
-          `Payment succeeded but your cart changed before the order could ` +
-            `be placed (${priced.error.message}). Reference ${paymentAttemptId} for support.`,
-        );
-      }
-
-      // Milestone 7E — re-resolve the regular Promotion/Coupon against the
-      // CURRENT promotion state (dates, location, applicability, minimum,
-      // limits) and the freshly repriced cart. The authoritative
-      // redemption-count enforcement happens in applyRedemption below.
-      const regularResolution: RegularDiscountResolution = features.promotions
-        ? await this.promotionService.resolveRegularDiscount({
-            tenantId,
-            db: tx,
-            priced,
-            menu,
-            locationId: request.locationId,
-            customerId,
-            couponCode,
-          })
-        : NO_REGULAR_DISCOUNT;
-      if (regularResolution.outcome === 'coupon_rejected') {
-        throw new ConflictException(
-          `Payment succeeded but your coupon is no longer valid ` +
-            `(${regularResolution.message}). Reference ${paymentAttemptId} for support.`,
-        );
-      }
-      const regularPlan =
-        regularResolution.outcome === 'applied' ? regularResolution.plan : null;
-      const regularDiscount = regularPlan?.discountMinorUnits ?? 0;
-      const merchandiseAfterRegular = priced.subtotal - regularDiscount;
-
-      // Milestone 7C — re-validate the chosen reward against the CURRENT
-      // reward configuration and the freshly repriced, regular-discounted
-      // cart. If the final expected charge differs from what was actually
-      // captured, the whole order fails and the payment is flagged
-      // reconciliationRequired — never a silent mismatch, never a false
-      // success.
+      // ESP-03 PR 7 — what the order contains and what it was charged for.
+      // A frozen (version 2) checkout is used EXACTLY as frozen — never
+      // re-priced — after its arithmetic is verified against the payment and
+      // the business and location are checked to still take orders. A
+      // version-1 checkout (a payment from before PR 7) is re-priced and
+      // re-validated as before.
+      let priced: {
+        currency: string;
+        subtotal: number;
+        lines: FrozenLine[];
+      };
+      let regularPlan: RegularDiscountPlan | null;
+      let regularDiscount: number;
       let plan: RedemptionPlan | null = null;
       let rewardDiscount = 0;
-      if (rewardId !== null && customerId !== null && features.loyalty) {
-        plan = await this.redemptionService.buildRedemptionPlan(
-          rewardId,
-          priced,
-          menu,
+      let giftCardTender: number;
+      if (checkout.frozen) {
+        const frozen = checkout.frozen;
+        try {
+          verifyFrozenCheckout({ ...checkout, frozen }, attempt);
+        } catch (error) {
+          if (error instanceof FrozenCheckoutMismatchError) {
+            throw new ConflictException(
+              `Payment succeeded but its saved checkout could not be verified. ` +
+                `Reference ${paymentAttemptId} for support.`,
+            );
+          }
+          throw error;
+        }
+        await this.assertStillTakingOrders(
+          tx,
           tenantId,
-          regularRewardContext(regularPlan, merchandiseAfterRegular),
+          request.locationId,
+          paymentAttemptId,
         );
-        rewardDiscount = plan.discountMinorUnits;
-      }
-      // Milestone 7G — the planned gift-card tender was fixed BEFORE payment
-      // and baked into attempt.amount (external charge = owed − tender). It
-      // is never re-sized here; applyRedemption below re-validates that the
-      // locked card can still satisfy this exact amount, or the whole
-      // transaction rolls back to reconciliation.
-      const giftCardTender = giftCardPlan?.plannedTenderMinorUnits ?? 0;
-      if (
-        priced.subtotal - regularDiscount - rewardDiscount - giftCardTender !==
-        attempt.amount
-      ) {
-        throw new ConflictException(
-          `Payment succeeded but the discount, reward, gift card or cart changed ` +
-            `before the order could be placed. Reference ${paymentAttemptId} for support.`,
+        priced = {
+          currency: frozen.currency,
+          subtotal: frozen.subtotal,
+          lines: frozen.lines,
+        };
+        regularPlan = frozen.regularPlan;
+        regularDiscount = frozen.totals.promotionDiscount;
+        // A reward is only ever frozen for a member with loyalty in the
+        // plan; anything else would charge a discount nobody redeems.
+        if (
+          frozen.rewardPlan !== null &&
+          (customerId === null || !features.loyalty)
+        ) {
+          throw new ConflictException(
+            `Payment succeeded but its saved checkout could not be verified. ` +
+              `Reference ${paymentAttemptId} for support.`,
+          );
+        }
+        // The frozen reward is honoured as frozen, but it must still be one
+        // of this business's rewards (never a dangling or foreign id).
+        if (
+          frozen.rewardPlan !== null &&
+          !(await tx.loyaltyReward.findFirst({
+            where: { id: frozen.rewardPlan.rewardId, tenantId },
+            select: { id: true },
+          }))
+        ) {
+          throw new ConflictException(
+            `Payment succeeded but its reward is no longer available. ` +
+              `Reference ${paymentAttemptId} for support.`,
+          );
+        }
+        plan = frozen.rewardPlan;
+        rewardDiscount = frozen.totals.rewardDiscount;
+        giftCardTender = frozen.totals.giftCardTender;
+      } else {
+        // Revalidate against the current catalog state — payment succeeding
+        // does not itself guarantee nothing changed in the window since the
+        // first repricing pass.
+        const menu = await this.locationsService.findMenu(
+          request.locationId,
+          tenantId,
+          tx,
         );
+        if (!menu) {
+          throw new ConflictException(
+            `Payment succeeded but this location is no longer orderable. ` +
+              `Reference ${paymentAttemptId} for support.`,
+          );
+        }
+
+        const repriced = priceCart(menu, request.lines);
+        if (!repriced.ok) {
+          throw new ConflictException(
+            `Payment succeeded but your cart changed before the order could ` +
+              `be placed (${repriced.error.message}). Reference ${paymentAttemptId} for support.`,
+          );
+        }
+
+        // Milestone 7E — re-resolve the regular Promotion/Coupon against the
+        // CURRENT promotion state (dates, location, applicability, minimum,
+        // limits) and the freshly repriced cart. The authoritative
+        // redemption-count enforcement happens in applyRedemption below.
+        const regularResolution: RegularDiscountResolution = features.promotions
+          ? await this.promotionService.resolveRegularDiscount({
+              tenantId,
+              db: tx,
+              priced: repriced,
+              menu,
+              locationId: request.locationId,
+              customerId,
+              couponCode,
+            })
+          : NO_REGULAR_DISCOUNT;
+        if (regularResolution.outcome === 'coupon_rejected') {
+          throw new ConflictException(
+            `Payment succeeded but your coupon is no longer valid ` +
+              `(${regularResolution.message}). Reference ${paymentAttemptId} for support.`,
+          );
+        }
+        regularPlan =
+          regularResolution.outcome === 'applied'
+            ? regularResolution.plan
+            : null;
+        regularDiscount = regularPlan?.discountMinorUnits ?? 0;
+        const merchandiseAfterRegular = repriced.subtotal - regularDiscount;
+
+        // Milestone 7C — re-validate the chosen reward against the CURRENT
+        // reward configuration and the freshly repriced, regular-discounted
+        // cart. If the final expected charge differs from what was actually
+        // captured, the whole order fails and the payment is flagged
+        // reconciliationRequired — never a silent mismatch, never a false
+        // success.
+        if (rewardId !== null && customerId !== null && features.loyalty) {
+          plan = await this.redemptionService.buildRedemptionPlan(
+            rewardId,
+            repriced,
+            menu,
+            tenantId,
+            regularRewardContext(regularPlan, merchandiseAfterRegular),
+          );
+          rewardDiscount = plan.discountMinorUnits;
+        }
+        // Milestone 7G — the planned gift-card tender was fixed BEFORE payment
+        // and baked into attempt.amount (external charge = owed − tender). It
+        // is never re-sized here; applyRedemption below re-validates that the
+        // locked card can still satisfy this exact amount, or the whole
+        // transaction rolls back to reconciliation.
+        giftCardTender = giftCardPlan?.plannedTenderMinorUnits ?? 0;
+        if (
+          repriced.subtotal -
+            regularDiscount -
+            rewardDiscount -
+            giftCardTender !==
+          attempt.amount
+        ) {
+          throw new ConflictException(
+            `Payment succeeded but the discount, reward, gift card or cart changed ` +
+              `before the order could be placed. Reference ${paymentAttemptId} for support.`,
+          );
+        }
+        priced = repriced;
       }
 
       let orderNumber: string | null = null;
@@ -1754,7 +1891,18 @@ export class CheckoutService {
           tenantId,
           orderId: order.id,
           customerId,
-          plan: regularPlan,
+          // ESP-03 PR 7 — a frozen discount is honoured, but never past the
+          // promotion's CURRENT configured limits (owner decision D2): an
+          // exhausted limit fails the order transaction, and the payment is
+          // kept for review — never re-priced, never charged again.
+          plan: checkout.frozen
+            ? await this.withCurrentLimits(
+                tx,
+                tenantId,
+                regularPlan,
+                paymentAttemptId,
+              )
+            : regularPlan,
         });
       }
 
@@ -1802,46 +1950,69 @@ export class CheckoutService {
             plan,
           });
         }
-        // Milestone 7A/7B/7E — standard Beans on the FINAL post-discount
-        // qualifying merchandise (gross - regular discount - reward discount).
-        await this.loyaltyService.earnForOrder({
-          tx,
-          tenantId,
-          customerId,
-          orderId: order.id,
-          qualifyingSubtotalMinorUnits:
-            priced.subtotal - regularDiscount - rewardDiscount,
-          currency: priced.currency,
-        });
-        // Milestone 7D/7E — award any Bonus Mocha Bean Promotions on
-        // qualifying items, as a dedicated positive BONUS_EARN entry, in
-        // this same transaction. Uses CURRENT promotion state and the
-        // qualifying spend that remains after BOTH the regular
-        // Promotion/Coupon and the Mocha Bean reward: every FREE_ITEM freed
-        // unit earns no bonus; every non-free order-level discount is summed
-        // and allocated across items proportionally. Writes nothing when no
-        // bonus promotion applies.
-        await this.bonusService.applyBonusForOrder({
-          tx,
-          tenantId,
-          customerId,
-          orderId: order.id,
-          locationId: request.locationId,
-          currency: priced.currency,
-          pricedLines: priced.lines.map((line) => ({
-            productId: line.productId,
-            productName: line.productName,
-            unitPrice: line.unitPrice,
-            quantity: line.quantity,
-          })),
-          freeUnitLineIndices: freedUnitLineIndices(regularPlan, plan),
-          orderLevelDiscounts: orderLevelDiscountBuckets(
-            regularPlan,
-            regularDiscount,
-            plan,
-            rewardDiscount,
-          ),
-        });
+        if (checkout.frozen) {
+          // ESP-03 PR 7 — exactly the Beans frozen at checkout (owner
+          // decision D4): the standard EARN and any BONUS_EARN, each exactly
+          // once per order by its ledger unique key.
+          const frozenLoyalty = checkout.frozen.loyalty;
+          if (frozenLoyalty !== null) {
+            await this.loyaltyService.applyEarning(tx, {
+              tenantId,
+              customerId,
+              orderId: order.id,
+              beans: frozenLoyalty.earnBeans,
+            });
+            if (frozenLoyalty.bonus !== null) {
+              await this.bonusService.applyBonusPlan(tx, {
+                tenantId,
+                customerId,
+                orderId: order.id,
+                plan: frozenLoyalty.bonus,
+              });
+            }
+          }
+        } else {
+          // Milestone 7A/7B/7E — standard Beans on the FINAL post-discount
+          // qualifying merchandise (gross - regular discount - reward discount).
+          await this.loyaltyService.earnForOrder({
+            tx,
+            tenantId,
+            customerId,
+            orderId: order.id,
+            qualifyingSubtotalMinorUnits:
+              priced.subtotal - regularDiscount - rewardDiscount,
+            currency: priced.currency,
+          });
+          // Milestone 7D/7E — award any Bonus Mocha Bean Promotions on
+          // qualifying items, as a dedicated positive BONUS_EARN entry, in
+          // this same transaction. Uses CURRENT promotion state and the
+          // qualifying spend that remains after BOTH the regular
+          // Promotion/Coupon and the Mocha Bean reward: every FREE_ITEM freed
+          // unit earns no bonus; every non-free order-level discount is summed
+          // and allocated across items proportionally. Writes nothing when no
+          // bonus promotion applies.
+          await this.bonusService.applyBonusForOrder({
+            tx,
+            tenantId,
+            customerId,
+            orderId: order.id,
+            locationId: request.locationId,
+            currency: priced.currency,
+            pricedLines: priced.lines.map((line) => ({
+              productId: line.productId,
+              productName: line.productName,
+              unitPrice: line.unitPrice,
+              quantity: line.quantity,
+            })),
+            freeUnitLineIndices: freedUnitLineIndices(regularPlan, plan),
+            orderLevelDiscounts: orderLevelDiscountBuckets(
+              regularPlan,
+              regularDiscount,
+              plan,
+              rewardDiscount,
+            ),
+          });
+        }
       }
 
       // ESP-03 PR 4 — fulfilled: the saved checkout has served its purpose
@@ -1865,6 +2036,72 @@ export class CheckoutService {
         include: ORDER_INCLUDE,
       });
     });
+  }
+
+  // ESP-03 PR 7 (owner decision D5) — a frozen order ignores ordinary menu,
+  // modifier and price changes, but never the business's operational
+  // restrictions: a suspended business, or a location that is inactive or
+  // no longer takes online orders, receives no new order. The payment is
+  // then kept for review (never re-priced, never charged again).
+  private async assertStillTakingOrders(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    locationId: string,
+    paymentAttemptId: string,
+  ): Promise<void> {
+    const location = await tx.location.findFirst({
+      where: { id: locationId, tenantId },
+      select: {
+        isActive: true,
+        isDigitalOrderingEnabled: true,
+        tenant: { select: { status: true } },
+      },
+    });
+    if (
+      !location ||
+      !location.isActive ||
+      !location.isDigitalOrderingEnabled ||
+      location.tenant.status !== 'ACTIVE'
+    ) {
+      throw new ConflictException(
+        `Payment succeeded but this location is not taking orders right now. ` +
+          `Reference ${paymentAttemptId} for support.`,
+      );
+    }
+  }
+
+  // ESP-03 PR 7 (owner decision D2) — the frozen discount with the
+  // promotion's CURRENT configured redemption limits, so a limit is never
+  // silently exceeded. A promotion that no longer exists refuses.
+  private async withCurrentLimits(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    plan: RegularDiscountPlan,
+    paymentAttemptId: string,
+  ): Promise<RegularDiscountPlan> {
+    // Locked until this transaction ends, so a limit changed concurrently
+    // cannot be read stale and then exceeded by the redemption below.
+    const [current] = await tx.$queryRaw<
+      {
+        totalRedemptionLimit: number | null;
+        perCustomerRedemptionLimit: number | null;
+      }[]
+    >`
+      SELECT "totalRedemptionLimit", "perCustomerRedemptionLimit"
+        FROM "Promotion"
+       WHERE id = ${plan.promotionId} AND "tenantId" = ${tenantId}
+       FOR UPDATE`;
+    if (!current) {
+      throw new ConflictException(
+        `Payment succeeded but its offer is no longer available. ` +
+          `Reference ${paymentAttemptId} for support.`,
+      );
+    }
+    return {
+      ...plan,
+      totalRedemptionLimit: current.totalRedemptionLimit,
+      perCustomerRedemptionLimit: current.perCustomerRedemptionLimit,
+    };
   }
 
   private toConfirmation(order: OrderWithRelations): OrderConfirmation {

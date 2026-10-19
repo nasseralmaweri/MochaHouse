@@ -1379,6 +1379,9 @@ model PaymentAttempt {
   // (tenantId, id) so the database itself can refuse a cross-business link
   // (composite foreign keys arrive in Security 4C-3).
   @@unique([tenantId, id])
+  // ESP-03 PR 7 — payment keys are unique per business too (the global
+  // unique key on idempotencyKey is kept).
+  @@unique([tenantId, idempotencyKey])
   @@index([status])
   @@index([reconciliationRequired])
   @@index([tenantId])
@@ -1415,7 +1418,8 @@ model CheckoutSnapshot {
   id               String         @id @default(uuid(7))
   paymentAttemptId String         @unique
   paymentAttempt   PaymentAttempt @relation(fields: [tenantId, paymentAttemptId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
-  // Format version of payload (CHECK).
+  // Format version of payload (CHECK): 1 (ids only, re-priced at
+  // fulfilment) or 2 (ESP-03 PR 7 — the complete frozen checkout).
   version          Int            @default(1)
   payload          Json
   createdAt        DateTime       @default(now())
