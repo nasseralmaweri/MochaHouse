@@ -347,18 +347,29 @@ export async function openReconciliationCase(
 
 // ESP-03 PR 4 — a payment whose order (or gift card) now exists no longer
 // needs review: its open case, if any, is resolved as FULFILLED with a
-// SYSTEM event, in the caller's transaction (the one that fulfilled it).
+// SYSTEM event, in the caller's transaction (the one that fulfilled it, or
+// — ESP-03 PR 5 — the one that proved the record exists under the payment
+// row lock). ESP-03 PR 5: the event records the state before and after and
+// the record that proves it (the order or the gift-card purchase).
+export interface FulfilmentProof {
+  orderId?: string;
+  giftCardPurchaseId?: string;
+  // Which path proved it (default: the fulfilment that created the record).
+  source?: 'fulfilment' | 'recovery';
+}
+
 export async function resolveCaseAsFulfilled(
   tx: Prisma.TransactionClient,
   tenantId: string,
   paymentAttemptId: string,
+  proof: FulfilmentProof = {},
 ): Promise<void> {
   const open = await tx.paymentReconciliationCase.findUnique({
     where: { tenantId_paymentAttemptId: { tenantId, paymentAttemptId } },
     select: { id: true, status: true },
   });
   if (!open || open.status === 'RESOLVED') return;
-  await tx.paymentReconciliationCase.updateMany({
+  const resolved = await tx.paymentReconciliationCase.updateMany({
     where: { id: open.id, tenantId, status: { not: 'RESOLVED' } },
     data: {
       status: 'RESOLVED',
@@ -366,13 +377,26 @@ export async function resolveCaseAsFulfilled(
       resolvedAt: new Date(),
     },
   });
+  // ESP-03 PR 5 — only the caller that actually resolved it records it (a
+  // concurrent resolver writes no second RESOLVED event).
+  if (resolved.count !== 1) return;
   await tx.paymentReconciliationEvent.create({
     data: {
       tenantId,
       caseId: open.id,
       actorKind: 'SYSTEM',
       action: 'RESOLVED',
-      detail: { source: 'fulfilment', resolution: 'FULFILLED' },
+      detail: {
+        source: proof.source ?? 'fulfilment',
+        resolution: 'FULFILLED',
+        from: open.status,
+        to: 'RESOLVED',
+        paymentAttemptId,
+        ...(proof.orderId ? { orderId: proof.orderId } : {}),
+        ...(proof.giftCardPurchaseId
+          ? { giftCardPurchaseId: proof.giftCardPurchaseId }
+          : {}),
+      },
     },
   });
 }

@@ -71,6 +71,9 @@ export const TENANT_ID_REQUIRED_MODELS: readonly string[] = [
   // ESP-03 PR 4 — the saved checkout a payment pays for: a brand-new
   // model, tenantId required from inception.
   'CheckoutSnapshot',
+  // ESP-03 PR 5 — platform support's notes on a reconciliation case: a
+  // brand-new model, tenantId required from inception.
+  'PaymentReconciliationNote',
   // S0D-2E — the internal admin identity/authorization chain. InternalUser
   // and InternalRole have no owning parent (backfilled straight to
   // Tenant #1, like Customer in S0D-2B-1); InternalRolePermission and

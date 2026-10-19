@@ -103,6 +103,10 @@ export const PLATFORM_AUDIT_ACTIONS = {
   // name the owner's login; target: the tenant).
   planSelfServiceChanged: 'platform.plan.self_service_changed',
   tenantSelfProvisioned: 'platform.tenant.self_provisioned',
+  // ESP-03 PR 5 — support requested a safe recovery of a restaurant payment
+  // case, or added an internal note to one (target: the case).
+  paymentCaseRecoveryRequested: 'platform.payment_case.recovery_requested',
+  paymentCaseNoteAdded: 'platform.payment_case.note_added',
 } as const;
 
 @Injectable()

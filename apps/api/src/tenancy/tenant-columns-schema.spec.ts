@@ -27,8 +27,8 @@ describe('S0D-1 tenant columns — schema introspection', () => {
     await moduleRef.close();
   });
 
-  it('covers exactly the 71 tenant-owned models', () => {
-    expect(tenantTables).toHaveLength(71);
+  it('covers exactly the 72 tenant-owned models', () => {
+    expect(tenantTables).toHaveLength(72);
     expect(tenantTables).not.toContain('Tenant');
   });
 

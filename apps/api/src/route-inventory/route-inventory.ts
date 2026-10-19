@@ -486,6 +486,25 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
       scope: 'platform',
       note: 'SC4f-3a — unpublish an address (storefront.manage, recent sign-in, reason, slug; audited).',
     },
+  // ESP-03 PR 5 — restaurant payment reconciliation support
+  // (payments.reconciliation.view to read; .manage, a recent sign-in and a
+  // reason to act; audited). A recovery never charges.
+  'GET /api/v1/platform/payment-cases': {
+    scope: 'platform',
+    note: 'ESP-03 PR 5 — payment reconciliation cases across businesses, filtered by business, status, category and date (payments.reconciliation.view; no card, code or contact data).',
+  },
+  'GET /api/v1/platform/payment-cases/:caseId': {
+    scope: 'platform',
+    note: 'ESP-03 PR 5 — one case: payment and order references, reason codes, recovery history and internal notes (payments.reconciliation.view).',
+  },
+  'POST /api/v1/platform/payment-cases/:caseId/recover': {
+    scope: 'platform',
+    note: 'ESP-03 PR 5 — a safe recovery attempt for a confirmed payment with no order / gift card (payments.reconciliation.manage, recent sign-in, reason; audited). Never charges; refuses uncertain payments.',
+  },
+  'POST /api/v1/platform/payment-cases/:caseId/notes': {
+    scope: 'platform',
+    note: 'ESP-03 PR 5 — add an append-only internal note to a case (payments.reconciliation.manage, recent sign-in; audited).',
+  },
   'GET /api/v1/platform/billing/payment-setup': {
     scope: 'platform',
     note: 'SC3e-4 — businesses awaiting payment setup and their deadlines (read-only).',

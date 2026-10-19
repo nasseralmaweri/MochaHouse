@@ -208,11 +208,15 @@ describe('ESP-03 PR 1: payment recovery database foundation', () => {
       expect(
         await rows(scratch.url, `SELECT 1 FROM "PaymentReconciliationEvent"`),
       ).toHaveLength(0);
+      // The checks of the tables this migration created (ESP-03 PR 5's
+      // PaymentReconciliationNote, created later, has its own suite).
       const checks = await rows<{ n: string }>(
         scratch.url,
         `SELECT conname AS n FROM pg_constraint
           WHERE contype = 'c'
-            AND (conname LIKE 'PaymentAttempt\\_%' OR conname LIKE 'PaymentReconciliation%')`,
+            AND (conname LIKE 'PaymentAttempt\\_%'
+              OR conname LIKE 'PaymentReconciliationCase\\_%'
+              OR conname LIKE 'PaymentReconciliationEvent\\_%')`,
       );
       expect(checks.map((c) => c.n).sort()).toEqual([
         'PaymentAttempt_fulfilmentStatus_check',

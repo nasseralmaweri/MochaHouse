@@ -308,6 +308,9 @@ const PLATFORM_AUDIT_TARGET_TYPES = [
   // SC4f-3a — an approved storefront address assigned / published /
   // unpublished.
   'storefront_host',
+  // ESP-03 PR 5 — a restaurant payment reconciliation case (support
+  // recovery requests and notes).
+  'payment_case',
 ];
 const PLATFORM_OPERATOR_MODELS = [
   'PlatformOperator',
@@ -487,7 +490,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(relationsBetweenBusinessRecords).toHaveLength(99);
+    expect(relationsBetweenBusinessRecords).toHaveLength(100);
     expect(
       relationsBetweenBusinessRecords
         .filter((r) => !isTenantEnforced(r))
@@ -593,6 +596,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'PaymentReconciliationCase.paymentAttemptId',
       'PaymentReconciliationEvent.actorInternalUserId',
       'PaymentReconciliationEvent.caseId',
+      'PaymentReconciliationNote.caseId',
       'Product.categoryId',
       'ProductModifierGroup.modifierGroupId',
       'ProductModifierGroup.productId',
@@ -632,7 +636,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(plainIdColumns).toHaveLength(14);
+    expect(plainIdColumns).toHaveLength(15);
   });
 
   it('classifies every JSON column on business-owned records', () => {
@@ -733,13 +737,13 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       external: count((r) => r.kind === 'external-identifier'),
       total: TENANT_RELATIONSHIPS.length,
     }).toEqual({
-      compositeWithForeignKey: 99,
+      compositeWithForeignKey: 100,
       compositeWithoutForeignKey: 0,
       historicalSnapshot: 8,
       polymorphic: 4,
       json: 8,
-      external: 2,
-      total: 121,
+      external: 3,
+      total: 123,
     });
     // Optional relationships are present and marked optional.
     const optionalForeignKeys = relationsBetweenBusinessRecords.filter(

@@ -41,7 +41,15 @@ export function FilterLinks<T extends string>({
   );
 }
 
-export function NoPermissionPanel({ permission }: { permission: string }) {
+// ESP-03 PR 5 — `area` names what the permission is for (default: the
+// onboarding reports).
+export function NoPermissionPanel({
+  permission,
+  area = "Onboarding oversight",
+}: {
+  permission: string;
+  area?: string;
+}) {
   return (
     <div
       role="alert"
@@ -49,7 +57,7 @@ export function NoPermissionPanel({ permission }: { permission: string }) {
     >
       <h2 className="text-base font-semibold text-text-primary">Access denied</h2>
       <p className="max-w-prose text-sm text-text-secondary">
-        Onboarding oversight needs the {permission} permission. Ask a CENTERIVO
+        {area} needs the {permission} permission. Ask a CENTERIVO
         administrator to grant it.
       </p>
     </div>

@@ -3,7 +3,8 @@ import { assertDisposableDatabase } from "./disposable-database";
 
 // TEST-ONLY (ESP-03 PR 4). Removes the payment-recovery records of the given
 // payment attempts — their saved checkouts (CheckoutSnapshot) and their
-// reconciliation cases with their event history — so a suite can delete the
+// reconciliation cases with their event history and support notes (ESP-03
+// PR 5) — so a suite can delete the
 // payment attempts it created afterwards.
 //
 // Reconciliation events are append-only on purpose (a database trigger
@@ -27,6 +28,11 @@ export async function removePaymentRecoveryRecordsForTest(
     const ids = [...paymentAttemptIds];
     await client.query(
       `DELETE FROM "CheckoutSnapshot" WHERE "paymentAttemptId" = ANY($1::text[])`,
+      [ids],
+    );
+    await client.query(
+      `DELETE FROM "PaymentReconciliationNote" WHERE "caseId" IN (
+         SELECT id FROM "PaymentReconciliationCase" WHERE "paymentAttemptId" = ANY($1::text[]))`,
       [ids],
     );
     await client.query(

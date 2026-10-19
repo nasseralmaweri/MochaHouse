@@ -21,6 +21,7 @@ import { PlatformPermissionsController } from '../platform-auth/api/platform-per
 import { AdminBillingController } from '../saas-billing/api/admin-billing.controller';
 import { BillingWebhookController } from '../saas-billing/api/billing-webhook.controller';
 import { OwnerRegistrationController } from '../owner-registration/api/owner-registration.controller';
+import { PlatformPaymentCasesController } from '../payment-recovery/api/platform-payment-cases.controller';
 import { OwnerOnboardingController } from '../owner-registration/api/owner-onboarding.controller';
 
 // The list of public routes protected by S3a. If a route here loses its
@@ -239,6 +240,12 @@ const PROTECTED: ReadonlyArray<{
     method: 'receive',
     policy: 'billing-webhook',
   },
+  // ESP-03 PR 5 — payment case support actions.
+  ...(['recover', 'addNote'] as const).map((method) => ({
+    controller: PlatformPaymentCasesController,
+    method,
+    policy: 'platform-lifecycle' as const,
+  })),
   // SC4a — business owner self-service registration.
   {
     controller: OwnerRegistrationController,

@@ -9,6 +9,7 @@ export type PlatformNavKey =
   | "plans"
   | "subscriptions"
   | "billing"
+  | "payments"
   | "support"
   | "settings";
 
@@ -55,6 +56,12 @@ export const PLATFORM_NAV_ITEMS: readonly PlatformNavItem[] = [
     label: "Billing",
     href: "/platform/billing",
     description: "Billing reconciliation (Stripe test mode).",
+  },
+  {
+    key: "payments",
+    label: "Payments",
+    href: "/platform/payments",
+    description: "Restaurant payment reconciliation and safe recovery.",
   },
   {
     key: "support",

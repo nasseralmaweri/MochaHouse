@@ -191,6 +191,7 @@ export const TENANT_MODEL_KEYS: Readonly<
   PaymentReconciliationCase: ['id'],
   PaymentReconciliationEvent: ['id'],
   CheckoutSnapshot: ['id'],
+  PaymentReconciliationNote: ['id'],
   OperationsTask: ['id'],
   Order: ['id'],
   OrderClosure: ['id'],
@@ -511,6 +512,19 @@ const DIRECT_REFERENCES: readonly DirectReference[] = [
     column: 'actorInternalUserId',
     target: 'InternalUser',
     nullable: true,
+    hasForeignKey: true,
+    onDelete: 'Restrict',
+    tenantEnforced: true,
+  },
+  // ESP-03 PR 5 — a support note belongs to a case of the SAME business
+  // (composite foreign key).
+  {
+    id: 'PaymentReconciliationNote.caseId',
+    kind: 'composite-fk-candidate',
+    model: 'PaymentReconciliationNote',
+    column: 'caseId',
+    target: 'PaymentReconciliationCase',
+    nullable: false,
     hasForeignKey: true,
     onDelete: 'Restrict',
     tenantEnforced: true,
@@ -1584,6 +1598,17 @@ const EXTERNAL_IDENTIFIERS: readonly ExternalIdentifier[] = [
     column: 'processorRefundId',
     nullable: true,
     system: 'payment processor',
+  },
+  // ESP-03 PR 5 — the CENTERIVO platform operator who wrote a support note:
+  // an id from the platform plane, deliberately never a foreign key from
+  // business data to platform data.
+  {
+    id: 'PaymentReconciliationNote.authorPlatformOperatorId',
+    kind: 'external-identifier',
+    model: 'PaymentReconciliationNote',
+    column: 'authorPlatformOperatorId',
+    nullable: false,
+    system: 'CENTERIVO platform operators',
   },
 ];
 
