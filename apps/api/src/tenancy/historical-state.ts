@@ -26,6 +26,8 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'CheckoutSession',
   // ESP-03 PR 8 — pre-charge financial holds (20261119090000).
   'FinancialHold',
+  // ESP-04 M1 — restaurant payment accounts (20261120090000).
+  'TenantPaymentAccount',
   // ESP-03 PR 5 — support notes on reconciliation cases (20261116090000).
   'PaymentReconciliationNote',
   // SC1a — CENTERIVO platform operators (20261022090000).

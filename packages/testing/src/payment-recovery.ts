@@ -111,3 +111,50 @@ export async function removeFinancialHoldsForTest(
     await client.end();
   }
 }
+
+// TEST-ONLY (ESP-04 M1). Removes the restaurant payment accounts of the given
+// businesses and the Connect webhook events naming the given connected
+// accounts, so a suite can clean up after itself. A payment account record is
+// never deleted in production (a trigger refuses); like the helpers above
+// this turns triggers off for ONE transaction and runs only against a
+// verified disposable test database.
+export async function removePaymentAccountsForTest(
+  refs: {
+    tenantIds?: readonly string[];
+    externalAccountIds?: readonly string[];
+    externalEventIds?: readonly string[];
+  },
+  url: string | undefined = process.env.DATABASE_URL,
+): Promise<void> {
+  const tenantIds = [...(refs.tenantIds ?? [])];
+  const accountIds = [...(refs.externalAccountIds ?? [])];
+  const eventIds = [...(refs.externalEventIds ?? [])];
+  if (tenantIds.length + accountIds.length + eventIds.length === 0) return;
+  await assertDisposableDatabase(url);
+  const client = new Client({ connectionString: url });
+  await client.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL session_replication_role = replica");
+    await client.query(
+      `DELETE FROM "RestaurantPaymentProviderEvent"
+        WHERE "externalAccountId" = ANY($1::text[])
+           OR "externalEventId" = ANY($2::text[])
+           OR "externalAccountId" IN (
+             SELECT "externalAccountId" FROM "TenantPaymentAccount"
+              WHERE "tenantId" = ANY($3::text[]))`,
+      [accountIds, eventIds, tenantIds],
+    );
+    await client.query(
+      `DELETE FROM "TenantPaymentAccount"
+        WHERE "tenantId" = ANY($1::text[]) OR "externalAccountId" = ANY($2::text[])`,
+      [tenantIds, accountIds],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    await client.end();
+  }
+}

@@ -22,6 +22,10 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   // SC3b — the business's own CENTERIVO subscription billing.
   'GET /api/v1/admin/billing': { scope: 'tenant' },
   'POST /api/v1/admin/billing/checkout': { scope: 'tenant' },
+  // ESP-04 M1 — the restaurant's own Stripe account (owner only).
+  'GET /api/v1/admin/payments/account': { scope: 'tenant' },
+  'POST /api/v1/admin/payments/account/onboarding': { scope: 'tenant' },
+  'POST /api/v1/admin/payments/account/refresh': { scope: 'tenant' },
   'POST /api/v1/admin/billing/recovery/invoice': { scope: 'tenant' },
   'POST /api/v1/admin/billing/recovery/portal': { scope: 'tenant' },
   // SC3d-1 — plan change preview (nothing charged or changed).
@@ -333,6 +337,10 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'GET /api/v1/media/objects/:folder/:file': {
     scope: 'token',
     note: 'Dev/local media bytes by unguessable object key (S3/CDN in production).',
+  },
+  'POST /api/v1/restaurant-payments/webhooks/:provider': {
+    scope: 'token',
+    note: "ESP-04 M1 — restaurant-payments (Stripe Connect) webhooks: the provider's signature over the raw body is the only credential; the business comes from our stored connected-account id, never the request.",
   },
   'POST /api/v1/billing/webhooks/:provider': {
     scope: 'token',

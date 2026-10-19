@@ -29,6 +29,7 @@ export { TENANT_ID_REQUIRED_MODELS } from './tenant-conversion';
 export { markOrderClosedForTest } from "./closed-orders";
 export {
   removeFinancialHoldsForTest,
+  removePaymentAccountsForTest,
   removePaymentRecoveryRecordsForTest,
 } from "./payment-recovery";
 export {

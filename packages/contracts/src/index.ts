@@ -4088,6 +4088,12 @@ export const INTERNAL_PERMISSION_KEYS = [
   // payment. Never anything about restaurant customer payments.
   "billing.view",
   "billing.manage",
+  // ESP-04 M1 — the restaurant's OWN customer-payment account (Stripe
+  // Connect): connect it, continue its hosted onboarding and refresh its
+  // status. Corporate-only and held only by the built-in administrator
+  // (owner) role; the API also requires that role. Never anything about
+  // CENTERIVO subscription billing.
+  "payments.connect",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -4243,6 +4249,7 @@ export const PERMISSION_MODULE: Readonly<
   "reports.view": "core",
   "billing.view": "core",
   "billing.manage": "core",
+  "payments.connect": "core",
   "operations.view": "operations",
   "operations.tasks.complete": "operations",
   "operations.checklists.configure": "operations",
@@ -4731,6 +4738,12 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "billing.manage",
     description:
       "Set up the business's CENTERIVO subscription payment (hosted Checkout). A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "payments.connect": {
+    key: "payments.connect",
+    description:
+      "Connect and manage the restaurant's own Stripe account for customer payments (owner only). A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
@@ -7374,3 +7387,65 @@ export const CHECKOUT_ALREADY_COMPLETED = "CHECKOUT_ALREADY_COMPLETED";
 // ESP-03 PR 8 — a promotion redemption, Mocha Beans or gift-card balance the
 // order needs is no longer available (nothing was charged; review the order).
 export const CHECKOUT_RESOURCE_UNAVAILABLE = "CHECKOUT_RESOURCE_UNAVAILABLE";
+
+// --- ESP-04 M1: restaurant payment account (Stripe Connect) -------------------
+// The restaurant's OWN Stripe account for customer payments — never
+// CENTERIVO's subscription billing. Owner only (payments.connect plus the
+// built-in administrator role). Readiness always comes from the account as
+// last read back from Stripe, never from returning from onboarding. Customer
+// payments stay disabled (paymentsEnabled is always false in this milestone).
+
+// NOT_CONNECTED       no account yet;
+// SETUP_IN_PROGRESS   an account exists; Stripe still needs information;
+// UNDER_REVIEW        nothing more is asked; Stripe is reviewing it;
+// ACTION_REQUIRED     Stripe needs more information (past due or restricted);
+// READY               card payments are active and the configuration is the
+//                     approved one (restaurant pays fees, full dashboard,
+//                     Stripe-managed losses);
+// NOT_SUPPORTED       Stripe cannot offer card payments to this business;
+// CLOSED              the account was closed;
+// CONFIGURATION_MISMATCH  Stripe reports a configuration other than the
+//                     approved one: never treated as ready.
+export const PAYMENT_ACCOUNT_STATES = [
+  "NOT_CONNECTED",
+  "SETUP_IN_PROGRESS",
+  "UNDER_REVIEW",
+  "ACTION_REQUIRED",
+  "READY",
+  "NOT_SUPPORTED",
+  "CLOSED",
+  "CONFIGURATION_MISMATCH",
+] as const;
+export type PaymentAccountState = (typeof PAYMENT_ACCOUNT_STATES)[number];
+
+// GET /api/v1/admin/payments/account and
+// POST /api/v1/admin/payments/account/refresh (payments.connect).
+export interface AdminPaymentAccountResponse {
+  // False when no restaurant-payments provider is configured here.
+  providerAvailable: boolean;
+  state: PaymentAccountState;
+  // The connected account's id (acct_…), shown so the owner can match it in
+  // their Stripe Dashboard; null before one exists.
+  accountId: string | null;
+  testMode: boolean;
+  // Requirements Stripe is waiting for from the restaurant.
+  requirementsDue: number;
+  // When the status was last read back from Stripe (ISO 8601), if ever.
+  lastCheckedAt: string | null;
+  // Customer payments are not available yet (ESP-04 M1): always false.
+  paymentsEnabled: false;
+}
+
+// POST /api/v1/admin/payments/account/onboarding (payments.connect; no
+// body). Creates the restaurant's account if it has none — at most one per
+// business, never a duplicate — and returns Stripe's hosted onboarding page.
+export interface AdminPaymentOnboardingResponse {
+  url: string;
+}
+
+// Refusal codes.
+export const PAYMENTS_PROVIDER_UNAVAILABLE = "PAYMENTS_PROVIDER_UNAVAILABLE";
+export const PAYMENT_ACCOUNT_OWNER_ONLY = "PAYMENT_ACCOUNT_OWNER_ONLY";
+// An earlier account request was never completed and is past the provider's
+// idempotency window: support checks it (never a silent second account).
+export const PAYMENT_ACCOUNT_NEEDS_SUPPORT = "PAYMENT_ACCOUNT_NEEDS_SUPPORT";

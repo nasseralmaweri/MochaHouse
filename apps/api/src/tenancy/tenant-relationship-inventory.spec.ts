@@ -188,6 +188,8 @@ const APPROVED_GLOBAL_MODELS = [
   'BillingPolicy',
   'BillingTrialClaim',
   'BillingProviderEvent',
+  // ESP-04 M1 — restaurant-payments (Connect) webhook events.
+  'RestaurantPaymentProviderEvent',
   // SC3b — Checkout sessions and reconciliation cases.
   'BillingCheckoutSession',
   'BillingReconciliationCase',
@@ -235,6 +237,8 @@ const EXTERNAL_IDENTIFIER_COLUMNS: Readonly<Record<string, readonly string[]>> =
       'externalSubscriptionId',
       'externalCustomerId',
     ],
+    // ESP-04 M1 — the Connect provider's event id and connected-account id.
+    RestaurantPaymentProviderEvent: ['externalEventId', 'externalAccountId'],
     // SC3d-1 — the provider subscription item, invoice and schedule a plan
     // change concerns.
     BillingPlanChange: [
@@ -326,6 +330,8 @@ const PLATFORM_OPERATOR_MODELS = [
   'BillingPolicy',
   'BillingTrialClaim',
   'BillingProviderEvent',
+  // ESP-04 M1 — restaurant-payments (Connect) webhook events.
+  'RestaurantPaymentProviderEvent',
   // SC3b — Checkout sessions and reconciliation cases.
   'BillingCheckoutSession',
   'BillingReconciliationCase',
@@ -490,8 +496,9 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    // ESP-03 PR 8 added FinancialHold (5 composite foreign keys).
-    expect(relationsBetweenBusinessRecords).toHaveLength(108);
+    // ESP-03 PR 8 added FinancialHold (5 composite foreign keys); ESP-04 M1
+    // TenantPaymentAccount (1).
+    expect(relationsBetweenBusinessRecords).toHaveLength(109);
     expect(
       relationsBetweenBusinessRecords
         .filter((r) => !isTenantEnforced(r))
@@ -618,6 +625,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'PromotionProduct.productId',
       'PromotionProduct.promotionId',
       'TenantBillingContact.internalUserId',
+      'TenantPaymentAccount.connectedByInternalUserId',
     ]);
   });
 
@@ -645,7 +653,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(plainIdColumns).toHaveLength(15);
+    // ESP-04 M1 added TenantPaymentAccount.externalAccountId.
+    expect(plainIdColumns).toHaveLength(16);
   });
 
   it('classifies every JSON column on business-owned records', () => {
@@ -746,13 +755,13 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       external: count((r) => r.kind === 'external-identifier'),
       total: TENANT_RELATIONSHIPS.length,
     }).toEqual({
-      compositeWithForeignKey: 108,
+      compositeWithForeignKey: 109,
       compositeWithoutForeignKey: 0,
       historicalSnapshot: 8,
       polymorphic: 4,
       json: 8,
-      external: 3,
-      total: 131,
+      external: 4,
+      total: 133,
     });
     // Optional relationships are present and marked optional.
     const optionalForeignKeys = relationsBetweenBusinessRecords.filter(

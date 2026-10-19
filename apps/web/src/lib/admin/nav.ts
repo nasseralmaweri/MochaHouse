@@ -249,6 +249,12 @@ export function adminNavItems(
     items.push({ key: "billing", label: "Billing", href: "/admin/billing" });
   }
 
+  // ESP-04 M1 — the restaurant's own Stripe account for customer payments
+  // (payments.connect: the owner). The page and the API re-check.
+  if (can(capabilities, "payments.connect")) {
+    items.push({ key: "payments", label: "Payments", href: "/admin/payments" });
+  }
+
   return items;
 }
 
@@ -321,7 +327,7 @@ const NAV_GROUPS: ReadonlyArray<{
     key: "admin",
     label: null,
     tier: "footer",
-    itemKeys: ["getting-started", "billing", "administration"],
+    itemKeys: ["getting-started", "billing", "payments", "administration"],
   },
 ];
 

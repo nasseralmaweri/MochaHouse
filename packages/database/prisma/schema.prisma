@@ -79,6 +79,8 @@ model Tenant {
   checkoutSnapshots                    CheckoutSnapshot[]
   checkoutSessions                     CheckoutSession[]
   financialHolds                       FinancialHold[]
+  // ESP-04 M1 — the restaurant's connected payment account (Stripe Connect).
+  paymentAccount                       TenantPaymentAccount?
   paymentReconciliationEvents          PaymentReconciliationEvent[]
   orderClosures                        OrderClosure[]
   orderRefundObligations               OrderRefundObligation[]
@@ -1482,6 +1484,71 @@ model FinancialHold {
   @@index([tenantId])
 }
 
+// ESP-04 M1 — the restaurant's own connected payment account (Stripe Connect,
+// Accounts v2). Restaurant CUSTOMER payments only — never CENTERIVO's SaaS
+// billing. At most one per business (unique tenantId); an account belongs to
+// one business (unique externalAccountId) and, once recorded, never changes
+// (guard trigger). Everything below externalAccountId is what Stripe last
+// reported (dashboard, fee and loss responsibilities, card-payments capability
+// and outstanding requirements) — never inferred from an onboarding redirect.
+// Test mode only for now (CHECK NOT livemode). Never deleted.
+model TenantPaymentAccount {
+  id                        String       @id @default(uuid(7))
+  // "stripe" (CHECK).
+  provider                  String
+  livemode                  Boolean      @default(false)
+  // acct_… once Stripe has created it; null while it is being created.
+  externalAccountId         String?      @unique
+  // As read back from Stripe.
+  dashboard                 String?
+  feesCollector             String?
+  lossesCollector           String?
+  // active | pending | restricted | unsupported (CHECK).
+  cardPaymentsStatus        String?
+  // currently_due | eventually_due | past_due — the soonest requirement.
+  requirementsStatus        String?
+  // Requirements waiting for the restaurant.
+  requirementsDue           Int          @default(0)
+  closed                    Boolean      @default(false)
+  lastSyncedAt              DateTime?
+  // When the provider account was first requested (before its id was known):
+  // past the idempotency window a missing id is never retried automatically.
+  creationRequestedAt       DateTime?
+  connectedByInternalUserId String
+  connectedBy               InternalUser @relation(fields: [tenantId, connectedByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  createdAt                 DateTime     @default(now())
+  updatedAt                 DateTime     @updatedAt
+
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+}
+
+// ESP-04 M1 — each verified restaurant-payments (Connect) webhook event, once
+// (unique per provider event id), with what was done with it. Platform-level:
+// an event may name an account that belongs to no business here. Only the
+// payload's SHA-256 digest is stored.
+model RestaurantPaymentProviderEvent {
+  id                String    @id @default(uuid(7))
+  // "stripe" | "fake" (CHECK).
+  provider          String
+  externalEventId   String
+  type              String
+  livemode          Boolean
+  externalAccountId String?
+  payloadDigest     String
+  // RECEIVED | PROCESSED | IGNORED | FAILED (CHECK).
+  status            String    @default("RECEIVED")
+  outcome           String?
+  attempts          Int       @default(0)
+  receivedAt        DateTime  @default(now())
+  processedAt       DateTime?
+
+  @@unique([provider, externalEventId])
+  @@index([externalAccountId])
+}
+
 // ESP-03 PR 6 — a server-owned checkout session: the identity a food-order
 // payment and every retry of it are bound to. Created by the server for one
 // business, one location and (when signed in) one customer; the caller holds
@@ -2158,14 +2225,16 @@ model InternalUser {
   // AuthorizationService can evaluate every grant within one trusted tenant
   // boundary. No default: every existing row was already Tenant #1 (the
   // single-tenant era's only tenant).
-  tenantId String
-  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-
-  @@unique([tenantId, externalProvider, externalSubject])
-  @@unique([tenantId, email])
+  tenantId                 String
+  tenant                   Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   // Security 4C-2 — composite tenant key: lets child tables reference
   // (tenantId, id) so the database itself can refuse a cross-business link
   // (composite foreign keys arrive in Security 4C-3).
+  // ESP-04 M1 — the restaurant payment account this owner connected.
+  connectedPaymentAccounts TenantPaymentAccount[]
+
+  @@unique([tenantId, externalProvider, externalSubject])
+  @@unique([tenantId, email])
   @@unique([tenantId, id])
   @@index([tenantId])
   // Milestone S0F — the identity -> memberships lookup runs BEFORE any

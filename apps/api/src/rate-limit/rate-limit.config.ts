@@ -71,6 +71,10 @@ export type PolicyName =
   // billing-provider webhooks.
   | 'billing-checkout'
   | 'billing-webhook'
+  // ESP-04 M1 — the owner connecting the restaurant's Stripe account, and
+  // restaurant-payments (Connect) webhooks.
+  | 'payments-onboarding'
+  | 'payments-connect-webhook'
   | 'account-recovery'
   | 'account-verification'
   // SC4a — business owner self-service registration (no tenant: the tenant
@@ -344,6 +348,38 @@ const DEFAULTS: Record<PolicyName, PolicyDefault> = {
         key: ['tenant'],
         limit: 30,
         windowSeconds: HOUR,
+      },
+    ],
+  },
+  // ESP-04 M1 — each onboarding link or status refresh calls Stripe: an
+  // owner needs a handful an hour.
+  'payments-onboarding': {
+    scopes: [
+      {
+        name: 'ip',
+        key: ['tenant', 'ip'],
+        limit: 20,
+        windowSeconds: HOUR,
+      },
+      {
+        name: 'tenant',
+        key: ['tenant'],
+        limit: 30,
+        windowSeconds: HOUR,
+      },
+    ],
+  },
+  // ESP-04 M1 — signed Connect webhooks: generous (Stripe retries and
+  // bursts across every restaurant), only a ceiling against floods.
+  'payments-connect-webhook': {
+    scopes: [
+      {
+        name: 'ip',
+        // No business context on this route: the tenant part is the shared
+        // placeholder, as on the billing webhooks.
+        key: ['tenant', 'ip'],
+        limit: 600,
+        windowSeconds: 10 * 60,
       },
     ],
   },

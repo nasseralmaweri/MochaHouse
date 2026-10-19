@@ -84,6 +84,7 @@ describe('capability presentation (Milestone 5E)', () => {
         'Approvals',
         'Reports',
         'Billing',
+        'Payments',
         'Administration',
       ]);
       expect(groups.find((g) => g.group === 'Customers')?.items).toEqual([

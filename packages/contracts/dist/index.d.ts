@@ -1944,7 +1944,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "orders.cancel", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.create", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "notifications.routing.view", "notifications.routing.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide", "reports.view", "billing.view", "billing.manage"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "orders.cancel", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.create", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "notifications.routing.view", "notifications.routing.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide", "reports.view", "billing.view", "billing.manage", "payments.connect"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export interface BuiltInInternalRole {
     key: string;
@@ -3420,4 +3420,21 @@ export declare const CHECKOUT_SESSION_EXPIRED = "CHECKOUT_SESSION_EXPIRED";
 export declare const CHECKOUT_CHANGED_DURING_PAYMENT = "CHECKOUT_CHANGED_DURING_PAYMENT";
 export declare const CHECKOUT_ALREADY_COMPLETED = "CHECKOUT_ALREADY_COMPLETED";
 export declare const CHECKOUT_RESOURCE_UNAVAILABLE = "CHECKOUT_RESOURCE_UNAVAILABLE";
+export declare const PAYMENT_ACCOUNT_STATES: readonly ["NOT_CONNECTED", "SETUP_IN_PROGRESS", "UNDER_REVIEW", "ACTION_REQUIRED", "READY", "NOT_SUPPORTED", "CLOSED", "CONFIGURATION_MISMATCH"];
+export type PaymentAccountState = (typeof PAYMENT_ACCOUNT_STATES)[number];
+export interface AdminPaymentAccountResponse {
+    providerAvailable: boolean;
+    state: PaymentAccountState;
+    accountId: string | null;
+    testMode: boolean;
+    requirementsDue: number;
+    lastCheckedAt: string | null;
+    paymentsEnabled: false;
+}
+export interface AdminPaymentOnboardingResponse {
+    url: string;
+}
+export declare const PAYMENTS_PROVIDER_UNAVAILABLE = "PAYMENTS_PROVIDER_UNAVAILABLE";
+export declare const PAYMENT_ACCOUNT_OWNER_ONLY = "PAYMENT_ACCOUNT_OWNER_ONLY";
+export declare const PAYMENT_ACCOUNT_NEEDS_SUPPORT = "PAYMENT_ACCOUNT_NEEDS_SUPPORT";
 //# sourceMappingURL=index.d.ts.map

@@ -244,6 +244,8 @@ const GLOBAL_TABLES = [
   'BillingPolicy',
   'BillingTrialClaim',
   'BillingProviderEvent',
+  // ESP-04 M1 — restaurant-payments (Connect) webhook events.
+  'RestaurantPaymentProviderEvent',
   'BillingCheckoutSession',
   'BillingReconciliationCase',
   // SC3c-3
