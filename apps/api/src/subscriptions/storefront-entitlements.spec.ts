@@ -8,7 +8,6 @@ import type { App } from 'supertest/types';
 import {
   FEATURE_NOT_AVAILABLE,
   STOREFRONT_FEATURE_KEYS,
-  type CheckoutRequest,
   type GiftCardPurchaseIntentResponse,
   type PurchaseGiftCardResponse,
   type StorefrontFeaturesResponse,
@@ -58,6 +57,11 @@ import {
   hashGiftCardCode,
 } from '../gift-cards/infrastructure/gift-card-code';
 import { SubscriptionsModule } from './subscriptions.module';
+import {
+  attemptsOfCheckout,
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../test/checkout-session';
 
 // SC2b — customer-facing entitlement enforcement, end to end in a SCRATCH
 // database (it creates businesses and changes their subscriptions, which the
@@ -325,10 +329,10 @@ describe('SC2b storefront entitlements (integration, scratch database)', () => {
 
   function order(
     shop: Shop,
-    over: Partial<CheckoutRequest> = {},
-  ): CheckoutRequest {
+    over: Partial<LabelledCheckoutRequest> = {},
+  ): LabelledCheckoutRequest {
     return {
-      idempotencyKey: `sc2b_${randomUUID()}`,
+      clientRef: `sc2b_${randomUUID()}`,
       locationId: shop.locationId,
       guest: { name: 'SC2b Guest', phone: '5551234567' },
       lines: [{ productId: shop.productId, quantity: 1, selections: [] }],
@@ -337,8 +341,17 @@ describe('SC2b storefront entitlements (integration, scratch database)', () => {
   }
 
   const checkoutOf = (app: INestApplication<App>) => app.get(CheckoutService);
-  const attemptFor = (idempotencyKey: string) =>
-    prisma.paymentAttempt.findUnique({ where: { idempotencyKey } });
+  // ESP-03 PR 6 — the newest payment attempt of a labelled checkout, and a
+  // gift-card purchase's attempt (keys are server-generated).
+  const attemptFor = (clientRef: string) =>
+    prisma.paymentAttempt.findFirst({
+      where: attemptsOfCheckout(clientRef),
+      orderBy: { createdAt: 'desc' },
+    });
+  const giftAttemptFor = (purchaseId: string) =>
+    prisma.paymentAttempt.findFirst({
+      where: { giftCardPurchase: { id: purchaseId } },
+    });
 
   async function expectFeatureRefusal(
     promise: Promise<unknown>,
@@ -565,16 +578,19 @@ describe('SC2b storefront entitlements (integration, scratch database)', () => {
       .expect(403);
     expect(refusedOptions.body).toMatchObject({ feature: 'giftcards' });
 
-    const idempotencyKey = randomUUID();
+    const purchasesBefore = await prisma.giftCardPurchase.count({
+      where: { tenantId: CORE },
+    });
     await request(core.getHttpServer())
       .post('/api/v1/gift-cards/purchase-intents')
       .send({
-        idempotencyKey,
         amountMinorUnits: 2500,
         purchaserEmail: `buyer-${run}@example.com`,
       })
       .expect(403);
-    expect(await attemptFor(idempotencyKey)).toBeNull();
+    expect(
+      await prisma.giftCardPurchase.count({ where: { tenantId: CORE } }),
+    ).toBe(purchasesBefore);
 
     const card = await giftCard(CORE, 600);
     const balance = await request(core.getHttpServer())
@@ -583,7 +599,8 @@ describe('SC2b storefront entitlements (integration, scratch database)', () => {
       .expect(200);
     expect(balance.body).toMatchObject({ found: true, balanceMinorUnits: 600 });
 
-    const placed = await checkoutOf(core).checkout(
+    const placed = await submitCheckout(
+      checkoutOf(core),
       order(coreShop, { giftCardCode: card.code }),
       undefined,
       tenantContextFor(CORE),
@@ -598,18 +615,19 @@ describe('SC2b storefront entitlements (integration, scratch database)', () => {
   it('gift-card purchase: removed after the intent but before the charge is refused with nothing charged; a purchase charged before removal replays normally', async () => {
     const http = () => request(full.getHttpServer());
     const startIntent = async () => {
-      const idempotencyKey = randomUUID();
       const intent = (
         await http()
           .post('/api/v1/gift-cards/purchase-intents')
           .send({
-            idempotencyKey,
             amountMinorUnits: 2500,
             purchaserEmail: `buyer-${run}@example.com`,
           })
           .expect(201)
       ).body as GiftCardPurchaseIntentResponse;
-      return { idempotencyKey, credential: intent.recoveryCredential };
+      return {
+        purchaseId: intent.purchaseId,
+        credential: intent.recoveryCredential,
+      };
     };
 
     // Removed between the two steps: refused before the charge claim.
@@ -622,12 +640,12 @@ describe('SC2b storefront entitlements (integration, scratch database)', () => {
     await http()
       .post('/api/v1/gift-cards/purchase')
       .send({
-        idempotencyKey: pending.idempotencyKey,
+        purchaseId: pending.purchaseId,
         recoveryCredential: pending.credential,
       })
       .expect(403);
     expect(charge).not.toHaveBeenCalled();
-    const held = await attemptFor(pending.idempotencyKey);
+    const held = await giftAttemptFor(pending.purchaseId);
     expect(held).toMatchObject({ status: 'PENDING', paymentState: 'NOT_SENT' });
 
     // Re-entitled: the same intent completes, charged exactly once.
@@ -636,7 +654,7 @@ describe('SC2b storefront entitlements (integration, scratch database)', () => {
       await http()
         .post('/api/v1/gift-cards/purchase')
         .send({
-          idempotencyKey: pending.idempotencyKey,
+          purchaseId: pending.purchaseId,
           recoveryCredential: pending.credential,
         })
         .expect(201)
@@ -651,7 +669,7 @@ describe('SC2b storefront entitlements (integration, scratch database)', () => {
       await http()
         .post('/api/v1/gift-cards/purchase')
         .send({
-          idempotencyKey: pending.idempotencyKey,
+          purchaseId: pending.purchaseId,
           recoveryCredential: pending.credential,
         })
         .expect(201)
@@ -673,21 +691,26 @@ describe('SC2b storefront entitlements (integration, scratch database)', () => {
 
     const withCoupon = order(coreShop, { couponCode: code });
     await expectFeatureRefusal(
-      checkoutOf(core).checkout(withCoupon, customer.id, tenant),
+      submitCheckout(checkoutOf(core), withCoupon, customer.id, tenant),
       'promotions',
     );
-    expect(await attemptFor(withCoupon.idempotencyKey)).toBeNull();
+    expect(await attemptFor(withCoupon.clientRef)).toBeNull();
 
     const withReward = order(coreShop, { loyaltyRewardId: rewardId });
     await expectFeatureRefusal(
-      checkoutOf(core).checkout(withReward, customer.id, tenant),
+      submitCheckout(checkoutOf(core), withReward, customer.id, tenant),
       'loyalty',
     );
-    expect(await attemptFor(withReward.idempotencyKey)).toBeNull();
+    expect(await attemptFor(withReward.clientRef)).toBeNull();
 
     // Core ordering and payment keep working, at full price, earning nothing.
     const plain = order(coreShop);
-    const placed = await checkoutOf(core).checkout(plain, customer.id, tenant);
+    const placed = await submitCheckout(
+      checkoutOf(core),
+      plain,
+      customer.id,
+      tenant,
+    );
     const placedOrder = await prisma.order.findUniqueOrThrow({
       where: { id: placed.orderId },
     });
@@ -696,7 +719,7 @@ describe('SC2b storefront entitlements (integration, scratch database)', () => {
       promotionDiscountMinorUnits: 0,
       rewardDiscountMinorUnits: 0,
     });
-    expect((await attemptFor(plain.idempotencyKey))?.amount).toBe(1000);
+    expect((await attemptFor(plain.clientRef))?.amount).toBe(1000);
     expect(await balanceOf(customer.customerId)).toBe(50);
     expect(await ledgerCount(customer.customerId)).toBe(0);
 
@@ -752,14 +775,15 @@ describe('SC2b storefront entitlements (integration, scratch database)', () => {
       couponCode: code,
       loyaltyRewardId: rewardId,
     });
-    const placed = await checkoutOf(full).checkout(
+    const placed = await submitCheckout(
+      checkoutOf(full),
       submission,
       customer.id,
       tenant,
     );
     expect(charge).toHaveBeenCalledTimes(1);
 
-    const attempt = await attemptFor(submission.idempotencyKey);
+    const attempt = await attemptFor(submission.clientRef);
     // $10.00 - $2.00 coupon - $3.00 reward = $5.00 charged.
     expect(attempt).toMatchObject({
       status: 'SUCCEEDED',
@@ -786,7 +810,8 @@ describe('SC2b storefront entitlements (integration, scratch database)', () => {
         where: { subscriberTenantId: FULL },
       }),
     ).toBe(0);
-    const replay = await checkoutOf(full).checkout(
+    const replay = await submitCheckout(
+      checkoutOf(full),
       submission,
       customer.id,
       tenant,
@@ -816,13 +841,14 @@ describe('SC2b storefront entitlements (integration, scratch database)', () => {
     await unsubscribe(FULL);
     const submission = order(fullShop, { couponCode: code });
     await expectFeatureRefusal(
-      checkoutOf(full).checkout(submission, customer.id, tenant),
+      submitCheckout(checkoutOf(full), submission, customer.id, tenant),
       'promotions',
     );
-    expect(await attemptFor(submission.idempotencyKey)).toBeNull();
+    expect(await attemptFor(submission.clientRef)).toBeNull();
     expect(await balanceOf(customer.customerId)).toBe(40);
 
-    const unearned = await checkoutOf(full).checkout(
+    const unearned = await submitCheckout(
+      checkoutOf(full),
       order(fullShop),
       customer.id,
       tenant,
@@ -831,7 +857,12 @@ describe('SC2b storefront entitlements (integration, scratch database)', () => {
     expect(await balanceOf(customer.customerId)).toBe(40);
 
     await subscribe(FULL);
-    await checkoutOf(full).checkout(order(fullShop), customer.id, tenant);
+    await submitCheckout(
+      checkoutOf(full),
+      order(fullShop),
+      customer.id,
+      tenant,
+    );
     // $10.00 at 1 Bean per dollar.
     expect(await balanceOf(customer.customerId)).toBe(50);
   });

@@ -10,6 +10,15 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import {
+  CHECKOUT_ALREADY_COMPLETED,
+  CHECKOUT_CHANGED_DURING_PAYMENT,
+  CHECKOUT_SESSION_EXPIRED,
+  CHECKOUT_SESSION_INVALID,
+  CLIENT_PAYMENT_KEY_NOT_ACCEPTED,
+  type CheckoutSessionRequest,
+  type CheckoutSessionResponse,
+} from '@mocha-house/contracts';
 import type {
   CheckoutQuoteRequest,
   CheckoutQuoteResponse,
@@ -50,6 +59,15 @@ import {
 } from '../../gift-cards/application/gift-card-redemption.service';
 import type { CustomerIdentity } from '../../customer-auth/infrastructure/customer-identity';
 import { assertValidCheckoutLines } from './validate-checkout-lines';
+import {
+  CHECKOUT_SESSION_NEW_ATTEMPTS_MS,
+  CHECKOUT_TOKEN_LIFETIME_MS,
+  CHECKOUT_TOKEN_PATTERN,
+  checkoutFingerprint,
+  generateCheckoutToken,
+  generatePaymentKey,
+  hashCheckoutToken,
+} from './checkout-session';
 import {
   buildCheckoutSnapshot,
   CHECKOUT_SNAPSHOT_VERSION,
@@ -105,6 +123,31 @@ const ORDER_INCLUDE = {
 } satisfies Prisma.OrderInclude;
 
 type PaymentAttemptRow = Prisma.PaymentAttemptGetPayload<Record<string, never>>;
+type CheckoutSessionRow = Prisma.CheckoutSessionGetPayload<
+  Record<string, never>
+>;
+
+// ESP-03 PR 6 — refusals.
+function invalidSession(): ConflictException {
+  return new ConflictException({
+    code: CHECKOUT_SESSION_INVALID,
+    message:
+      'This checkout is no longer valid. Refresh the page to start again. If you already paid, do not pay again — check your order or contact the restaurant.',
+  });
+}
+
+function clientPaymentKeyRefused(): BadRequestException {
+  return new BadRequestException({
+    code: CLIENT_PAYMENT_KEY_NOT_ACCEPTED,
+    message:
+      'This checkout page is out of date. Refresh the page and place your order again — nothing was charged.',
+  });
+}
+
+function sameFingerprint(stored: string | null, presented: string): boolean {
+  if (stored === null || stored.length !== presented.length) return false;
+  return timingSafeEqual(Buffer.from(stored), Buffer.from(presented));
+}
 
 // ESP-03 PR 4 — the payment behind an order must be definitively charged.
 class PaymentNotConfirmedError extends ConflictException {
@@ -167,22 +210,14 @@ export class CheckoutService {
   // must belong to it (checked before pricing, before any PaymentAttempt
   // exists and before any charge), the PaymentAttempt copies that
   // Location's tenant, and the Order, its lines, its first status-history
-  // row and its outbox event copy the attempt's. An existing attempt for
-  // this idempotency key is only ever replayed for its own tenant.
+  // row and its outbox event copy the attempt's. ESP-03 PR 6 — a checkout
+  // session is only ever used by its own business, location and customer.
   async checkout(
     request: CheckoutRequest,
     customerIdentity: CustomerIdentity | undefined,
     tenant: TenantContext,
   ): Promise<OrderConfirmation> {
     this.validateRequestShape(request);
-
-    const existingAttempt = await this.prisma.paymentAttempt.findUnique({
-      where: { idempotencyKey: request.idempotencyKey },
-    });
-
-    if (existingAttempt) {
-      return this.replayOwned(existingAttempt, tenant, request.locationId);
-    }
 
     // Resolved once, up front, alongside the other pre-payment steps —
     // never re-derived inside the transaction or on replay, so a
@@ -200,6 +235,57 @@ export class CheckoutService {
       request.locationId,
       tenant,
     );
+
+    // ESP-03 PR 6 — the server-owned checkout session this request belongs
+    // to: this business, this location and this customer (or guest), or
+    // nothing is revealed and nothing is charged. Every retry of this
+    // checkout presents the same token. Checked after the request itself,
+    // the customer and the location, so those answer exactly as before.
+    if (
+      typeof request.checkoutToken !== 'string' ||
+      !CHECKOUT_TOKEN_PATTERN.test(request.checkoutToken)
+    ) {
+      throw invalidSession();
+    }
+    const session = await this.requireSession(
+      request.checkoutToken,
+      tenant,
+      customerId,
+    );
+    if (session.locationId !== request.locationId) {
+      throw invalidSession();
+    }
+    const rewardIdInput =
+      typeof request.loyaltyRewardId === 'string' &&
+      request.loyaltyRewardId.trim().length > 0
+        ? request.loyaltyRewardId.trim()
+        : null;
+    const fingerprint = checkoutFingerprint(request.checkoutToken, {
+      tenantId: session.tenantId,
+      locationId: request.locationId,
+      customerId,
+      guest: request.guest,
+      lines: request.lines,
+      rewardId: rewardIdInput,
+      couponCode: normalizeRequestCoupon(request.couponCode),
+      giftCardCode: normalizeRequestGiftCardCode(request.giftCardCode),
+    });
+
+    // A payment for this checkout that may be charging, is held or unknown,
+    // or succeeded answers every retry (the stored outcome, never a new
+    // charge). Only after a definitively unsuccessful one may a new attempt
+    // start — and only for a session still accepting new payments.
+    const live = await this.liveAttemptOf(session);
+    if (live) {
+      return this.answerForLiveAttempt(live, fingerprint);
+    }
+    if (session.expiresAt.getTime() <= Date.now()) {
+      throw new ConflictException({
+        code: CHECKOUT_SESSION_EXPIRED,
+        message:
+          'This checkout has expired. Refresh the page to start again — nothing was charged for it.',
+      });
+    }
 
     const menu = await this.locationsService.findMenu(
       request.locationId,
@@ -346,7 +432,8 @@ export class CheckoutService {
       features,
     });
     const created = await this.createPaymentAttempt(
-      request.idempotencyKey,
+      session,
+      fingerprint,
       request.locationId,
       chargeAmount,
       priced.currency,
@@ -355,12 +442,10 @@ export class CheckoutService {
     );
 
     if (!created.wasCreatedByThisRequest) {
-      // Another concurrent request with the same idempotency key won the
-      // race to create the attempt row — never charge twice for one key,
-      // fall back to whatever that request's outcome resolves to (for this
-      // tenant only — the winner is ownership-checked exactly like an
-      // attempt found up front).
-      return this.replayOwned(created.attempt, tenant, request.locationId);
+      // A concurrent submission for this checkout created its live attempt
+      // first — never charge twice for one checkout: answer with that
+      // attempt (or refuse a different checkout) exactly like a retry.
+      return this.answerForLiveAttempt(created.attempt, fingerprint);
     }
 
     const attempt = created.attempt;
@@ -372,14 +457,27 @@ export class CheckoutService {
       // rest of the order flow, and replay, are completely unchanged. A
       // full-gift-card order still records its REDEMPTION transactionally
       // in createOrderTransactionally below.
-      await this.prisma.paymentAttempt.update({
-        where: { id: attempt.id },
+      // ESP-03 PR 6 — only from NOT_SENT (the same claim a charge needs), so
+      // an attempt closed meanwhile is never turned into a success.
+      const claimed = await this.prisma.paymentAttempt.updateMany({
+        where: {
+          id: attempt.id,
+          tenantId: attempt.tenantId,
+          status: 'PENDING',
+          paymentState: 'NOT_SENT',
+        },
         data: {
           status: 'SUCCEEDED',
           paymentState: 'SUCCEEDED',
           providerReference: 'no-charge',
         },
       });
+      if (claimed.count !== 1) {
+        const current = await this.prisma.paymentAttempt.findUniqueOrThrow({
+          where: { id: attempt.id },
+        });
+        return this.replay(current);
+      }
     } else {
       // ESP-03 PR 2 — CHARGING is committed before the provider is called;
       // a throw / timeout / pending result is held (never FAILED, never
@@ -476,6 +574,13 @@ export class CheckoutService {
       if (order) {
         return this.toConfirmation(order);
       }
+      // ESP-03 PR 6 — a confirmed payment with neither its order nor its
+      // saved checkout is flagged for people (with a reconciliation case),
+      // never left silent.
+      await this.recordFulfilmentFailure(
+        attempt,
+        new Error('The saved checkout for this payment is missing.'),
+      );
       throw new ConflictException(manualReviewMessage(attempt.id));
     }
 
@@ -918,14 +1023,15 @@ export class CheckoutService {
   }
 
   private validateRequestShape(request: CheckoutRequest): void {
+    // ESP-03 PR 6 — payment keys are generated by the server only. A client
+    // that still sends one (an out-of-date checkout page) is refused before
+    // anything happens.
     if (
-      typeof request.idempotencyKey !== 'string' ||
-      request.idempotencyKey.trim().length < 8 ||
-      request.idempotencyKey.length > 200
+      request &&
+      typeof request === 'object' &&
+      Object.prototype.hasOwnProperty.call(request, 'idempotencyKey')
     ) {
-      throw new BadRequestException(
-        'A valid idempotencyKey (8-200 characters) is required.',
-      );
+      throw clientPaymentKeyRefused();
     }
     if (
       typeof request.locationId !== 'string' ||
@@ -987,34 +1093,254 @@ export class CheckoutService {
     }
   }
 
-  // Milestone S0D-2C-1 — idempotency keys are still GLOBALLY unique
-  // (tenant-scoping them is S0D-3), so a key can name another tenant's
-  // attempt. That attempt is refused BEFORE anything about it is revealed —
-  // its status, its failure reason, and above all its Order confirmation
-  // (which carries the order's accessToken and guest details) — with one
-  // generic conflict that says nothing about what the key belongs to.
-  private async replayOwned(
-    attempt: PaymentAttemptRow,
+  // ESP-03 PR 6 — start, or resume, the checkout session a food-order
+  // payment and its retries are bound to. A token that is still recognised
+  // for this business, location and customer is kept: its held or completed
+  // payment is reported (never charged again), and a session still accepting
+  // payments is reused. Otherwise a new session starts. Never charges.
+  async startSession(
+    request: CheckoutSessionRequest,
+    customerIdentity: CustomerIdentity | undefined,
     tenant: TenantContext,
-    requestedLocationId: string,
+  ): Promise<CheckoutSessionResponse> {
+    if (
+      !request ||
+      typeof request.locationId !== 'string' ||
+      request.locationId.trim().length === 0
+    ) {
+      throw new BadRequestException('locationId is required.');
+    }
+    if (Object.prototype.hasOwnProperty.call(request, 'idempotencyKey')) {
+      throw clientPaymentKeyRefused();
+    }
+    const customerId = await this.resolveCustomerId(customerIdentity, tenant);
+    const tenantId = await this.requireLocationTenant(
+      request.locationId,
+      tenant,
+    );
+    const presented =
+      typeof request.checkoutToken === 'string' &&
+      CHECKOUT_TOKEN_PATTERN.test(request.checkoutToken)
+        ? request.checkoutToken
+        : null;
+    if (presented) {
+      const existing = await this.findSession(presented, tenant, customerId);
+      if (existing && existing.locationId === request.locationId) {
+        const live = await this.liveAttemptOf(existing);
+        if (live) {
+          const order =
+            live.status === 'SUCCEEDED'
+              ? await this.prisma.order.findFirst({
+                  where: { paymentAttemptId: live.id, tenantId },
+                  include: ORDER_INCLUDE,
+                })
+              : null;
+          return {
+            checkoutToken: presented,
+            state: order ? 'COMPLETED' : 'IN_PROGRESS',
+            acceptsNewPaymentsUntil: existing.expiresAt.toISOString(),
+            confirmation: order ? this.toConfirmation(order) : null,
+          };
+        }
+        if (existing.expiresAt.getTime() > Date.now()) {
+          return {
+            checkoutToken: presented,
+            state: 'OPEN',
+            acceptsNewPaymentsUntil: existing.expiresAt.toISOString(),
+            confirmation: null,
+          };
+        }
+      }
+    }
+    await this.purgeUnusedSessions();
+    const checkoutToken = generateCheckoutToken();
+    const now = Date.now();
+    const created = await this.prisma.checkoutSession.create({
+      data: {
+        tenantId,
+        locationId: request.locationId,
+        customerId,
+        customerBound: customerId !== null,
+        tokenHash: hashCheckoutToken(checkoutToken),
+        createdAt: new Date(now),
+        expiresAt: new Date(now + CHECKOUT_SESSION_NEW_ATTEMPTS_MS),
+        tokenExpiresAt: new Date(now + CHECKOUT_TOKEN_LIFETIME_MS),
+      },
+      select: { expiresAt: true },
+    });
+    return {
+      checkoutToken,
+      state: 'OPEN',
+      acceptsNewPaymentsUntil: created.expiresAt.toISOString(),
+      confirmation: null,
+    };
+  }
+
+  // The session a token names, only when it belongs to this business and
+  // this customer (or guest) and is still recognised; otherwise null.
+  private async findSession(
+    checkoutToken: string,
+    tenant: TenantContext,
+    customerId: string | null,
+  ): Promise<CheckoutSessionRow | null> {
+    const session = await this.prisma.checkoutSession.findUnique({
+      where: { tokenHash: hashCheckoutToken(checkoutToken) },
+    });
+    if (
+      !session ||
+      session.tenantId !== tenant.tenantId ||
+      session.customerId !== customerId ||
+      // A customer's session whose customer was removed is never a guest's.
+      (session.customerBound && session.customerId === null) ||
+      session.tokenExpiresAt.getTime() <= Date.now()
+    ) {
+      return null;
+    }
+    return session;
+  }
+
+  // Bounded housekeeping, best effort: sessions no longer recognised (past
+  // their token lifetime) that never had a payment attempt hold no payment
+  // record and are removed, a small batch at a time. A session with any
+  // payment attempt is always kept.
+  private async purgeUnusedSessions(): Promise<void> {
+    try {
+      await this.prisma.$executeRaw`
+        DELETE FROM "CheckoutSession" WHERE id IN (
+          SELECT s.id FROM "CheckoutSession" s
+          WHERE s."tokenExpiresAt" < now()
+            AND NOT EXISTS (
+              SELECT 1 FROM "PaymentAttempt" a
+              WHERE a."checkoutSessionId" = s.id AND a."tenantId" = s."tenantId"
+            )
+          LIMIT 50
+        )`;
+    } catch (error) {
+      this.logger.warn(
+        `checkout session housekeeping failed (${
+          error instanceof Error ? error.name : 'unknown error'
+        })`,
+      );
+    }
+  }
+
+  // Another business's, another customer's, an expired or an unknown
+  // session: one generic refusal that says nothing about which.
+  private async requireSession(
+    checkoutToken: string,
+    tenant: TenantContext,
+    customerId: string | null,
+  ): Promise<CheckoutSessionRow> {
+    const session = await this.findSession(checkoutToken, tenant, customerId);
+    if (!session) throw invalidSession();
+    return session;
+  }
+
+  // The session's live attempt: one that is not definitively unsuccessful
+  // (the database allows at most one). An attempt saved but never sent to
+  // the provider long after it was created is abandoned first — by a
+  // conditional update from NOT_SENT, which the charge claim also needs, so
+  // it can never race a real charge — and no longer counts.
+  private async liveAttemptOf(
+    session: CheckoutSessionRow,
+  ): Promise<PaymentAttemptRow | null> {
+    const live = await this.prisma.paymentAttempt.findFirst({
+      where: {
+        tenantId: session.tenantId,
+        checkoutSessionId: session.id,
+        status: { notIn: ['DECLINED', 'FAILED'] },
+      },
+    });
+    if (
+      live &&
+      live.status === 'PENDING' &&
+      live.paymentState === 'NOT_SENT' &&
+      Date.now() - live.createdAt.getTime() > STRANDED_ATTEMPT_MS
+    ) {
+      if (await this.abandonIfNeverSent(live)) return null;
+      // Changed meanwhile: claimed (live after all), or closed by a
+      // concurrent request (then it no longer counts).
+      const current = await this.prisma.paymentAttempt.findUnique({
+        where: { id: live.id },
+      });
+      return current &&
+        current.status !== 'DECLINED' &&
+        current.status !== 'FAILED'
+        ? current
+        : null;
+    }
+    // A charge claimed long ago that never recorded an outcome (the process
+    // stopped between the claim and the provider call, or the claim's
+    // acknowledgement was lost): it may or may not have been charged, so it
+    // is never abandoned — it is made visible to people instead.
+    if (
+      live &&
+      live.status === 'PENDING' &&
+      live.paymentState === 'CHARGING' &&
+      Date.now() - live.updatedAt.getTime() > STRANDED_ATTEMPT_MS
+    ) {
+      await openReconciliationCase(this.prisma, live.id, 'CHARGE_STRANDED', {
+        outcome: 'unknown',
+      });
+    }
+    return live;
+  }
+
+  // Closes an attempt that was never sent to the payment provider — by a
+  // conditional update from NOT_SENT, the same state the charge claim needs,
+  // so it can never race a real charge — and only then removes its saved
+  // checkout. False when the attempt was claimed or closed meanwhile.
+  private async abandonIfNeverSent(
+    attempt: PaymentAttemptRow,
+  ): Promise<boolean> {
+    const abandoned = await this.prisma.paymentAttempt.updateMany({
+      where: {
+        id: attempt.id,
+        tenantId: attempt.tenantId,
+        status: 'PENDING',
+        paymentState: 'NOT_SENT',
+      },
+      data: {
+        status: 'FAILED',
+        paymentState: 'ABANDONED',
+        failureReason: 'Abandoned before it was sent to the payment provider.',
+      },
+    });
+    if (abandoned.count !== 1) return false;
+    await this.discardSnapshot(attempt);
+    return true;
+  }
+
+  // A retry of this checkout while its payment is live: the same checkout is
+  // answered with that payment's stored outcome (never charged again); a
+  // changed checkout is refused — it never updates the saved order and never
+  // receives a different order.
+  private async answerForLiveAttempt(
+    live: PaymentAttemptRow,
+    fingerprint: string,
   ): Promise<OrderConfirmation> {
-    if (attempt.tenantId !== tenant.tenantId) {
-      throw new ConflictException(
-        'This idempotency key cannot be used. Start a new checkout.',
-      );
+    if (!sameFingerprint(live.requestFingerprint, fingerprint)) {
+      const order =
+        live.status === 'SUCCEEDED'
+          ? await this.prisma.order.findFirst({
+              where: { paymentAttemptId: live.id, tenantId: live.tenantId },
+              select: { id: true },
+            })
+          : null;
+      if (order) {
+        throw new ConflictException({
+          code: CHECKOUT_ALREADY_COMPLETED,
+          message:
+            'This checkout has already been paid for and its order placed. Your changes were not applied and nothing new was charged. To order again, start a new order.',
+        });
+      }
+      throw new ConflictException({
+        code: CHECKOUT_CHANGED_DURING_PAYMENT,
+        message:
+          'A payment for the earlier version of this order is still being processed. Your changes were not applied and nothing new was charged. Do not pay again.',
+      });
     }
-    // ESP-03 PR 2 — a key is bound to the request that created it. The
-    // Location is the part of that request persisted on the attempt; a
-    // replay naming a different one is a different request reusing the key
-    // and is refused before its outcome (or any order) is revealed.
-    // (Binding the cart / guest details too needs a persisted request
-    // fingerprint, which needs a schema change — deferred.)
-    if (attempt.locationId !== requestedLocationId) {
-      throw new ConflictException(
-        'This idempotency key was already used for a different checkout. Start a new checkout.',
-      );
-    }
-    return this.replay(attempt);
+    return this.replay(live);
   }
 
   private async replay(attempt: PaymentAttemptRow): Promise<OrderConfirmation> {
@@ -1030,19 +1356,21 @@ export class CheckoutService {
       // charging. Nothing was charged and nothing will be; its saved
       // checkout (guest contact) is removed and the customer starts again.
       // It is never charged from here.
+      // ESP-03 PR 6 — the saved checkout is only removed AFTER the attempt
+      // is closed by the conditional update from NOT_SENT (which the charge
+      // claim also needs), so a request that is merely slow can never be
+      // charged without its saved checkout.
       if (
         attempt.paymentState === 'NOT_SENT' &&
-        Date.now() - attempt.createdAt.getTime() > STRANDED_ATTEMPT_MS
+        Date.now() - attempt.createdAt.getTime() > STRANDED_ATTEMPT_MS &&
+        (await this.abandonIfNeverSent(attempt))
       ) {
-        await this.discardSnapshot(attempt);
         throw new ConflictException(
           'This checkout was interrupted before any payment was taken. ' +
             'Nothing was charged. Please start a new checkout.',
         );
       }
-      throw new ConflictException(
-        'A checkout with this idempotency key is already being processed.',
-      );
+      throw new ConflictException('This checkout is already being processed.');
     }
 
     if (attempt.status === 'DECLINED' || attempt.status === 'FAILED') {
@@ -1069,7 +1397,9 @@ export class CheckoutService {
       (await this.prisma.checkoutSnapshot.count({
         where: { tenantId: attempt.tenantId, paymentAttemptId: attempt.id },
       })) > 0;
-    if (hasSavedCheckout) {
+    // ESP-03 PR 6 — a session payment always had a saved checkout: one that
+    // is gone without its order is flagged for review by fulfilFromSnapshot.
+    if (hasSavedCheckout || attempt.checkoutSessionId !== null) {
       try {
         return await this.fulfilFromSnapshot(attempt);
       } catch (error) {
@@ -1097,9 +1427,7 @@ export class CheckoutService {
 
     // Payment succeeded and the order-creation transaction hasn't committed
     // (or failed) yet — genuinely still in progress, not an error.
-    throw new ConflictException(
-      'A checkout with this idempotency key is already being processed.',
-    );
+    throw new ConflictException('This checkout is already being processed.');
   }
 
   private async markReconciliationRequired(
@@ -1122,7 +1450,8 @@ export class CheckoutService {
   }
 
   private async createPaymentAttempt(
-    idempotencyKey: string,
+    session: CheckoutSessionRow,
+    requestFingerprint: string,
     locationId: string,
     amount: number,
     currency: string,
@@ -1132,14 +1461,36 @@ export class CheckoutService {
     | { wasCreatedByThisRequest: true; attempt: PaymentAttemptRow }
     | { wasCreatedByThisRequest: false; attempt: PaymentAttemptRow }
   > {
+    const findLive = (db: Prisma.TransactionClient | PrismaService) =>
+      db.paymentAttempt.findFirst({
+        where: {
+          tenantId: session.tenantId,
+          checkoutSessionId: session.id,
+          status: { notIn: ['DECLINED', 'FAILED'] },
+        },
+      });
     try {
       // ESP-03 PR 4 — one transaction: the attempt never exists without its
-      // saved checkout, and both are committed before any charge.
-      const attempt = await this.prisma.$transaction(async (tx) => {
+      // saved checkout, and both are committed before any charge. ESP-03
+      // PR 6 — the session row is locked first, so concurrent submissions
+      // for one checkout are serialised: only one creates its live attempt
+      // (the partial unique index enforces the same in the database).
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`
+          SELECT id FROM "CheckoutSession"
+          WHERE id = ${session.id} AND "tenantId" = ${session.tenantId}
+          FOR UPDATE`;
+        const raced = await findLive(tx);
+        if (raced) {
+          return { wasCreatedByThisRequest: false as const, attempt: raced };
+        }
         const row = await tx.paymentAttempt.create({
           data: {
             tenantId,
-            idempotencyKey,
+            // ESP-03 PR 6 — generated by the server, never by a client.
+            idempotencyKey: generatePaymentKey('ck'),
+            checkoutSessionId: session.id,
+            requestFingerprint,
             // The provider actually bound (audit: a simulated payment is
             // always recorded as such).
             provider: this.paymentProvider.name,
@@ -1158,21 +1509,17 @@ export class CheckoutService {
             payload: snapshot as unknown as Prisma.InputJsonObject,
           },
         });
-        return row;
+        return { wasCreatedByThisRequest: true as const, attempt: row };
       });
-      return { wasCreatedByThisRequest: true, attempt };
     } catch (error) {
       // Checked structurally (not via `instanceof Prisma.PrismaClientKnownRequestError`)
       // because a genuinely concurrent unique-constraint violation can
       // surface through a different error identity than the one this
-      // module's own Prisma import resolves to. The idempotencyKey unique
-      // constraint is the only thing this insert can violate, so any P2002
-      // here unambiguously means a concurrent request won the race.
+      // module's own Prisma import resolves to. Here it can only be the
+      // one-live-attempt-per-session index: a concurrent submission won.
       if (isUniqueConstraintViolation(error)) {
-        const attempt = await this.prisma.paymentAttempt.findUniqueOrThrow({
-          where: { idempotencyKey },
-        });
-        return { wasCreatedByThisRequest: false, attempt };
+        const attempt = await findLive(this.prisma);
+        if (attempt) return { wasCreatedByThisRequest: false, attempt };
       }
       throw error;
     }

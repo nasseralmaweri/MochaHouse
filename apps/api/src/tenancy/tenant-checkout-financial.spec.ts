@@ -16,6 +16,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { signInternalDevJwt } from '../internal-auth/infrastructure/internal-dev-jwt';
 import { signDevJwt } from '../customer-auth/infrastructure/dev-jwt';
 import { GiftCardPublicThrottleGuard } from '../gift-cards/infrastructure/gift-card-public-throttle.guard';
+import {
+  httpCheckoutBody,
+  withStatusExpectation,
+} from '../../test/checkout-session';
 
 // Security 4B — PLACED orders (POST /api/v1/orders, the real checkout with
 // the fake payment provider), not just quotes. Business A is Mocha House,
@@ -286,14 +290,29 @@ describe('Checkout financial isolation (integration)', () => {
     b: await financials(TENANTS.b),
   });
 
-  const checkout = (store: Tag, body: object, customer?: Tag) => {
-    const req = request(apps[store].getHttpServer()).post('/api/v1/orders');
-    if (customer) req.set('Authorization', `Bearer ${customerToken(customer)}`);
-    return req.send({
-      idempotencyKey: `tcf_${randomUUID()}`,
-      guest: { name: 'TCF Guest', phone: '5551234567' },
-      ...body,
-    });
+  // ESP-03 PR 6 — each submission is a new checkout: its session is started
+  // first (same app, same customer), then the order is submitted with it.
+  const checkout = (store: Tag, body: object, customer?: Tag) =>
+    withStatusExpectation(submit(store, body, customer));
+  const submit = async (store: Tag, body: object, customer?: Tag) => {
+    const headers: Record<string, string> = customer
+      ? { Authorization: `Bearer ${customerToken(customer)}` }
+      : {};
+    const server = apps[store].getHttpServer();
+    return request(server)
+      .post('/api/v1/orders')
+      .set(headers)
+      .send(
+        await httpCheckoutBody(
+          server,
+          {
+            clientRef: `tcf_${randomUUID()}`,
+            guest: { name: 'TCF Guest', phone: '5551234567' },
+            ...body,
+          },
+          headers,
+        ),
+      );
   };
   const line = (f: Fixtures, selections: object[] = []) => [
     { productId: f.productId, quantity: 1, selections },
@@ -362,6 +381,8 @@ describe('Checkout financial isolation (integration)', () => {
         await del('giftCardTransaction', { giftCardId: F.a.giftCardId });
         await del('order', { id: { in: orders } });
         await del('paymentAttempt', { id: { in: attempts } });
+        // ESP-03 PR 6 — this business's checkout sessions (after their attempts).
+        await del('checkoutSession', { locationId: F.a.locationId });
         await del('giftCard', { id: F.a.giftCardId });
         await del('promotionCustomerUsage', {
           promotionId: { in: createdA.promotions },
@@ -415,6 +436,7 @@ describe('Checkout financial isolation (integration)', () => {
         'giftCardTransaction',
         'order',
         'paymentAttempt',
+        'checkoutSession',
         'giftCard',
         'internalAuditEvent',
         'promotionCustomerUsage',

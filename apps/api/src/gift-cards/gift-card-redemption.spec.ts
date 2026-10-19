@@ -8,7 +8,6 @@ import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { FakePaymentProvider } from '@mocha-house/integrations';
-import type { CheckoutRequest } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { LocationsModule } from '../locations/locations.module';
@@ -27,6 +26,12 @@ import {
   generateGiftCardCode,
   hashGiftCardCode,
 } from './infrastructure/gift-card-code';
+import {
+  attemptsOfCheckout,
+  checkoutAttemptsOfThisSuite,
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../test/checkout-session';
 
 // Milestone 7G — gift-card redemption at checkout, exercised through the
 // real CheckoutService orchestration against the real local Postgres (like
@@ -98,7 +103,7 @@ describe('Gift card redemption at checkout (integration)', () => {
 
   afterAll(async () => {
     const attempts = await prisma.paymentAttempt.findMany({
-      where: { idempotencyKey: { startsWith: 'gcr_' } },
+      where: checkoutAttemptsOfThisSuite(),
       select: { id: true },
     });
     const attemptIds = attempts.map((a) => a.id);
@@ -185,10 +190,10 @@ describe('Gift card redemption at checkout (integration)', () => {
   });
 
   function buildRequest(
-    overrides: Partial<CheckoutRequest> = {},
-  ): CheckoutRequest {
+    overrides: Partial<LabelledCheckoutRequest> = {},
+  ): LabelledCheckoutRequest {
     return {
-      idempotencyKey: `gcr_${randomUUID()}`,
+      clientRef: `gcr_${randomUUID()}`,
       locationId,
       guest: { name: 'GC Guest', phone: '5551234567' },
       lines: [
@@ -252,7 +257,8 @@ describe('Gift card redemption at checkout (integration)', () => {
     const gc = await createGiftCard(1000); // covers the 400 total
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       buildRequest({ giftCardCode: gc.code }),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -302,7 +308,8 @@ describe('Gift card redemption at checkout (integration)', () => {
     const gc = await createGiftCard(150); // total 400 -> external 250
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       buildRequest({ giftCardCode: gc.code }),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -381,7 +388,8 @@ describe('Gift card redemption at checkout (integration)', () => {
 
     try {
       // subtotal 400 -> -25% coupon (100) -> 300 -> -$1 reward (100) -> owed 200.
-      const confirmation = await checkoutService.checkout(
+      const confirmation = await submitCheckout(
+        checkoutService,
         buildRequest({
           giftCardCode: gc.code,
           couponCode,
@@ -421,12 +429,14 @@ describe('Gift card redemption at checkout (integration)', () => {
     const gc = await createGiftCard(1000);
     const request = buildRequest({ giftCardCode: gc.code });
 
-    const first = await checkoutService.checkout(
+    const first = await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
-    const second = await checkoutService.checkout(
+    const second = await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -448,13 +458,15 @@ describe('Gift card redemption at checkout (integration)', () => {
     const request = buildRequest({ giftCardCode: gc.code });
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
 
-    await checkoutService.checkout(
+    await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     // Simulate the client never seeing the response and retrying.
-    const retry = await checkoutService.checkout(
+    const retry = await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -475,12 +487,14 @@ describe('Gift card redemption at checkout (integration)', () => {
   it('two concurrent checkouts against one card never overspend it', async () => {
     const gc = await createGiftCard(500); // enough for exactly one 400 order
     const results = await Promise.allSettled([
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         buildRequest({ giftCardCode: gc.code }),
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         buildRequest({ giftCardCode: gc.code }),
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -524,7 +538,8 @@ describe('Gift card redemption at checkout (integration)', () => {
     const gc = await createGiftCard(1000, { status: 'INACTIVE' });
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         buildRequest({ giftCardCode: gc.code }),
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -542,7 +557,8 @@ describe('Gift card redemption at checkout (integration)', () => {
   it('a zero-balance card is rejected with a clear message', async () => {
     const gc = await createGiftCard(0);
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         buildRequest({ giftCardCode: gc.code }),
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -553,7 +569,8 @@ describe('Gift card redemption at checkout (integration)', () => {
   it('an unknown code is rejected before any payment', async () => {
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         buildRequest({ giftCardCode: 'ZZZZ ZZZZ ZZZZ ZZZZ' }),
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -565,7 +582,8 @@ describe('Gift card redemption at checkout (integration)', () => {
   it('a currency mismatch is hard-rejected', async () => {
     const gc = await createGiftCard(1000, { currency: 'EUR' });
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         buildRequest({ giftCardCode: gc.code }),
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -580,7 +598,8 @@ describe('Gift card redemption at checkout (integration)', () => {
   it('a declined external payment leaves the gift card untouched', async () => {
     const gc = await createGiftCard(150); // split tender: 250 external
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         buildRequest({
           giftCardCode: gc.code,
           guest: { name: 'GC Guest', phone: FakePaymentProvider.DECLINE_TEST_PHONE },
@@ -606,7 +625,8 @@ describe('Gift card redemption at checkout (integration)', () => {
       .mockResolvedValueOnce({ outcome: 'failed', reason: 'Gateway timeout' });
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         buildRequest({ giftCardCode: gc.code }),
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -638,15 +658,17 @@ describe('Gift card redemption at checkout (integration)', () => {
       .mockRejectedValueOnce(new Error('Simulated Order transaction failure'));
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toThrow('Simulated Order transaction failure');
 
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(request.clientRef),
     });
     expect(attempt.status).toBe('SUCCEEDED');
     expect(attempt.reconciliationRequired).toBe(true);
@@ -668,12 +690,14 @@ describe('Gift card redemption at checkout (integration)', () => {
     // ESP-03 PR 4 — a retry creates the order from the saved checkout: no
     // second charge, and the card is spent exactly once, by the planned
     // tender.
-    await checkoutService.checkout(
+    await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
-    await checkoutService.checkout(
+    await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -711,15 +735,17 @@ describe('Gift card redemption at checkout (integration)', () => {
       });
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toBeInstanceOf(ConflictException);
 
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(request.clientRef),
     });
     expect(attempt.status).toBe('SUCCEEDED');
     expect(attempt.reconciliationRequired).toBe(true);
@@ -811,7 +837,8 @@ describe('Gift card redemption at checkout (integration)', () => {
     const gc = await createGiftCard(1000);
     const canonical = canonicalizeGiftCardCode(gc.code)!;
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       buildRequest({ giftCardCode: gc.code }),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -853,7 +880,8 @@ describe('Gift card redemption at checkout (integration)', () => {
 
   it('enforces one REDEMPTION per order at the database level', async () => {
     const gc = await createGiftCard(1000);
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       buildRequest({ giftCardCode: gc.code }),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -877,7 +905,8 @@ describe('Gift card redemption at checkout (integration)', () => {
 
   it('a checkout with no gift card is completely unchanged (no redemption, external charge for the full total)', async () => {
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       buildRequest(),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),

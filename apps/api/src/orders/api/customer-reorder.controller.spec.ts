@@ -10,9 +10,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
-import { FakePaymentProvider } from '@mocha-house/integrations';
 import type {
-  CheckoutRequest,
   OrderConfirmation,
   ReorderPreparation,
 } from '@mocha-house/contracts';
@@ -32,6 +30,10 @@ import { CustomerOrdersService } from '../application/customer-orders.service';
 import { CustomerReorderService } from '../application/customer-reorder.service';
 import { PaymentModule } from '../../payment/payment.module';
 import { CustomerOrdersController } from './customer-orders.controller';
+import {
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../../test/checkout-session';
 
 // Full HTTP integration test for POST /customers/me/orders/:orderId/reorder
 // (Milestone 4G). Uses a dedicated, isolated menu graph so prices,
@@ -238,6 +240,10 @@ describe('Customer reorder (integration)', () => {
     await prisma.category.deleteMany({ where: { slug: { contains: tag } } });
     await prisma.locationMenu.deleteMany({ where: { locationId } });
     await prisma.menu.deleteMany({ where: { id: menuId } });
+    // ESP-03 PR 6 — this suite's checkout sessions reference the location.
+    await prisma.checkoutSession.deleteMany({
+      where: { locationId: locationId },
+    });
     await prisma.location.deleteMany({ where: { id: locationId } });
 
     await app.close();
@@ -312,10 +318,10 @@ describe('Customer reorder (integration)', () => {
 
   function checkoutBody(
     optionId: string = mediumOptionId,
-    overrides: Partial<CheckoutRequest> = {},
-  ): CheckoutRequest {
+    overrides: Partial<LabelledCheckoutRequest> = {},
+  ): LabelledCheckoutRequest {
     return {
-      idempotencyKey: `test_reorder_${randomUUID()}`,
+      clientRef: `test_reorder_${randomUUID()}`,
       locationId,
       guest: { name: 'Reorder Guest', phone: '5551234567' },
       lines: [
@@ -333,7 +339,8 @@ describe('Customer reorder (integration)', () => {
     identifier: string,
     optionId?: string,
   ): Promise<OrderConfirmation> {
-    return checkoutService.checkout(
+    return submitCheckout(
+      checkoutService,
       checkoutBody(optionId),
       await identityFor(identifier),
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),

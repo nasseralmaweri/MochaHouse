@@ -11,6 +11,12 @@ jest.mock("@/lib/auth/session", () => ({
 
 import * as checkoutRoute from "./checkout/route";
 import { submitCheckoutFromBrowser } from "@/lib/api-client";
+import { serializeCheckoutSessions } from "@/lib/security/checkout-session";
+
+// ESP-03 PR 6 — the checkout-session token lives in the HttpOnly
+// checkout cookie (never in the browser's request body).
+const TOKEN = `cs_${"A".repeat(43)}`;
+const CHECKOUT_COOKIE = `mh_checkout=${serializeCheckoutSessions([["loc-1", TOKEN]])}`;
 
 const ORIGIN = "http://shop.test";
 const fetchMock = jest.fn();
@@ -36,9 +42,9 @@ function post(path: string, cookie: string | null) {
         "x-centerivo-request": "1",
         "sec-fetch-site": "same-origin",
         origin: ORIGIN,
-        ...(cookie ? { cookie } : {}),
+        cookie: cookie ? `${cookie}; ${CHECKOUT_COOKIE}` : CHECKOUT_COOKIE,
       },
-      body: "{}",
+      body: JSON.stringify({ locationId: "loc-1" }),
     }),
   );
 }
@@ -116,6 +122,45 @@ describe("checkout route: guest choice", () => {
     await post("/api/checkout", "mh_customer_session=ctok");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe("Bearer ctok");
+  });
+
+  it("ESP-03 PR 6: adds this location's checkout-session token from the cookie, and forgets it once the order is placed", async () => {
+    fetchMock.mockResolvedValueOnce(json(201, { orderId: "o1" }));
+    const res = await post("/api/checkout", null);
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(sent).toEqual({ locationId: "loc-1", checkoutToken: TOKEN });
+    expect(res.headers.get("set-cookie")).toMatch(/mh_checkout=;/);
+  });
+
+  it("ESP-03 PR 6: an out-of-date page that sends a payment key, or a checkout with no session, is refused before the API is called", async () => {
+    const stale = await checkoutRoute.POST(
+      new NextRequest(`${ORIGIN}/api/checkout`, {
+        method: "POST",
+        headers: {
+          "x-centerivo-request": "1",
+          "sec-fetch-site": "same-origin",
+          origin: ORIGIN,
+          cookie: CHECKOUT_COOKIE,
+        },
+        body: JSON.stringify({ locationId: "loc-1", idempotencyKey: "k" }),
+      }),
+    );
+    expect(stale.status).toBe(400);
+    expect(await stale.json()).toMatchObject({ code: "CLIENT_PAYMENT_KEY_NOT_ACCEPTED" });
+    const noSession = await checkoutRoute.POST(
+      new NextRequest(`${ORIGIN}/api/checkout`, {
+        method: "POST",
+        headers: {
+          "x-centerivo-request": "1",
+          "sec-fetch-site": "same-origin",
+          origin: ORIGIN,
+        },
+        body: JSON.stringify({ locationId: "loc-2" }),
+      }),
+    );
+    expect(noSession.status).toBe(409);
+    expect(await noSession.json()).toMatchObject({ code: "CHECKOUT_SESSION_INVALID" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

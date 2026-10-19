@@ -28,6 +28,7 @@ import { CheckoutService } from '../application/checkout.service';
 import { PaymentModule } from '../../payment/payment.module';
 import { RateLimitModule } from '../../rate-limit/rate-limit.module';
 import { OrdersController } from './orders.controller';
+import { hashCheckoutToken } from '../application/checkout-session';
 
 // Full HTTP integration test for POST /api/v1/orders' optional-auth
 // behavior (Milestone 4B fix): OptionalCustomerAuthGuard +
@@ -104,7 +105,8 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
 
   afterAll(async () => {
     const attempts = await prisma.paymentAttempt.findMany({
-      where: { idempotencyKey: { startsWith: 'test_' } },
+      // ESP-03 PR 6 — the attempts of this file's checkout sessions.
+      where: { checkoutSession: { tokenHash: { in: sessionTokenHashes } } },
       select: { id: true },
     });
     const attemptIds = attempts.map((a) => a.id);
@@ -151,11 +153,26 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
     process.env = { ...originalEnv };
   });
 
+  // ESP-03 PR 6 — every checkout starts a server-owned session (here as a
+  // guest; a session is bound to its customer, so a signed-in submission
+  // starts its own with the same Authorization).
+  const sessionTokenHashes: string[] = [];
+  async function startSession(authorization?: string): Promise<string> {
+    const req = request(app.getHttpServer())
+      .post('/api/v1/orders/checkout-sessions')
+      .send({ locationId });
+    if (authorization) req.set('Authorization', authorization);
+    const res = await req.expect(200);
+    const token = (res.body as { checkoutToken: string }).checkoutToken;
+    sessionTokenHashes.push(hashCheckoutToken(token));
+    return token;
+  }
+
   function buildCheckoutRequest(
     overrides: Partial<CheckoutRequest> = {},
-  ): CheckoutRequest {
+  ): Omit<CheckoutRequest, 'checkoutToken'> {
+    void randomUUID;
     return {
-      idempotencyKey: `test_${randomUUID()}`,
       locationId,
       guest: { name: 'Test Guest', phone: '5551234567' },
       lines: [
@@ -169,17 +186,20 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
     };
   }
 
-  async function paymentAttemptExists(
-    idempotencyKey: string,
-  ): Promise<boolean> {
-    const attempt = await prisma.paymentAttempt.findUnique({
-      where: { idempotencyKey },
+  async function paymentAttemptExists(checkoutToken: string): Promise<boolean> {
+    const attempt = await prisma.paymentAttempt.findFirst({
+      where: {
+        checkoutSession: { tokenHash: hashCheckoutToken(checkoutToken) },
+      },
     });
     return attempt !== null;
   }
 
   it('succeeds as guest with no Authorization header, and the Order has customerId null', async () => {
-    const checkoutRequest = buildCheckoutRequest();
+    const checkoutRequest = {
+      ...buildCheckoutRequest(),
+      checkoutToken: await startSession(),
+    };
 
     const response = await request(app.getHttpServer())
       .post('/api/v1/orders')
@@ -206,7 +226,10 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
       devSecret,
       3600,
     );
-    const checkoutRequest = buildCheckoutRequest();
+    const checkoutRequest = {
+      ...buildCheckoutRequest(),
+      checkoutToken: await startSession(`Bearer ${token}`),
+    };
 
     const response = await request(app.getHttpServer())
       .post('/api/v1/orders')
@@ -233,7 +256,10 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
   });
 
   it('rejects an invalid token with 401 and creates no payment attempt or order', async () => {
-    const checkoutRequest = buildCheckoutRequest();
+    const checkoutRequest = {
+      ...buildCheckoutRequest(),
+      checkoutToken: await startSession(),
+    };
 
     await request(app.getHttpServer())
       .post('/api/v1/orders')
@@ -241,7 +267,7 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
       .send(checkoutRequest)
       .expect(401);
 
-    expect(await paymentAttemptExists(checkoutRequest.idempotencyKey)).toBe(
+    expect(await paymentAttemptExists(checkoutRequest.checkoutToken)).toBe(
       false,
     );
   });
@@ -256,7 +282,10 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
       devSecret,
       -1,
     );
-    const checkoutRequest = buildCheckoutRequest();
+    const checkoutRequest = {
+      ...buildCheckoutRequest(),
+      checkoutToken: await startSession(),
+    };
 
     await request(app.getHttpServer())
       .post('/api/v1/orders')
@@ -264,7 +293,7 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
       .send(checkoutRequest)
       .expect(401);
 
-    expect(await paymentAttemptExists(checkoutRequest.idempotencyKey)).toBe(
+    expect(await paymentAttemptExists(checkoutRequest.checkoutToken)).toBe(
       false,
     );
   });
@@ -279,7 +308,10 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
       'a-completely-different-secret',
       3600,
     );
-    const checkoutRequest = buildCheckoutRequest();
+    const checkoutRequest = {
+      ...buildCheckoutRequest(),
+      checkoutToken: await startSession(),
+    };
 
     await request(app.getHttpServer())
       .post('/api/v1/orders')
@@ -287,7 +319,7 @@ describe('POST /api/v1/orders — optional customer authentication (integration)
       .send(checkoutRequest)
       .expect(401);
 
-    expect(await paymentAttemptExists(checkoutRequest.idempotencyKey)).toBe(
+    expect(await paymentAttemptExists(checkoutRequest.checkoutToken)).toBe(
       false,
     );
   });

@@ -100,6 +100,7 @@ import type {
 } from "@mocha-house/contracts";
 import { parseLocationMenuResponse } from "@/lib/menu";
 import { LOCATION_NOT_IN_STOREFRONT } from "@/lib/cart-binding";
+import type { BrowserCheckoutSession } from "@/lib/security/checkout-session";
 
 // Browser-safe counterpart to lib/api.ts's getLocationMenu. The cart lives
 // in localStorage (browser-only), so /order/cart must revalidate it from
@@ -153,7 +154,7 @@ export type CheckoutResult =
   | { outcome: "success"; confirmation: OrderConfirmation }
   | { outcome: "declined" | "failed"; message: string }
   | { outcome: "invalid"; message: string }
-  | { outcome: "conflict"; message: string }
+  | { outcome: "conflict"; message: string; code: string | null }
   // SC2b — the business no longer offers something this checkout used (a
   // coupon or a reward). Refused before any payment: nothing was charged.
   | { outcome: "unavailable"; message: string }
@@ -210,8 +211,45 @@ export async function getCheckoutQuoteFromBrowser(
   }
 }
 
+// ESP-03 PR 6 — what the browser submits: never a payment key or the
+// checkout-session token (this app's server adds the token from its
+// HttpOnly cookie; see app/api/checkout/route.ts).
+export type BrowserCheckoutRequest = Omit<CheckoutRequest, "checkoutToken">;
+
+export type CheckoutSessionResult =
+  | { kind: "ok"; session: BrowserCheckoutSession }
+  | { kind: "error"; message: string };
+
+// ESP-03 PR 6 — start or resume this visitor's checkout at a location. Never
+// charges. A held payment comes back IN_PROGRESS; a completed one COMPLETED
+// with its order id.
+export async function startCheckoutSessionFromBrowser(
+  locationId: string,
+): Promise<CheckoutSessionResult> {
+  try {
+    const response = await fetch("/api/checkout/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locationId }),
+    });
+    const body = await safeJson(response);
+    if (!response.ok) {
+      return {
+        kind: "error",
+        message: body?.message ?? "We couldn't start your checkout. Please refresh the page.",
+      };
+    }
+    return { kind: "ok", session: body as unknown as BrowserCheckoutSession };
+  } catch {
+    return {
+      kind: "error",
+      message: "Could not reach the server. Check your connection and try again.",
+    };
+  }
+}
+
 export async function submitCheckoutFromBrowser(
-  request: CheckoutRequest,
+  request: BrowserCheckoutRequest,
   options: { asGuest?: boolean } = {},
 ): Promise<CheckoutResult> {
   let response: Response;
@@ -249,6 +287,7 @@ export async function submitCheckoutFromBrowser(
     return {
       outcome: "conflict",
       message: body?.message ?? "This order is already being processed.",
+      code: typeof body?.code === "string" ? body.code : null,
     };
   }
 
@@ -287,8 +326,8 @@ export async function submitCheckoutFromBrowser(
   }
 
   if (response.status === 429) {
-    // Too many requests: nothing was placed. The same idempotency key is kept
-    // for the retry, so waiting and trying again can never double-order.
+    // Too many requests: nothing was placed. The retry is the same checkout
+    // session, so waiting and trying again can never double-order.
     return {
       outcome: "network-error",
       message: "Too many requests right now. Please wait a moment and try again.",

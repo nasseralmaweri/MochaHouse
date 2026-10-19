@@ -452,18 +452,27 @@ describe('Public storefront tenant isolation (integration)', () => {
     }).expect(200);
     expect(bodyOf<{ subtotal: number }>(ok).subtotal).toBe(500);
 
-    // Checkout: refused before any payment attempt exists.
-    const idempotencyKey = `tsi_${randomUUID()}`;
+    // Checkout (ESP-03 PR 6 — no client key; the session is server-owned):
+    // another business's location cannot start a checkout session, and a
+    // submission naming it is refused before any payment attempt exists.
+    await post(appA, '/orders/checkout-sessions', {
+      locationId: B.locationId,
+    }).expect(404);
+    const attemptsBefore = await prisma.paymentAttempt.count({
+      where: { locationId: B.locationId },
+    });
     const foreignCheckout = await post(appA, '/orders', {
-      idempotencyKey,
+      checkoutToken: `cs_${'A'.repeat(43)}`,
       locationId: B.locationId,
       guest: { name: 'TSI Guest', phone: '5551234567' },
       lines: [line(B)],
     });
     expect(foreignCheckout.status).toBe(404);
     expect(
-      await prisma.paymentAttempt.count({ where: { idempotencyKey } }),
-    ).toBe(0);
+      await prisma.paymentAttempt.count({
+        where: { locationId: B.locationId },
+      }),
+    ).toBe(attemptsBefore);
   });
 
   const application = {

@@ -105,6 +105,8 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     PaymentReconciliationEvent: 'tenant',
     // ESP-03 PR 4 — the saved checkout a payment pays for.
     CheckoutSnapshot: 'tenant',
+    // ESP-03 PR 6 — server-owned checkout sessions.
+    CheckoutSession: 'tenant',
     // ESP-03 PR 5 — platform support's append-only notes on a case.
     PaymentReconciliationNote: 'tenant',
     // R1 / S5a — order closure foundation.

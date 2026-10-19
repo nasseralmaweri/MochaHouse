@@ -7,7 +7,6 @@ import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
 import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { FakePaymentProvider } from '@mocha-house/integrations';
-import type { CheckoutRequest } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { LocationsModule } from '../locations/locations.module';
@@ -20,6 +19,12 @@ import type { CustomerIdentity } from '../customer-auth/infrastructure/customer-
 import { LoyaltyModule } from './loyalty.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 import { GiftCardsModule } from '../gift-cards/gift-cards.module';
+import {
+  attemptsOfCheckout,
+  checkoutAttemptsOfThisSuite,
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../test/checkout-session';
 
 // Milestone 7D — Bonus Mocha Beans Promotions, exercised end-to-end through
 // the real CheckoutService against local Postgres. A dedicated test
@@ -170,7 +175,7 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     });
 
     const attempts = await prisma.paymentAttempt.findMany({
-      where: { idempotencyKey: { startsWith: KEY_PREFIX } },
+      where: checkoutAttemptsOfThisSuite(),
       select: { id: true },
     });
     const attemptIds = attempts.map((a) => a.id);
@@ -233,6 +238,10 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     });
     await prisma.category.deleteMany({
       where: { id: { in: [drinksCategoryId, foodCategoryId] } },
+    });
+    // ESP-03 PR 6 — this suite's checkout sessions reference the location.
+    await prisma.checkoutSession.deleteMany({
+      where: { locationId: { in: [locationId, otherLocationId] } },
     });
     await prisma.location.deleteMany({
       where: { id: { in: [locationId, otherLocationId] } },
@@ -388,11 +397,11 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
   }
 
   function req(
-    lines: CheckoutRequest['lines'],
-    over: Partial<CheckoutRequest> = {},
-  ): CheckoutRequest {
+    lines: LabelledCheckoutRequest['lines'],
+    over: Partial<LabelledCheckoutRequest> = {},
+  ): LabelledCheckoutRequest {
     return {
-      idempotencyKey: `${KEY_PREFIX}${randomUUID()}`,
+      clientRef: `${KEY_PREFIX}${randomUUID()}`,
       locationId,
       guest: { name: 'Bonus Guest', phone: '5551234567' },
       lines,
@@ -421,7 +430,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const customerId = await customerIdFor(id);
     await makePromotion({ type: 'EXTRA_BEANS', bonusValue: 20, productIds: [matchaId] });
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(matchaId)]), // $6
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -456,7 +466,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       productIds: [latteId],
     });
 
-    await checkoutService.checkout(
+    await submitCheckout(
+      checkoutService,
       req([line(latteId, 3)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -473,7 +484,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const customerId = await customerIdFor(id);
     await makePromotion({ type: 'EXTRA_BEANS', bonusValue: 20, productIds: [matchaId] });
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -502,7 +514,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
         productIds: [matchaId],
       });
 
-      await checkoutService.checkout(
+      await submitCheckout(
+        checkoutService,
         req([line(matchaId)]),
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -533,7 +546,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       productIds: [matchaId],
     });
 
-    await checkoutService.checkout(
+    await submitCheckout(
+      checkoutService,
       req([line(matchaId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -563,7 +577,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
         productIds: [latteId],
       });
 
-      await checkoutService.checkout(
+      await submitCheckout(
+        checkoutService,
         req([line(latteId)]),
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -592,7 +607,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       productIds: [latteId],
     });
 
-    await checkoutService.checkout(
+    await submitCheckout(
+      checkoutService,
       req([line(latteId, 3)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -608,7 +624,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const customerId = await customerIdFor(id);
     await makePromotion({ type: 'MULTIPLIER', bonusValue: 2, productIds: [matchaId] });
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(matchaId), line(pastryId)]), // $6 promoted + $3 plain
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -639,7 +656,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       productIds: [matchaId],
     });
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(matchaId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -666,7 +684,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     await new Promise((r) => setTimeout(r, 10));
     await makePromotion({ type: 'MULTIPLIER', bonusValue: 2, productIds: [latteId] });
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId, 2)]), // 2 x $5 -> 10 standard; EXTRA 5*2=10; MULT 10*(2-1)=10
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -689,7 +708,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       appliesToAllLocations: true,
     });
 
-    await checkoutService.checkout(
+    await submitCheckout(
+      checkoutService,
       req([line(matchaId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -710,7 +730,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       locationIds: [locationId],
     });
 
-    await checkoutService.checkout(
+    await submitCheckout(
+      checkoutService,
       req([line(matchaId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -732,7 +753,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       locationIds: [otherLocationId],
     });
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(matchaId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -754,7 +776,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       isActive: false,
     });
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(matchaId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -774,7 +797,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       startsAt: new Date(Date.now() + 60 * 60 * 1000),
     });
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(matchaId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -794,7 +818,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       endsAt: new Date(Date.now() + 60 * 60 * 1000),
     });
 
-    await checkoutService.checkout(
+    await submitCheckout(
+      checkoutService,
       req([line(matchaId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -815,7 +840,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       endsAt: new Date(Date.now() - 60 * 60 * 1000),
     });
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(matchaId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -833,7 +859,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     await makePromotion({ type: 'EXTRA_BEANS', bonusValue: 10, productIds: [matchaId] });
 
     // 3 matcha @ $6 = $18 gross; one free -> $12 net.
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(matchaId, 3)], { loyaltyRewardId: rewardId }),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -859,7 +886,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     await makePromotion({ type: 'MULTIPLIER', bonusValue: 2, productIds: [matchaId] });
 
     // 1 matcha @ $6, made free -> the only unit is free.
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(matchaId, 1)], { loyaltyRewardId: rewardId }),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -881,7 +909,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     // matcha $6 + pastry $3 = $9 gross paid; $5 discount allocated in minor
     // units, largest-remainder: matcha 500*600/900 = 333.33 -> 333,
     // pastry 166.67 -> 167. matcha qualifying spend = 600 - 333 = 267.
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(matchaId), line(pastryId)], { loyaltyRewardId: rewardId }),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -907,7 +936,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     const customerId = await customerIdFor(id);
     await makePromotion({ type: 'EXTRA_BEANS', bonusValue: 12, productIds: [matchaId] });
 
-    await checkoutService.checkout(
+    await submitCheckout(
+      checkoutService,
       req([line(matchaId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -930,7 +960,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       productIds: [matchaId],
     });
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(matchaId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -965,12 +996,14 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     await makePromotion({ type: 'EXTRA_BEANS', bonusValue: 20, productIds: [matchaId] });
     const request = req([line(matchaId)]);
 
-    const first = await checkoutService.checkout(
+    const first = await submitCheckout(
+      checkoutService,
       request,
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
-    const second = await checkoutService.checkout(
+    const second = await submitCheckout(
+      checkoutService,
       request,
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -995,7 +1028,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     await makePromotion({ type: 'EXTRA_BEANS', bonusValue: 20, productIds: [matchaId] });
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(matchaId)], {
           guest: { name: 'Declined', phone: FakePaymentProvider.DECLINE_TEST_PHONE },
         }),
@@ -1028,15 +1062,17 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
       .mockRejectedValueOnce(new Error('Simulated order transaction failure'));
 
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toThrow('Simulated order transaction failure');
 
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(request.clientRef),
     });
     expect(attempt.status).toBe('SUCCEEDED');
     expect(attempt.reconciliationRequired).toBe(true);
@@ -1053,7 +1089,8 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
     await grantBeans(id, 100);
     const customerId = await customerIdFor(id);
 
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -1067,8 +1104,13 @@ describe('Bonus Mocha Beans Promotions at checkout (integration)', () => {
   });
 
   it('a guest order earns no bonus even on a promoted product', async () => {
-    await makePromotion({ type: 'EXTRA_BEANS', bonusValue: 20, productIds: [matchaId] });
-    const confirmation = await checkoutService.checkout(
+    await makePromotion({
+      type: 'EXTRA_BEANS',
+      bonusValue: 20,
+      productIds: [matchaId],
+    });
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(matchaId)]),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),

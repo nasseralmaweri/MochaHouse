@@ -490,7 +490,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    expect(relationsBetweenBusinessRecords).toHaveLength(100);
+    expect(relationsBetweenBusinessRecords).toHaveLength(103);
     expect(
       relationsBetweenBusinessRecords
         .filter((r) => !isTenantEnforced(r))
@@ -522,6 +522,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'ChecklistInstanceItem.completedByInternalUserId',
       'ChecklistInstanceItem.exceptionByInternalUserId',
       'ChecklistTemplateItem.templateId',
+      'CheckoutSession.customerId',
+      'CheckoutSession.locationId',
       'CheckoutSnapshot.paymentAttemptId',
       'CustomerLoyaltyAccount.customerId',
       'CustomerNote.authorInternalUserId',
@@ -591,6 +593,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'OrderRefundObligation.paymentAttemptId',
       'OrderRefundObligation.settledByInternalUserId',
       'OrderStatusHistory.orderId',
+      'PaymentAttempt.checkoutSessionId',
       'PaymentAttempt.locationId',
       'PaymentReconciliationCase.assigneeInternalUserId',
       'PaymentReconciliationCase.paymentAttemptId',
@@ -737,13 +740,13 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       external: count((r) => r.kind === 'external-identifier'),
       total: TENANT_RELATIONSHIPS.length,
     }).toEqual({
-      compositeWithForeignKey: 100,
+      compositeWithForeignKey: 103,
       compositeWithoutForeignKey: 0,
       historicalSnapshot: 8,
       polymorphic: 4,
       json: 8,
       external: 3,
-      total: 123,
+      total: 126,
     });
     // Optional relationships are present and marked optional.
     const optionalForeignKeys = relationsBetweenBusinessRecords.filter(

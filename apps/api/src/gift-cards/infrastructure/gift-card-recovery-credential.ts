@@ -3,14 +3,15 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 // Milestone 7H (post-review correction B) — the server-generated recovery
 // credential for a GUEST gift-card purchase.
 //
-// WHY: payment idempotency (PaymentAttempt.idempotencyKey) is a client-chosen
-// value. It must not ALSO be the sole secret that unlocks stored value. This
+// WHY: the purchase reference a buyer holds (since ESP-03 PR 6 the purchase
+// id; the payment key itself is server-generated and never sent to a client)
+// must not ALSO be the sole secret that unlocks stored value. This
 // credential separates those concerns: the server mints a 256-bit CSPRNG
 // value when the PENDING purchase is first established (before any charge),
 // returns it to the buyer exactly once, and persists only a one-way HMAC
-// verifier. Guest full-code recovery then requires BOTH the idempotency key
+// verifier. Guest full-code recovery then requires BOTH the purchase id
 // (to find the logical purchase) AND this credential (to authorise the
-// disclosure); the idempotency key alone never yields the code.
+// disclosure); the purchase id alone never yields the code.
 //
 // The secret keying the HMAC is purpose-specific: NOT GIFT_CARD_CODE_SECRET
 // (which keys the one-way code hash) and NOT GIFT_CARD_PURCHASE_CODE_KEK

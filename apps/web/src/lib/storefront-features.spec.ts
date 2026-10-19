@@ -69,7 +69,7 @@ describe('SC2b storefront feature handling', () => {
 
   describe('submitCheckoutFromBrowser', () => {
     const request = {
-      idempotencyKey: 'k-12345678',
+      checkoutToken: 'cs_' + 'A'.repeat(43),
       locationId: 'loc',
       guest: { name: 'G', phone: '5551234567' },
       lines: [],

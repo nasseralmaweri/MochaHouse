@@ -30,6 +30,11 @@ import { PaymentModule } from '../../payment/payment.module';
 import { RateLimitModule } from '../../rate-limit/rate-limit.module';
 import { OrdersController } from './orders.controller';
 import { CheckoutRewardsController } from './checkout-rewards.controller';
+import {
+  attemptsOfCheckout,
+  checkoutAttemptsOfThisSuite,
+  httpCheckoutBody,
+} from '../../../test/checkout-session';
 
 // Checkout validation & payment safety over real HTTP. Every cart-pricing
 // entry point (POST /orders — which prices the cart before payment and
@@ -121,7 +126,7 @@ describe('checkout request validation and payment safety (integration)', () => {
   afterAll(async () => {
     process.env.NODE_ENV = 'development';
     const attempts = await prisma.paymentAttempt.findMany({
-      where: { idempotencyKey: { startsWith: KEY_PREFIX } },
+      where: checkoutAttemptsOfThisSuite(),
       select: { id: true },
     });
     const attemptIds = attempts.map((a) => a.id);
@@ -220,8 +225,12 @@ describe('checkout request validation and payment safety (integration)', () => {
     return count > 0;
   }
 
+  // ESP-03 PR 6 — the attempts of the checkout labelled `idempotencyKey`
+  // (a test-side label; the client sends the session token instead).
   async function attemptCount(idempotencyKey: string): Promise<number> {
-    return prisma.paymentAttempt.count({ where: { idempotencyKey } });
+    return prisma.paymentAttempt.count({
+      where: attemptsOfCheckout(idempotencyKey),
+    });
   }
 
   async function createGiftCard(balanceMinorUnits: number): Promise<string> {
@@ -258,10 +267,11 @@ describe('checkout request validation and payment safety (integration)', () => {
       for (const [name, lines] of cases()) {
         const { subject, token } = await newIdentity(false);
         const body = checkoutBody({ lines });
+        const auth = { Authorization: `Bearer ${token}` };
         const response = await request(fakeApp.getHttpServer())
           .post('/api/v1/orders')
-          .set('Authorization', `Bearer ${token}`)
-          .send(body);
+          .set(auth)
+          .send(await httpCheckoutBody(fakeApp.getHttpServer(), body, auth));
         expect({ name, status: response.status }).toEqual({
           name,
           status: 400,
@@ -341,10 +351,15 @@ describe('checkout request validation and payment safety (integration)', () => {
         '/api/v1/orders/reward-eligibility',
       ]) {
         const { token } = await newIdentity();
+        const auth = { Authorization: `Bearer ${token}` };
+        const sent =
+          path === '/api/v1/orders'
+            ? await httpCheckoutBody(fakeApp.getHttpServer(), makeBody(), auth)
+            : makeBody();
         const response = await request(fakeApp.getHttpServer())
           .post(path)
-          .set('Authorization', `Bearer ${token}`)
-          .send(makeBody() as object);
+          .set(auth)
+          .send(sent as object);
         // The quote routes ignore wrongly-typed coupon/gift-card/reward
         // fields (a 200 there is fine); no route may ever answer 5xx.
         expect({ path, serverError: response.status >= 500 }).toEqual({
@@ -367,11 +382,11 @@ describe('checkout request validation and payment safety (integration)', () => {
       const body = checkoutBody({ lines: [line] });
       const response = await request(fakeApp.getHttpServer())
         .post('/api/v1/orders')
-        .send(body)
+        .send(await httpCheckoutBody(fakeApp.getHttpServer(), body))
         .expect(201);
       expect(response.body).toHaveProperty('orderId');
-      const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-        where: { idempotencyKey: body.idempotencyKey },
+      const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+        where: attemptsOfCheckout(body.idempotencyKey),
       });
       expect(attempt.status).toBe('SUCCEEDED');
       expect(attempt.provider).toBe('fake');
@@ -384,10 +399,16 @@ describe('checkout request validation and payment safety (integration)', () => {
         '/api/v1/orders/reward-eligibility',
       ]) {
         const { token } = await newIdentity();
+        const auth = { Authorization: `Bearer ${token}` };
+        const body = checkoutBody({ lines: [{ productId, quantity: 1 }] });
         const response = await request(fakeApp.getHttpServer())
           .post(path)
-          .set('Authorization', `Bearer ${token}`)
-          .send(checkoutBody({ lines: [{ productId, quantity: 1 }] }));
+          .set(auth)
+          .send(
+            path === '/api/v1/orders'
+              ? await httpCheckoutBody(fakeApp.getHttpServer(), body, auth)
+              : body,
+          );
         expect({ path, status: response.status }).toEqual({
           path,
           status: 400,
@@ -415,7 +436,7 @@ describe('checkout request validation and payment safety (integration)', () => {
       const ordersBefore = await prisma.order.count();
       const response = await request(disabledApp.getHttpServer())
         .post('/api/v1/orders')
-        .send(body)
+        .send(await httpCheckoutBody(disabledApp.getHttpServer(), body))
         .expect(503);
       expect(JSON.stringify(response.body)).not.toMatch(/PAYMENT_PROVIDER/);
       expect(await attemptCount(body.idempotencyKey)).toBe(0);
@@ -428,10 +449,11 @@ describe('checkout request validation and payment safety (integration)', () => {
       // payment records must not.
       const { token } = await newIdentity();
       const body = checkoutBody();
+      const auth = { Authorization: `Bearer ${token}` };
       await request(disabledApp.getHttpServer())
         .post('/api/v1/orders')
-        .set('Authorization', `Bearer ${token}`)
-        .send(body)
+        .set(auth)
+        .send(await httpCheckoutBody(disabledApp.getHttpServer(), body, auth))
         .expect(503);
       expect(await attemptCount(body.idempotencyKey)).toBe(0);
     });
@@ -448,11 +470,11 @@ describe('checkout request validation and payment safety (integration)', () => {
       const body = checkoutBody({ giftCardCode: code });
       const response = await request(disabledApp.getHttpServer())
         .post('/api/v1/orders')
-        .send(body)
+        .send(await httpCheckoutBody(disabledApp.getHttpServer(), body))
         .expect(201);
       expect(response.body).toHaveProperty('orderId');
-      const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-        where: { idempotencyKey: body.idempotencyKey },
+      const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+        where: attemptsOfCheckout(body.idempotencyKey),
       });
       expect(attempt.status).toBe('SUCCEEDED');
       expect(attempt.providerReference).toBe('no-charge');
@@ -468,7 +490,7 @@ describe('checkout request validation and payment safety (integration)', () => {
       try {
         await request(fakeApp.getHttpServer())
           .post('/api/v1/orders')
-          .send(body)
+          .send(await httpCheckoutBody(fakeApp.getHttpServer(), body))
           .expect(503);
       } finally {
         process.env.NODE_ENV = 'development';

@@ -8,7 +8,6 @@ import { randomUUID } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { FakePaymentProvider } from '@mocha-house/integrations';
-import type { CheckoutRequest } from '@mocha-house/contracts';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { LocationsModule } from '../locations/locations.module';
@@ -21,6 +20,12 @@ import { PaymentModule } from '../payment/payment.module';
 import type { CustomerIdentity } from '../customer-auth/infrastructure/customer-identity';
 import { PromotionsModule } from './promotions.module';
 import { GiftCardsModule } from '../gift-cards/gift-cards.module';
+import {
+  attemptsOfCheckout,
+  checkoutAttemptsOfThisSuite,
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../test/checkout-session';
 
 // Milestone 7E — Promotions & Coupons at checkout, exercised end-to-end
 // through the real CheckoutService against local Postgres.
@@ -237,7 +242,7 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       },
     });
     const attempts = await prisma.paymentAttempt.findMany({
-      where: { idempotencyKey: { startsWith: KEY_PREFIX } },
+      where: checkoutAttemptsOfThisSuite(),
       select: { id: true },
     });
     const attemptIds = attempts.map((a) => a.id);
@@ -310,6 +315,10 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     await prisma.modifierGroup.deleteMany({ where: { id: sizeGroupId } });
     await prisma.category.deleteMany({
       where: { id: { in: [drinksCategoryId, foodCategoryId] } },
+    });
+    // ESP-03 PR 6 — this suite's checkout sessions reference the location.
+    await prisma.checkoutSession.deleteMany({
+      where: { locationId: { in: [locationId, otherLocationId] } },
     });
     await prisma.location.deleteMany({
       where: { id: { in: [locationId, otherLocationId] } },
@@ -489,11 +498,11 @@ describe('Promotions & Coupons at checkout (integration)', () => {
   }
 
   function req(
-    lines: CheckoutRequest['lines'],
-    over: Partial<CheckoutRequest> = {},
-  ): CheckoutRequest {
+    lines: LabelledCheckoutRequest['lines'],
+    over: Partial<LabelledCheckoutRequest> = {},
+  ): LabelledCheckoutRequest {
     return {
-      idempotencyKey: `${KEY_PREFIX}${randomUUID()}`,
+      clientRef: `${KEY_PREFIX}${randomUUID()}`,
       locationId,
       guest: { name: 'Promo Guest', phone: '5551234567' },
       lines,
@@ -522,7 +531,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       discountType: 'PERCENTAGE_OFF',
       discountValue: 20,
     });
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId), line(muffinId)]), // $9
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -541,7 +551,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       discountType: 'FIXED_AMOUNT',
       discountValue: 500,
     });
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(pastryId)]), // $3
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -560,7 +571,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       applicability: 'SELECTED_CATEGORIES',
       categoryIds: [foodCategoryId],
     });
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(pastryId), line(muffinId), line(latteId)]), // food: $3, $4
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -578,7 +590,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       discountType: 'FIXED_AMOUNT',
       discountValue: 500,
     });
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId), line(muffinId)], { couponCode: '  save5now ' }),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -590,14 +603,16 @@ describe('Promotions & Coupons at checkout (integration)', () => {
   it('an unknown / invalid coupon is rejected before payment', async () => {
     const request = req([line(latteId)], { couponCode: 'NOPENOPE' });
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
-    const attempt = await prisma.paymentAttempt.findUnique({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirst({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(request.clientRef),
     });
     expect(attempt).toBeNull();
   });
@@ -614,7 +629,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       discountType: 'FIXED_AMOUNT',
       discountValue: 100,
     });
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId), line(muffinId)], { couponCode: 'SMALL1' }),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -631,7 +647,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       discountValue: 20,
     });
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(latteId)], { couponCode: 'WRONGCODE' }),
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -648,7 +665,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       minimumSubtotalMinorUnits: 2000,
     });
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(latteId)], { couponCode: 'BIG20' }), // $5 < $20
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -669,7 +687,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       discountType: 'PERCENTAGE_OFF',
       discountValue: 30, // $2.70 on $9
     });
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId), line(muffinId)]),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -687,7 +706,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       appliesToAllLocations: false,
       locationIds: [otherLocationId],
     });
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId)]),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -703,7 +723,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       discountValue: 200,
       endsAt: new Date(Date.now() - 60_000),
     });
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId)]),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -725,7 +746,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     const rewardId = await makeFixedReward(100, 500); // $5 off
 
     // Cart $9. -$6 promo -> $3 remaining. -$5 reward capped to $3 -> $0.
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId), line(muffinId)], { loyaltyRewardId: rewardId }),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -756,7 +778,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     const rewardId = await makeFreeItemReward(100, [latteId]);
 
     // 3 lattes @ $5 = $15. promo frees one ($5), reward frees another ($5).
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId, 3)], { loyaltyRewardId: rewardId }),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -780,7 +803,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
 
     // Only 1 latte — promo frees it, reward has nothing left to free.
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(latteId), line(muffinId)], { loyaltyRewardId: rewardId }),
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -797,7 +821,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       discountValue: 100000,
     });
     const rewardId = await makeFixedReward(100, 100000);
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(pastryId)], { loyaltyRewardId: rewardId }), // $3
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -836,7 +861,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     // Cart $9. -$3 promo -> net $6. standard EARN = 6.
     // Bonus MULTIPLIER on latte: latte's share of the $3 discount ~
     // 3 * 500/900 = 166 -> latte qualifying $3.34 -> 3 standard -> +3 bonus.
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId), line(muffinId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -883,7 +909,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     });
 
     // latte $5 + muffin $4. -50% latte -> $2.50 discount, all on the latte.
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId), line(muffinId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -936,7 +963,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     });
 
     // latte $5 + pastry $3 + muffin $4. -50% of the $7 food -> $3.50.
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId), line(pastryId), line(muffinId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -985,7 +1013,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     });
 
     // latte $5, -50% -> latte qualifying $2.50 -> 2 standard -> +2 bonus.
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId), line(muffinId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -1022,7 +1051,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     // Cart: one Large latte ($7, listed first) + one Small latte ($5).
     // The regular promo frees the LOWEST-priced unit = the $5 Small.
     // The reward must then free the remaining $7 Large — total merchandise $0.
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req(
         [
           {
@@ -1064,7 +1094,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
 
     // 3 Small lattes @ $5 on one line -> promo frees one, reward frees one,
     // one still paid.
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId, 3)], { loyaltyRewardId: rewardId }),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -1085,14 +1116,16 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       discountValue: 100,
       totalRedemptionLimit: 1,
     });
-    await checkoutService.checkout(
+    await submitCheckout(
+      checkoutService,
       req([line(latteId)], { couponCode: 'ONCEONLY' }),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     // Second use — the limit is now reached.
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(latteId)], { couponCode: 'ONCEONLY' }),
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -1114,7 +1147,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     });
     // Guest -> rejected (sign-in required).
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(latteId)], { couponCode: 'PERCUST1' }),
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -1123,14 +1157,16 @@ describe('Promotions & Coupons at checkout (integration)', () => {
 
     const id = identity(randomUUID());
     await grantBeans(id, 0);
-    await checkoutService.checkout(
+    await submitCheckout(
+      checkoutService,
       req([line(latteId)], { couponCode: 'PERCUST1' }),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     // Same customer, second use -> rejected.
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(latteId)], { couponCode: 'PERCUST1' }),
         id,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -1147,7 +1183,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       totalRedemptionLimit: 5,
     });
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(latteId)], {
           couponCode: 'DECLINE1',
           guest: {
@@ -1184,14 +1221,16 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       .mockImplementationOnce(realTransaction)
       .mockRejectedValueOnce(new Error('Simulated order transaction failure'));
     await expect(
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         request,
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
     ).rejects.toThrow('Simulated order transaction failure');
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey: request.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(request.clientRef),
     });
     expect(attempt.status).toBe('SUCCEEDED');
     expect(attempt.reconciliationRequired).toBe(true);
@@ -1214,12 +1253,14 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       totalRedemptionLimit: 1,
     });
     const results = await Promise.allSettled([
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(latteId)], { couponCode: 'RACE1' }),
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
-      checkoutService.checkout(
+      submitCheckout(
+        checkoutService,
         req([line(latteId)], { couponCode: 'RACE1' }),
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -1248,12 +1289,14 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       totalRedemptionLimit: 5,
     });
     const request = req([line(latteId)], { couponCode: 'REPLAY1' });
-    const first = await checkoutService.checkout(
+    const first = await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
-    const second = await checkoutService.checkout(
+    const second = await submitCheckout(
+      checkoutService,
       request,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -1277,7 +1320,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
       discountType: 'FIXED_AMOUNT',
       discountValue: 200,
     });
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId)]),
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -1311,7 +1355,8 @@ describe('Promotions & Coupons at checkout (integration)', () => {
     const id = identity(randomUUID());
     await grantBeans(id, 0);
     const customerId = await customerIdFor(id);
-    const confirmation = await checkoutService.checkout(
+    const confirmation = await submitCheckout(
+      checkoutService,
       req([line(latteId)]),
       id,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),

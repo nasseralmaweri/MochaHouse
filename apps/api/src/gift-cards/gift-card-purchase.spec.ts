@@ -77,9 +77,46 @@ describe('Customer gift-card purchase (integration)', () => {
     return k;
   }
 
+  // ESP-03 PR 6 — payment keys are server-generated: step 1 always creates a
+  // NEW purchase and step 2 names it by purchaseId. These tests keep a label
+  // (`idempotencyKey` here is ONLY a test-side label, never sent) per purchase.
+  type LabelledIntent = CreateGiftCardPurchaseIntentRequest & {
+    idempotencyKey: string;
+  };
+  const purchaseIdByLabel = new Map<string, string>();
+  const purchaseIdOf = (label: string) =>
+    purchaseIdByLabel.get(label) ?? '00000000-0000-7000-8000-000000000000';
+  async function createIntentL(
+    req: LabelledIntent,
+    identity: CustomerIdentity | undefined,
+    tenant: ReturnType<typeof tenantContextFor>,
+  ) {
+    const { idempotencyKey: label, ...rest } = req;
+    const intent = await purchases.createIntent(rest, identity, tenant);
+    purchaseIdByLabel.set(label, intent.purchaseId);
+    return intent;
+  }
+  function purchaseL(
+    req: { idempotencyKey: string; recoveryCredential?: string | null },
+    identity: CustomerIdentity | undefined,
+    tenant: ReturnType<typeof tenantContextFor>,
+  ) {
+    return purchases.purchase(
+      {
+        purchaseId: purchaseIdOf(req.idempotencyKey),
+        recoveryCredential: req.recoveryCredential,
+      },
+      identity,
+      tenant,
+    );
+  }
+  const attemptWhere = (label: string) => ({
+    giftCardPurchase: { id: purchaseIdOf(label) },
+  });
+
   function intentRequest(
-    overrides: Partial<CreateGiftCardPurchaseIntentRequest> = {},
-  ): CreateGiftCardPurchaseIntentRequest {
+    overrides: Partial<LabelledIntent> = {},
+  ): LabelledIntent {
     return {
       idempotencyKey: overrides.idempotencyKey ?? key(),
       amountMinorUnits: overrides.amountMinorUnits ?? 2500,
@@ -94,7 +131,7 @@ describe('Customer gift-card purchase (integration)', () => {
   // Full happy-path purchase: step 1 then step 2. Returns the step-2
   // response plus the credential and key so a test can replay.
   async function buy(
-    overrides: Partial<CreateGiftCardPurchaseIntentRequest> = {},
+    overrides: Partial<LabelledIntent> = {},
     identity?: CustomerIdentity,
   ): Promise<{
     response: PurchaseGiftCardResponse;
@@ -102,12 +139,12 @@ describe('Customer gift-card purchase (integration)', () => {
     recoveryCredential: string | null;
   }> {
     const req = intentRequest(overrides);
-    const intent = await purchases.createIntent(
+    const intent = await createIntentL(
       req,
       identity,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
-    const response = await purchases.purchase(
+    const response = await purchaseL(
       {
         idempotencyKey: req.idempotencyKey,
         recoveryCredential: intent.recoveryCredential,
@@ -218,7 +255,12 @@ describe('Customer gift-card purchase (integration)', () => {
     process.env = { ...originalEnv };
     const keys = [...idempotencyKeys];
     const attempts = await prisma.paymentAttempt.findMany({
-      where: { idempotencyKey: { in: keys } },
+      where: {
+        OR: [
+          { idempotencyKey: { in: keys } },
+          { giftCardPurchase: { id: { in: [...purchaseIdByLabel.values()] } } },
+        ],
+      },
       select: { id: true },
     });
     const attemptIds = attempts.map((a) => a.id);
@@ -286,7 +328,7 @@ describe('Customer gift-card purchase (integration)', () => {
   it('step 1 establishes a PENDING purchase, mints a guest recovery credential, and does NOT charge or issue', async () => {
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
     const req = intentRequest();
-    const intent = await purchases.createIntent(
+    const intent = await createIntentL(
       req,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -321,7 +363,7 @@ describe('Customer gift-card purchase (integration)', () => {
 
   it('step 1 for a signed-in buyer links the customer and returns no credential', async () => {
     const identity = await signedIn();
-    const intent = await purchases.createIntent(
+    const intent = await createIntentL(
       intentRequest(),
       identity,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -336,45 +378,45 @@ describe('Customer gift-card purchase (integration)', () => {
     expect(purchase.recoveryCredentialHash).toBeNull();
   });
 
-  it('step 1 replayed for an established intent returns it as persisted (no new credential)', async () => {
-    const req = intentRequest({ amountMinorUnits: 5000 });
-    const first = await purchases.createIntent(
-      req,
+  it('step 1 never replays: repeating it establishes a separate purchase with its own credential (nothing charged)', async () => {
+    const chargeSpy = jest.spyOn(paymentProvider, 'charge');
+    const req = intentRequest();
+    const first = await createIntentL(req, undefined, t1);
+    const again = await createIntentL(
+      { ...req, idempotencyKey: key() },
       undefined,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+      t1,
     );
-    const replay = await purchases.createIntent(
-      req,
-      undefined,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-    expect(replay.purchaseId).toBe(first.purchaseId);
-    expect(replay.amountMinorUnits).toBe(5000);
-    expect(replay.recoveryCredential).toBeNull();
+    expect(again.purchaseId).not.toBe(first.purchaseId);
+    expect(again.recoveryCredential).not.toBeNull();
+    expect(again.recoveryCredential).not.toBe(first.recoveryCredential);
+    expect(chargeSpy).not.toHaveBeenCalled();
+    chargeSpy.mockRestore();
   });
 
-  it('step 1 replay is NOT re-validated against current configuration (correction E)', async () => {
+  it('step 2 is NOT re-validated against current configuration: an established purchase completes after the presets change (correction E)', async () => {
     const req = intentRequest({ amountMinorUnits: 2500 });
-    await purchases.createIntent(
-      req,
-      undefined,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-    await setConfig({ presetAmountsMinorUnits: [1000], customAmountEnabled: false });
-    // A brand-new intent for 2500 would now fail; the replay must not.
-    const replay = await purchases.createIntent(
-      req,
-      undefined,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-    expect(replay.amountMinorUnits).toBe(2500);
-    await expect(
-      purchases.createIntent(
-        intentRequest({ amountMinorUnits: 2500 }),
+    const intent = await createIntentL(req, undefined, t1);
+    await setConfig({
+      presetAmountsMinorUnits: [1000, 5000],
+      customAmountEnabled: false,
+    });
+    try {
+      const done = await purchaseL(
+        {
+          idempotencyKey: req.idempotencyKey,
+          recoveryCredential: intent.recoveryCredential,
+        },
         undefined,
-        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-      ),
-    ).rejects.toBeInstanceOf(BadRequestException);
+        t1,
+      );
+      expect(done.amountMinorUnits).toBe(2500);
+    } finally {
+      await setConfig({
+        presetAmountsMinorUnits: [1000, 2500, 5000, 10000],
+        customAmountEnabled: true,
+      });
+    }
   });
 
   // --- step 2: happy path ------------------------------------
@@ -414,8 +456,8 @@ describe('Customer gift-card purchase (integration)', () => {
       card.balanceMinorUnits,
     );
 
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      where: attemptWhere(idempotencyKey),
       include: { order: true },
     });
     expect(attempt.status).toBe('SUCCEEDED');
@@ -427,12 +469,12 @@ describe('Customer gift-card purchase (integration)', () => {
   it('a signed-in purchase does not require a recovery credential', async () => {
     const identity = await signedIn();
     const req = intentRequest();
-    await purchases.createIntent(
+    await createIntentL(
       req,
       identity,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
-    const res = await purchases.purchase(
+    const res = await purchaseL(
       { idempotencyKey: req.idempotencyKey },
       identity,
       t1,
@@ -478,7 +520,7 @@ describe('Customer gift-card purchase (integration)', () => {
   it('guest recovery: idempotencyKey + correct credential returns the code; key alone does not', async () => {
     const { response, idempotencyKey, recoveryCredential } = await buy();
 
-    const authorised = await purchases.purchase(
+    const authorised = await purchaseL(
       {
         idempotencyKey,
         recoveryCredential,
@@ -492,7 +534,7 @@ describe('Customer gift-card purchase (integration)', () => {
     // ESP-03 PR 3 — the key alone reveals nothing, not even a masked
     // confirmation: it is answered like a key with no purchase.
     await expect(
-      purchases.purchase({ idempotencyKey }, undefined, t1),
+      purchaseL({ idempotencyKey }, undefined, t1),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
@@ -505,7 +547,7 @@ describe('Customer gift-card purchase (integration)', () => {
       hashRecoveryCredential('anything'),
     ]) {
       await expect(
-        purchases.purchase(
+        purchaseL(
           {
             idempotencyKey,
             recoveryCredential: bad,
@@ -517,28 +559,19 @@ describe('Customer gift-card purchase (integration)', () => {
     }
   });
 
-  it('a low-entropy UUID idempotency key does not weaken code confidentiality', async () => {
-    // Even a trivially-guessable key only reaches the purchase; the code
-    // still needs the server-generated credential.
-    const weakKey = '00000000-0000-4000-8000-000000000001';
-    idempotencyKeys.add(weakKey);
-    const intent = await purchases.createIntent(
-      intentRequest({ idempotencyKey: weakKey }),
-      undefined,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-    await purchases.purchase(
-      {
-        idempotencyKey: weakKey,
-        recoveryCredential: intent.recoveryCredential,
-      },
-      undefined,
-      t1,
-    );
-
-    // An attacker who guessed the weak key but not the credential gets nothing.
+  it('knowing the purchase id alone never yields the code (the credential is required)', async () => {
+    // ESP-03 PR 6 — the purchase reference a buyer holds is the purchase id
+    // (the payment key is server-generated and never sent to a client).
+    const { idempotencyKey } = await buy();
     await expect(
-      purchases.purchase({ idempotencyKey: weakKey }, undefined, t1),
+      purchaseL({ idempotencyKey }, undefined, t1),
+    ).rejects.toBeInstanceOf(ConflictException);
+    await expect(
+      purchaseL(
+        { idempotencyKey, recoveryCredential: '0'.repeat(43) },
+        undefined,
+        t1,
+      ),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
@@ -546,7 +579,7 @@ describe('Customer gift-card purchase (integration)', () => {
     const a = await buy();
     const b = await buy();
     await expect(
-      purchases.purchase(
+      purchaseL(
         {
           idempotencyKey: a.idempotencyKey,
           recoveryCredential: b.recoveryCredential,
@@ -560,19 +593,15 @@ describe('Customer gift-card purchase (integration)', () => {
   it('signed-in purchase: owner recovers without a credential; anonymous and other customers cannot', async () => {
     const owner = await signedIn();
     const req = intentRequest();
-    await purchases.createIntent(
-      req,
-      owner,
-      tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-    );
-    const first = await purchases.purchase(
+    await createIntentL(req, owner, tenantContextFor(TENANT_1_MOCHA_HOUSE_ID));
+    const first = await purchaseL(
       { idempotencyKey: req.idempotencyKey },
       owner,
       t1,
     );
     expect(first.code).not.toBeNull();
 
-    const sameOwner = await purchases.purchase(
+    const sameOwner = await purchaseL(
       { idempotencyKey: req.idempotencyKey },
       owner,
       t1,
@@ -580,12 +609,12 @@ describe('Customer gift-card purchase (integration)', () => {
     expect(sameOwner.code).toBe(first.code);
 
     await expect(
-      purchases.purchase({ idempotencyKey: req.idempotencyKey }, undefined, t1),
+      purchaseL({ idempotencyKey: req.idempotencyKey }, undefined, t1),
     ).rejects.toBeInstanceOf(ConflictException);
 
     const stranger = await signedIn(false);
     await expect(
-      purchases.purchase({ idempotencyKey: req.idempotencyKey }, stranger, t1),
+      purchaseL({ idempotencyKey: req.idempotencyKey }, stranger, t1),
     ).rejects.toBeInstanceOf(ConflictException);
     // The unauthorised probe must not JIT-create a Customer row.
     const strangerRow = await prisma.customer.findUnique({
@@ -602,13 +631,13 @@ describe('Customer gift-card purchase (integration)', () => {
 
   it('an authenticated caller may complete/recover a GUEST purchase with the guest credential (no ownership transfer)', async () => {
     const req = intentRequest();
-    const intent = await purchases.createIntent(
+    const intent = await createIntentL(
       req,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     ); // guest intent
     const somebody = await signedIn();
-    const res = await purchases.purchase(
+    const res = await purchaseL(
       {
         idempotencyKey: req.idempotencyKey,
         recoveryCredential: intent.recoveryCredential,
@@ -626,7 +655,7 @@ describe('Customer gift-card purchase (integration)', () => {
 
   it('step 2 without an established intent is rejected', async () => {
     await expect(
-      purchases.purchase(
+      purchaseL(
         { idempotencyKey: key(), recoveryCredential: 'x' },
         undefined,
         t1,
@@ -636,7 +665,7 @@ describe('Customer gift-card purchase (integration)', () => {
 
   it('step 2 charge is refused when a guest supplies no / wrong credential', async () => {
     const req = intentRequest();
-    await purchases.createIntent(
+    await createIntentL(
       req,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -646,7 +675,7 @@ describe('Customer gift-card purchase (integration)', () => {
     // unauthorised caller learns nothing about the payment.
     for (const recoveryCredential of [undefined, 'wrong-credential']) {
       await expect(
-        purchases.purchase(
+        purchaseL(
           { idempotencyKey: req.idempotencyKey, recoveryCredential },
           undefined,
           t1,
@@ -674,7 +703,7 @@ describe('Customer gift-card purchase (integration)', () => {
     await setConfig({ presetAmountsMinorUnits: [1000, 2500, 5000, 10000] });
     for (const amt of [499, 50_001, 200_001, 12.5, 0]) {
       await expect(
-        purchases.createIntent(
+        createIntentL(
           intentRequest({ amountMinorUnits: amt }),
           undefined,
           tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -690,7 +719,7 @@ describe('Customer gift-card purchase (integration)', () => {
     });
     expect((await buy({ amountMinorUnits: 1000 })).response.status).toBe('ISSUED');
     await expect(
-      purchases.createIntent(
+      createIntentL(
         intentRequest({ amountMinorUnits: 700 }),
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -698,9 +727,9 @@ describe('Customer gift-card purchase (integration)', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('rejects a missing email and a non-UUID idempotency key at step 1', async () => {
+  it('rejects a missing email, and any client-chosen payment key, at step 1 and step 2', async () => {
     await expect(
-      purchases.createIntent(
+      createIntentL(
         intentRequest({ purchaserEmail: '   ' }),
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -709,13 +738,27 @@ describe('Customer gift-card purchase (integration)', () => {
     await expect(
       purchases.createIntent(
         {
-          idempotencyKey: 'not-a-uuid',
+          idempotencyKey: randomUUID(),
           amountMinorUnits: 2500,
           purchaserEmail: 'x@example.com',
-        },
+        } as never,
         undefined,
         tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
       ),
+    ).rejects.toMatchObject({
+      response: { code: 'CLIENT_PAYMENT_KEY_NOT_ACCEPTED' },
+    });
+    await expect(
+      purchases.purchase(
+        { idempotencyKey: randomUUID() } as never,
+        undefined,
+        t1,
+      ),
+    ).rejects.toMatchObject({
+      response: { code: 'CLIENT_PAYMENT_KEY_NOT_ACCEPTED' },
+    });
+    await expect(
+      purchases.purchase({ purchaseId: 'not-a-uuid' }, undefined, t1),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -726,13 +769,13 @@ describe('Customer gift-card purchase (integration)', () => {
       .spyOn(paymentProvider, 'charge')
       .mockResolvedValue({ outcome: 'declined', reason: 'Card declined' });
     const req = intentRequest();
-    const intent = await purchases.createIntent(
+    const intent = await createIntentL(
       req,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
     await expect(
-      purchases.purchase(
+      purchaseL(
         {
           idempotencyKey: req.idempotencyKey,
           recoveryCredential: intent.recoveryCredential,
@@ -742,8 +785,8 @@ describe('Customer gift-card purchase (integration)', () => {
       ),
     ).rejects.toMatchObject({ status: 402 });
 
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey: req.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      where: attemptWhere(req.idempotencyKey),
       include: { giftCardPurchase: true },
     });
     expect(attempt.status).toBe('DECLINED');
@@ -752,7 +795,7 @@ describe('Customer gift-card purchase (integration)', () => {
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
     chargeSpy.mockClear();
     await expect(
-      purchases.purchase(
+      purchaseL(
         {
           idempotencyKey: req.idempotencyKey,
           recoveryCredential: intent.recoveryCredential,
@@ -766,18 +809,19 @@ describe('Customer gift-card purchase (integration)', () => {
 
   it('payment succeeds but issuance fails: reconciliation recorded, no card; a retry issues exactly one card without charging again', async () => {
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
-    const txSpy = jest
-      .spyOn(prisma, '$transaction')
-      .mockRejectedValueOnce(new Error('issuance boom'));
-
     const req = intentRequest();
-    const intent = await purchases.createIntent(
+    const intent = await createIntentL(
       req,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
     );
+    // ESP-03 PR 6 — step 1 is itself one transaction; the failure is
+    // injected into the issuing transaction of step 2.
+    const txSpy = jest
+      .spyOn(prisma, '$transaction')
+      .mockRejectedValueOnce(new Error('issuance boom'));
     await expect(
-      purchases.purchase(
+      purchaseL(
         {
           idempotencyKey: req.idempotencyKey,
           recoveryCredential: intent.recoveryCredential,
@@ -789,8 +833,8 @@ describe('Customer gift-card purchase (integration)', () => {
     expect(chargeSpy).toHaveBeenCalledTimes(1);
     txSpy.mockRestore();
 
-    const attempt = await prisma.paymentAttempt.findUniqueOrThrow({
-      where: { idempotencyKey: req.idempotencyKey },
+    const attempt = await prisma.paymentAttempt.findFirstOrThrow({
+      where: attemptWhere(req.idempotencyKey),
       include: { giftCardPurchase: true },
     });
     expect(attempt.status).toBe('SUCCEEDED');
@@ -800,7 +844,7 @@ describe('Customer gift-card purchase (integration)', () => {
 
     // ESP-03 PR 4 — the buyer's retry issues the card from the saved
     // purchase: one card, never a second charge.
-    const resumed = await purchases.purchase(
+    const resumed = await purchaseL(
       {
         idempotencyKey: req.idempotencyKey,
         recoveryCredential: intent.recoveryCredential,
@@ -827,7 +871,7 @@ describe('Customer gift-card purchase (integration)', () => {
   it('a duplicate step 2 with the same key + credential returns the same card + code, no second charge', async () => {
     const { response, idempotencyKey, recoveryCredential } = await buy();
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
-    const again = await purchases.purchase(
+    const again = await purchaseL(
       {
         idempotencyKey,
         recoveryCredential,
@@ -842,7 +886,7 @@ describe('Customer gift-card purchase (integration)', () => {
 
   it('concurrent step 2 requests charge exactly once and issue exactly one card', async () => {
     const req = intentRequest();
-    const intent = await purchases.createIntent(
+    const intent = await createIntentL(
       req,
       undefined,
       tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
@@ -854,9 +898,9 @@ describe('Customer gift-card purchase (integration)', () => {
     };
 
     const results = await Promise.allSettled([
-      purchases.purchase(body, undefined, t1),
-      purchases.purchase(body, undefined, t1),
-      purchases.purchase(body, undefined, t1),
+      purchaseL(body, undefined, t1),
+      purchaseL(body, undefined, t1),
+      purchaseL(body, undefined, t1),
     ]);
     expect(
       results.filter((r) => r.status === 'fulfilled').length,
@@ -864,7 +908,7 @@ describe('Customer gift-card purchase (integration)', () => {
     expect(chargeSpy).toHaveBeenCalledTimes(1);
 
     const purchase = await prisma.giftCardPurchase.findFirstOrThrow({
-      where: { paymentAttempt: { idempotencyKey: req.idempotencyKey } },
+      where: { paymentAttempt: attemptWhere(req.idempotencyKey) },
     });
     expect(
       await prisma.giftCard.count({ where: { purchase: { id: purchase.id } } }),
@@ -876,42 +920,54 @@ describe('Customer gift-card purchase (integration)', () => {
     ).toBe(1);
   });
 
-  it('concurrent step 1 for the same key creates exactly one purchase + attempt', async () => {
-    const k = key();
+  it('concurrent step 1 calls each establish their own uncharged purchase; step 2 of one charges it exactly once', async () => {
+    const labels = [key(), key(), key()];
+    const intents = await Promise.all(
+      labels.map((label) =>
+        createIntentL(
+          intentRequest({ idempotencyKey: label }),
+          undefined,
+          tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+        ),
+      ),
+    );
+    expect(new Set(intents.map((i) => i.purchaseId)).size).toBe(3);
+    const chargeSpy = jest.spyOn(paymentProvider, 'charge');
     const results = await Promise.allSettled([
-      purchases.createIntent(
-        intentRequest({ idempotencyKey: k }),
+      purchaseL(
+        {
+          idempotencyKey: labels[0],
+          recoveryCredential: intents[0].recoveryCredential,
+        },
         undefined,
-        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+        t1,
       ),
-      purchases.createIntent(
-        intentRequest({ idempotencyKey: k }),
+      purchaseL(
+        {
+          idempotencyKey: labels[0],
+          recoveryCredential: intents[0].recoveryCredential,
+        },
         undefined,
-        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
-      ),
-      purchases.createIntent(
-        intentRequest({ idempotencyKey: k }),
-        undefined,
-        tenantContextFor(TENANT_1_MOCHA_HOUSE_ID),
+        t1,
       ),
     ]);
-    const ok = results.filter(
-      (r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof purchases.createIntent>>> =>
-        r.status === 'fulfilled',
-    );
-    expect(ok.length).toBeGreaterThanOrEqual(1);
-    const ids = new Set(ok.map((r) => r.value.purchaseId));
-    expect(ids.size).toBe(1);
-    expect(
-      await prisma.paymentAttempt.count({ where: { idempotencyKey: k } }),
-    ).toBe(1);
+    expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
+    expect(chargeSpy).toHaveBeenCalledTimes(1);
+    chargeSpy.mockRestore();
+    for (const label of labels.slice(1)) {
+      expect(
+        await prisma.paymentAttempt.findFirstOrThrow({
+          where: attemptWhere(label),
+        }),
+      ).toMatchObject({ status: 'PENDING', paymentState: 'NOT_SENT' });
+    }
   });
 
   // --- lost-response recovery -----------------------------
 
   it('a lost step-2 response is recovered by replaying key + credential within the window', async () => {
     const { response, idempotencyKey, recoveryCredential } = await buy();
-    const replay = await purchases.purchase(
+    const replay = await purchaseL(
       {
         idempotencyKey,
         recoveryCredential,
@@ -928,7 +984,7 @@ describe('Customer gift-card purchase (integration)', () => {
       where: { id: response.purchaseId },
       data: { codeRetrievableUntil: new Date(Date.now() - 1000) },
     });
-    const replay = await purchases.purchase(
+    const replay = await purchaseL(
       {
         idempotencyKey,
         recoveryCredential,
@@ -945,7 +1001,7 @@ describe('Customer gift-card purchase (integration)', () => {
     const { idempotencyKey, recoveryCredential } = await buy();
     process.env.GIFT_CARD_PURCHASE_CODE_KEK = KEK_B;
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
-    const replay = await purchases.purchase(
+    const replay = await purchaseL(
       {
         idempotencyKey,
         recoveryCredential,
@@ -964,7 +1020,7 @@ describe('Customer gift-card purchase (integration)', () => {
     // The old credential no longer proves the buyer: answered like a key
     // with no purchase, never charged.
     await expect(
-      purchases.purchase(
+      purchaseL(
         {
           idempotencyKey,
           recoveryCredential,
@@ -1183,16 +1239,8 @@ describe('Customer gift-card purchase (integration)', () => {
   it('purchase idempotency still prevents a double charge if the throttle is bypassed', async () => {
     const { idempotencyKey, recoveryCredential } = await buy();
     const chargeSpy = jest.spyOn(paymentProvider, 'charge');
-    await purchases.purchase(
-      { idempotencyKey, recoveryCredential },
-      undefined,
-      t1,
-    );
-    await purchases.purchase(
-      { idempotencyKey, recoveryCredential },
-      undefined,
-      t1,
-    );
+    await purchaseL({ idempotencyKey, recoveryCredential }, undefined, t1);
+    await purchaseL({ idempotencyKey, recoveryCredential }, undefined, t1);
     expect(chargeSpy).not.toHaveBeenCalled();
   });
 });

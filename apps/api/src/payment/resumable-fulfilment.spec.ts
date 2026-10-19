@@ -16,7 +16,6 @@ import type {
   PaymentProvider,
 } from '@mocha-house/integrations';
 import type {
-  CheckoutRequest,
   OrderConfirmation,
   PurchaseGiftCardResponse,
 } from '@mocha-house/contracts';
@@ -37,6 +36,15 @@ import { CheckoutService } from '../orders/application/checkout.service';
 import { GiftCardPurchaseService } from '../gift-cards/application/gift-card-purchase.service';
 import { GiftCardIssuanceService } from '../gift-cards/application/gift-card-issuance.service';
 import { GIFT_CARD_CONFIGURATION_KEY } from '../gift-cards/application/gift-card-configuration.service';
+import {
+  attemptsOfCheckout,
+  submitCheckout,
+  type LabelledCheckoutRequest,
+} from '../../test/checkout-session';
+import {
+  createGiftIntent,
+  purchaseGiftCard,
+} from '../../test/checkout-session';
 
 // ESP-03 PR 4 — resumable fulfilment (PAY-3). Real services and a real
 // disposable database; the provider is a controlled double, and database
@@ -252,11 +260,11 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
   beforeEach(() => provider.reset());
 
   const body = (
-    overrides: Partial<CheckoutRequest> = {},
+    overrides: Partial<LabelledCheckoutRequest> = {},
     optionId = mediumOptionId,
     quantity = 2,
-  ): CheckoutRequest => ({
-    idempotencyKey: `rf_${randomUUID()}`,
+  ): LabelledCheckoutRequest => ({
+    clientRef: `rf_${randomUUID()}`,
     locationId,
     guest: { name: 'Resume Guest', phone: '5551239999' },
     lines: [
@@ -269,7 +277,10 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
     ...overrides,
   });
   const attemptOf = (key: string) =>
-    prisma.paymentAttempt.findUniqueOrThrow({ where: { idempotencyKey: key } });
+    prisma.paymentAttempt.findFirstOrThrow({
+      orderBy: { createdAt: 'desc' },
+      where: attemptsOfCheckout(key),
+    });
   const snapshotOf = (paymentAttemptId: string) =>
     prisma.checkoutSnapshot.findUnique({ where: { paymentAttemptId } });
   const ordersFor = (paymentAttemptId: string) =>
@@ -292,10 +303,10 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
   // failure inside the order transaction).
   async function chargedWithoutOrder(request = body()) {
     const first = await withFailingWrites('Order', () =>
-      outcomeOf(() => checkout.checkout(request, undefined, t1)),
+      outcomeOf(() => submitCheckout(checkout, request, undefined, t1)),
     );
     expect(first.ok).toBe(false);
-    const attempt = await attemptOf(request.idempotencyKey);
+    const attempt = await attemptOf(request.clientRef);
     expect(attempt).toMatchObject({
       status: 'SUCCEEDED',
       paymentState: 'SUCCEEDED',
@@ -317,7 +328,12 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
         seenDuringCharge = await snapshotOf(attempt.id);
         return { outcome: 'succeeded', providerReference: 'ref_ok' };
       };
-      const confirmation = await checkout.checkout(request, undefined, t1);
+      const confirmation = await submitCheckout(
+        checkout,
+        request,
+        undefined,
+        t1,
+      );
       expect(seenDuringCharge).toMatchObject({
         version: 1,
         tenantId: TENANT_1_MOCHA_HOUSE_ID,
@@ -329,9 +345,9 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
         },
       });
       const saved = JSON.stringify(seenDuringCharge);
-      expect(saved).not.toContain(request.idempotencyKey);
+      expect(saved).not.toContain(request.clientRef);
       // Fulfilled: the order exists and the saved checkout is gone.
-      const attempt = await attemptOf(request.idempotencyKey);
+      const attempt = await attemptOf(request.clientRef);
       expect(attempt.fulfilmentStatus).toBe('DONE');
       expect(await snapshotOf(attempt.id)).toBeNull();
       expect(confirmation.orderId).toBe((await ordersFor(attempt.id))[0].id);
@@ -340,13 +356,14 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
     it('never charges when the checkout cannot be saved, and leaves no payment behind', async () => {
       const request = body();
       const r = await withFailingWrites('CheckoutSnapshot', () =>
-        outcomeOf(() => checkout.checkout(request, undefined, t1)),
+        outcomeOf(() => submitCheckout(checkout, request, undefined, t1)),
       );
       expect(r.ok).toBe(false);
       expect(provider.calls).toHaveLength(0);
       expect(
-        await prisma.paymentAttempt.findUnique({
-          where: { idempotencyKey: request.idempotencyKey },
+        await prisma.paymentAttempt.findFirst({
+          orderBy: { createdAt: 'desc' },
+          where: attemptsOfCheckout(request.clientRef),
         }),
       ).toBeNull();
     });
@@ -355,17 +372,20 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
       provider.behavior = async () => ({ outcome: 'declined', reason: 'no' });
       const request = body();
       expect(
-        (await outcomeOf(() => checkout.checkout(request, undefined, t1)))
-          .status,
+        (
+          await outcomeOf(() =>
+            submitCheckout(checkout, request, undefined, t1),
+          )
+        ).status,
       ).toBe(402);
-      const attempt = await attemptOf(request.idempotencyKey);
+      const attempt = await attemptOf(request.clientRef);
       expect(attempt.fulfilmentStatus).toBe('NOT_REQUIRED');
       expect(await snapshotOf(attempt.id)).toBeNull();
     });
   });
 
   describe('a charged payment whose order failed', () => {
-    it('is kept for review with its saved checkout, then fulfilled on retry from the SAVED checkout, never the retried cart', async () => {
+    it('is kept for review with its saved checkout; a changed retry is refused (ESP-03 PR 6), the same retry is fulfilled from the SAVED checkout', async () => {
       const { request, attempt } = await chargedWithoutOrder(
         body({}, mediumOptionId, 2),
       );
@@ -376,7 +396,8 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
         reasonCode: 'FULFILMENT_FAILED',
       });
 
-      // The retry sends a different cart and guest: ignored.
+      // A retry that sends a different cart and guest is refused: it never
+      // changes the saved order and is never answered with another order.
       const tampered = {
         ...request,
         guest: { name: 'Someone Else', phone: '5550000000' },
@@ -388,7 +409,16 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
           },
         ],
       };
-      const resumed = await checkout.checkout(tampered, undefined, t1);
+      const refused = await outcomeOf(() =>
+        submitCheckout(checkout, tampered, undefined, t1),
+      );
+      expect(refused.status).toBe(409);
+      expect(refused.response).toMatchObject({
+        code: 'CHECKOUT_CHANGED_DURING_PAYMENT',
+      });
+      expect(await ordersFor(attempt.id)).toHaveLength(0);
+      // The same checkout retried: the order comes from the SAVED checkout.
+      const resumed = await submitCheckout(checkout, request, undefined, t1);
       const orders = await ordersFor(attempt.id);
       expect(orders).toHaveLength(1);
       expect(orders[0]).toMatchObject({ guestName: 'Resume Guest' });
@@ -399,7 +429,7 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
       expect(resumed.orderId).toBe(orders[0].id);
       expect(provider.calls).toHaveLength(1);
 
-      const after = await attemptOf(request.idempotencyKey);
+      const after = await attemptOf(request.clientRef);
       expect(after).toMatchObject({
         status: 'SUCCEEDED',
         reconciliationRequired: false,
@@ -432,10 +462,10 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
           },
           { table: 'PaymentReconciliationCase' },
         ],
-        () => outcomeOf(() => checkout.checkout(request, undefined, t1)),
+        () => outcomeOf(() => submitCheckout(checkout, request, undefined, t1)),
       );
       expect(first.ok).toBe(false);
-      const attempt = await attemptOf(request.idempotencyKey);
+      const attempt = await attemptOf(request.clientRef);
       expect(attempt).toMatchObject({
         status: 'SUCCEEDED',
         paymentState: 'SUCCEEDED',
@@ -450,7 +480,7 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
       );
       expect(recovered.orderId).toBe((await ordersFor(attempt.id))[0].id);
       // A late retry by the customer sees the same order.
-      const replay = await checkout.checkout(request, undefined, t1);
+      const replay = await submitCheckout(checkout, request, undefined, t1);
       expect(replay.orderId).toBe(recovered.orderId);
       expect(await ordersFor(attempt.id)).toHaveLength(1);
       expect(provider.calls).toHaveLength(1);
@@ -476,7 +506,7 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
           ),
         ),
         ...Array.from({ length: 4 }, () =>
-          outcomeOf(() => checkout.checkout(request, undefined, t1)),
+          outcomeOf(() => submitCheckout(checkout, request, undefined, t1)),
         ),
       ]);
       expect(results.every((r) => r.ok)).toBe(true);
@@ -506,9 +536,9 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
 
     it('an existing order is returned as it is; nothing is created or charged again', async () => {
       const request = body();
-      const first = await checkout.checkout(request, undefined, t1);
-      const attempt = await attemptOf(request.idempotencyKey);
-      const again = await checkout.checkout(request, undefined, t1);
+      const first = await submitCheckout(checkout, request, undefined, t1);
+      const attempt = await attemptOf(request.clientRef);
+      const again = await submitCheckout(checkout, request, undefined, t1);
       const recovered = await checkout.recoverFulfilment(
         attempt.id,
         TENANT_1_MOCHA_HOUSE_ID,
@@ -536,7 +566,7 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
       });
       try {
         const retry = await outcomeOf(() =>
-          checkout.checkout(request, undefined, t1),
+          submitCheckout(checkout, request, undefined, t1),
         );
         expect(retry.status).toBe(409);
         expect(JSON.stringify(retry.response)).toContain('manual review');
@@ -545,7 +575,7 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
         );
         expect(recovery.ok).toBe(false);
         expect(await ordersFor(attempt.id)).toHaveLength(0);
-        expect(await attemptOf(request.idempotencyKey)).toMatchObject({
+        expect(await attemptOf(request.clientRef)).toMatchObject({
           status: 'SUCCEEDED',
           paymentState: 'SUCCEEDED',
           reconciliationRequired: true,
@@ -573,23 +603,24 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
       provider.behavior = async () => ({ outcome: 'unknown', reason: 'x' });
       const request = body();
       expect(
-        (await outcomeOf(() => checkout.checkout(request, undefined, t1)))
-          .status,
+        (
+          await outcomeOf(() =>
+            submitCheckout(checkout, request, undefined, t1),
+          )
+        ).status,
       ).toBe(409);
-      const attempt = await attemptOf(request.idempotencyKey);
+      const attempt = await attemptOf(request.clientRef);
       const recovery = await outcomeOf(() =>
         checkout.recoverFulfilment(attempt.id, TENANT_1_MOCHA_HOUSE_ID),
       );
       expect(recovery.status).toBe(409);
       const retry = await outcomeOf(() =>
-        checkout.checkout(request, undefined, t1),
+        submitCheckout(checkout, request, undefined, t1),
       );
       expect(retry.response).toMatchObject({ message: HELD_PAYMENT_MESSAGE });
       expect(await ordersFor(attempt.id)).toHaveLength(0);
       expect(await snapshotOf(attempt.id)).not.toBeNull();
-      expect((await attemptOf(request.idempotencyKey)).paymentState).toBe(
-        'UNKNOWN',
-      );
+      expect((await attemptOf(request.clientRef)).paymentState).toBe('UNKNOWN');
       expect(provider.calls).toHaveLength(1);
     });
   });
@@ -602,13 +633,16 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
       );
       expect(foreign.status).toBe(409);
       const foreignRetry = await outcomeOf(() =>
-        checkout.checkout(
+        submitCheckout(
+          checkout,
           request,
           undefined,
           tenantContextFor(TEST_TENANT_B_ID),
         ),
       );
-      expect(foreignRetry.status).toBe(409);
+      // Another business cannot even name this business's location (the
+      // same 404 as a missing one), let alone its checkout session.
+      expect(foreignRetry.status).toBe(404);
       expect(await ordersFor(attempt.id)).toHaveLength(0);
       // The saved checkout cannot be moved to another business.
       await expect(
@@ -643,11 +677,11 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
         .mockImplementationOnce(commitsThenFails(realTx)); // the order
       let confirmation: OrderConfirmation | undefined;
       try {
-        confirmation = await checkout.checkout(request, undefined, t1);
+        confirmation = await submitCheckout(checkout, request, undefined, t1);
       } finally {
         spy.mockRestore();
       }
-      const attempt = await attemptOf(request.idempotencyKey);
+      const attempt = await attemptOf(request.clientRef);
       const orders = await ordersFor(attempt.id);
       expect(orders.map((o) => o.id)).toEqual([confirmation.orderId]);
       expect(attempt).toMatchObject({
@@ -666,21 +700,21 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
       let transient: Awaited<ReturnType<typeof outcomeOf>> | undefined;
       try {
         transient = await outcomeOf(() =>
-          checkout.checkout(request, undefined, t1),
+          submitCheckout(checkout, request, undefined, t1),
         );
       } finally {
         spy.mockRestore();
       }
       expect(transient.status).toBe(503);
       expect(JSON.stringify(transient.response)).toContain('Do not pay again');
-      const resumed = await checkout.checkout(request, undefined, t1);
+      const resumed = await submitCheckout(checkout, request, undefined, t1);
       expect((await ordersFor(attempt.id)).map((o) => o.id)).toEqual([
         resumed.orderId,
       ]);
       expect(provider.calls).toHaveLength(1);
     });
 
-    it('an attempt saved but never sent is cleared after a while, never charged; a fresh one is left alone', async () => {
+    it('an attempt saved but never sent is abandoned after a while (never charged) and the retry pays once; a fresh one is left alone', async () => {
       const stale = body();
       const fresh = body();
       // Two requests that stopped right after saving, before any charge.
@@ -693,54 +727,68 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
               when: `NEW."paymentState" = 'CHARGING'`,
             },
           ],
-          () => outcomeOf(() => checkout.checkout(request, undefined, t1)),
+          () =>
+            outcomeOf(() => submitCheckout(checkout, request, undefined, t1)),
         );
         expect(r.ok).toBe(false);
       }
       expect(provider.calls).toHaveLength(0);
-      const staleAttempt = await attemptOf(stale.idempotencyKey);
+      const staleAttempt = await attemptOf(stale.clientRef);
       await prisma.paymentAttempt.update({
         where: { id: staleAttempt.id },
         data: { createdAt: new Date(Date.now() - 20 * 60 * 1000) },
       });
 
-      const r = await outcomeOf(() => checkout.checkout(stale, undefined, t1));
-      expect(r.status).toBe(409);
-      expect(JSON.stringify(r.response)).toContain('Nothing was charged');
+      // ESP-03 PR 6 — the stranded attempt is closed as ABANDONED (it was
+      // never sent, so nothing was charged) and the same checkout continues
+      // with one new attempt: one charge, one order.
+      const retried = await submitCheckout(checkout, stale, undefined, t1);
+      expect(provider.calls).toHaveLength(1);
       expect(await snapshotOf(staleAttempt.id)).toBeNull();
-      expect(await attemptOf(stale.idempotencyKey)).toMatchObject({
-        status: 'PENDING',
-        paymentState: 'NOT_SENT',
+      expect(
+        await prisma.paymentAttempt.findUniqueOrThrow({
+          where: { id: staleAttempt.id },
+        }),
+      ).toMatchObject({
+        status: 'FAILED',
+        paymentState: 'ABANDONED',
         fulfilmentStatus: 'NOT_REQUIRED',
       });
+      expect(await ordersFor(staleAttempt.id)).toHaveLength(0);
+      const paid = await attemptOf(stale.clientRef);
+      expect(paid.id).not.toBe(staleAttempt.id);
+      expect((await ordersFor(paid.id)).map((o) => o.id)).toEqual([
+        retried.orderId,
+      ]);
 
-      const freshAttempt = await attemptOf(fresh.idempotencyKey);
+      const freshAttempt = await attemptOf(fresh.clientRef);
       const busy = await outcomeOf(() =>
-        checkout.checkout(fresh, undefined, t1),
+        submitCheckout(checkout, fresh, undefined, t1),
       );
       expect(JSON.stringify(busy.response)).toContain(
         'already being processed',
       );
       expect(await snapshotOf(freshAttempt.id)).not.toBeNull();
-      expect(provider.calls).toHaveLength(0);
+      expect(provider.calls).toHaveLength(1);
     });
 
     it('a gift card whose commit acknowledgement is lost is still handed to the buyer, never flagged', async () => {
       const req = {
-        idempotencyKey: randomUUID(),
+        clientRef: randomUUID(),
         amountMinorUnits: 2500,
         purchaserEmail: 'rf-ack@example.test',
         purchaserName: 'RF Ack',
       };
-      const i = await purchases.createIntent(req, undefined, t1);
+      const i = await createGiftIntent(purchases, req, undefined, t1);
       const spy = jest
         .spyOn(prisma, '$transaction')
         .mockImplementationOnce(commitsThenFails(real()));
       let first: PurchaseGiftCardResponse | undefined;
       try {
-        first = await purchases.purchase(
+        first = await purchaseGiftCard(
+          purchases,
           {
-            idempotencyKey: req.idempotencyKey,
+            clientRef: req.clientRef,
             recoveryCredential: i.recoveryCredential ?? undefined,
           },
           undefined,
@@ -751,7 +799,7 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
       }
       expect(first.status).toBe('ISSUED');
       expect(first.code).not.toBeNull();
-      const attempt = await attemptOf(req.idempotencyKey);
+      const attempt = await attemptOf(req.clientRef);
       const purchase = await prisma.giftCardPurchase.findUniqueOrThrow({
         where: { paymentAttemptId: attempt.id },
       });
@@ -759,9 +807,10 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
       expect(attempt.reconciliationRequired).toBe(false);
       expect(await caseOf(attempt.id)).toBeNull();
       // A retry answers with the same card.
-      const again = await purchases.purchase(
+      const again = await purchaseGiftCard(
+        purchases,
         {
-          idempotencyKey: req.idempotencyKey,
+          clientRef: req.clientRef,
           recoveryCredential: i.recoveryCredential ?? undefined,
         },
         undefined,
@@ -774,7 +823,7 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
 
   describe('gift-card issuance', () => {
     const intent = () => ({
-      idempotencyKey: randomUUID(),
+      clientRef: randomUUID(),
       amountMinorUnits: 2500,
       purchaserEmail: 'rf-buyer@example.test',
       purchaserName: 'RF Buyer',
@@ -782,12 +831,13 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
 
     it('a charged purchase whose card failed to issue gets exactly one card on retry, never charged again', async () => {
       const req = intent();
-      const i = await purchases.createIntent(req, undefined, t1);
+      const i = await createGiftIntent(purchases, req, undefined, t1);
       const run = () =>
         outcomeOf(() =>
-          purchases.purchase(
+          purchaseGiftCard(
+            purchases,
             {
-              idempotencyKey: req.idempotencyKey,
+              clientRef: req.clientRef,
               recoveryCredential: i.recoveryCredential ?? undefined,
             },
             undefined,
@@ -796,7 +846,7 @@ describe('ESP-03 PR 4 resumable fulfilment (integration)', () => {
         );
       const failed = await withFailingWrites('GiftCard', run);
       expect(failed.status).toBe(409);
-      const attempt = await attemptOf(req.idempotencyKey);
+      const attempt = await attemptOf(req.clientRef);
       expect(attempt).toMatchObject({
         status: 'SUCCEEDED',
         reconciliationRequired: true,

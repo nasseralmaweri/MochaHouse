@@ -53,6 +53,13 @@ const PROTECTED: ReadonlyArray<{
     policy: 'checkout-quote',
     authenticatedFirst: OptionalCustomerAuthGuard,
   },
+  // ESP-03 PR 6 — starting a checkout session writes a row: rate limited.
+  {
+    controller: OrdersController,
+    method: 'startSession',
+    policy: 'checkout-quote',
+    authenticatedFirst: OptionalCustomerAuthGuard,
+  },
   { controller: OrdersController, method: 'getStatus', policy: 'order-status' },
   {
     controller: CheckoutRewardsController,
