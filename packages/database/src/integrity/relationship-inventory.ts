@@ -1714,6 +1714,17 @@ const EXTERNAL_IDENTIFIERS: readonly ExternalIdentifier[] = [
     nullable: true,
     system: "payment processor",
   },
+  // ESP-04 M3 — the connected account (acct_…) a Stripe payment intent was
+  // created on: an id issued by the payment processor, recorded with the
+  // charge claim and never changed (trigger guard).
+  {
+    id: 'PaymentAttempt.providerAccountId',
+    kind: 'external-identifier',
+    model: 'PaymentAttempt',
+    column: 'providerAccountId',
+    nullable: true,
+    system: 'payment processor',
+  },
   {
     id: 'OrderRefundObligation.processorRefundId',
     kind: 'external-identifier',

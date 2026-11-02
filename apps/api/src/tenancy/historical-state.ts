@@ -93,6 +93,8 @@ export const COLUMNS_ADDED_AFTER_4C: Readonly<
     // ESP-03 PR 6 (20261117090000).
     'checkoutSessionId',
     'requestFingerprint',
+    // ESP-04 M3 (20261122090000).
+    'providerAccountId',
   ],
   // SC3c-3 — verified-email stamps (20261029090000).
   InternalUser: ['verifiedEmail', 'emailVerifiedAt'],

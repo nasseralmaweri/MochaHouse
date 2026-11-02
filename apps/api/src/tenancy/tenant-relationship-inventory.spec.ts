@@ -238,7 +238,12 @@ const EXTERNAL_IDENTIFIER_COLUMNS: Readonly<Record<string, readonly string[]>> =
       'externalCustomerId',
     ],
     // ESP-04 M1 — the Connect provider's event id and connected-account id.
-    RestaurantPaymentProviderEvent: ['externalEventId', 'externalAccountId'],
+    // ESP-04 M3 — the payment intent a payment event is about.
+    RestaurantPaymentProviderEvent: [
+      'externalEventId',
+      'externalAccountId',
+      'externalObjectId',
+    ],
     // SC3d-1 — the provider subscription item, invoice and schedule a plan
     // change concerns.
     BillingPlanChange: [
@@ -653,8 +658,9 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       unclassified: [],
       mismatched: [],
     });
-    // ESP-04 M1 added TenantPaymentAccount.externalAccountId.
-    expect(plainIdColumns).toHaveLength(16);
+    // ESP-04 M1 added TenantPaymentAccount.externalAccountId; ESP-04 M3
+    // PaymentAttempt.providerAccountId.
+    expect(plainIdColumns).toHaveLength(17);
   });
 
   it('classifies every JSON column on business-owned records', () => {
@@ -760,8 +766,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       historicalSnapshot: 8,
       polymorphic: 4,
       json: 8,
-      external: 4,
-      total: 133,
+      external: 5,
+      total: 134,
     });
     // Optional relationships are present and marked optional.
     const optionalForeignKeys = relationsBetweenBusinessRecords.filter(

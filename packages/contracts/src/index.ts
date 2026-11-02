@@ -7425,6 +7425,12 @@ export interface CheckoutPaymentRequiredResponse {
     // fetched fresh from the provider on every answer so a reload resumes the
     // SAME payment; never stored by the server. Null when nothing is needed.
     clientSecret: string | null;
+    // ESP-04 M3 — Stripe direct charges: the platform's publishable key and
+    // the restaurant's connected account the intent lives on (Stripe.js is
+    // initialised with both). From the server's records only; null for
+    // providers that need neither (the development fake).
+    publishableKey: string | null;
+    connectedAccountId: string | null;
     // The frozen amount being paid, for display only.
     amountMinorUnits: number;
     currency: string;

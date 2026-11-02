@@ -455,6 +455,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
       ['OrderLine.selections', null],
       ['OrderRefundObligation.processorRefundId', null],
       ['OutboxEvent.payload', null],
+      ['PaymentAttempt.providerAccountId', null],
       ['PaymentReconciliationEvent.detail', null],
       ['PaymentReconciliationNote.authorPlatformOperatorId', null],
       ['TenantPaymentAccount.externalAccountId', null],
@@ -746,7 +747,8 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
           warnings: 0,
         },
         'external-identifier': {
-          relationships: 4,
+          // ESP-04 M3 added PaymentAttempt.providerAccountId.
+          relationships: 5,
           checked: 0,
           violations: 0,
           warnings: 0,

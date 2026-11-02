@@ -5,6 +5,12 @@ import type {
 } from '@mocha-house/integrations';
 import type { Prisma } from '@mocha-house/database';
 import type { PrismaService } from '../prisma/prisma.service';
+import { stateOf } from '../restaurant-payments/application/payment-accounts.service';
+import {
+  STRIPE_MINIMUM_CHARGE_MINOR_UNITS,
+  STRIPE_SUPPORTED_CURRENCIES,
+  StripePaymentIntentProvider,
+} from '../restaurant-payments/provider/stripe-payment-intent-provider';
 import {
   DEFAULT_PROVIDER_TIMEOUT_MS,
   openReconciliationCase,
@@ -64,6 +70,10 @@ export type IntentCheck =
   | { kind: 'processing' }
   | { kind: 'failed' }
   | { kind: 'unknown' }
+  // ESP-04 M3 — the provider took a different amount or currency than the
+  // frozen checkout: never recorded as paid, never released, and held for
+  // people (a reconciliation case is open).
+  | { kind: 'mismatch' }
   // The attempt is no longer waiting for its customer (another request
   // settled it meanwhile): the caller re-reads it.
   | { kind: 'not-waiting' };
@@ -130,7 +140,15 @@ export async function startPaymentIntent(
 ): Promise<IntentStart> {
   const claim = await prisma.paymentAttempt.updateMany({
     where: { id: attempt.id, status: 'PENDING', paymentState: 'NOT_SENT' },
-    data: { paymentState: 'CHARGING' },
+    // ESP-04 M3 — the connected account the intent is created on, recorded
+    // with the claim (before the provider is called): every later read of
+    // this payment is made on exactly this account.
+    data: {
+      paymentState: 'CHARGING',
+      ...(input.account.connectedAccountId
+        ? { providerAccountId: input.account.connectedAccountId }
+        : {}),
+    },
   });
   if (claim.count === 0) return { kind: 'not-claimed' };
 
@@ -302,7 +320,7 @@ export async function checkPaymentIntent(
           'PROVIDER_AMOUNT_MISMATCH',
           { outcome: 'unknown' },
         );
-        return { kind: 'unknown' };
+        return { kind: 'mismatch' };
       }
       const moved = await prisma.paymentAttempt.updateMany({
         where: waiting,
@@ -314,8 +332,28 @@ export async function checkPaymentIntent(
     }
     case 'requires_customer_action':
       return { kind: 'customer-action', state: 'REQUIRES_CUSTOMER_ACTION' };
-    case 'requires_payment_method':
+    case 'requires_payment_method': {
+      // ESP-04 M3 — a payment the provider was processing that then failed
+      // (its card refused after all) waits for its customer again on the
+      // SAME intent: live, no longer held, and its case says why.
+      if (attempt.paymentState === 'AWAITING_CONFIRMATION') {
+        const moved = await prisma.paymentAttempt.updateMany({
+          where: { ...waiting, paymentState: 'AWAITING_CONFIRMATION' },
+          data: {
+            paymentState: 'REQUIRES_CUSTOMER_ACTION',
+            failureReason: null,
+          },
+        });
+        if (moved.count === 1) {
+          await noteOnCase(prisma, attempt.tenantId, attempt.id, {
+            action: 'PROVIDER_REQUIRES_PAYMENT_METHOD',
+            from: 'AWAITING_CONFIRMATION',
+            to: 'REQUIRES_CUSTOMER_ACTION',
+          });
+        }
+      }
       return { kind: 'customer-action', state: 'REQUIRES_PAYMENT_METHOD' };
+    }
     case 'processing': {
       // Money may be moving: held (never a prompt to pay again) and visible
       // to people. Later checks keep reading the provider.
@@ -359,6 +397,87 @@ export async function checkPaymentIntent(
     default:
       // "failed" or "unknown" from a READ is not a definitive outcome.
       return { kind: 'unknown' };
+  }
+}
+
+// ESP-04 M3 — the account a two-step payment's intent lives on: the one
+// recorded on the attempt when it was sent, which must still be the
+// business's own connected account (an account id never changes, M1 guard).
+// Null when they disagree: nothing is read and the payment stays as it is.
+export async function paymentAccountForAttempt(
+  prisma: PrismaService,
+  attempt: { tenantId: string; providerAccountId: string | null },
+): Promise<PaymentAccountContext | null> {
+  const current = await paymentAccountContext(prisma, attempt.tenantId);
+  if (attempt.providerAccountId === null) return current;
+  return current.connectedAccountId === attempt.providerAccountId
+    ? current
+    : null;
+}
+
+// ESP-04 M3 (D1) — whether this business may START a payment with the bound
+// provider. Only Stripe needs it: the business must be on the test-mode
+// allowlist (B2), its connected account READY as last read back from Stripe
+// (M1) and in test mode, and the charge one Stripe may take (US dollars, at
+// least the minimum). Checked before any payment attempt or hold exists, so
+// a refusal records nothing.
+export async function canStartPayment(
+  prisma: PrismaService,
+  provider: unknown,
+  tenantId: string,
+  amount: number,
+  currency: string,
+): Promise<boolean> {
+  if (!(provider instanceof StripePaymentIntentProvider)) return true;
+  if (!provider.allowsTenant(tenantId)) return false;
+  if (
+    !STRIPE_SUPPORTED_CURRENCIES.has(currency.toUpperCase()) ||
+    !Number.isInteger(amount) ||
+    amount < STRIPE_MINIMUM_CHARGE_MINOR_UNITS
+  ) {
+    return false;
+  }
+  const account = await prisma.tenantPaymentAccount.findUnique({
+    where: { tenantId },
+  });
+  return (
+    account !== null &&
+    account.provider === 'stripe' &&
+    account.livemode === false &&
+    stateOf(account) === 'READY'
+  );
+}
+
+// A SYSTEM event on the payment's open case, if it has one. Best effort: the
+// payment's own state is already recorded and authoritative.
+async function noteOnCase(
+  prisma: PrismaService,
+  tenantId: string,
+  paymentAttemptId: string,
+  detail: { action: string; from: string; to: string },
+): Promise<void> {
+  try {
+    const open = await prisma.paymentReconciliationCase.findUnique({
+      where: { tenantId_paymentAttemptId: { tenantId, paymentAttemptId } },
+      select: { id: true, status: true },
+    });
+    if (!open || open.status === 'RESOLVED') return;
+    await prisma.paymentReconciliationEvent.create({
+      data: {
+        tenantId,
+        caseId: open.id,
+        actorKind: 'SYSTEM',
+        action: detail.action,
+        detail: {
+          source: 'payment-intent',
+          from: detail.from,
+          to: detail.to,
+          paymentAttemptId,
+        },
+      },
+    });
+  } catch {
+    // The case keeps its earlier history.
   }
 }
 

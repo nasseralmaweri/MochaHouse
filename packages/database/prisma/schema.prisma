@@ -1305,6 +1305,13 @@ model PaymentAttempt {
   currency          String
   providerReference String?
   failureReason     String?
+  // ESP-04 M3 — the restaurant's connected account (acct_…) a Stripe payment
+  // intent was created on, recorded with the charge claim before Stripe is
+  // called; every later read of the intent uses exactly this account. Null
+  // for providers without connected accounts. A partial unique index (raw
+  // SQL, migration 20261122090000_stripe_payment_intents) lets at most ONE
+  // Stripe attempt name a given intent.
+  providerAccountId String?
 
   // Set when this attempt's payment SUCCEEDED but the subsequent protected
   // Order transaction did not commit (e.g. the catalog changed underneath
@@ -1543,16 +1550,25 @@ model RestaurantPaymentProviderEvent {
   type              String
   livemode          Boolean
   externalAccountId String?
+  // ESP-04 M3 — the payment intent a payment event is about (pi_…): with the
+  // account and type, enough to process the event again without its body.
+  externalObjectId  String?
   payloadDigest     String
-  // RECEIVED | PROCESSED | IGNORED | FAILED (CHECK).
+  // RECEIVED | PROCESSED | IGNORED | FAILED (CHECK). ESP-04 M3: UNMATCHED —
+  // a verified payment event for one of our accounts that names no payment
+  // of that business; kept (never linked by its metadata) for
+  // reconciliation.
   status            String    @default("RECEIVED")
   outcome           String?
   attempts          Int       @default(0)
   receivedAt        DateTime  @default(now())
   processedAt       DateTime?
+  // ESP-04 M3 — when processing was last tried (re-drive backoff).
+  lastAttemptAt     DateTime?
 
   @@unique([provider, externalEventId])
   @@index([externalAccountId])
+  @@index([status, receivedAt])
 }
 
 // ESP-03 PR 6 — a server-owned checkout session: the identity a food-order

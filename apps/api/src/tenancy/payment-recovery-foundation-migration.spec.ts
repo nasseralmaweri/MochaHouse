@@ -222,7 +222,10 @@ describe('ESP-03 PR 1: payment recovery database foundation', () => {
               'PaymentAttempt_checkout_session_check',
               'PaymentAttempt_abandoned_check',
               -- ESP-04 M2's check has its own suite too.
-              'PaymentAttempt_customer_action_check')`,
+              'PaymentAttempt_customer_action_check',
+              -- ...and so do ESP-04 M3's.
+              'PaymentAttempt_providerAccountId_check',
+              'PaymentAttempt_stripe_account_check')`,
       );
       expect(checks.map((c) => c.n).sort()).toEqual([
         'PaymentAttempt_fulfilmentStatus_check',
