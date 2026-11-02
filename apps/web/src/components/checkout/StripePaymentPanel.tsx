@@ -22,8 +22,8 @@ import {
 // initialised with the platform's publishable key and the restaurant's
 // connected account from the server's answer, and the Payment Element is
 // mounted for that intent's client secret. Cards only (the intent allows
-// nothing else; wallets are switched off here too). 3-D Secure runs in
-// Stripe's own frame.
+// nothing else; Apple Pay, Google Pay and Link are switched off here too).
+// 3-D Secure runs in Stripe's own frame.
 //
 // Paying never places the order here: after confirmPayment, whatever it
 // answered, `onCheck` asks CENTERIVO's server, which reads the payment from
@@ -188,7 +188,7 @@ function PayForm({
       <PaymentElement
         options={{
           layout: "tabs",
-          wallets: { applePay: "never", googlePay: "never" },
+          wallets: { applePay: "never", googlePay: "never", link: "never" },
         }}
         onReady={() => setReady(true)}
         onChange={(event) => setComplete(event.complete)}

@@ -272,9 +272,10 @@ describe("the payment panel component (source guarantees)", () => {
     expect(source).not.toMatch(/from "@stripe\/stripe-js";/);
   });
 
-  it("offers cards only: no wallets", () => {
+  it("offers cards only: no Apple Pay, Google Pay or Link", () => {
     expect(source).toMatch(/applePay: "never"/);
     expect(source).toMatch(/googlePay: "never"/);
+    expect(source).toMatch(/link: "never"/);
   });
 
   it("keys the form by account and intent, and never stores or logs the client secret", () => {
