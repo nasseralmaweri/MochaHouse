@@ -25,5 +25,7 @@ export function paymentProviderLabel(provider: {
 }): string {
   if (provider.name === 'fake') return 'Development payment provider';
   if (!provider.acceptsPayments) return 'Online payment disabled';
+  // ESP-04 M3 — Stripe PaymentIntents run in Stripe test mode only.
+  if (provider.name === 'stripe') return 'Stripe (test mode)';
   return 'Live payment provider';
 }

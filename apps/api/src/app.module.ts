@@ -37,6 +37,7 @@ import { PlatformSubscriptionsModule } from './platform-subscriptions/platform-s
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { SaasBillingModule } from './saas-billing/saas-billing.module';
 import { RestaurantPaymentsModule } from './restaurant-payments/restaurant-payments.module';
+import { RestaurantPaymentEventsModule } from './restaurant-payments/payment-events/restaurant-payment-events.module';
 import { OwnerRegistrationModule } from './owner-registration/owner-registration.module';
 
 @Module({
@@ -76,6 +77,8 @@ import { OwnerRegistrationModule } from './owner-registration/owner-registration
     // ESP-04 M1 — the restaurant's own Stripe account (Connect foundation);
     // separate from SaaS billing, and no customer payment.
     RestaurantPaymentsModule,
+    // ESP-04 M3 — Stripe payment events (their own endpoint and secret).
+    RestaurantPaymentEventsModule,
     // SC1a — CENTERIVO platform operators (/api/v1/platform/*), outside
     // every tenant boundary.
     PlatformAuthModule,

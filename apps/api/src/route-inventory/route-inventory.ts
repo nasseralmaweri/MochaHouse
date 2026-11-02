@@ -346,6 +346,10 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     scope: 'token',
     note: "ESP-04 M1 — restaurant-payments (Stripe Connect) webhooks: the provider's signature over the raw body is the only credential; the business comes from our stored connected-account id, never the request.",
   },
+  'POST /api/v1/restaurant-payments/webhooks/stripe/payments': {
+    scope: 'token',
+    note: "ESP-04 M3 — Stripe payment events (its own endpoint and signing secret): Stripe's signature over the raw body is the only credential; the business comes from our stored connected-account id and the payment from our stored intent on that account, never the event's metadata; the payment's state is read back from Stripe.",
+  },
   'POST /api/v1/billing/webhooks/:provider': {
     scope: 'token',
     note: "SC3b — billing-provider webhooks: the provider's signature over the raw body is the only credential; the business comes from our stored provider ids, never the request.",

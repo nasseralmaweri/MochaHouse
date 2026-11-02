@@ -167,6 +167,23 @@ The checkout page shows a payment panel while a payment waits, with
 **Check payment status** and, in development with the two-step fake, the
 simulator buttons. A reload resumes the same payment.
 
+## ESP-04 M3 additions
+
+Stripe PaymentIntents now implement this interface:
+[stripe-payment-intents.md](stripe-payment-intents.md). Changes to the flow
+above:
+
+- The `202` answer also carries `publishableKey` and `connectedAccountId`.
+  Both are null for the fake.
+- The connected account is recorded on the payment with the charge claim.
+  Every check reads the intent on that account, and only with the provider
+  that created it.
+- A provider that took a different amount answers the check with a distinct
+  `mismatch` (held, case), so a webhook can tell it from "not readable yet".
+- A processing payment that later answers `requires_payment_method` returns
+  to `REQUIRES_CUSTOMER_ACTION` on the same intent, with a SYSTEM event on its
+  case.
+
 ## Not in M2
 
 - Stripe PaymentIntent creation, the Payment Element and webhooks (M3).

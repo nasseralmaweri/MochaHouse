@@ -39,6 +39,10 @@ export interface PaymentProvider {
   // configured). Callers check it BEFORE recording anything, so a request
   // that needs an external charge is refused without side effects.
   readonly acceptsPayments: boolean;
+  // ESP-04 M3 — false when this provider takes payments ONLY in two steps
+  // (payment intents), so a one-step `charge` (gift-card purchases until
+  // ESP-04 M6) is refused before anything is recorded. Absent means true.
+  readonly acceptsOneStepCharges?: boolean;
   charge(request: ChargeRequest): Promise<ChargeResult>;
 }
 

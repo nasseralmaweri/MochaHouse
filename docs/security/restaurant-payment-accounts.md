@@ -148,6 +148,19 @@ Migration `20261120090000_restaurant_payment_accounts` is additive: one DO
 block, a preflight and a 5s lock timeout. Its rollback refuses while any
 record exists.
 
+## ESP-04 M3 changes
+
+- **Payment events.** Payment events have their own endpoint and secret, and
+  are recorded in the same event table
+  ([stripe-payment-intents.md](stripe-payment-intents.md)).
+- **Type checked first.** The account-events handler checks the event type
+  before anything else, so it never touches a payment event.
+- **Concurrent duplicates.** A concurrent duplicate delivery is no longer
+  acknowledged while the first delivery is unfinished. It processes the event
+  itself.
+- **Account must be READY.** A business's connected account must be `READY`
+  before it can take Stripe test payments.
+
 ## Follow-ups
 
 - **Retention.** A retention policy for processed and ignored Connect event

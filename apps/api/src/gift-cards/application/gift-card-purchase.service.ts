@@ -608,7 +608,12 @@ export class GiftCardPurchaseService implements OnModuleInit {
   // to the owning customer. Read-only — a wrong / anonymous caller never
   // creates a customer row here.
   private assertPaymentAvailable(): void {
-    if (!this.paymentProvider.acceptsPayments) {
+    // ESP-04 M3 — a two-step-only provider (Stripe PaymentIntents) cannot
+    // take this one-step charge: refused before anything is recorded.
+    if (
+      !this.paymentProvider.acceptsPayments ||
+      this.paymentProvider.acceptsOneStepCharges === false
+    ) {
       throw new ServiceUnavailableException(
         'Online payment is not available right now.',
       );

@@ -116,9 +116,12 @@ import {
 } from '../../payment/financial-holds';
 import {
   checkPaymentIntent,
+  canStartPayment,
   paymentAccountContext,
+  paymentAccountForAttempt,
   startPaymentIntent,
 } from '../../payment/payment-intent';
+import { StripePaymentIntentProvider } from '../../restaurant-payments/provider/stripe-payment-intent-provider';
 import {
   generateOrderAccessToken,
   generateOrderNumber,
@@ -466,7 +469,20 @@ export class CheckoutService {
     // refuse BEFORE recording a payment attempt, an order or a gift-card
     // redemption. A reward or gift card covering everything needs no
     // provider and continues.
-    if (chargeAmount > 0 && !this.paymentProvider.acceptsPayments) {
+    // ESP-04 M3 (D1) — with Stripe, only a business on the test-mode
+    // allowlist whose connected account is READY, for a charge Stripe may
+    // take; refused the same way, before anything is recorded.
+    if (
+      chargeAmount > 0 &&
+      (!this.paymentProvider.acceptsPayments ||
+        !(await canStartPayment(
+          this.prisma,
+          this.paymentProvider,
+          tenantId,
+          chargeAmount,
+          priced.currency,
+        )))
+    ) {
       throw new ServiceUnavailableException(
         'Online payment is not available right now.',
       );
@@ -1683,7 +1699,15 @@ export class CheckoutService {
       // read here, so nothing changes and the customer must not pay again.
       throw new ConflictException(HELD_PAYMENT_MESSAGE);
     }
-    const account = await paymentAccountContext(this.prisma, attempt.tenantId);
+    // ESP-04 M3 — only the provider that created the intent can read it, and
+    // only on the account it was created on (recorded with the claim).
+    const account =
+      attempt.provider === provider.name
+        ? await paymentAccountForAttempt(this.prisma, attempt)
+        : null;
+    if (account === null) {
+      throw new ConflictException(HELD_PAYMENT_MESSAGE);
+    }
     const checked = await checkPaymentIntent(
       this.prisma,
       provider,
@@ -1703,6 +1727,7 @@ export class CheckoutService {
       case 'processing':
         return this.paymentRequired(attempt, 'PROCESSING', account);
       case 'unknown':
+      case 'mismatch':
         // Not definitive: the payment, its holds and its saved checkout stay.
         throw new ConflictException(HELD_PAYMENT_MESSAGE);
       case 'failed':
@@ -1759,16 +1784,104 @@ export class CheckoutService {
         'The payment page could not be loaded just now. Nothing new was charged — please try again in a moment.',
       );
     }
+    // ESP-04 M3 (D5) — Stripe direct charges: the browser initialises
+    // Stripe.js with the platform's publishable key and the account the
+    // intent lives on, both from the server's own records, never a client's.
+    const stripe = provider instanceof StripePaymentIntentProvider;
     return {
       outcome: 'PAYMENT_REQUIRED',
       payment: {
         provider: provider.name,
         state,
         clientSecret,
+        publishableKey: stripe ? provider.publishableKey : null,
+        connectedAccountId: stripe ? account.connectedAccountId : null,
         amountMinorUnits: attempt.amount,
         currency: attempt.currency,
       },
     };
+  }
+
+  // ESP-04 M3 (D6/D7) — a verified provider event about this business's
+  // two-step payment (the payment-events webhook, or its re-drive). The
+  // payment is read back from the provider exactly as a customer's check
+  // would, and a confirmed payment's order is created from its saved
+  // checkout exactly once (the same locked path every retry and recovery
+  // takes). Never charges, never creates a payment. Bounded by `timeoutMs`
+  // for the provider read.
+  //   'settled'  the payment's outcome is durably recorded (paid with its
+  //              order, closed, waiting for its customer, still processing,
+  //              or kept for review with a case): nothing more to do;
+  //   'retry'    not settled yet (the provider could not be read, or the
+  //              order could not be written and was not flagged): the
+  //              caller must not treat the event as handled.
+  async reconcileProviderPayment(
+    tenantId: string,
+    paymentAttemptId: string,
+    timeoutMs: number,
+  ): Promise<'settled' | 'retry'> {
+    const provider = this.paymentProvider;
+    let attempt = await this.prisma.paymentAttempt.findFirst({
+      where: { id: paymentAttemptId, tenantId },
+    });
+    if (!attempt) return 'retry';
+    if (
+      this.isTwoStepWaiting(attempt) &&
+      isPaymentIntentProvider(provider) &&
+      attempt.provider === provider.name &&
+      attempt.providerReference !== null
+    ) {
+      const account = await paymentAccountForAttempt(this.prisma, attempt);
+      if (account === null) return 'retry';
+      const checked = await checkPaymentIntent(
+        this.prisma,
+        provider,
+        {
+          id: attempt.id,
+          tenantId: attempt.tenantId,
+          providerReference: attempt.providerReference,
+          paymentState: attempt.paymentState,
+          amount: attempt.amount,
+          currency: attempt.currency,
+        },
+        account,
+        timeoutMs,
+      );
+      // Unreadable: not definitive, read again later. A different amount is
+      // held for people (with a case): recorded, nothing more to do here.
+      if (checked.kind === 'unknown') return 'retry';
+      if (checked.kind === 'mismatch') return 'settled';
+      attempt = await this.prisma.paymentAttempt.findFirstOrThrow({
+        where: { id: attempt.id, tenantId },
+      });
+    }
+    if (attempt.status === 'FAILED' || attempt.status === 'DECLINED') {
+      // Nothing will be fulfilled: its saved checkout goes.
+      if (attempt.fulfilmentStatus !== 'NOT_REQUIRED') {
+        await this.discardSnapshot(attempt);
+      }
+      return 'settled';
+    }
+    if (attempt.status !== 'SUCCEEDED') {
+      // Waiting for its customer, processing or held: recorded as it stands.
+      return 'settled';
+    }
+    if (attempt.paymentState !== 'SUCCEEDED') return 'settled';
+    try {
+      await this.fulfilFromSnapshot(attempt);
+      return 'settled';
+    } catch {
+      // Not created. Kept for review (flagged, with a case) is settled for
+      // this event; anything else is retried.
+      const now = await this.prisma.paymentAttempt.findFirst({
+        where: { id: attempt.id, tenantId },
+        select: { reconciliationRequired: true, fulfilmentStatus: true },
+      });
+      return now?.reconciliationRequired === true ||
+        now?.fulfilmentStatus === 'NEEDS_REVIEW'
+        ? 'settled'
+        : 'retry';
+    }
   }
 
   private completed(confirmation: OrderConfirmation): CheckoutSubmitResult {

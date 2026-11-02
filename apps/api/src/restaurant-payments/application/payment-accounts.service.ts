@@ -166,13 +166,20 @@ export class PaymentAccountsService {
   // about an account of ours — the account is read back from Stripe.
   // Returns false when it should be retried (the provider retries on 503).
   async handleEvent(event: VerifiedConnectEvent): Promise<boolean> {
-    let stored = await this.prisma.restaurantPaymentProviderEvent.findUnique({
-      where: {
-        provider_externalEventId: {
-          provider: event.provider,
-          externalEventId: event.externalEventId,
-        },
+    // Only account events belong to this endpoint; anything else it is sent
+    // is acknowledged and dropped (the endpoint should subscribe to account
+    // events only), so the table cannot grow from unrelated traffic.
+    // ESP-04 M3 — checked FIRST, so this endpoint never touches an event
+    // recorded by the payment-events endpoint (same table).
+    if (!isAccountEvent(event.type)) return true;
+    const key = {
+      provider_externalEventId: {
+        provider: event.provider,
+        externalEventId: event.externalEventId,
       },
+    };
+    let stored = await this.prisma.restaurantPaymentProviderEvent.findUnique({
+      where: key,
     });
     if (
       stored &&
@@ -180,10 +187,6 @@ export class PaymentAccountsService {
     ) {
       return true; // A duplicate delivery: already handled.
     }
-    // Only account events are recorded; anything else the endpoint is sent
-    // is acknowledged and dropped (the endpoint should subscribe to account
-    // events only), so the table cannot grow from unrelated traffic.
-    if (!stored && !isAccountEvent(event.type)) return true;
     if (!stored) {
       try {
         stored = await this.prisma.restaurantPaymentProviderEvent.create({
@@ -197,9 +200,18 @@ export class PaymentAccountsService {
           },
         });
       } catch (error) {
-        // A concurrent delivery of the same event recorded it first.
-        if (isUniqueViolation(error)) return true;
-        throw error;
+        if (!isUniqueViolation(error)) throw error;
+        // ESP-04 M3 (safeguard 2) — a concurrent delivery recorded it first.
+        // Acknowledged only once that one has FINISHED it; otherwise this
+        // delivery processes it too (a read-back, idempotent), so a crash of
+        // the other can never strand it.
+        stored = await this.prisma.restaurantPaymentProviderEvent.findUnique({
+          where: key,
+        });
+        if (!stored) return false;
+        if (stored.status === 'PROCESSED' || stored.status === 'IGNORED') {
+          return true;
+        }
       }
     }
     const settle = (

@@ -3427,6 +3427,8 @@ export interface CheckoutPaymentRequiredResponse {
         provider: string;
         state: CheckoutPaymentState;
         clientSecret: string | null;
+        publishableKey: string | null;
+        connectedAccountId: string | null;
         amountMinorUnits: number;
         currency: string;
     };

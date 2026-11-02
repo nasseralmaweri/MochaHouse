@@ -6,7 +6,11 @@ import {
   type PaymentProvider,
 } from '@mocha-house/integrations';
 import { PAYMENT_PROVIDER } from './payment-provider.token';
-import { resolvePaymentProviderMode } from './payment-provider-mode';
+import {
+  resolvePaymentProviderMode,
+  stripeCheckoutTenants,
+} from './payment-provider-mode';
+import { StripePaymentIntentProvider } from '../restaurant-payments/provider/stripe-payment-intent-provider';
 
 // The single binding of the payment boundary (Milestone 7H). CheckoutService
 // (food orders) and GiftCardPurchaseService (gift-card purchases) both depend
@@ -29,6 +33,15 @@ export function createPaymentProvider(
   // gift-card purchases still use its one-step charge.
   if (mode === 'fake-two-step') {
     return new FakeTwoStepPaymentProvider();
+  }
+  // ESP-04 M3 — Stripe PaymentIntents on the restaurant's connected account,
+  // test mode only (validated above).
+  if (mode === 'stripe') {
+    return StripePaymentIntentProvider.create(env.STRIPE_CONNECT_SECRET_KEY!, {
+      publishableKey: env.STRIPE_CONNECT_PUBLISHABLE_KEY!,
+      paymentsWebhookSecret: env.STRIPE_CONNECT_PAYMENTS_WEBHOOK_SECRET!,
+      allowedTenantIds: stripeCheckoutTenants(env),
+    });
   }
   new Logger('PaymentModule').warn(
     'No payment provider is configured: online payment is disabled.',

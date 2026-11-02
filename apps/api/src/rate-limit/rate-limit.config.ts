@@ -75,6 +75,8 @@ export type PolicyName =
   // restaurant-payments (Connect) webhooks.
   | 'payments-onboarding'
   | 'payments-connect-webhook'
+  // ESP-04 M3 — Stripe payment events (their own endpoint).
+  | 'payments-intent-webhook'
   | 'account-recovery'
   | 'account-verification'
   // SC4a — business owner self-service registration (no tenant: the tenant
@@ -379,6 +381,20 @@ const DEFAULTS: Record<PolicyName, PolicyDefault> = {
         // placeholder, as on the billing webhooks.
         key: ['tenant', 'ip'],
         limit: 600,
+        windowSeconds: 10 * 60,
+      },
+    ],
+  },
+  // ESP-04 M3 — signed payment events: their own budget, separate from the
+  // account events, so a burst of one can never starve the other. A refused
+  // delivery is retried by Stripe (and nothing is acknowledged unfinished),
+  // so this is only a ceiling against floods.
+  'payments-intent-webhook': {
+    scopes: [
+      {
+        name: 'ip',
+        key: ['tenant', 'ip'],
+        limit: 1200,
         windowSeconds: 10 * 60,
       },
     ],
