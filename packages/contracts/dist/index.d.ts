@@ -3356,9 +3356,17 @@ export interface PlatformPaymentCaseSummary {
         issued: boolean;
     } | null;
     recovery: PlatformPaymentCaseRecovery;
+    stripe: PlatformPaymentCaseStripeRecheck | null;
     createdAt: string;
     updatedAt: string;
     resolvedAt: string | null;
+}
+export interface PlatformPaymentCaseStripeRecheck {
+    recheckable: boolean;
+    automaticAttempts: number;
+    lastFailure: string | null;
+    lastFailureAt: string | null;
+    nextAutomaticAttemptAt: string | null;
 }
 export interface PlatformPaymentCaseListResponse {
     cases: PlatformPaymentCaseSummary[];
@@ -3399,6 +3407,30 @@ export interface PlatformPaymentCaseNoteRequest {
 export declare const PAYMENT_CASE_NOTE_MAX_LENGTH = 1000;
 export declare const PAYMENT_CASE_REASON_MIN_LENGTH = 10;
 export declare const PAYMENT_CASE_REASON_MAX_LENGTH = 500;
+export type PlatformPaymentCaseRecheckRequest = PlatformPaymentCaseRecoverRequest;
+export type StripeRecheckResult = "PAID" | "WAITING_FOR_CUSTOMER" | "PROCESSING" | "NOT_CHARGED" | "UNCHANGED" | "NEEDS_ATTENTION";
+export interface PlatformPaymentCaseRecheckResponse {
+    result: StripeRecheckResult;
+    failure: string | null;
+    detail: PlatformPaymentCaseDetail;
+}
+export declare const PAYMENT_RECHECK_NOT_APPLICABLE = "PAYMENT_RECHECK_NOT_APPLICABLE";
+export interface PlatformUnmatchedPaymentEvent {
+    id: string;
+    type: string;
+    receivedAt: string;
+    attempts: number;
+    connectedAccountId: string | null;
+    paymentIntentId: string | null;
+    tenant: {
+        id: string;
+        name: string;
+    } | null;
+}
+export interface PlatformUnmatchedPaymentEventsResponse {
+    events: PlatformUnmatchedPaymentEvent[];
+    truncated: boolean;
+}
 export declare const PAYMENT_RECOVERY_NOT_CONFIRMED = "PAYMENT_RECOVERY_NOT_CONFIRMED";
 export declare const PAYMENT_RECOVERY_NOTHING_TO_RECOVER = "PAYMENT_RECOVERY_NOTHING_TO_RECOVER";
 export declare const PAYMENT_RECOVERY_IN_PROGRESS = "PAYMENT_RECOVERY_IN_PROGRESS";

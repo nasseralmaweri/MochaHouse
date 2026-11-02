@@ -126,6 +126,28 @@ export async function paymentAccountContext(
   return { tenantId, connectedAccountId: account?.externalAccountId ?? null };
 }
 
+// ESP-04 M4a — what an intent is created with for a payment, from the
+// payment itself: its frozen amount and currency, the business's account,
+// and our id. The ONE builder for both the first creation and a recovery
+// replay, so a replay sends byte-identical parameters under the same key
+// (Stripe refuses a key reused with other parameters).
+export function intentCreationInput(
+  attempt: { id: string; amount: number; currency: string },
+  account: PaymentAccountContext,
+): {
+  amount: number;
+  currency: string;
+  account: PaymentAccountContext;
+  metadata: Record<string, string>;
+} {
+  return {
+    amount: attempt.amount,
+    currency: attempt.currency,
+    account,
+    metadata: { paymentAttemptId: attempt.id },
+  };
+}
+
 export async function startPaymentIntent(
   prisma: PrismaService,
   provider: PaymentIntentProvider,
@@ -450,7 +472,7 @@ export async function canStartPayment(
 
 // A SYSTEM event on the payment's open case, if it has one. Best effort: the
 // payment's own state is already recorded and authoritative.
-async function noteOnCase(
+export async function noteOnCase(
   prisma: PrismaService,
   tenantId: string,
   paymentAttemptId: string,
@@ -484,7 +506,7 @@ async function noteOnCase(
 // A payment the provider confirmed was never charged (its intent was
 // cancelled): its open case, if any, is resolved as NOT_CHARGED with a SYSTEM
 // event, in the caller's transaction (the one that closed the payment).
-async function resolveCaseAsNotCharged(
+export async function resolveCaseAsNotCharged(
   tx: Prisma.TransactionClient,
   tenantId: string,
   paymentAttemptId: string,

@@ -1,5 +1,6 @@
 import {
   HttpException,
+  Inject,
   Injectable,
   Logger,
   OnModuleDestroy,
@@ -15,6 +16,19 @@ import {
   openReconciliationCase,
   resolveCaseAsFulfilled,
 } from '../../payment/payment-charge';
+import type { PaymentProvider } from '@mocha-house/integrations';
+import { PAYMENT_PROVIDER } from '../../payment/payment-provider.token';
+import { paymentAccountForAttempt } from '../../payment/payment-intent';
+import {
+  RECOVERABLE_HELD_STATES,
+  readBackHeldPayment,
+  replayPaymentIntentCreation,
+  type ReadBack,
+} from '../../payment/payment-intent-recovery';
+import {
+  PAYMENT_EVENT_TYPES,
+  StripePaymentIntentProvider,
+} from '../../restaurant-payments/provider/stripe-payment-intent-provider';
 
 // ESP-03 PR 5 — payment reconciliation and automatic recovery.
 //
@@ -60,6 +74,39 @@ import {
 
 export type RecoveryTrigger = 'automatic' | 'platform_support';
 
+// ESP-04 M4a — why a Stripe outcome recovery did not settle the payment.
+// Retryable: Stripe could not be read (or proved nothing), or the payment
+// moved meanwhile. Not retryable (people must look): the creation can no
+// longer be replayed safely, Stripe refuses the key with these parameters
+// (or the intent belongs to another payment), no account was recorded, the
+// stored account is not the business's, or a different amount was taken.
+export type StripeRecheckFailure =
+  | 'STRIPE_UNREADABLE'
+  | 'STRIPE_STATE_CHANGED'
+  | 'STRIPE_CREATE_EXPIRED'
+  | 'STRIPE_IDEMPOTENCY_CONFLICT'
+  | 'STRIPE_ACCOUNT_MISSING'
+  | 'STRIPE_ACCOUNT_MISMATCH'
+  | 'STRIPE_AMOUNT_MISMATCH'
+  // Paid at Stripe and recorded, but its order is not created yet (fulfilment
+  // recovery creates it exactly once).
+  | 'STRIPE_FULFILMENT_PENDING';
+
+export type StripeRecheckOutcome =
+  | {
+      kind: 'settled';
+      result: 'PAID' | 'WAITING_FOR_CUSTOMER' | 'PROCESSING' | 'NOT_CHARGED';
+    }
+  | { kind: 'failed'; failure: StripeRecheckFailure; retryable: boolean }
+  // Not a Stripe payment whose outcome only Stripe can settle.
+  | { kind: 'not_applicable' }
+  | { kind: 'not_found' }
+  | { kind: 'busy' };
+
+// Who asked: the sweeper, platform support, or an unmatched Stripe event that
+// now names this payment (not counted toward the automatic cap).
+export type StripeRecheckTrigger = RecoveryTrigger | 'stripe_event';
+
 export type RecoveryFailure =
   | 'FULFILMENT_REJECTED'
   | 'SNAPSHOT_UNREADABLE'
@@ -104,6 +151,36 @@ export const RECOVERY_STALE_MS = 5 * 60 * 1000;
 
 const SWEEP_LOCK_KEY = 'esp03-payment-auto-recovery-sweep';
 
+// ESP-04 M4a — Stripe outcome recovery. Each Stripe call is bounded; a
+// CHARGING payment gets longer before it is touched (its first request may
+// still be talking to Stripe, with the SDK's own retries); unmatched events
+// are looked at for a week, at most 20 per sweep from a scan of 100, with a
+// per-event backoff (1, 2, 4 … 60 minutes) and cap.
+export const STRIPE_RECHECK_TIMEOUT_MS = 8_000;
+export const STRIPE_CHARGING_GRACE_MS = 10 * 60 * 1000;
+export const UNMATCHED_EVENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+export const UNMATCHED_EVENT_MAX_ATTEMPTS = 8;
+const UNMATCHED_EVENT_SCAN = 100;
+export const UNMATCHED_EVENT_BATCH = 20;
+
+export function unmatchedBackoffMs(attempts: number): number {
+  return Math.min(60, 2 ** Math.max(0, attempts - 1)) * 60_000;
+}
+
+// What a payment's state now says, for a recheck that settled it.
+function resultOfState(attempt: {
+  status: string;
+  paymentState: string | null;
+}): 'PAID' | 'WAITING_FOR_CUSTOMER' | 'PROCESSING' | 'NOT_CHARGED' {
+  if (attempt.status === 'SUCCEEDED') return 'PAID';
+  if (attempt.status === 'FAILED' || attempt.status === 'DECLINED') {
+    return 'NOT_CHARGED';
+  }
+  return attempt.paymentState === 'AWAITING_CONFIRMATION'
+    ? 'PROCESSING'
+    : 'WAITING_FOR_CUSTOMER';
+}
+
 export function automaticRecoveryEnabled(): boolean {
   return process.env.PAYMENT_AUTO_RECOVERY_ENABLED === '1';
 }
@@ -121,7 +198,7 @@ export interface RecoveryHistory {
   automaticAttempts: number;
   // The latest attempt of any trigger (its start, or its failure).
   lastAttemptAt: Date | null;
-  lastFailure: RecoveryFailure | null;
+  lastFailure: RecoveryFailure | StripeRecheckFailure | null;
   lastFailureRetryable: boolean;
   lastFailureAt: Date | null;
   // A RECOVERY_STARTED newer than every outcome and not stale.
@@ -130,36 +207,39 @@ export interface RecoveryHistory {
 
 type EventRow = { action: string; detail: unknown; createdAt: Date };
 
+// ESP-04 M4a — `prefix` selects the history: RECOVERY (fulfilment) or
+// STRIPE_RECHECK (Stripe outcome recovery), counted separately (decision 8).
 export function recoveryHistoryOf(
   events: readonly EventRow[],
   now: Date = new Date(),
+  prefix: 'RECOVERY' | 'STRIPE_RECHECK' = 'RECOVERY',
 ): RecoveryHistory {
   const sorted = [...events].sort(
     (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
   );
   let automaticAttempts = 0;
   let lastAttemptAt: Date | null = null;
-  let lastFailure: RecoveryFailure | null = null;
+  let lastFailure: RecoveryFailure | StripeRecheckFailure | null = null;
   let lastFailureRetryable = false;
   let lastFailureAt: Date | null = null;
   let openStart: Date | null = null;
   for (const event of sorted) {
     const detail = (event.detail ?? {}) as Record<string, unknown>;
-    if (event.action === 'RECOVERY_STARTED') {
+    if (event.action === `${prefix}_STARTED`) {
       openStart = event.createdAt;
       lastAttemptAt = event.createdAt;
       if (detail.trigger === 'automatic') automaticAttempts += 1;
-    } else if (event.action === 'RECOVERY_FAILED') {
+    } else if (event.action === `${prefix}_FAILED`) {
       openStart = null;
       lastAttemptAt = event.createdAt;
       lastFailure =
         typeof detail.failure === 'string'
-          ? (detail.failure as RecoveryFailure)
+          ? (detail.failure as RecoveryFailure | StripeRecheckFailure)
           : 'TRANSIENT_ERROR';
       lastFailureRetryable = detail.retryable === true;
       lastFailureAt = event.createdAt;
     } else if (
-      event.action === 'RECOVERY_SUCCEEDED' ||
+      event.action === `${prefix}_SUCCEEDED` ||
       event.action === 'RESOLVED'
     ) {
       openStart = null;
@@ -222,6 +302,10 @@ export class PaymentRecoveryService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly checkout: CheckoutService,
     private readonly giftCards: GiftCardPurchaseService,
+    // ESP-04 M4a — only a Stripe provider enables Stripe outcome recovery
+    // (absent when constructed directly, e.g. by older specs).
+    @Inject(PAYMENT_PROVIDER)
+    private readonly provider: PaymentProvider | null = null,
   ) {}
 
   // OFF by default: nothing is scheduled unless the deployment explicitly
@@ -258,6 +342,22 @@ export class PaymentRecoveryService implements OnModuleInit, OnModuleDestroy {
         // ESP-03 PR 8 — payments that were never sent are closed first, so
         // their financial holds do not stay reserved.
         await this.checkout.abandonStrandedUnsentAttempts(now);
+        // ESP-04 M4a — Stripe payments whose outcome is held are read back
+        // from Stripe (and a lost creation replayed, within its window),
+        // then unmatched Stripe events that now name a payment are
+        // reconciled — both before fulfilment, so a payment found paid gets
+        // its order in this same sweep.
+        if (this.provider instanceof StripePaymentIntentProvider) {
+          for (const candidate of await this.stripeCandidates(now)) {
+            await this.recheckStripeOutcome(
+              candidate.id,
+              candidate.tenantId,
+              { trigger: 'automatic' },
+              now,
+            );
+          }
+          await this.reconcileUnmatchedEvents(now);
+        }
         const due = await this.dueCandidates(now);
         const outcomes: RecoveryOutcome[] = [];
         for (const candidate of due) {
@@ -530,6 +630,448 @@ export class PaymentRecoveryService implements OnModuleInit, OnModuleDestroy {
         ...(purchase ? { giftCardPurchaseId: purchase.id } : {}),
       });
     });
+  }
+
+  // --- ESP-04 M4a: Stripe outcome recovery -----------------------------------
+
+  // One Stripe outcome recovery of one payment of one business, under the
+  // SAME per-payment lock as fulfilment recovery (they never run together on
+  // a payment). Safe to call at any time, any number of times: it never
+  // charges, never creates a payment or a second intent, and moves the
+  // payment only on Stripe's read-back.
+  async recheckStripeOutcome(
+    paymentAttemptId: string,
+    tenantId: string,
+    request: { trigger: StripeRecheckTrigger; platformOperatorId?: string },
+    now: Date = new Date(),
+  ): Promise<StripeRecheckOutcome> {
+    try {
+      const outcome = await withSessionLock(
+        `esp03-payment-recovery:${tenantId}:${paymentAttemptId}`,
+        () =>
+          this.stripeOutcomeLocked(paymentAttemptId, tenantId, request, now),
+      );
+      return outcome ?? { kind: 'busy' };
+    } catch (error) {
+      this.logger.error(
+        `payment attempt ${paymentAttemptId}: Stripe outcome recovery could not run (${
+          error instanceof Error ? error.name : 'unknown error'
+        })`,
+      );
+      return { kind: 'failed', failure: 'STRIPE_UNREADABLE', retryable: true };
+    }
+  }
+
+  private async stripeOutcomeLocked(
+    paymentAttemptId: string,
+    tenantId: string,
+    request: { trigger: StripeRecheckTrigger; platformOperatorId?: string },
+    now: Date,
+  ): Promise<StripeRecheckOutcome> {
+    const provider = this.provider;
+    if (!(provider instanceof StripePaymentIntentProvider)) {
+      return { kind: 'not_applicable' };
+    }
+    const attempt = await this.prisma.paymentAttempt.findFirst({
+      where: { id: paymentAttemptId, tenantId },
+    });
+    if (!attempt) return { kind: 'not_found' };
+    const held = (RECOVERABLE_HELD_STATES as readonly string[]).includes(
+      attempt.paymentState ?? '',
+    );
+    // A payment waiting for its customer is rechecked only on request
+    // (support, or a Stripe event naming it); the sweeper leaves it alone.
+    const waiting =
+      attempt.paymentState === 'REQUIRES_CUSTOMER_ACTION' &&
+      request.trigger !== 'automatic';
+    if (
+      attempt.provider !== 'stripe' ||
+      String(attempt.status) !== 'PENDING' ||
+      (!held && !waiting)
+    ) {
+      return { kind: 'not_applicable' };
+    }
+
+    const caseId = await this.ensureOutcomeCase(
+      paymentAttemptId,
+      tenantId,
+      attempt.paymentState === 'CHARGING'
+        ? 'CHARGE_STRANDED'
+        : 'PROVIDER_OUTCOME_UNKNOWN',
+    );
+    const base: Record<string, string> = {
+      source: 'stripe-recovery',
+      trigger: request.trigger,
+      paymentAttemptId,
+      ...(request.platformOperatorId
+        ? { platformOperatorId: request.platformOperatorId }
+        : {}),
+    };
+    await this.event(tenantId, caseId, 'STRIPE_RECHECK_STARTED', base);
+    const fail = async (
+      failure: StripeRecheckFailure,
+      retryable: boolean,
+    ): Promise<StripeRecheckOutcome> => {
+      await this.event(tenantId, caseId, 'STRIPE_RECHECK_FAILED', {
+        ...base,
+        failure,
+        retryable,
+      });
+      return { kind: 'failed', failure, retryable };
+    };
+    const settled = async (
+      result: 'PAID' | 'WAITING_FOR_CUSTOMER' | 'PROCESSING' | 'NOT_CHARGED',
+    ): Promise<StripeRecheckOutcome> => {
+      await this.event(tenantId, caseId, 'STRIPE_RECHECK_SUCCEEDED', {
+        ...base,
+        outcome: result,
+      });
+      return { kind: 'settled', result };
+    };
+
+    // Only ever the account the payment was created on, still the
+    // business's own.
+    const account = await paymentAccountForAttempt(this.prisma, attempt);
+    if (account === null || attempt.providerAccountId === null) {
+      return fail(
+        attempt.providerAccountId === null
+          ? 'STRIPE_ACCOUNT_MISSING'
+          : 'STRIPE_ACCOUNT_MISMATCH',
+        false,
+      );
+    }
+
+    if (!held) {
+      // Live: the customer's own check path (read-back, conditional moves,
+      // the order exactly once).
+      const answer = await this.checkout.reconcileProviderPayment(
+        tenantId,
+        paymentAttemptId,
+        STRIPE_RECHECK_TIMEOUT_MS,
+      );
+      if (answer === 'retry') return fail('STRIPE_UNREADABLE', true);
+      const current = await this.prisma.paymentAttempt.findFirstOrThrow({
+        where: { id: paymentAttemptId, tenantId },
+        select: { status: true, paymentState: true },
+      });
+      return settled(resultOfState(current));
+    }
+
+    let reference = attempt.providerReference;
+    if (reference === null) {
+      const replay = await replayPaymentIntentCreation(
+        this.prisma,
+        provider,
+        attempt,
+        account,
+        now,
+        STRIPE_RECHECK_TIMEOUT_MS,
+      );
+      switch (replay.kind) {
+        case 'linked':
+          reference = replay.reference;
+          break;
+        case 'expired':
+          return fail('STRIPE_CREATE_EXPIRED', false);
+        case 'conflict':
+          return fail('STRIPE_IDEMPOTENCY_CONFLICT', false);
+        case 'no-account':
+          return fail('STRIPE_ACCOUNT_MISSING', false);
+        case 'unreadable':
+          return fail('STRIPE_UNREADABLE', true);
+        case 'changed':
+          return fail('STRIPE_STATE_CHANGED', true);
+      }
+    }
+
+    const readBack: ReadBack = await readBackHeldPayment(
+      this.prisma,
+      provider,
+      { ...attempt, providerReference: reference },
+      account,
+      STRIPE_RECHECK_TIMEOUT_MS,
+    );
+    switch (readBack.kind) {
+      case 'unreadable':
+        return fail('STRIPE_UNREADABLE', true);
+      case 'changed':
+        return fail('STRIPE_STATE_CHANGED', true);
+      case 'mismatch':
+        return fail('STRIPE_AMOUNT_MISMATCH', false);
+      case 'paid':
+      case 'not-charged': {
+        // The order exactly once (paid), or the saved checkout removed (not
+        // charged) — the same idempotent path a webhook takes.
+        const followed = await this.checkout
+          .reconcileProviderPayment(
+            tenantId,
+            paymentAttemptId,
+            STRIPE_RECHECK_TIMEOUT_MS,
+          )
+          .catch(() => 'retry' as const);
+        if (followed === 'retry' && readBack.kind === 'paid') {
+          // Paid, but its order is not created (or flagged) yet: NOT settled
+          // for whoever asked (an unmatched event stays open, with a case);
+          // fulfilment recovery creates the order exactly once.
+          return fail('STRIPE_FULFILMENT_PENDING', true);
+        }
+        return settled(readBack.kind === 'paid' ? 'PAID' : 'NOT_CHARGED');
+      }
+      case 'waiting':
+        return settled('WAITING_FOR_CUSTOMER');
+      case 'processing':
+        return settled('PROCESSING');
+    }
+  }
+
+  // Held Stripe payments due a Stripe outcome recovery: past their grace
+  // (CHARGING longer: the first request may still be talking to Stripe),
+  // case not resolved, not set aside for people (the latest Stripe recheck
+  // failed in a way a retry cannot fix, or the automatic attempts are used
+  // up — both decided in SQL), and due by the backoff — oldest first, one
+  // batch at most.
+  async stripeCandidates(
+    now: Date = new Date(),
+  ): Promise<{ id: string; tenantId: string }[]> {
+    const before = new Date(now.getTime() - RECOVERY_GRACE_MS);
+    const chargingBefore = new Date(now.getTime() - STRIPE_CHARGING_GRACE_MS);
+    const due: { id: string; tenantId: string }[] = [];
+    let after: { updatedAt: Date; id: string } | null = null;
+    for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
+      const afterUpdatedAt: Date = after?.updatedAt ?? new Date(0);
+      const afterId: string = after?.id ?? '';
+      const rows: {
+        id: string;
+        tenantId: string;
+        updatedAt: Date;
+        caseId: string | null;
+      }[] = await this.prisma.$queryRaw<
+        {
+          id: string;
+          tenantId: string;
+          updatedAt: Date;
+          caseId: string | null;
+        }[]
+      >`
+        SELECT pa.id, pa."tenantId", pa."updatedAt", c.id AS "caseId"
+        FROM "PaymentAttempt" pa
+        LEFT JOIN "PaymentReconciliationCase" c
+          ON c."paymentAttemptId" = pa.id AND c."tenantId" = pa."tenantId"
+        WHERE pa.provider = 'stripe'
+          AND pa.status::text = 'PENDING'
+          AND pa."paymentState" IN ('CHARGING', 'UNKNOWN', 'AWAITING_CONFIRMATION')
+          AND (
+            (pa."paymentState" = 'CHARGING' AND pa."updatedAt" < ${chargingBefore})
+            OR (pa."paymentState" <> 'CHARGING' AND pa."updatedAt" < ${before})
+          )
+          AND (c.id IS NULL OR c.status <> 'RESOLVED')
+          AND (pa."updatedAt", pa.id) > (${afterUpdatedAt}, ${afterId})
+          -- Set aside for people: the latest Stripe recheck outcome is a
+          -- failure a retry cannot fix.
+          AND NOT EXISTS (
+            SELECT 1 FROM "PaymentReconciliationEvent" f
+            WHERE c.id IS NOT NULL
+              AND f."caseId" = c.id AND f."tenantId" = c."tenantId"
+              AND f.action = 'STRIPE_RECHECK_FAILED'
+              AND f.detail->>'retryable' = 'false'
+              AND NOT EXISTS (
+                SELECT 1 FROM "PaymentReconciliationEvent" g
+                WHERE g."caseId" = c.id AND g."tenantId" = c."tenantId"
+                  AND g.action IN ('STRIPE_RECHECK_FAILED', 'STRIPE_RECHECK_SUCCEEDED')
+                  AND (g."createdAt", g.id) > (f."createdAt", f.id)
+              )
+          )
+          -- Set aside for people: the automatic attempts are used up.
+          AND (
+            c.id IS NULL OR (
+              SELECT count(*) FROM "PaymentReconciliationEvent" s
+              WHERE s."caseId" = c.id AND s."tenantId" = c."tenantId"
+                AND s.action = 'STRIPE_RECHECK_STARTED'
+                AND s.detail->>'trigger' = 'automatic'
+            ) < ${MAX_AUTOMATIC_ATTEMPTS}
+          )
+        ORDER BY pa."updatedAt" ASC, pa.id ASC
+        LIMIT ${SWEEP_PAGE_SIZE}`;
+      if (rows.length === 0) break;
+      const caseIds = rows.flatMap((r) => (r.caseId ? [r.caseId] : []));
+      const events = caseIds.length
+        ? await this.prisma.paymentReconciliationEvent.findMany({
+            where: {
+              caseId: { in: caseIds },
+              action: { startsWith: 'STRIPE_RECHECK_' },
+            },
+            select: {
+              caseId: true,
+              action: true,
+              detail: true,
+              createdAt: true,
+            },
+          })
+        : [];
+      for (const row of rows) {
+        const history = recoveryHistoryOf(
+          events.filter((e) => e.caseId === row.caseId),
+          now,
+          'STRIPE_RECHECK',
+        );
+        if (history.inProgressSince) continue;
+        const next = nextAutomaticAttemptAt(history, row.updatedAt, true);
+        if (next === null || next.getTime() > now.getTime()) continue;
+        due.push({ id: row.id, tenantId: row.tenantId });
+        if (due.length >= SWEEP_BATCH_SIZE) return due;
+      }
+      if (rows.length < SWEEP_PAGE_SIZE) break;
+      const last = rows[rows.length - 1];
+      after = { updatedAt: last.updatedAt, id: last.id };
+    }
+    return due;
+  }
+
+  // Corrected decision 7 — UNMATCHED Stripe payment events (a verified
+  // event for one of our accounts that named no payment when it arrived)
+  // that now name one: the payment is reconciled HERE, through the same
+  // idempotent paths (Stripe outcome recovery for a held payment, the
+  // webhook's read-back for any other), whether or not the event re-drive is
+  // on and without waiting for Stripe to deliver anything again. Linking is
+  // only ever through OUR records: the event's account must be one of our
+  // businesses' accounts, and that business's Stripe payment must name the
+  // event's intent on that same account — never the event's metadata.
+  // Bounded: the least recently tried first (never-tried before anything),
+  // backoff and a cap per event, so events still failing never crowd out
+  // the ones behind them.
+  async reconcileUnmatchedEvents(now: Date = new Date()): Promise<number> {
+    const since = new Date(now.getTime() - UNMATCHED_EVENT_WINDOW_MS);
+    const rows = await this.prisma.$queryRaw<
+      {
+        eventId: string;
+        attemptId: string;
+        tenantId: string;
+        attempts: number;
+        lastAttemptAt: Date | null;
+      }[]
+    >`
+      SELECT e.id AS "eventId", pa.id AS "attemptId", pa."tenantId",
+             e.attempts, e."lastAttemptAt"
+      FROM "RestaurantPaymentProviderEvent" e
+      JOIN "TenantPaymentAccount" a
+        ON a."externalAccountId" = e."externalAccountId"
+       AND a.provider = 'stripe' AND a.livemode = false
+      JOIN "PaymentAttempt" pa
+        ON pa."tenantId" = a."tenantId"
+       AND pa.provider = 'stripe'
+       AND pa."providerReference" = e."externalObjectId"
+       AND pa."providerAccountId" = e."externalAccountId"
+      WHERE e.provider = 'stripe'
+        AND e.status = 'UNMATCHED'
+        AND e.livemode = false
+        AND e.type = ANY(${[...PAYMENT_EVENT_TYPES]}::text[])
+        AND e."receivedAt" > ${since}
+        AND e.attempts < ${UNMATCHED_EVENT_MAX_ATTEMPTS}
+      ORDER BY e."lastAttemptAt" ASC NULLS FIRST, e."receivedAt" ASC, e.id ASC
+      LIMIT ${UNMATCHED_EVENT_SCAN}`;
+    let processed = 0;
+    for (const row of rows) {
+      if (processed >= UNMATCHED_EVENT_BATCH) break;
+      if (
+        row.lastAttemptAt !== null &&
+        now.getTime() - row.lastAttemptAt.getTime() <
+          unmatchedBackoffMs(row.attempts)
+      ) {
+        continue;
+      }
+      // Claimed for this try (counted from the start, so an interrupted try
+      // backs off too); skipped if another process finished it meanwhile.
+      const claimed =
+        await this.prisma.restaurantPaymentProviderEvent.updateMany({
+          where: { id: row.eventId, status: 'UNMATCHED' },
+          data: { attempts: { increment: 1 }, lastAttemptAt: now },
+        });
+      if (claimed.count !== 1) continue;
+      processed += 1;
+      if (await this.reconcileLinkedPayment(row.attemptId, row.tenantId, now)) {
+        await this.prisma.restaurantPaymentProviderEvent.updateMany({
+          where: { id: row.eventId, status: 'UNMATCHED' },
+          data: {
+            status: 'PROCESSED',
+            outcome: 'LINKED_BY_RECOVERY',
+            processedAt: new Date(),
+          },
+        });
+      } else {
+        // Money may have moved: visible to people meanwhile.
+        await openReconciliationCase(
+          this.prisma,
+          row.attemptId,
+          'PROVIDER_EVENT_NOT_SETTLED',
+          { outcome: 'unknown' },
+        );
+      }
+    }
+    return processed;
+  }
+
+  // True when the payment an unmatched event names is settled from Stripe's
+  // own answer (or was already final).
+  private async reconcileLinkedPayment(
+    paymentAttemptId: string,
+    tenantId: string,
+    now: Date,
+  ): Promise<boolean> {
+    const attempt = await this.prisma.paymentAttempt.findFirst({
+      where: { id: paymentAttemptId, tenantId },
+      select: { status: true, paymentState: true },
+    });
+    if (!attempt) return false;
+    if (
+      String(attempt.status) === 'PENDING' &&
+      (RECOVERABLE_HELD_STATES as readonly string[]).includes(
+        attempt.paymentState ?? '',
+      )
+    ) {
+      const outcome = await this.recheckStripeOutcome(
+        paymentAttemptId,
+        tenantId,
+        { trigger: 'stripe_event' },
+        now,
+      );
+      return outcome.kind === 'settled';
+    }
+    // Live, paid or closed: the webhook's own idempotent read-back (the
+    // order exactly once), under the payment's lock.
+    const answer = await withSessionLock(
+      `esp03-payment-recovery:${tenantId}:${paymentAttemptId}`,
+      () =>
+        this.checkout.reconcileProviderPayment(
+          tenantId,
+          paymentAttemptId,
+          STRIPE_RECHECK_TIMEOUT_MS,
+        ),
+    ).catch(() => null);
+    return answer === 'settled';
+  }
+
+  // The payment's case for a Stripe outcome recovery (opened first if a
+  // crash left the held payment without one).
+  private async ensureOutcomeCase(
+    paymentAttemptId: string,
+    tenantId: string,
+    reasonCode: string,
+  ): Promise<string> {
+    const find = () =>
+      this.prisma.paymentReconciliationCase.findUnique({
+        where: { tenantId_paymentAttemptId: { tenantId, paymentAttemptId } },
+        select: { id: true },
+      });
+    const existing = await find();
+    if (existing) return existing.id;
+    await openReconciliationCase(this.prisma, paymentAttemptId, reasonCode, {
+      outcome: 'unknown',
+    });
+    const opened = await find();
+    if (!opened) {
+      throw new Error('The reconciliation case could not be opened.');
+    }
+    return opened.id;
   }
 
   private async ensureCase(

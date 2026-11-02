@@ -73,6 +73,10 @@ export default async function PlatformPaymentsPage({
             : " Recoveries happen only when a customer retries or support asks for one here."}
         </p>
       ) : null}
+      {/* ESP-04 M4a — Stripe payment events that named no payment. */}
+      <Link href="/platform/payments/unmatched" className={LINK}>
+        Unmatched Stripe events
+      </Link>
       <FilterLinks
         label="Case category"
         options={CATEGORY_FILTERS}

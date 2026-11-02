@@ -15,6 +15,8 @@ import type {
   PlatformPaymentCaseDetail,
   PlatformPaymentCaseListResponse,
   PlatformPaymentCaseRecoverResponse,
+  PlatformPaymentCaseRecheckResponse,
+  PlatformUnmatchedPaymentEventsResponse,
 } from '@mocha-house/contracts';
 import { PlatformAuthGuard } from '../../platform-auth/infrastructure/platform-auth.guard';
 import { RequirePlatformPermission } from '../../platform-auth/authorization/platform-permission.guard';
@@ -83,6 +85,29 @@ export class PlatformPaymentCasesController {
     );
   }
 
+  // ESP-04 M4a — "Recheck with Stripe": the same permission, recent sign-in,
+  // rate limit and audit as a recovery request.
+  @UseGuards(RateLimitGuard)
+  @RateLimit('platform-lifecycle')
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(200)
+  @RequirePlatformPermission('payments.reconciliation.manage')
+  @Post(':caseId/recheck')
+  recheck(
+    @Param('caseId') caseId: string,
+    @Body() body: unknown,
+    @Req() request: PlatformAuthenticatedRequest,
+  ): Promise<PlatformPaymentCaseRecheckResponse> {
+    assertRecentSignIn(request.platformIdentity);
+    const { reason } = parsed(() => parseRecoverRequest(body));
+    return this.cases.recheck(
+      caseId,
+      reason,
+      request.platformOperator!,
+      request.requestId,
+    );
+  }
+
   @UseGuards(RateLimitGuard)
   @RateLimit('platform-lifecycle')
   @Header('Cache-Control', 'no-store')
@@ -102,6 +127,23 @@ export class PlatformPaymentCasesController {
       request.platformOperator!,
       request.requestId,
     );
+  }
+}
+
+// ESP-04 M4a — the unmatched Stripe payment events, read-only, for CENTERIVO
+// support (the same guard, permission and rate limit as reading cases).
+@UseGuards(PlatformAuthGuard)
+@Controller('api/v1/platform/payment-events')
+export class PlatformPaymentEventsController {
+  constructor(private readonly cases: PlatformPaymentCasesService) {}
+
+  @UseGuards(RateLimitGuard)
+  @RateLimit('platform-onboarding-report')
+  @Header('Cache-Control', 'no-store')
+  @RequirePlatformPermission('payments.reconciliation.view')
+  @Get('unmatched')
+  unmatched(): Promise<PlatformUnmatchedPaymentEventsResponse> {
+    return this.cases.unmatchedEvents();
   }
 }
 
