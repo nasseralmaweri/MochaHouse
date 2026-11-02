@@ -63,6 +63,13 @@ export function buildHeaderRules(
     // The confirmation URL carries the order id (a tracking capability); account
     // pages are per-customer.
     { source: "/order/confirmation/:path*", headers: [...PRIVATE_URL_HEADERS] },
+    // ESP-04 M3b — checkout: Stripe returns a customer here after a bank
+    // authentication with the payment's client secret in the URL (the page
+    // removes it at once); it must never leave in a Referer or be cached.
+    // Stripe.js and its frames need nothing else from these headers: no
+    // full CSP is set, frame-ancestors only governs who may frame THIS page,
+    // and card payments need no Payment Request permission.
+    { source: "/order/checkout", headers: [...PRIVATE_URL_HEADERS] },
     { source: "/account/:path*", headers: [...PRIVATE_URL_HEADERS] },
     { source: "/api/:path*", headers: [...API_ROUTE_HEADERS] },
     // SC1b — the CENTERIVO platform console (operator-only; the first

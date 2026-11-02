@@ -17,6 +17,8 @@ describe("two-step checkout client", () => {
     provider: "fake-two-step",
     state: "REQUIRES_PAYMENT_METHOD",
     clientSecret: null,
+    publishableKey: null,
+    connectedAccountId: null,
     amountMinorUnits: 700,
     currency: "USD",
   };

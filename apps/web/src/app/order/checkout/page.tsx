@@ -30,6 +30,11 @@ import {
   type CheckoutResult,
 } from "@/lib/api-client";
 import { formatPrice } from "@/lib/money";
+import {
+  stripeContextOf,
+  withoutPaymentReturnParams,
+} from "@/lib/checkout/stripe-payment";
+import { StripePaymentPanel } from "@/components/checkout/StripePaymentPanel";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { BackLink } from "@/components/BackLink";
@@ -50,6 +55,15 @@ const PAYMENT_STATE_MESSAGE: Record<
     "Your payment didn't go through. Try again or use another payment method — you won't be charged twice.",
   PROCESSING:
     "Your payment is being processed. Do not pay again — check back in a moment.",
+};
+
+// ESP-04 M3b — the same states with the Stripe card form on the page.
+const STRIPE_PAYMENT_STATE_MESSAGE: typeof PAYMENT_STATE_MESSAGE = {
+  ...PAYMENT_STATE_MESSAGE,
+  REQUIRES_CUSTOMER_ACTION:
+    "Enter your card details to pay and place your order.",
+  REQUIRES_PAYMENT_METHOD:
+    "Your payment didn't go through. Check your card or try another one — you won't be charged twice.",
 };
 
 // DEVELOPMENT ONLY — the two-step fake provider's simulator (never shown in a
@@ -139,10 +153,26 @@ export default function CheckoutPage() {
   const [paymentBusy, setPaymentBusy] = useState(false);
   const [paymentNotice, setPaymentNotice] = useState<string | null>(null);
   const paymentInFlightRef = useRef(false);
+  // ESP-04 M3b — the server check in flight (if any), and whether the
+  // customer's card payment is being confirmed with Stripe right now (no
+  // other payment action meanwhile).
+  const checkInFlightRef = useRef<Promise<CheckoutResult> | null>(null);
+  const [cardPaying, setCardPaying] = useState(false);
   const [sessionNotice, setSessionNotice] = useState<string | null>(null);
   const [sessionRefresh, setSessionRefresh] = useState(0);
   const [completedOrderId, setCompletedOrderId] = useState<string | null>(null);
   const [paymentResume, setPaymentResume] = useState(0);
+
+  // ESP-04 M3b — back from a Stripe authentication redirect: the parameters
+  // Stripe added (the client secret among them) leave the address bar and
+  // history at once. They are never read: the checkout session below
+  // resumes this payment and the server says where it stands.
+  useEffect(() => {
+    const cleaned = withoutPaymentReturnParams(window.location.href);
+    if (cleaned !== null) {
+      window.history.replaceState(window.history.state, "", cleaned);
+    }
+  }, []);
 
   useEffect(() => {
     if (!cart.isHydrated || !cart.locationId) {
@@ -353,6 +383,9 @@ export default function CheckoutPage() {
       : null;
   const amountDue =
     quote?.amountDueAfterGiftCardMinorUnits ?? total - giftCardApplied;
+  // ESP-04 M3b — the Stripe context the server gave for this payment (null
+  // for any other provider, or when there is nothing to pay right now).
+  const stripeContext = pendingPayment ? stripeContextOf(pendingPayment) : null;
 
   function showPendingPayment(
     payment: CheckoutPaymentRequiredResponse["payment"],
@@ -399,22 +432,50 @@ export default function CheckoutPage() {
     if (!cart.locationId || paymentInFlightRef.current) return;
     paymentInFlightRef.current = true;
     setPaymentBusy(true);
-    const result = await checkCheckoutPaymentFromBrowser(cart.locationId);
-    paymentInFlightRef.current = false;
-    setPaymentBusy(false);
+    const running = checkCheckoutPaymentFromBrowser(cart.locationId);
+    checkInFlightRef.current = running;
+    let result: CheckoutResult;
+    try {
+      result = await running;
+    } catch {
+      result = {
+        outcome: "network-error",
+        message:
+          "Could not reach the server. Your payment was not affected — check again in a moment.",
+      };
+    } finally {
+      paymentInFlightRef.current = false;
+      checkInFlightRef.current = null;
+      setPaymentBusy(false);
+    }
     applyPaymentResult(result);
+  }
+
+  // ESP-04 M3b — the check after the customer confirmed a card payment. A
+  // check already running may have started BEFORE Stripe confirmed, so it is
+  // waited for and a fresh one is made: the page always shows what the
+  // server says after the confirmation.
+  async function checkPaymentAfterConfirm() {
+    while (checkInFlightRef.current) {
+      await checkInFlightRef.current.catch(() => undefined);
+    }
+    await checkPayment();
   }
 
   async function simulatePayment(outcome: CheckoutPaymentSimulationOutcome) {
     if (!cart.locationId || paymentInFlightRef.current) return;
     paymentInFlightRef.current = true;
     setPaymentBusy(true);
-    const accepted = await simulateCheckoutPaymentFromBrowser(
-      cart.locationId,
-      outcome,
-    );
-    paymentInFlightRef.current = false;
-    setPaymentBusy(false);
+    let accepted = false;
+    try {
+      accepted = await simulateCheckoutPaymentFromBrowser(
+        cart.locationId,
+        outcome,
+      );
+    } finally {
+      paymentInFlightRef.current = false;
+      setPaymentBusy(false);
+    }
     if (!accepted) {
       setPaymentNotice("The payment simulator could not do that just now.");
     }
@@ -584,13 +645,38 @@ export default function CheckoutPage() {
             </h2>
             <p role="status">
               {pendingPayment
-                ? PAYMENT_STATE_MESSAGE[pendingPayment.state]
+                ? (pendingPayment.provider === "stripe"
+                    ? STRIPE_PAYMENT_STATE_MESSAGE
+                    : PAYMENT_STATE_MESSAGE)[pendingPayment.state]
                 : "Loading your payment…"}
             </p>
             {paymentNotice ? (
               <p role="alert" className="text-status-warning">
                 {paymentNotice}
               </p>
+            ) : null}
+            {/* ESP-04 M3b — the Stripe card form while the payment waits for
+                its customer (never while it is processing: nothing to pay
+                again). */}
+            {pendingPayment?.provider === "stripe" &&
+            pendingPayment.state !== "PROCESSING" ? (
+              stripeContext ? (
+                <StripePaymentPanel
+                  context={stripeContext}
+                  amountLabel={formatPrice(
+                    pendingPayment.amountMinorUnits,
+                    pendingPayment.currency,
+                  )}
+                  disabled={paymentBusy}
+                  onPayingChange={setCardPaying}
+                  onCheck={checkPaymentAfterConfirm}
+                />
+              ) : (
+                <p role="alert" className="text-status-warning">
+                  We couldn&apos;t load the payment form. Nothing was charged —
+                  refresh the page to try again.
+                </p>
+              )
             ) : null}
             {SIMULATOR_ENABLED &&
             pendingPayment?.provider === "fake-two-step" ? (
@@ -601,7 +687,7 @@ export default function CheckoutPage() {
                     <button
                       key={outcome}
                       type="button"
-                      disabled={paymentBusy}
+                      disabled={paymentBusy || cardPaying}
                       onClick={() => void simulatePayment(outcome)}
                       className="flex min-h-11 items-center justify-center rounded-xl border border-border-default px-4 py-2 text-sm font-semibold text-text-primary disabled:text-text-muted"
                     >
@@ -613,7 +699,7 @@ export default function CheckoutPage() {
             ) : null}
             <button
               type="button"
-              disabled={paymentBusy}
+              disabled={paymentBusy || cardPaying}
               onClick={() => void checkPayment()}
               className="flex min-h-11 items-center justify-center rounded-xl border border-border-default px-4 py-3 text-base font-semibold text-text-primary disabled:text-text-muted"
             >

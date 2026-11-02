@@ -338,6 +338,12 @@ function isPaymentRequired(
       payment.state === "PROCESSING") &&
     (payment.clientSecret === null ||
       typeof payment.clientSecret === "string") &&
+    // ESP-04 M3b — Stripe's publishable key and the connected account the
+    // intent lives on (null for other providers).
+    (payment.publishableKey === null ||
+      typeof payment.publishableKey === "string") &&
+    (payment.connectedAccountId === null ||
+      typeof payment.connectedAccountId === "string") &&
     typeof payment.amountMinorUnits === "number" &&
     typeof payment.currency === "string"
   );

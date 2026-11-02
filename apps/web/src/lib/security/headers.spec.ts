@@ -36,6 +36,19 @@ describe("buildHeaderRules", () => {
     }
   });
 
+  it("keeps checkout (a Stripe return URL carries a client secret) unreferred and uncached (ESP-04 M3b)", () => {
+    const h = find(rules, "/order/checkout");
+    expect(h["Referrer-Policy"]).toBe("no-referrer");
+    expect(h["Cache-Control"]).toBe("no-store");
+    // The global baseline still applies there, unweakened: Stripe's frames
+    // are framed BY the page, which frame-ancestors does not restrict, and
+    // card payments need no Payment Request permission.
+    const base = find(rules, "/:path*");
+    expect(base["Content-Security-Policy"]).toBe("frame-ancestors 'none'");
+    expect(base["X-Frame-Options"]).toBe("DENY");
+    expect(base["Permissions-Policy"]).toContain("payment=()");
+  });
+
   it("keeps the CENTERIVO platform console uncached, unreferred and unindexed (SC1b)", () => {
     for (const source of ["/platform", "/platform/:path*"]) {
       const h = find(rules, source);

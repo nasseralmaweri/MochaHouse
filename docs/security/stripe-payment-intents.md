@@ -1,4 +1,4 @@
-# Stripe payments (ESP-04 M3a)
+# Stripe payments (ESP-04 M3a, M3b)
 
 Food-order checkout can take card payments through **Stripe PaymentIntents**,
 in **Stripe test mode only**. Each payment is a **direct charge** on the
@@ -8,7 +8,9 @@ restaurant's own connected account (ESP-04 M1):
 - the restaurant pays Stripe's fees;
 - CENTERIVO takes no application fee.
 
-This milestone is the backend only. The web Payment Element is M3b.
+M3a is the backend. M3b is the customer's card form (the Stripe Payment
+Element) on the checkout page, described in
+[The checkout page (M3b)](#the-checkout-page-m3b).
 
 Everything is **off by default**. Nothing changes unless `PAYMENT_PROVIDER=stripe`
 is set with a valid test configuration **and** the business is on the test
@@ -213,9 +215,125 @@ The real adapter runs against an in-memory stand-in for the PaymentIntents
 API, with Stripe's idempotency rules. Webhook signatures use the SDK's own
 helpers. No Stripe call is made, and no key or webhook is configured.
 
-## Not in M3a
+## The checkout page (M3b)
 
-- The Payment Element and 3-D Secure UI (M3b).
+When the server answers `202 PAYMENT_REQUIRED` for a Stripe payment, the
+checkout page shows a card form: the Stripe **Payment Element**
+(`@stripe/react-stripe-js` 6.12.0 with `@stripe/stripe-js` 9.17.0, pinned).
+These load Stripe.js `dahlia`, the release that matches the server's API
+version `2026-08-26.dahlia`.
+
+### Initialisation: only what the server gave
+
+- **Lazy.** Stripe.js is loaded from `js.stripe.com` only when the form is
+  shown (the "pure" loader), never on other pages.
+- **From the 202 answer only.** It is initialised with that answer's
+  `publishableKey` and `connectedAccountId` (the account the intent lives
+  on). The form is mounted with that intent's `clientSecret`.
+- **Refused otherwise.** The page uses no form for:
+  - another provider;
+  - a payment that is processing;
+  - a live or non-publishable key;
+  - a missing or malformed account or secret.
+  It then says the form couldn't load and that nothing was charged.
+- **One Stripe.js instance per connected account.** The form is keyed by
+  account and intent, so it is never reused for another payment, checkout or
+  business.
+- **Nothing sent back.** The browser still sends only a location to the
+  server, never an account, an amount or an intent.
+- **Cards only.** The intent allows nothing else, and Apple Pay and Google
+  Pay are switched off in the form. No Link, no other methods.
+- **Theme.** The form follows the storefront's theme tokens (accent,
+  surfaces, text, error colour, control radius).
+
+### Paying
+
+1. **Pay [amount].** The button is enabled once the card form is complete. A
+   second press, or a double click, does nothing while a payment is being
+   confirmed or checked.
+2. **Confirm.** `stripe.confirmPayment({ redirect: "if_required" })`. 3-D
+   Secure runs in Stripe's own frame. If the bank requires a redirect,
+   Stripe returns the customer to `<this origin>/order/checkout?payment=return`.
+   That URL is built from the browser's own location.
+3. **Server check, always.** Whatever Stripe.js answers, the page then asks
+   CENTERIVO's server (`/api/checkout/payment`). The server reads the intent
+   from Stripe and alone creates the order, exactly once. A Stripe.js
+   "succeeded" is never treated as paid.
+
+| Stripe.js answers                                | The page                                                     |
+| ------------------------------------------------ | ------------------------------------------------------------ |
+| No error (paid, or waiting for a bank)           | Asks the server                                              |
+| `card_error` (declined)                          | Shows Stripe's message, asks the server; retry on the same intent |
+| `validation_error` (form incomplete)             | Asks the customer to fix the card form; nothing was sent     |
+| Any other error, or no answer                    | Asks the server; never shown as failed                       |
+
+### What the customer sees
+
+| Server says                 | Page                                                                    |
+| --------------------------- | ----------------------------------------------------------------------- |
+| Waiting for a card          | Card form, Pay button                                                   |
+| Refused                     | "Didn't go through … you won't be charged twice", form for another card |
+| Processing                  | No form, "do not pay again"                                             |
+| Not known yet (`409`)       | The existing held-payment message; never "failed"                       |
+| Paid                        | The order confirmation                                                  |
+| Cancelled (`402`)           | "Not successful"; the checkout can be placed again                      |
+| Session expired or invalid  | The existing session messages                                           |
+
+### Refresh and return from the bank
+
+- **Refresh resumes the same payment.** The checkout session (HttpOnly
+  cookie, unchanged) reports `PAYMENT_REQUIRED`. The page asks the server
+  and shows the same intent's form again, never a second intent. The cookie
+  is cleared only when the order is placed.
+- **Return parameters removed.** On return from a bank redirect, the
+  parameters Stripe adds (`payment_intent`, `payment_intent_client_secret`,
+  `redirect_status`, and our `payment=return`) are never read. They are
+  removed twice:
+  - **on the server**, before any page renders: the web proxy answers
+    `303` to the same checkout page without them, with
+    `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The secret
+    never reaches a rendered document, its scripts or a Referer;
+  - **in the page**, as a fallback, with `history.replaceState`.
+
+  The one returning request still carries them, as Stripe sends it, so
+  access logs in front of the web app should not record query strings for
+  `/order/checkout` (deployment item, M7).
+- **Busy state.** While a card payment is being confirmed, the page's other
+  payment actions ("Check payment status", the development simulator) are
+  paused. The check after confirming waits for any check already running and
+  then makes a fresh one, so the page always shows the server's answer from
+  **after** the confirmation. A failed check never leaves the page stuck.
+- **No storage.** The client secret lives in memory only: never stored,
+  logged or sent anywhere but Stripe.js.
+
+### Headers
+
+- `/order/checkout` now gets `Referrer-Policy: no-referrer` and
+  `Cache-Control: no-store`, like the order confirmation page.
+- The global headers are unchanged:
+  - `X-Frame-Options: DENY` and `frame-ancestors 'none'` govern who may frame
+    **this** page, not Stripe's frames inside it;
+  - no full CSP is set;
+  - `Permissions-Policy: payment=()` stays, because card payments need no
+    Payment Request permission. Wallets would.
+
+### Unchanged
+
+- The development two-step simulator (fake provider, development only).
+- Zero-charge orders, coupons, rewards and gift cards.
+- The cart and order summary.
+- Checkout-session recovery, the confirmation page and every existing error
+  message.
+- SaaS billing.
+
+### Verified offline
+
+Stripe.js is mocked in the web tests: initialisation, per-account instances,
+confirmation outcomes, duplicate presses, return-URL clean-up, headers and
+the 202 parsing. No real Stripe call is made.
+
+## Not in M3a / M3b
+
 - Cancelling abandoned intents, and recovering unknown creations (M4).
   Until then, a waiting payment keeps its holds.
 - Refunds (M5). Gift cards on intents (M6). Live mode (M7).
@@ -232,3 +350,33 @@ helpers. No Stripe call is made, and no key or webhook is configured.
    `stripe listen --forward-connect-to …/webhooks/stripe/payments`.
 5. Confirm in test mode that `payment_intent.*` events from Accounts v2
    connected accounts reach that destination.
+
+### Manual test-mode end-to-end run (needs owner approval)
+
+Not done by M3a or M3b, and nothing here is switched on by them. With the
+setup above, on a local or test environment (never production):
+
+1. **API settings.**
+   - `PAYMENT_PROVIDER=stripe` and `RESTAURANT_PAYMENTS_PROVIDER=stripe`;
+   - the Connect test key and both webhook secrets;
+   - `STRIPE_CONNECT_PUBLISHABLE_KEY`;
+   - `RESTAURANT_CHECKOUT_PAYMENT_TENANTS=<the test business id>`.
+2. **Forward events.** Run
+   `stripe listen --forward-connect-to http://localhost:3001/api/v1/restaurant-payments/webhooks/stripe/payments`
+   and use the secret it prints.
+3. **Check each case** on the storefront with Stripe's test cards:
+   - `4242 4242 4242 4242`: paid, one order;
+   - `4000 0025 0000 3155`: 3-D Secure challenge;
+   - `4000 0000 0000 9995` (declined), then a good card on the same payment;
+   - `4000 0000 0000 0341` (declined after attaching).
+4. **Interruptions.** Also check:
+   - a page refresh mid-payment;
+   - closing the tab after paying (the webhook creates the order);
+   - a redirect return (Stripe's parameters must leave the URL).
+5. **Verify** in Stripe's test Dashboard that each charge is on the
+   **connected account**, for the frozen amount, with no application fee.
+6. **Check the referrer policy.** Confirm Stripe.js and 3-D Secure work with
+   the checkout page's `Referrer-Policy: no-referrer`. If Stripe needs a
+   referrer, `strict-origin` would still never send the URL's query string.
+7. **Turn it all off afterwards.** Unset `PAYMENT_PROVIDER` and empty the
+   allowlist.
