@@ -687,7 +687,7 @@ describe('ESP-04 M3 Stripe payments (integration, offline Stripe)', () => {
     intents.succeed(attempt.providerReference!, attempt.amount - 1);
     const id = evt();
     expect(
-      await deliver('payment_intent.succeeded', attempt.providerReference!, {
+      await deliver('payment_intent.succeeded', attempt.providerReference, {
         id,
       }),
     ).toBe(true);

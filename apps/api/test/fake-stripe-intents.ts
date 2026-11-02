@@ -39,9 +39,16 @@ export class FakeStripeIntents {
   readonly intents = new Map<string, StoredIntent>();
   private readonly byKey = new Map<string, { id: string; params: string }>();
   private next = 1;
-  // Make the next create / retrieve throw this (one shot each).
-  createError: unknown = null;
-  retrieveError: unknown = null;
+  // Make the next create / retrieve reject with this (one shot each); null
+  // drops any one-shot rejection not used yet. Queued on the mock itself, so
+  // any value — an SDK error or a non-Error throw — is passed through exactly
+  // as given.
+  set createError(error: unknown) {
+    oneShotRejection(this.create, error);
+  }
+  set retrieveError(error: unknown) {
+    oneShotRejection(this.retrieve, error);
+  }
   // Report this amount as created (a misbehaving answer).
   createAmountOverride: number | null = null;
 
@@ -53,11 +60,6 @@ export class FakeStripeIntents {
       params: Stripe.PaymentIntentCreateParams,
       options: { stripeAccount: string; idempotencyKey: string },
     ): Promise<Stripe.PaymentIntent> => {
-      if (this.createError) {
-        const error = this.createError;
-        this.createError = null;
-        return Promise.reject(error);
-      }
       const key = `${options.stripeAccount}|${options.idempotencyKey}`;
       const serialized = JSON.stringify(params);
       const seen = this.byKey.get(key);
@@ -100,11 +102,6 @@ export class FakeStripeIntents {
       _params: unknown,
       options: { stripeAccount: string },
     ): Promise<Stripe.PaymentIntent> => {
-      if (this.retrieveError) {
-        const error = this.retrieveError;
-        this.retrieveError = null;
-        return Promise.reject(error);
-      }
       const stored = this.intents.get(id);
       // Another account's intent does not exist on this one.
       if (!stored || stored.account !== options?.stripeAccount) {
@@ -119,7 +116,7 @@ export class FakeStripeIntents {
   // What the customer (or Stripe) did next.
   set(id: string, change: Partial<Stripe.PaymentIntent>): void {
     const stored = this.intents.get(id)!;
-    stored.intent = { ...stored.intent, ...change } as Stripe.PaymentIntent;
+    stored.intent = { ...stored.intent, ...change };
   }
   succeed(id: string, amountReceived?: number): void {
     const intent = this.intents.get(id)!.intent;
@@ -132,9 +129,7 @@ export class FakeStripeIntents {
   decline(id: string): void {
     this.set(id, {
       status: 'requires_payment_method',
-      last_payment_error: {
-        type: 'card_error',
-      } as Stripe.PaymentIntent.LastPaymentError,
+      last_payment_error: { type: 'card_error' },
     });
   }
   process(id: string): void {
@@ -157,6 +152,20 @@ export class FakeStripeIntents {
   private copy(id: string): Stripe.PaymentIntent {
     return structuredClone(this.intents.get(id)!.intent);
   }
+}
+
+function oneShotRejection<A extends unknown[]>(
+  mock: jest.Mock<Promise<Stripe.PaymentIntent>, A>,
+  error: unknown,
+): void {
+  if (error !== null) {
+    mock.mockRejectedValueOnce(error);
+    return;
+  }
+  // mockReset also forgets the real implementation: put it back.
+  const implementation = mock.getMockImplementation();
+  mock.mockReset();
+  if (implementation) mock.mockImplementation(implementation);
 }
 
 // An SDK error of the given class (what the SDK throws), with no provider
