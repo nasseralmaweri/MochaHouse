@@ -1,6 +1,7 @@
 import { Test } from '@nestjs/testing';
 import {
   FakePaymentProvider,
+  FakeTwoStepPaymentProvider,
   UnavailablePaymentProvider,
   type PaymentProvider,
 } from '@mocha-house/integrations';
@@ -55,6 +56,30 @@ describe('payment provider configuration (payment safety)', () => {
         ).toBe('fake');
       },
     );
+
+    // ESP-04 M2 — the two-step fake: development and tests only, like 'fake'.
+    it('accepts PAYMENT_PROVIDER=fake-two-step outside production-like environments only', () => {
+      for (const nodeEnv of ['development', 'test', undefined]) {
+        expect(
+          resolvePaymentProviderMode({
+            NODE_ENV: nodeEnv,
+            PAYMENT_PROVIDER: 'fake-two-step',
+          }),
+        ).toBe('fake-two-step');
+      }
+      for (const env of [
+        { NODE_ENV: 'production' },
+        { NODE_ENV: 'development', APP_ENV: 'staging' },
+        { NODE_ENV: 'test', DEPLOYMENT_ENV: 'live' },
+      ]) {
+        expect(() =>
+          resolvePaymentProviderMode({
+            ...env,
+            PAYMENT_PROVIDER: 'fake-two-step',
+          }),
+        ).toThrow(/not allowed in production/);
+      }
+    });
 
     it('refuses PAYMENT_PROVIDER=fake in production', () => {
       expect(() =>
@@ -116,6 +141,20 @@ describe('payment provider configuration (payment safety)', () => {
         PAYMENT_PROVIDER: 'fake',
       });
       expect(provider).toBeInstanceOf(FakePaymentProvider);
+    });
+
+    it('binds the two-step fake only when explicitly requested outside production', () => {
+      const provider = createPaymentProvider({
+        NODE_ENV: 'development',
+        PAYMENT_PROVIDER: 'fake-two-step',
+      });
+      expect(provider).toBeInstanceOf(FakeTwoStepPaymentProvider);
+      expect(() =>
+        createPaymentProvider({
+          NODE_ENV: 'production',
+          PAYMENT_PROVIDER: 'fake-two-step',
+        }),
+      ).toThrow(PaymentConfigurationError);
     });
 
     it('defaults to the unavailable provider when nothing is configured', () => {

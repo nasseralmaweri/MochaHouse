@@ -3407,7 +3407,7 @@ export interface CheckoutSessionRequest {
     locationId: string;
     checkoutToken?: string | null;
 }
-export type CheckoutSessionState = "OPEN" | "IN_PROGRESS" | "COMPLETED";
+export type CheckoutSessionState = "OPEN" | "IN_PROGRESS" | "PAYMENT_REQUIRED" | "COMPLETED";
 export interface CheckoutSessionResponse {
     checkoutToken: string;
     state: CheckoutSessionState;
@@ -3420,6 +3420,34 @@ export declare const CHECKOUT_SESSION_EXPIRED = "CHECKOUT_SESSION_EXPIRED";
 export declare const CHECKOUT_CHANGED_DURING_PAYMENT = "CHECKOUT_CHANGED_DURING_PAYMENT";
 export declare const CHECKOUT_ALREADY_COMPLETED = "CHECKOUT_ALREADY_COMPLETED";
 export declare const CHECKOUT_RESOURCE_UNAVAILABLE = "CHECKOUT_RESOURCE_UNAVAILABLE";
+export type CheckoutPaymentState = "REQUIRES_CUSTOMER_ACTION" | "REQUIRES_PAYMENT_METHOD" | "PROCESSING";
+export interface CheckoutPaymentRequiredResponse {
+    outcome: "PAYMENT_REQUIRED";
+    payment: {
+        provider: string;
+        state: CheckoutPaymentState;
+        clientSecret: string | null;
+        amountMinorUnits: number;
+        currency: string;
+    };
+}
+export type CheckoutSubmitResult = {
+    outcome: "COMPLETED";
+    confirmation: OrderConfirmation;
+} | CheckoutPaymentRequiredResponse;
+export interface CheckoutPaymentCheckRequest {
+    locationId: string;
+    checkoutToken: string;
+}
+export declare const SIMULATED_PAYMENT_OUTCOMES: readonly ["succeed", "decline", "process", "cancel", "unknown"];
+export type CheckoutPaymentSimulationOutcome = (typeof SIMULATED_PAYMENT_OUTCOMES)[number];
+export interface CheckoutPaymentSimulationRequest {
+    locationId: string;
+    checkoutToken: string;
+    outcome: CheckoutPaymentSimulationOutcome;
+}
+export declare const CHECKOUT_NO_PAYMENT_IN_PROGRESS = "CHECKOUT_NO_PAYMENT_IN_PROGRESS";
+export declare const PAYMENT_SIMULATION_NOT_AVAILABLE = "PAYMENT_SIMULATION_NOT_AVAILABLE";
 export declare const PAYMENT_ACCOUNT_STATES: readonly ["NOT_CONNECTED", "SETUP_IN_PROGRESS", "UNDER_REVIEW", "ACTION_REQUIRED", "READY", "NOT_SUPPORTED", "CLOSED", "CONFIGURATION_MISMATCH"];
 export type PaymentAccountState = (typeof PAYMENT_ACCOUNT_STATES)[number];
 export interface AdminPaymentAccountResponse {

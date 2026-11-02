@@ -15,9 +15,17 @@ import {
   CHECKOUT_CHANGED_DURING_PAYMENT,
   CHECKOUT_SESSION_EXPIRED,
   CHECKOUT_SESSION_INVALID,
+  CHECKOUT_NO_PAYMENT_IN_PROGRESS,
   CLIENT_PAYMENT_KEY_NOT_ACCEPTED,
+  PAYMENT_SIMULATION_NOT_AVAILABLE,
+  SIMULATED_PAYMENT_OUTCOMES,
+  type CheckoutPaymentCheckRequest,
+  type CheckoutPaymentRequiredResponse,
+  type CheckoutPaymentSimulationRequest,
+  type CheckoutPaymentState,
   type CheckoutSessionRequest,
   type CheckoutSessionResponse,
+  type CheckoutSubmitResult,
 } from '@mocha-house/contracts';
 import type {
   CheckoutQuoteRequest,
@@ -30,8 +38,17 @@ import type {
   OrderStatusResponse,
 } from '@mocha-house/contracts';
 import { priceCart } from '@mocha-house/domain';
-import type { PaymentProvider } from '@mocha-house/integrations';
-import { Prisma, type TenantContext } from '@mocha-house/database';
+import {
+  FakeTwoStepPaymentProvider,
+  isPaymentIntentProvider,
+  type PaymentAccountContext,
+  type PaymentProvider,
+} from '@mocha-house/integrations';
+import {
+  Prisma,
+  productionSignal,
+  type TenantContext,
+} from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 import { LocationsService } from '../../locations/application/locations.service';
@@ -97,6 +114,11 @@ import {
   reserveFinancialHolds,
   type HoldRequest,
 } from '../../payment/financial-holds';
+import {
+  checkPaymentIntent,
+  paymentAccountContext,
+  startPaymentIntent,
+} from '../../payment/payment-intent';
 import {
   generateOrderAccessToken,
   generateOrderNumber,
@@ -224,11 +246,27 @@ export class CheckoutService {
   // Location's tenant, and the Order, its lines, its first status-history
   // row and its outbox event copy the attempt's. ESP-03 PR 6 — a checkout
   // session is only ever used by its own business, location and customer.
+  //
+  // ESP-04 M2 — checkout() answers with the order (a one-step payment, a
+  // zero-charge order, a completed checkout). submit() also answers a
+  // two-step payment that waits for its customer (PAYMENT_REQUIRED).
   async checkout(
     request: CheckoutRequest,
     customerIdentity: CustomerIdentity | undefined,
     tenant: TenantContext,
   ): Promise<OrderConfirmation> {
+    const result = await this.submit(request, customerIdentity, tenant);
+    if (result.outcome !== 'COMPLETED') {
+      throw new ConflictException(HELD_PAYMENT_MESSAGE);
+    }
+    return result.confirmation;
+  }
+
+  async submit(
+    request: CheckoutRequest,
+    customerIdentity: CustomerIdentity | undefined,
+    tenant: TenantContext,
+  ): Promise<CheckoutSubmitResult> {
     this.validateRequestShape(request);
 
     // Resolved once, up front, alongside the other pre-payment steps —
@@ -554,7 +592,40 @@ export class CheckoutService {
         const current = await this.prisma.paymentAttempt.findUniqueOrThrow({
           where: { id: attempt.id },
         });
-        return this.replay(current);
+        return this.completed(await this.replay(current));
+      }
+    } else if (isPaymentIntentProvider(this.paymentProvider)) {
+      // ESP-04 M2 — two steps: the intent for the frozen amount is created
+      // under the attempt's own key, for the restaurant account our records
+      // name (never the request's), and the customer then confirms it.
+      const account = await paymentAccountContext(this.prisma, tenantId);
+      const started = await startPaymentIntent(
+        this.prisma,
+        this.paymentProvider,
+        attempt,
+        {
+          amount: chargeAmount,
+          currency: priced.currency,
+          account,
+          metadata: { paymentAttemptId: attempt.id },
+        },
+      );
+      if (started.kind === 'customer-action') {
+        return this.paymentRequired(
+          { ...attempt, providerReference: started.reference },
+          'REQUIRES_CUSTOMER_ACTION',
+          account,
+        );
+      }
+      if (started.kind === 'failed') {
+        await this.discardSnapshot(attempt);
+        throw new HttpException(
+          { outcome: 'failed', message: customerPaymentMessage('failed') },
+          HttpStatus.PAYMENT_REQUIRED,
+        );
+      }
+      if (started.kind === 'held' || started.kind === 'not-claimed') {
+        throw new ConflictException(HELD_PAYMENT_MESSAGE);
       }
     } else {
       // ESP-03 PR 2 — CHARGING is committed before the provider is called;
@@ -590,7 +661,7 @@ export class CheckoutService {
 
     // ESP-03 PR 4 — the order is created from the saved checkout (the same
     // path any later recovery takes), never from this request directly.
-    return this.fulfilFromSnapshot(attempt);
+    return this.completed(await this.fulfilFromSnapshot(attempt));
   }
 
   // ESP-03 PR 4 — recovery for a definitively charged payment whose order
@@ -1242,7 +1313,11 @@ export class CheckoutService {
               : null;
           return {
             checkoutToken: presented,
-            state: order ? 'COMPLETED' : 'IN_PROGRESS',
+            state: order
+              ? 'COMPLETED'
+              : this.isTwoStepWaiting(live)
+                ? 'PAYMENT_REQUIRED'
+                : 'IN_PROGRESS',
             acceptsNewPaymentsUntil: existing.expiresAt.toISOString(),
             confirmation: order ? this.toConfirmation(order) : null,
           };
@@ -1425,7 +1500,7 @@ export class CheckoutService {
   private async answerForLiveAttempt(
     live: PaymentAttemptRow,
     fingerprint: string,
-  ): Promise<OrderConfirmation> {
+  ): Promise<CheckoutSubmitResult> {
     if (!sameFingerprint(live.requestFingerprint, fingerprint)) {
       const order =
         live.status === 'SUCCEEDED'
@@ -1447,7 +1522,257 @@ export class CheckoutService {
           'A payment for the earlier version of this order is still being processed. Your changes were not applied and nothing new was charged. Do not pay again.',
       });
     }
-    return this.replay(live);
+    return this.resume(live);
+  }
+
+  // ESP-04 M2 — POST /orders/checkout-sessions/payment: what happened to this
+  // checkout's two-step payment, read from the payment provider (never from
+  // the browser). The request names only the session: the payment, its
+  // amount and the restaurant's account all come from our records.
+  //   200 order       — paid (the order is created exactly once);
+  //   202 waiting     — the customer still has to confirm, may try again on
+  //                     the same payment, or the provider is processing it;
+  //   402             — it definitively did not go through (holds released);
+  //   409             — the outcome is not known yet (nothing changes).
+  async checkPayment(
+    request: CheckoutPaymentCheckRequest,
+    customerIdentity: CustomerIdentity | undefined,
+    tenant: TenantContext,
+  ): Promise<CheckoutSubmitResult> {
+    const session = await this.sessionForPayment(
+      request,
+      customerIdentity,
+      tenant,
+    );
+    const live = await this.liveAttemptOf(session);
+    if (live) {
+      return this.resume(live);
+    }
+    // No live payment: the latest one's definitive outcome, if any.
+    const latest = await this.prisma.paymentAttempt.findFirst({
+      where: { tenantId: session.tenantId, checkoutSessionId: session.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!latest) {
+      throw new ConflictException({
+        code: CHECKOUT_NO_PAYMENT_IN_PROGRESS,
+        message:
+          'There is no payment in progress for this checkout. Nothing was charged.',
+      });
+    }
+    return this.completed(await this.replay(latest));
+  }
+
+  // ESP-04 M2 — DEVELOPMENT AND TESTS ONLY: plays the customer's part with the
+  // two-step fake provider (what the payment page would do with a real one).
+  // Refused unless the fake is configured and no production-like signal is
+  // present; it only ever names this checkout's own waiting payment, and it
+  // never records anything itself — the outcome is still read back from the
+  // provider by checkPayment.
+  async simulatePayment(
+    request: CheckoutPaymentSimulationRequest,
+    customerIdentity: CustomerIdentity | undefined,
+    tenant: TenantContext,
+  ): Promise<void> {
+    const provider = this.paymentProvider;
+    if (
+      !(provider instanceof FakeTwoStepPaymentProvider) ||
+      productionSignal(process.env) !== null
+    ) {
+      throw new NotFoundException({
+        code: PAYMENT_SIMULATION_NOT_AVAILABLE,
+        message: 'The payment simulator is not available.',
+      });
+    }
+    if (
+      typeof request?.outcome !== 'string' ||
+      !(SIMULATED_PAYMENT_OUTCOMES as readonly string[]).includes(
+        request.outcome,
+      )
+    ) {
+      throw new BadRequestException('outcome is not a supported value.');
+    }
+    const session = await this.sessionForPayment(
+      request,
+      customerIdentity,
+      tenant,
+    );
+    const live = await this.liveAttemptOf(session);
+    if (
+      !live ||
+      !this.isTwoStepWaiting(live) ||
+      live.providerReference === null ||
+      !provider.simulate(live.providerReference, live.tenantId, request.outcome)
+    ) {
+      throw new ConflictException({
+        code: CHECKOUT_NO_PAYMENT_IN_PROGRESS,
+        message: 'No payment of this checkout is waiting for its customer.',
+      });
+    }
+  }
+
+  // The checkout session a payment request names: this business, this
+  // location and this customer (or guest), or one generic refusal.
+  private async sessionForPayment(
+    request: { locationId?: unknown; checkoutToken?: unknown },
+    customerIdentity: CustomerIdentity | undefined,
+    tenant: TenantContext,
+  ): Promise<CheckoutSessionRow> {
+    if (
+      !request ||
+      typeof request.locationId !== 'string' ||
+      request.locationId.trim().length === 0
+    ) {
+      throw new BadRequestException('locationId is required.');
+    }
+    const customerId = await this.resolveCustomerId(customerIdentity, tenant);
+    await this.requireLocationTenant(request.locationId, tenant);
+    if (
+      typeof request.checkoutToken !== 'string' ||
+      !CHECKOUT_TOKEN_PATTERN.test(request.checkoutToken)
+    ) {
+      throw invalidSession();
+    }
+    const session = await this.requireSession(
+      request.checkoutToken,
+      tenant,
+      customerId,
+    );
+    if (session.locationId !== request.locationId) {
+      throw invalidSession();
+    }
+    return session;
+  }
+
+  // ESP-04 M2 — a live payment answered again (a retry, a reload, a check):
+  // one waiting for its customer (or one this provider is processing) is
+  // checked with the provider and resumed — the SAME intent, never a new
+  // one; anything else is replayed as before.
+  private async resume(
+    attempt: PaymentAttemptRow,
+  ): Promise<CheckoutSubmitResult> {
+    if (this.isTwoStepWaiting(attempt)) {
+      return this.checkWaitingPayment(attempt);
+    }
+    return this.completed(await this.replay(attempt));
+  }
+
+  // A two-step payment whose outcome only the provider can settle: waiting
+  // for its customer, or (with this same two-step provider) processing.
+  private isTwoStepWaiting(attempt: PaymentAttemptRow): boolean {
+    if (attempt.status !== 'PENDING' || attempt.providerReference === null) {
+      return false;
+    }
+    if (attempt.paymentState === 'REQUIRES_CUSTOMER_ACTION') return true;
+    return (
+      attempt.paymentState === 'AWAITING_CONFIRMATION' &&
+      isPaymentIntentProvider(this.paymentProvider) &&
+      attempt.provider === this.paymentProvider.name
+    );
+  }
+
+  private async checkWaitingPayment(
+    attempt: PaymentAttemptRow,
+  ): Promise<CheckoutSubmitResult> {
+    const provider = this.paymentProvider;
+    if (
+      !isPaymentIntentProvider(provider) ||
+      attempt.providerReference === null
+    ) {
+      // Configured without two-step payments meanwhile: the outcome cannot be
+      // read here, so nothing changes and the customer must not pay again.
+      throw new ConflictException(HELD_PAYMENT_MESSAGE);
+    }
+    const account = await paymentAccountContext(this.prisma, attempt.tenantId);
+    const checked = await checkPaymentIntent(
+      this.prisma,
+      provider,
+      {
+        id: attempt.id,
+        tenantId: attempt.tenantId,
+        providerReference: attempt.providerReference,
+        paymentState: attempt.paymentState,
+        amount: attempt.amount,
+        currency: attempt.currency,
+      },
+      account,
+    );
+    switch (checked.kind) {
+      case 'customer-action':
+        return this.paymentRequired(attempt, checked.state, account);
+      case 'processing':
+        return this.paymentRequired(attempt, 'PROCESSING', account);
+      case 'unknown':
+        // Not definitive: the payment, its holds and its saved checkout stay.
+        throw new ConflictException(HELD_PAYMENT_MESSAGE);
+      case 'failed':
+        // Cancelled at the provider: no charge can occur, the database has
+        // released the holds, and nothing will be fulfilled.
+        await this.discardSnapshot(attempt);
+        throw new HttpException(
+          { outcome: 'failed', message: customerPaymentMessage('failed') },
+          HttpStatus.PAYMENT_REQUIRED,
+        );
+      case 'succeeded':
+      case 'not-waiting': {
+        // Paid (by this request or a concurrent one), or settled meanwhile:
+        // the attempt as it now stands decides — the order exactly once.
+        const current = await this.prisma.paymentAttempt.findFirstOrThrow({
+          where: { id: attempt.id, tenantId: attempt.tenantId },
+        });
+        if (current.status === 'PENDING') {
+          throw new ConflictException(HELD_PAYMENT_MESSAGE);
+        }
+        if (current.status === 'FAILED' || current.status === 'DECLINED') {
+          await this.discardSnapshot(current);
+        }
+        return this.completed(await this.replay(current));
+      }
+    }
+  }
+
+  // The 202 answer: what the customer still has to do. The client secret is
+  // fetched from the provider for this answer only — never stored or logged —
+  // and never while the provider is processing (nothing to pay again).
+  private async paymentRequired(
+    attempt: PaymentAttemptRow,
+    state: CheckoutPaymentState,
+    account: PaymentAccountContext,
+  ): Promise<CheckoutPaymentRequiredResponse> {
+    const provider = this.paymentProvider;
+    if (
+      !isPaymentIntentProvider(provider) ||
+      attempt.providerReference === null
+    ) {
+      throw new ConflictException(HELD_PAYMENT_MESSAGE);
+    }
+    let clientSecret: string | null = null;
+    try {
+      if (state !== 'PROCESSING') {
+        clientSecret = await provider.clientSecretFor({
+          reference: attempt.providerReference,
+          account,
+        });
+      }
+    } catch {
+      throw new ServiceUnavailableException(
+        'The payment page could not be loaded just now. Nothing new was charged — please try again in a moment.',
+      );
+    }
+    return {
+      outcome: 'PAYMENT_REQUIRED',
+      payment: {
+        provider: provider.name,
+        state,
+        clientSecret,
+        amountMinorUnits: attempt.amount,
+        currency: attempt.currency,
+      },
+    };
+  }
+
+  private completed(confirmation: OrderConfirmation): CheckoutSubmitResult {
+    return { outcome: 'COMPLETED', confirmation };
   }
 
   private async replay(attempt: PaymentAttemptRow): Promise<OrderConfirmation> {

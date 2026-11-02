@@ -62,6 +62,14 @@ const PROTECTED: ReadonlyArray<{
     policy: 'checkout-quote',
     authenticatedFirst: OptionalCustomerAuthGuard,
   },
+  // ESP-04 M2 — checking a payment calls the payment provider; the
+  // development simulator is limited like checkout.
+  ...(['checkPayment', 'simulatePayment'] as const).map((method) => ({
+    controller: OrdersController,
+    method,
+    policy: 'checkout' as const,
+    authenticatedFirst: OptionalCustomerAuthGuard,
+  })),
   { controller: OrdersController, method: 'getStatus', policy: 'order-status' },
   {
     controller: CheckoutRewardsController,

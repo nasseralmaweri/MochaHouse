@@ -410,6 +410,10 @@ describe('dev auth startup validation (ESP-02)', () => {
       expect(
         problems({ ...PRODUCTION, PAYMENT_PROVIDER: ' FAKE ' }),
       ).toHaveLength(1);
+      // ESP-04 M2 — the two-step fake too.
+      expect(
+        problems({ ...PRODUCTION, PAYMENT_PROVIDER: 'fake-two-step' }),
+      ).toEqual([expect.stringContaining('PAYMENT_PROVIDER=fake-two-step')]);
       expect(problems({ ...PRODUCTION, PAYMENT_PROVIDER: 'disabled' })).toEqual(
         [],
       );
@@ -417,6 +421,9 @@ describe('dev auth startup validation (ESP-02)', () => {
 
     it('is allowed locally and in tests', () => {
       expect(problems({ ...LOCAL, PAYMENT_PROVIDER: 'fake' })).toEqual([]);
+      expect(problems({ ...LOCAL, PAYMENT_PROVIDER: 'fake-two-step' })).toEqual(
+        [],
+      );
       expect(problems(TEST_SERVER)).toEqual([]);
     });
 

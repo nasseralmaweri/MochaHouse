@@ -48,6 +48,8 @@ export type ChargeDisposition =
   // Another request already owns (or owned) the charge for this attempt.
   | { kind: 'not-claimed' };
 
+export type HeldDisposition = Extract<ChargeDisposition, { kind: 'held' }>;
+
 export const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
 
 export interface ChargeAttemptOptions {
@@ -195,12 +197,13 @@ export async function chargeAttempt(
 // throws, the provider's answer is not discarded: its reference is kept when
 // it has one, a reconciliation case is opened, and the caller is told the
 // payment is held. Nothing here charges again.
-async function settle(
+// ESP-04 M2 — also records a payment intent's first answer (payment-intent.ts).
+export async function settle<T extends { kind: string }>(
   prisma: PrismaService,
   attemptId: string,
   data: Record<string, unknown>,
-  result: ChargeDisposition,
-): Promise<ChargeDisposition> {
+  result: T,
+): Promise<T | HeldDisposition> {
   let written = false;
   try {
     const done = await prisma.paymentAttempt.updateMany({
@@ -242,11 +245,11 @@ async function settle(
 
 // A held outcome (provider pending, or unknown) is recorded like any other;
 // once recorded it also opens a case so a person sees the held payment.
-async function settleHeld(
+export async function settleHeld(
   prisma: PrismaService,
   attemptId: string,
   data: Record<string, unknown>,
-  result: ChargeDisposition & { kind: 'held' },
+  result: HeldDisposition,
 ): Promise<ChargeDisposition> {
   const settled = await settle(prisma, attemptId, data, result);
   if (settled === result) {

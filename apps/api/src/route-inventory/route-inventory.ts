@@ -268,6 +268,10 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/orders/checkout-quote': { scope: 'tenant' },
   // ESP-03 PR 6 — start or resume a server-owned checkout session.
   'POST /api/v1/orders/checkout-sessions': { scope: 'tenant' },
+  // ESP-04 M2 — check a two-step payment with the provider; the development
+  // payment simulator (404 unless the two-step fake is configured).
+  'POST /api/v1/orders/checkout-sessions/payment': { scope: 'tenant' },
+  'POST /api/v1/orders/checkout-sessions/payment/simulate': { scope: 'tenant' },
   'POST /api/v1/orders/reward-eligibility': { scope: 'tenant' },
   'PUT /api/v1/admin/gift-cards/configuration': { scope: 'tenant' },
   'PUT /api/v1/admin/loyalty/settings': { scope: 'tenant' },
