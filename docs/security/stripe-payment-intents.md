@@ -332,10 +332,42 @@ Stripe.js is mocked in the web tests: initialisation, per-account instances,
 confirmation outcomes, duplicate presses, return-URL clean-up, headers and
 the 202 parsing. No real Stripe call is made.
 
-## Not in M3a / M3b
+## Outcome recovery (M4a)
 
-- Cancelling abandoned intents, and recovering unknown creations (M4).
-  Until then, a waiting payment keeps its holds.
+A Stripe payment whose outcome is not known is recovered from Stripe itself
+by the existing payment-recovery sweeper. This covers CHARGING (a crash
+after the claim), UNKNOWN (a timeout, a connection error, a 409, 429 or 500,
+or a lost database write) and AWAITING_CONFIRMATION (processing). Details
+are in [payment-reconciliation.md](payment-reconciliation.md#stripe-outcome-recovery-esp-04-m4a).
+
+- **The intent is known.** It is read back on the payment's stored account
+  and the payment moves only on Stripe's answer:
+  - paid, for the frozen amount and currency, gets its order exactly once;
+  - waiting for a card makes the payment live again on the same intent;
+  - processing stays held;
+  - cancelled with nothing received releases the holds;
+  - a different amount is held for people.
+- **No intent recorded.** The creation is **replayed**: the same idempotency
+  key, the same connected account and byte-identical parameters (one shared
+  builder). This happens only **within 20 hours** of the payment's creation,
+  because Stripe keeps keys "at least 24 hours" and reusing a pruned key is a
+  new request. The replay finds the intent Stripe created, or creates it for
+  the first time if the original never arrived.
+  - **Proves nothing, changes nothing:** a cached 500, a conflict, a local
+    refusal or a timeout.
+  - **Set aside for people, holds kept:** a key Stripe refuses with these
+    parameters, an intent that already belongs to another payment, or any
+    payment past the window.
+- **Events that arrived first.** A Stripe event that came before its payment
+  recorded the intent (`UNMATCHED`) is reconciled by the sweep through the
+  same idempotent path once the payment names that intent. Re-drive does not
+  need to be on, and no redelivery is needed. Linking only ever goes through
+  our records, never through an event's metadata.
+
+## Not in M3 / M4a
+
+- Cancelling abandoned intents (M4b). Until then, a payment waiting for its
+  customer keeps its holds.
 - Refunds (M5). Gift cards on intents (M6). Live mode (M7).
 - Wallets, Link and other payment methods (B4: cards only).
 

@@ -113,4 +113,27 @@ describe("platform payment cases", () => {
       message: expect.stringMatching(/stays open.*Nothing was charged.*changed/),
     });
   });
+
+  // ESP-04 M4a — "Recheck with Stripe".
+  it("reports what a Stripe recheck found, never inventing a payment", () => {
+    const detail = { case: {}, events: [], notes: [], automaticRecoveryEnabled: false };
+    const answer = (result: string, failure: string | null = null) =>
+      interpretPaymentCaseChange("recheck", 200, { result, failure, detail });
+    expect(answer("PAID")).toMatchObject({ kind: "ok", message: expect.stringMatching(/exactly once.*Nothing was charged again/) });
+    expect(answer("NOT_CHARGED")).toMatchObject({ message: expect.stringMatching(/nothing taken; its holds are released/) });
+    expect(answer("PROCESSING")).toMatchObject({ message: expect.stringMatching(/stays held.*do not ask the customer to pay again/) });
+    expect(answer("NEEDS_ATTENTION", "STRIPE_CREATE_EXPIRED")).toMatchObject({
+      message: expect.stringMatching(/cannot be settled automatically.*more than 20 hours.*holds stay/),
+    });
+    // An unknown result is never read as paid.
+    expect(answer("SOMETHING_NEW")).toMatchObject({ message: expect.stringMatching(/Nothing changed; it stays held/) });
+    expect(interpretPaymentCaseChange("recheck", 409, { code: "PAYMENT_RECHECK_NOT_APPLICABLE" })).toEqual({
+      kind: "error",
+      message: "Only a Stripe payment whose outcome is not final can be rechecked. Nothing was done.",
+    });
+    expect(interpretPaymentCaseChange("recheck", 400, null)).toMatchObject({
+      kind: "error",
+      message: expect.stringMatching(/reason of 10 to 500/),
+    });
+  });
 });

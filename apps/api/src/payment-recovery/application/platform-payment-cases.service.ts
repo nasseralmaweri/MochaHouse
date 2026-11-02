@@ -8,6 +8,7 @@ import {
   PAYMENT_RECOVERY_IN_PROGRESS,
   PAYMENT_RECOVERY_NOT_CONFIRMED,
   PAYMENT_RECOVERY_NOTHING_TO_RECOVER,
+  PAYMENT_RECHECK_NOT_APPLICABLE,
   type PaymentCaseCategory,
   type PaymentCasePurchaseKind,
   type PaymentCaseStatus,
@@ -16,7 +17,10 @@ import {
   type PlatformPaymentCaseEvent,
   type PlatformPaymentCaseListResponse,
   type PlatformPaymentCaseRecoverResponse,
+  type PlatformPaymentCaseRecheckResponse,
   type PlatformPaymentCaseSummary,
+  type PlatformUnmatchedPaymentEventsResponse,
+  type StripeRecheckResult,
 } from '@mocha-house/contracts';
 import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -24,10 +28,12 @@ import { PLATFORM_AUDIT_ACTIONS } from '../../platform-auth/application/platform
 import type { PlatformOperatorRow } from '../../platform-auth/infrastructure/platform-identity';
 import {
   automaticRecoveryEnabled,
+  MAX_AUTOMATIC_ATTEMPTS,
   nextAutomaticAttemptAt,
   PaymentRecoveryService,
   recoveryHistoryOf,
 } from './payment-recovery.service';
+import { RECOVERABLE_HELD_STATES } from '../../payment/payment-intent-recovery';
 import type { PaymentCaseQuery } from './payment-case-query';
 
 // ESP-03 PR 5 — restaurant payment reconciliation cases in the Platform
@@ -67,6 +73,9 @@ const DETAIL_KEYS = new Set([
   'giftCardPurchaseId',
 ]);
 
+// ESP-04 M4a — at most this many unmatched Stripe events are listed.
+const UNMATCHED_LIST_LIMIT = 100;
+
 const CASE_SELECT = {
   id: true,
   tenantId: true,
@@ -80,6 +89,7 @@ const CASE_SELECT = {
   paymentAttempt: {
     select: {
       id: true,
+      provider: true,
       amount: true,
       currency: true,
       status: true,
@@ -93,7 +103,13 @@ const CASE_SELECT = {
     },
   },
   events: {
-    where: { action: { startsWith: 'RECOVERY_' } },
+    where: {
+      OR: [
+        { action: { startsWith: 'RECOVERY_' } },
+        // ESP-04 M4a — Stripe outcome recovery history.
+        { action: { startsWith: 'STRIPE_RECHECK_' } },
+      ],
+    },
     select: { action: true, detail: true, createdAt: true },
   },
 } satisfies Prisma.PaymentReconciliationCaseSelect;
@@ -119,6 +135,19 @@ export function categoryOf(
       payment.status === 'PENDING' ||
       HELD_STATES.has(payment.paymentState ?? '')
     ) {
+      // ESP-04 M4a — a Stripe payment the automatic Stripe recovery has set
+      // aside (a failure a retry cannot fix, or its attempts used up) needs
+      // people.
+      if (payment.provider === 'stripe') {
+        const stripe = recoveryHistoryOf(row.events, now, 'STRIPE_RECHECK');
+        if (stripe.inProgressSince) return 'RECOVERY_IN_PROGRESS';
+        if (
+          (stripe.lastFailure !== null && !stripe.lastFailureRetryable) ||
+          stripe.automaticAttempts >= MAX_AUTOMATIC_ATTEMPTS
+        ) {
+          return 'NEEDS_ATTENTION';
+        }
+      }
       return 'AWAITING_PAYMENT_OUTCOME';
     }
     return 'NEEDS_ATTENTION';
@@ -362,6 +391,176 @@ export class PlatformPaymentCasesService {
     return this.detail(row.id);
   }
 
+  // ESP-04 M4a — "Recheck with Stripe": one Stripe outcome recovery of this
+  // case's payment now, the same path as the automatic one (it never
+  // charges, never creates a second intent, never replays outside the safe
+  // window, and releases holds only on a proven cancellation with nothing
+  // received). Audited like "Recover now": SUCCEEDED with the result (or
+  // RECHECK_FAILED_<failure>) when it ran, DENIED with the refusal code
+  // otherwise; the written reason is kept as a note. Does not count toward
+  // the automatic attempts.
+  async recheck(
+    caseId: string,
+    reason: string,
+    operator: PlatformOperatorRow,
+    requestReference: string | undefined,
+  ): Promise<PlatformPaymentCaseRecheckResponse> {
+    const row = await this.findCase(caseId);
+    const audit = (
+      outcome: 'SUCCEEDED' | 'DENIED',
+      reasonCode: string,
+      tx: Prisma.TransactionClient | PrismaService = this.prisma,
+    ) =>
+      tx.platformAuditEvent.create({
+        data: {
+          action: PLATFORM_AUDIT_ACTIONS.paymentCaseStripeRecheckRequested,
+          outcome,
+          reasonCode,
+          actorPlatformOperatorId: operator.id,
+          targetType: 'payment_case',
+          targetId: row.id,
+          requestReference: requestReference ?? null,
+        },
+      });
+    const refuse = async (code: string, message: string): Promise<never> => {
+      await audit('DENIED', code);
+      throw new ConflictException({ code, message });
+    };
+    if (row.status === 'RESOLVED') {
+      return refuse(
+        PAYMENT_RECOVERY_CASE_RESOLVED,
+        'This case is already resolved. Nothing was done.',
+      );
+    }
+    const outcome = await this.recovery.recheckStripeOutcome(
+      row.paymentAttemptId,
+      row.tenantId,
+      { trigger: 'platform_support', platformOperatorId: operator.id },
+    );
+    let result: StripeRecheckResult;
+    let failure: string | null = null;
+    switch (outcome.kind) {
+      case 'settled':
+        result = outcome.result;
+        break;
+      case 'failed':
+        // Paid at Stripe and recorded; only its order is still pending.
+        result =
+          outcome.failure === 'STRIPE_FULFILMENT_PENDING'
+            ? 'PAID'
+            : outcome.retryable
+              ? 'UNCHANGED'
+              : 'NEEDS_ATTENTION';
+        failure = outcome.failure;
+        break;
+      case 'not_found':
+        throw new NotFoundException('Payment case not found.');
+      case 'not_applicable':
+        return refuse(
+          PAYMENT_RECHECK_NOT_APPLICABLE,
+          'Only a Stripe payment whose outcome is not final can be rechecked with Stripe. Nothing was done.',
+        );
+      case 'busy':
+        return refuse(
+          PAYMENT_RECOVERY_IN_PROGRESS,
+          'A recovery of this payment is already running. Refresh in a moment.',
+        );
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.paymentReconciliationNote.create({
+        data: {
+          tenantId: row.tenantId,
+          caseId: row.id,
+          authorPlatformOperatorId: operator.id,
+          body: `Stripe recheck requested: ${reason}`.slice(0, 1000),
+        },
+      });
+      await audit(
+        'SUCCEEDED',
+        failure ? `RECHECK_FAILED_${failure}` : result,
+        tx,
+      );
+    });
+    return { result, failure, detail: await this.detail(row.id) };
+  }
+
+  // ESP-04 M4a — the newest unmatched Stripe payment events (read-only):
+  // ids, type and when, and the business the account belongs to (through
+  // OUR stored account, never the event). No body, no personal data.
+  async unmatchedEvents(): Promise<PlatformUnmatchedPaymentEventsResponse> {
+    const rows = await this.prisma.restaurantPaymentProviderEvent.findMany({
+      where: { provider: 'stripe', status: 'UNMATCHED' },
+      orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
+      take: UNMATCHED_LIST_LIMIT + 1,
+      select: {
+        id: true,
+        type: true,
+        receivedAt: true,
+        attempts: true,
+        externalAccountId: true,
+        externalObjectId: true,
+      },
+    });
+    const accountIds = [
+      ...new Set(
+        rows.flatMap((r) => (r.externalAccountId ? [r.externalAccountId] : [])),
+      ),
+    ];
+    const accounts = accountIds.length
+      ? await this.prisma.tenantPaymentAccount.findMany({
+          where: { externalAccountId: { in: accountIds } },
+          select: {
+            externalAccountId: true,
+            tenant: { select: { id: true, name: true } },
+          },
+        })
+      : [];
+    const tenantOf = new Map(
+      accounts.map((a) => [a.externalAccountId, a.tenant]),
+    );
+    return {
+      events: rows.slice(0, UNMATCHED_LIST_LIMIT).map((r) => ({
+        id: r.id,
+        type: r.type,
+        receivedAt: r.receivedAt.toISOString(),
+        attempts: r.attempts,
+        connectedAccountId: r.externalAccountId,
+        paymentIntentId: r.externalObjectId,
+        tenant: r.externalAccountId
+          ? (tenantOf.get(r.externalAccountId) ?? null)
+          : null,
+      })),
+      truncated: rows.length > UNMATCHED_LIST_LIMIT,
+    };
+  }
+
+  // The Stripe outcome recovery view of a case's payment (null when it is
+  // not a Stripe payment).
+  private stripeRecheckOf(
+    row: CaseRow,
+    now: Date,
+  ): PlatformPaymentCaseSummary['stripe'] {
+    const payment = row.paymentAttempt;
+    if (payment.provider !== 'stripe') return null;
+    const history = recoveryHistoryOf(row.events, now, 'STRIPE_RECHECK');
+    const open = row.status !== 'RESOLVED' && payment.status === 'PENDING';
+    const held = (RECOVERABLE_HELD_STATES as readonly string[]).includes(
+      payment.paymentState ?? '',
+    );
+    const next =
+      open && held ? nextAutomaticAttemptAt(history, payment.updatedAt) : null;
+    return {
+      recheckable:
+        open && (held || payment.paymentState === 'REQUIRES_CUSTOMER_ACTION'),
+      automaticAttempts: history.automaticAttempts,
+      lastFailure: history.lastFailure,
+      lastFailureAt: history.lastFailureAt?.toISOString() ?? null,
+      nextAutomaticAttemptAt: next
+        ? new Date(Math.max(next.getTime(), now.getTime())).toISOString()
+        : null,
+    };
+  }
+
   private async findCase(
     caseId: string,
   ): Promise<CaseRow & { paymentAttemptId: string }> {
@@ -420,6 +619,7 @@ export class PlatformPaymentCasesService {
       giftCardPurchase: purchase
         ? { id: purchase.id, issued: purchase.giftCardId !== null }
         : null,
+      stripe: this.stripeRecheckOf(row, now),
       recovery: {
         recoverable,
         automaticAttempts: history.automaticAttempts,

@@ -160,6 +160,35 @@ export function PaymentCasePanel({
         ) : null}
       </PlatformCard>
 
+      {row.stripe ? (
+        <PlatformCard title="Stripe outcome">
+          <dl className="grid gap-2 text-sm sm:grid-cols-[12rem_1fr]">
+            <dt className="text-text-secondary">Automatic rechecks</dt>
+            <dd className="text-text-primary">{row.stripe.automaticAttempts}</dd>
+            <dt className="text-text-secondary">Last failure</dt>
+            <dd className="text-text-primary">
+              {row.stripe.lastFailure
+                ? `${labelOf(FAILURE_LABEL, row.stripe.lastFailure)} (${formatPlatformTime(row.stripe.lastFailureAt)})`
+                : "—"}
+            </dd>
+            <dt className="text-text-secondary">Next automatic recheck</dt>
+            <dd className="text-text-primary">
+              {row.stripe.nextAutomaticAttemptAt
+                ? formatPlatformTime(row.stripe.nextAutomaticAttemptAt)
+                : detail.automaticRecoveryEnabled
+                  ? "None scheduled"
+                  : "Automatic recovery is off"}
+            </dd>
+          </dl>
+          {canManage && row.stripe.recheckable ? (
+            <details>
+              <summary className="cursor-pointer text-sm font-medium text-text-primary">Recheck with Stripe</summary>
+              <PaymentCaseForm caseId={row.id} intent="recheck" />
+            </details>
+          ) : null}
+        </PlatformCard>
+      ) : null}
+
       <PlatformCard title={`History (${events.length})`}>
         {events.length === 0 ? (
           <p className="text-sm text-text-secondary">No history recorded.</p>
@@ -207,7 +236,13 @@ export function PaymentCasePanel({
   );
 }
 
-function PaymentCaseForm({ caseId, intent }: { caseId: string; intent: "recover" | "note" }) {
+function PaymentCaseForm({
+  caseId,
+  intent,
+}: {
+  caseId: string;
+  intent: "recover" | "recheck" | "note";
+}) {
   // Controlled, so typed text survives a refusal (sign-in, rate limit,
   // network) instead of being reset with the form.
   const [value, setValue] = useState("");
@@ -227,7 +262,8 @@ function PaymentCaseForm({ caseId, intent }: { caseId: string; intent: "recover"
   const errorId = useId();
   const outcome = state.outcome;
   const fieldError = localError ?? state.fieldError;
-  const recover = intent === "recover";
+  // A recovery or a Stripe recheck needs a reason; a note is the body.
+  const recover = intent !== "note";
 
   // After each answer, focus moves to the result so it is read out; a field
   // the server refused gets the focus instead, so it can be fixed.
@@ -255,9 +291,11 @@ function PaymentCaseForm({ caseId, intent }: { caseId: string; intent: "recover"
       <input type="hidden" name="caseId" value={caseId} />
       <input type="hidden" name="intent" value={intent} />
       <p id={hintId} className="text-xs text-text-muted">
-        {recover
-          ? "Creates the missing order or gift card from what was saved before payment. It never charges the customer and is refused for a payment that is not confirmed. The reason (10–500 characters) is kept as a note and in the audit log."
-          : "Add an internal note (up to 1,000 characters). It is kept permanently."}
+        {intent === "recheck"
+          ? "Reads this payment back from Stripe now and settles it only on Stripe's answer. It never charges the customer or creates a second payment, and releases holds only if Stripe confirms nothing was taken. The reason (10–500 characters) is kept as a note and in the audit log."
+          : recover
+            ? "Creates the missing order or gift card from what was saved before payment. It never charges the customer and is refused for a payment that is not confirmed. The reason (10–500 characters) is kept as a note and in the audit log."
+            : "Add an internal note (up to 1,000 characters). It is kept permanently."}
       </p>
       <label htmlFor={fieldId} className="text-sm font-medium text-text-primary">
         {recover ? "Reason" : "Note"}
@@ -281,7 +319,13 @@ function PaymentCaseForm({ caseId, intent }: { caseId: string; intent: "recover"
         </p>
       ) : null}
       <button type="submit" disabled={pending} className={recover ? PRIMARY : SECONDARY}>
-        {pending ? "Working…" : recover ? "Recover now" : "Add note"}
+        {pending
+          ? "Working…"
+          : intent === "recheck"
+            ? "Recheck with Stripe"
+            : recover
+              ? "Recover now"
+              : "Add note"}
       </button>
       <div ref={message} tabIndex={-1} aria-live="polite" className="text-sm focus:outline-none">
         {outcome?.kind === "ok" ? <p className="text-text-primary">{outcome.message}</p> : null}

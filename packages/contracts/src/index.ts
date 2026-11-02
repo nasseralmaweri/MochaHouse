@@ -7277,9 +7277,23 @@ export interface PlatformPaymentCaseSummary {
   order: { id: string; orderNumber: string } | null;
   giftCardPurchase: { id: string; issued: boolean } | null;
   recovery: PlatformPaymentCaseRecovery;
+  // ESP-04 M4a — Stripe outcome recovery of a Stripe payment whose outcome
+  // only Stripe can settle (null for any other payment).
+  stripe: PlatformPaymentCaseStripeRecheck | null;
   createdAt: string;
   updatedAt: string;
   resolvedAt: string | null;
+}
+
+export interface PlatformPaymentCaseStripeRecheck {
+  // Support may ask for a recheck now (a Stripe payment, not yet final).
+  recheckable: boolean;
+  automaticAttempts: number;
+  lastFailure: string | null;
+  lastFailureAt: string | null;
+  // The automatic recovery will try again at this time; null when it will
+  // not (switched off, set aside for people, or nothing to do).
+  nextAutomaticAttemptAt: string | null;
 }
 
 // GET /api/v1/platform/payment-cases
@@ -7337,6 +7351,43 @@ export interface PlatformPaymentCaseNoteRequest {
 export const PAYMENT_CASE_NOTE_MAX_LENGTH = 1000;
 export const PAYMENT_CASE_REASON_MIN_LENGTH = 10;
 export const PAYMENT_CASE_REASON_MAX_LENGTH = 500;
+
+// ESP-04 M4a — POST /api/v1/platform/payment-cases/:caseId/recheck: read the
+// payment back from Stripe now (the same path as the automatic recovery:
+// never a charge, never a new intent, holds released only on a proven
+// cancellation with nothing received).
+export type PlatformPaymentCaseRecheckRequest = PlatformPaymentCaseRecoverRequest;
+export type StripeRecheckResult =
+  | "PAID"
+  | "WAITING_FOR_CUSTOMER"
+  | "PROCESSING"
+  | "NOT_CHARGED"
+  | "UNCHANGED"
+  | "NEEDS_ATTENTION";
+export interface PlatformPaymentCaseRecheckResponse {
+  result: StripeRecheckResult;
+  failure: string | null;
+  detail: PlatformPaymentCaseDetail;
+}
+export const PAYMENT_RECHECK_NOT_APPLICABLE = "PAYMENT_RECHECK_NOT_APPLICABLE";
+
+// ESP-04 M4a — GET /api/v1/platform/payment-events/unmatched: verified Stripe
+// payment events for one of our connected accounts that named no payment of
+// that business (read-only; ids only, never a body or personal data).
+export interface PlatformUnmatchedPaymentEvent {
+  id: string;
+  type: string;
+  receivedAt: string;
+  attempts: number;
+  connectedAccountId: string | null;
+  paymentIntentId: string | null;
+  // The business the account belongs to (null: none of ours).
+  tenant: { id: string; name: string } | null;
+}
+export interface PlatformUnmatchedPaymentEventsResponse {
+  events: PlatformUnmatchedPaymentEvent[];
+  truncated: boolean;
+}
 
 // Refusal codes (409) of a recovery request.
 export const PAYMENT_RECOVERY_NOT_CONFIRMED = "PAYMENT_RECOVERY_NOT_CONFIRMED";

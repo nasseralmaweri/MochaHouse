@@ -42,6 +42,9 @@ describe('ESP-04 M3 Stripe PaymentIntents adapter (offline)', () => {
     expect(result).toEqual({
       status: 'requires_customer_action',
       reference: intents.only(),
+      // ESP-04 M4a — what the intent is for.
+      amount: 1250,
+      currency: 'USD',
     });
     expect(intents.create).toHaveBeenCalledTimes(1);
     const [params, options] = intents.create.mock.calls[0];
@@ -171,13 +174,20 @@ describe('ESP-04 M3 Stripe PaymentIntents adapter (offline)', () => {
     expect(of({ status: 'requires_payment_method' })).toEqual({
       status: 'requires_customer_action',
       reference: 'pi_1',
+      amount: 1250,
+      currency: 'USD',
     });
     expect(
       of({
         status: 'requires_payment_method',
         last_payment_error: { type: 'card_error' },
       }),
-    ).toEqual({ status: 'requires_payment_method', reference: 'pi_1' });
+    ).toEqual({
+      status: 'requires_payment_method',
+      reference: 'pi_1',
+      amount: 1250,
+      currency: 'USD',
+    });
     expect(of({ status: 'requires_confirmation' }).status).toBe(
       'requires_customer_action',
     );

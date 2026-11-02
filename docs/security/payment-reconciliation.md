@@ -138,6 +138,111 @@ Routes are under `/api/v1/platform/payment-cases`. Pages are under
     data to platform data.
   - Each note is audited as `platform.payment_case.note_added`.
 
+## Stripe outcome recovery (ESP-04 M4a)
+
+When Stripe payments are configured (`PAYMENT_PROVIDER=stripe`), each sweep
+runs two extra phases **before** fulfilment, so a payment found paid gets its
+order in the same sweep. Both are part of the same sweeper, so the same
+`PAYMENT_AUTO_RECOVERY_ENABLED=1` switch turns them on (off by default). No
+migration.
+
+### Phase 1: held Stripe payments
+
+- **Which payments.** CHARGING, UNKNOWN or AWAITING_CONFIRMATION.
+  - CHARGING is untouched for 10 minutes, because its first request may
+    still be talking to Stripe. The others wait the usual 2 minutes.
+  - At most 10 per sweep, oldest first.
+  - Each runs under the **same per-payment lock** as fulfilment, so the two
+    never run together on one payment.
+- **Intent known.** It is read back on the payment's stored account, which
+  must still be the business's own. The move is a conditional update from
+  the exact state and intent that were read:
+
+  | Stripe says                                      | The payment                                                      |
+  | ------------------------------------------------ | ---------------------------------------------------------------- |
+  | succeeded, for the frozen amount and currency    | SUCCEEDED, then the order exactly once                           |
+  | succeeded, another amount or currency            | held; `STRIPE_AMOUNT_MISMATCH`, set aside for people             |
+  | processing                                       | AWAITING_CONFIRMATION (held), rechecked later                    |
+  | waiting for a card, nothing received             | REQUIRES_CUSTOMER_ACTION (live on the same intent)               |
+  | cancelled, nothing received                      | FAILED: the holds are released, the case resolves `NOT_CHARGED` |
+  | unreadable, live mode, or anything else          | unchanged (`STRIPE_UNREADABLE`, retried)                         |
+
+- **No intent recorded.** The original creation is replayed:
+  - the same idempotency key, account and byte-identical parameters;
+  - **only within 20 hours** of the payment's creation.
+
+  Outcomes:
+  - **The answer names an intent:** the intent is recorded (only into an
+    empty reference, one Stripe payment per intent), then read back as
+    above.
+  - **A cached 500, a timeout, a concurrent-key conflict, or a local refusal
+    (e.g. the business left the allowlist):** unchanged, retried. None of
+    them proves anything about the original request.
+  - **Past the window (`STRIPE_CREATE_EXPIRED`), a key refused with these
+    parameters, or an intent that already belongs to another payment
+    (`STRIPE_IDEMPOTENCY_CONFLICT`):** never replayed again. Set aside for
+    people with the holds kept.
+- **Amount checked at every step.**
+  - An intent that Stripe reports is **for** another amount or currency is
+    never linked by a replay and never made live again or held as processing.
+  - The payment is held instead, as `STRIPE_IDEMPOTENCY_CONFLICT` or
+    `STRIPE_AMOUNT_MISMATCH`, and set aside for people.
+- **Paid but no order yet.** If Stripe confirms the payment but its order
+  can't be created right away, the result is `STRIPE_FULFILMENT_PENDING`.
+  - It is **not** reported as settled: an unmatched event stays open with a
+    case.
+  - Fulfilment recovery creates the order exactly once.
+- **Webhooks for held payments.** A Stripe webhook for a held payment whose
+  intent is known goes through the same read-back. It is acknowledged only
+  once Stripe's answer is recorded, never on the payment's stored state.
+- **History.** `STRIPE_RECHECK_STARTED`, `_SUCCEEDED` (with the outcome) or
+  `_FAILED` (with a fixed failure code and whether it is retryable). These
+  are **counted separately** from fulfilment attempts: the same 5-attempt cap
+  and backoff of 5 min × 2ⁿ up to 6 h. Once set aside, the case shows **Needs
+  attention**.
+
+### Phase 2: unmatched Stripe events
+
+- **Which events.** An `UNMATCHED` payment event from the last 7 days whose
+  connected account is one of our businesses' accounts, and whose intent that
+  business's Stripe payment now names on that same account. Metadata is
+  never used.
+- **What happens.** The payment is reconciled at once through the idempotent
+  paths:
+  - a held payment goes through phase 1's recovery;
+  - any other payment goes through the webhook's own read-back.
+
+  The event becomes `PROCESSED` (`LINKED_BY_RECOVERY`). This works with
+  `RESTAURANT_PAYMENT_EVENT_REDRIVE_ENABLED` off and needs no redelivery.
+- **Limits.** At most 20 per sweep from a scan of 100. The least recently
+  tried go first (never-tried before anything), with a per-event backoff of
+  1 to 60 minutes and a cap of 8 tries. An event still failing never crowds
+  out the ones behind it.
+- **Not settled yet.** The event stays `UNMATCHED` and the payment gets a
+  `PROVIDER_EVENT_NOT_SETTLED` case.
+
+### Platform Console
+
+- **Recheck with Stripe** (`POST /api/v1/platform/payment-cases/:caseId/recheck`).
+  Runs one phase 1 recovery now. It is also allowed for a payment waiting for
+  its customer: it reads that payment back through the customer's own check
+  path.
+  - **Access:** `payments.reconciliation.manage`, a recent sign-in, and a
+    reason, which is kept as a note.
+  - **Audit:** `platform.payment_case.stripe_recheck_requested`. SUCCEEDED
+    carries the result, or `RECHECK_FAILED_<failure>`. DENIED carries the
+    refusal code: a resolved case, a payment that isn't Stripe or isn't
+    pending, or a recovery already running.
+  - **Counting:** it does not count toward the automatic attempts.
+- **Unmatched Stripe events** (`GET /api/v1/platform/payment-events/unmatched`,
+  page `/platform/payments/unmatched`).
+  - **Access:** `payments.reconciliation.view`, read-only.
+  - **Shown:** the newest 100, with type, time received, tries, account,
+    intent and the business the account belongs to. No event body or
+    personal data.
+- **Case details.** A case's detail shows its Stripe recheck history and the
+  next automatic recheck.
+
 ## Customer retries (PAY-4)
 
 A retry with the same idempotency key never starts another charge. Depending

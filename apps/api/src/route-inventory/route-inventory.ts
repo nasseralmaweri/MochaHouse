@@ -519,6 +519,14 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
     scope: 'platform',
     note: 'ESP-03 PR 5 — a safe recovery attempt for a confirmed payment with no order / gift card (payments.reconciliation.manage, recent sign-in, reason; audited). Never charges; refuses uncertain payments.',
   },
+  'POST /api/v1/platform/payment-cases/:caseId/recheck': {
+    scope: 'platform',
+    note: "ESP-04 M4a — read a Stripe payment whose outcome is not final back from Stripe now (payments.reconciliation.manage, recent sign-in, reason; audited). The automatic recovery's path: never charges, never a new intent, a lost creation replayed only within 20 hours under its original key; holds released only on a proven cancellation.",
+  },
+  'GET /api/v1/platform/payment-events/unmatched': {
+    scope: 'platform',
+    note: 'ESP-04 M4a — verified Stripe payment events for one of our accounts that named no payment (payments.reconciliation.view; ids, type and time only).',
+  },
   'POST /api/v1/platform/payment-cases/:caseId/notes': {
     scope: 'platform',
     note: 'ESP-03 PR 5 — add an append-only internal note to a case (payments.reconciliation.manage, recent sign-in; audited).',

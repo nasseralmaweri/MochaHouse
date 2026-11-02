@@ -559,4 +559,98 @@ describe('ESP-03 PR 5 platform payment cases (integration, scratch database)', (
       ).toBe(0);
     });
   });
+
+  // ESP-04 M4a — "Recheck with Stripe" and the unmatched Stripe events list
+  // (their Stripe behaviour is covered by stripe-outcome-recovery.spec.ts).
+  describe('Stripe recheck and unmatched events (ESP-04 M4a)', () => {
+    it('recheck needs manage and a recent sign-in, and is refused (audited, nothing written) for a payment that is not a Stripe one', async () => {
+      const url = `${BASE}/${ids.held.case}/recheck`;
+      await as('viewer', 'post', url, { reason: REASON }).expect(403);
+      const stale = await as(
+        'manager',
+        'post',
+        url,
+        { reason: REASON },
+        2 * 3600,
+      );
+      expect(stale.status).toBe(401);
+      expect(codeOf(stale.body)).toBe('REAUTHENTICATION_REQUIRED');
+      await as('manager', 'post', url, { reason: 'short' }).expect(400);
+      const refused = await as('manager', 'post', url, { reason: REASON });
+      expect(refused.status).toBe(409);
+      expect(codeOf(refused.body)).toBe('PAYMENT_RECHECK_NOT_APPLICABLE');
+      expect(
+        await prisma.platformAuditEvent.count({
+          where: {
+            action: 'platform.payment_case.stripe_recheck_requested',
+            outcome: 'DENIED',
+            reasonCode: 'PAYMENT_RECHECK_NOT_APPLICABLE',
+            targetId: ids.held.case,
+          },
+        }),
+      ).toBe(1);
+      expect(
+        await prisma.paymentReconciliationNote.count({
+          where: { caseId: ids.held.case },
+        }),
+      ).toBe(0);
+      expect(
+        await prisma.paymentReconciliationEvent.count({
+          where: {
+            caseId: ids.held.case,
+            action: { startsWith: 'STRIPE_RECHECK_' },
+          },
+        }),
+      ).toBe(0);
+      // A case of another provider shows no Stripe recheck.
+      const detail = (
+        await as('viewer', 'get', `${BASE}/${ids.held.case}`).expect(200)
+      ).body as PlatformPaymentCaseDetail;
+      expect(detail.case.stripe).toBeNull();
+    });
+
+    it('lists unmatched Stripe events for viewers only, with ids and the owning business only', async () => {
+      const id = `evt_M4aUnmatched${run}`;
+      await prisma.restaurantPaymentProviderEvent.create({
+        data: {
+          provider: 'stripe',
+          externalEventId: id,
+          type: 'payment_intent.succeeded',
+          livemode: false,
+          externalAccountId: `acct_1NotOurs${run}`,
+          externalObjectId: `pi_Unmatched${run}`,
+          payloadDigest: '0'.repeat(64),
+          status: 'UNMATCHED',
+          outcome: 'NO_MATCHING_PAYMENT',
+        },
+      });
+      const url = '/api/v1/platform/payment-events/unmatched';
+      await http().get(url).expect(401);
+      await as('none', 'get', url).expect(403);
+      await as('billing', 'get', url).expect(403);
+      const body = (await as('viewer', 'get', url).expect(200)).body as {
+        events: Record<string, unknown>[];
+      };
+      const row = body.events.find(
+        (e) => e.paymentIntentId === `pi_Unmatched${run}`,
+      );
+      expect(row).toMatchObject({
+        type: 'payment_intent.succeeded',
+        connectedAccountId: `acct_1NotOurs${run}`,
+        tenant: null,
+        attempts: 0,
+      });
+      expect(Object.keys(row!).sort()).toEqual(
+        [
+          'attempts',
+          'connectedAccountId',
+          'id',
+          'paymentIntentId',
+          'receivedAt',
+          'tenant',
+          'type',
+        ].sort(),
+      );
+    });
+  });
 });

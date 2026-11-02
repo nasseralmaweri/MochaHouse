@@ -15,6 +15,7 @@ import type {
   PlatformStorefrontView,
   PlatformPaymentCaseDetail,
   PlatformPaymentCaseListResponse,
+  PlatformUnmatchedPaymentEventsResponse,
   PlatformAdjustableInvoice,
   PlatformAdjustmentListResponse,
   PlatformAdjustmentView,
@@ -232,6 +233,13 @@ export function listPaymentCases(
   query: string,
 ): Promise<RegistryResult<PlatformPaymentCaseListResponse>> {
   return readRegistry(`/payment-cases?${query}`);
+}
+
+// ESP-04 M4a — the unmatched Stripe payment events (read-only).
+export function listUnmatchedPaymentEvents(): Promise<
+  RegistryResult<PlatformUnmatchedPaymentEventsResponse>
+> {
+  return readRegistry("/payment-events/unmatched");
 }
 
 export function getPaymentCase(

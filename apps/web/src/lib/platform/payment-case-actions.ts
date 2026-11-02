@@ -36,15 +36,21 @@ export async function paymentCaseAction(
 ): Promise<PaymentCaseFormState> {
   const caseId = form.get("caseId");
   const intent = text(form, "intent");
-  if (!validCaseId(caseId) || (intent !== "recover" && intent !== "note")) {
+  if (
+    !validCaseId(caseId) ||
+    (intent !== "recover" && intent !== "recheck" && intent !== "note")
+  ) {
     return { outcome: { kind: "error", message: PAYMENT_CASE_MESSAGES.unavailable }, fieldError: null };
   }
   let path: string;
   let body: Record<string, string>;
-  if (intent === "recover") {
+  // ESP-04 M4a — "recheck" reads a Stripe payment back from Stripe (the
+  // API's Stripe outcome recovery; never a charge), with a reason like
+  // "recover".
+  if (intent === "recover" || intent === "recheck") {
     const reason = text(form, "reason");
     if (!validRecoveryReason(reason)) return { outcome: null, fieldError: PAYMENT_CASE_MESSAGES.reason };
-    path = "recover";
+    path = intent;
     body = { reason: reason.trim() };
   } else {
     const note = text(form, "body");

@@ -142,9 +142,22 @@ export type PaymentIntentResult =
   // The amount and currency the provider actually took: checked against the
   // frozen checkout before anything is recorded as paid.
   | { status: "succeeded"; reference: string; amount: number; currency: string }
-  | { status: "requires_customer_action"; reference: string }
-  | { status: "requires_payment_method"; reference: string }
-  | { status: "processing"; reference: string }
+  // ESP-04 M4a — `amount` / `currency`: what the intent is FOR, when the
+  // provider reports it (Stripe does); recovery never makes a payment live
+  // again, or holds it as processing, on an intent for another amount.
+  | {
+      status: "requires_customer_action";
+      reference: string;
+      amount?: number;
+      currency?: string;
+    }
+  | {
+      status: "requires_payment_method";
+      reference: string;
+      amount?: number;
+      currency?: string;
+    }
+  | { status: "processing"; reference: string; amount?: number; currency?: string }
   | { status: "canceled"; reference: string }
   | { status: "failed"; reason: string }
   | { status: "unknown"; reason: string; reference?: string };
