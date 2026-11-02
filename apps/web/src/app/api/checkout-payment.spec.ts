@@ -53,6 +53,8 @@ const WAITING = {
     provider: "fake-two-step",
     state: "REQUIRES_CUSTOMER_ACTION",
     clientSecret: null,
+    publishableKey: null,
+    connectedAccountId: null,
     amountMinorUnits: 700,
     currency: "USD",
   },
