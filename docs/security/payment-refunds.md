@@ -38,7 +38,7 @@ One row per refund **operation**:
 | `UNKNOWN` | An answer was lost; it may have happened | yes |
 | `SUCCEEDED` | Stripe refunded it | yes |
 | `FAILED` / `CANCELED` | Stripe says it did not happen | no |
-| `NOT_CREATED` | Proven never created at Stripe | no |
+| `NOT_CREATED` | Proven never created at Stripe, with recorded evidence | no |
 | `FAILED_AFTER_SUCCESS` | It succeeded, then Stripe returned the money | no (owed again) |
 
 Moves are forward only:
@@ -81,10 +81,21 @@ amount reserved until a read-back from Stripe proves what happened.
     snapshot, and a row lock alone raises no conflict against a `READ COMMITTED` writer.
   * Every refund status change, and every obligation settlement, takes the payment's lock, so
     a settlement can never race a late failure of its refunds.
-* **"Never created" is never inferred from a timeout.** `NOT_CREATED` gives the amount back,
-  so it is allowed only for a request that was never sent, or one first sent more than 24
-  hours ago. That is past Stripe's idempotency window, when the same key can no longer bring
-  the refund back.
+* **"Never created" needs proof.** `NOT_CREATED` gives the amount back, so it is never inferred
+  from a timeout, an error or time passing. It needs recorded evidence (`notCreatedEvidence`),
+  which the database stamps with the time it was recorded, keeps unchanged, and writes into the
+  history:
+  * `NEVER_SENT`: the request was never sent to Stripe.
+  * `STRIPE_HISTORY_VERIFIED`: the request was sent, and a **complete** read-back of the
+    payment's refund history at Stripe, on its own account, shows no refund of this operation.
+    This is allowed only after the 24-hour idempotency window. That condition is necessary
+    but never sufficient: before then, the same key could still bring the refund back.
+
+  M5b decides the evidence with `notCreatedEvidenceFor`. It returns nothing, so the refund
+  stays `UNKNOWN` with its amount reserved, when:
+  * Stripe cannot be read, or not every page was read;
+  * the refund is found;
+  * an unrecorded refund of the same amount without our id might be it.
 * **Identity never changes:** business, order, payment, account, origin, amount, currency,
   reason, note, requester, idempotency key and creation time.
   * The Stripe refund id and the first-sent time are written once.
@@ -92,7 +103,7 @@ amount reserved until a read-back from Stripe proves what happened.
   * A refund is never deleted.
 * **Times come from the database clock, in UTC.** The creation, success, late-failure and
   review times are set by the database, never by the application, whatever the session's time
-  zone. The settlement hold below cannot be shortened.
+  zone.
 * **A refund made outside CENTERIVO is recorded only as Stripe reports it:** `PENDING`,
   `SUCCEEDED`, `FAILED` or `CANCELED`. It is never inserted already returned or reviewed.
 * **History is written by the database.**
@@ -123,24 +134,27 @@ amount**. M5a adds guards only; every S5a / S5b guard is unchanged.
   * the payment's succeeded refunds cover the whole obligation;
   * none is still in flight;
   * the recorded `processorRefundId` is one of those succeeded refunds;
-  * no refund of the payment whose money came back is still unreviewed;
-  * **each succeeded at least 30 days ago.**
+  * no refund of the payment whose money came back is still unreviewed.
 
-  A partly refunded obligation is never marked satisfied. It stays `PROCESSING` through the
-  hold, because Stripe can return a card refund up to 30 days after it succeeded.
-* **A late failure** (`FAILED_AFTER_SUCCESS`):
-  * It is kept as immutable history. Its amount is owed again, and `payment-refunds.ts`
-    `obligationStanding` reports exactly what is outstanding.
-  * The database **blocks any new CENTERIVO refund of that payment until a staff member has
-    recorded a review**, once, with a note. The review is audited in the history.
-  * Within the hold, the obligation has not been recorded settled, so it never says
-    "refunded" while money is outstanding.
-  * A refund returned even after its obligation was settled (beyond Stripe's documented
-    window) is still recorded. Its history entry is flagged `obligationAlreadySettled`, and
-    its amount is owed again. **What is owed always comes from the refunds** (`obligationStanding`),
-    never from the obligation's status. The settled obligation itself cannot change, so its
-    `REFUNDED` is a record of the settlement, not a statement about today. M5c surfaces these
-    cases to people.
+  These are verified from Stripe's read-back. There is no waiting period: a verified, complete
+  refund settles at once. A partly refunded obligation is never marked satisfied.
+* **A late failure** (`FAILED_AFTER_SUCCESS`): Stripe can still return a card refund after it
+  succeeded, including after the obligation was recorded settled.
+  * The refund's history is kept, immutable. Its amount is owed again: capacity returns, and
+    `payment-refunds.ts` `obligationStanding` recalculates what is outstanding from the actual
+    refunds.
+  * **The case is flagged for staff attention.**
+    * The history entry carries `obligationAlreadySettled` when the obligation had been
+      settled.
+    * `obligationStanding` reports `needsAttention` for an unreviewed return, or for a
+      settled obligation its refunds no longer cover.
+  * The database **blocks any replacement refund of that payment, and any settlement, until a
+    staff member has recorded a review**, once, with a note. The review is audited in the
+    history.
+  * **The obligation is never presented as satisfied while money is owed.** A settled
+    obligation cannot change (S5a: `REFUNDED` is terminal), so its `REFUNDED` is a record of
+    the settlement, not a statement about today. What is owed always comes from the refunds,
+    never from the obligation's status. M5b and M5c show and act on that calculated amount.
 * **Manual settlement (S5c `MANUAL_EXTERNAL`) is refused for a Stripe payment.** Its refund
   goes back to the original card, through Stripe. A Dashboard refund is recorded as an
   `EXTERNAL` refund and counts like any other. Manual settlement remains available for

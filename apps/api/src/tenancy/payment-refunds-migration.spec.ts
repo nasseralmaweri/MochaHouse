@@ -276,17 +276,6 @@ describe('ESP-04 M5a payment refunds migration (scratch database)', () => {
         [id],
       )
     ).rows;
-  // The superuser-only bypass the docs name (T-2): used here ONLY to age a
-  // succeeded refund past the settlement hold.
-  const ageSuccess = (scratch: ScratchDatabase, id: string, days: number) =>
-    inTransaction(scratch, [
-      ['SET LOCAL session_replication_role = replica'],
-      [
-        `UPDATE "PaymentRefund" SET "succeededAt" = now() - ($2 || ' days')::interval WHERE id = $1`,
-        [id, String(days)],
-      ],
-    ]);
-
   it('is listed after every earlier migration', () => {
     expect(at).toBeGreaterThan(0);
   });
@@ -491,7 +480,11 @@ describe('ESP-04 M5a payment refunds migration (scratch database)', () => {
       );
       const c = await refund(scratch, paid, { amount: 600 });
       expect(c).toBeTruthy();
-      await setRefund(scratch, c, `status = 'NOT_CREATED'`);
+      await setRefund(
+        scratch,
+        c,
+        `status = 'NOT_CREATED', "notCreatedEvidence" = 'NEVER_SENT'`,
+      );
       await refund(scratch, paid, { amount: 600 });
     });
 
@@ -612,22 +605,69 @@ describe('ESP-04 M5a payment refunds migration (scratch database)', () => {
       ).rejects.toThrow(/written only by the database/);
     });
 
-    it('never records a sent refund as "never created" inside the idempotency window', async () => {
+    it('"never created" needs its evidence: never from a timeout or time alone, and the evidence is kept', async () => {
       const paid = await paidOrder(scratch);
-      // Never sent: provably not created.
+      const notCreated = (id: string, evidence: string | null) =>
+        setRefund(
+          scratch,
+          id,
+          `status = 'NOT_CREATED', "notCreatedEvidence" = $2`,
+          [evidence],
+        );
+      // Never sent: provably not created, with that evidence recorded.
       const unsent = await refund(scratch, paid, { amount: 100 });
-      await setRefund(scratch, unsent, `status = 'NOT_CREATED'`);
-      // Sent, then the answer was lost: unknown, and NOT "never created".
+      await expect(notCreated(unsent, null)).rejects.toThrow(
+        /only with its evidence/,
+      );
+      await expect(notCreated(unsent, 'A_GUESS')).rejects.toThrow(
+        /only with its evidence/,
+      );
+      await expect(
+        notCreated(unsent, 'STRIPE_HISTORY_VERIFIED'),
+      ).rejects.toThrow(/never sent has no Stripe history/);
+      await notCreated(unsent, 'NEVER_SENT');
+      expect(await refundRow(scratch, unsent)).toMatchObject({
+        status: 'NOT_CREATED',
+        notCreatedEvidence: 'NEVER_SENT',
+      });
+      expect(
+        (await refundRow(scratch, unsent)).notCreatedRecordedAt,
+      ).not.toBeNull();
+      const created = (await history(scratch, unsent)).at(-1);
+      expect(created).toMatchObject({ toStatus: 'NOT_CREATED' });
+      const { rows: detail } = await run(
+        scratch,
+        `SELECT detail FROM "PaymentRefundEvent" WHERE "refundId" = $1 AND "toStatus" = 'NOT_CREATED'`,
+        [unsent],
+      );
+      expect(detail[0].detail).toEqual({ notCreatedEvidence: 'NEVER_SENT' });
+      // The evidence never changes afterwards.
+      await expect(
+        setRefund(
+          scratch,
+          unsent,
+          `"notCreatedEvidence" = 'STRIPE_HISTORY_VERIFIED'`,
+        ),
+      ).rejects.toThrow(/set only by its status/);
+      // Sent, then the answer was lost: unknown. Neither "never sent", nor —
+      // inside the idempotency window — verifiable from Stripe's history.
       const sent = await refund(scratch, paid, { amount: 100 });
       await setRefund(
         scratch,
         sent,
         `"firstSentAt" = now(), status = 'UNKNOWN'`,
       );
-      await expect(
-        setRefund(scratch, sent, `status = 'NOT_CREATED'`),
-      ).rejects.toThrow(/less than 24 hours ago/);
-      // Past the window, a final read-back may record it.
+      await expect(notCreated(sent, null)).rejects.toThrow(
+        /only with its evidence/,
+      );
+      await expect(notCreated(sent, 'NEVER_SENT')).rejects.toThrow(
+        /not "never sent"/,
+      );
+      await expect(notCreated(sent, 'STRIPE_HISTORY_VERIFIED')).rejects.toThrow(
+        /less than 24 hours ago/,
+      );
+      // Time alone is not proof: past the window it still needs the
+      // verified Stripe history.
       await inTransaction(scratch, [
         ['SET LOCAL session_replication_role = replica'],
         [
@@ -635,7 +675,18 @@ describe('ESP-04 M5a payment refunds migration (scratch database)', () => {
           [sent],
         ],
       ]);
-      await setRefund(scratch, sent, `status = 'NOT_CREATED'`);
+      await expect(notCreated(sent, null)).rejects.toThrow(
+        /only with its evidence/,
+      );
+      expect(await refundRow(scratch, sent)).toMatchObject({
+        status: 'UNKNOWN',
+      });
+      await notCreated(sent, 'STRIPE_HISTORY_VERIFIED');
+      // Evidence on any other status is refused.
+      const other = await refund(scratch, paid, { amount: 100 });
+      await expect(
+        setRefund(scratch, other, `"notCreatedEvidence" = 'NEVER_SENT'`),
+      ).rejects.toThrow(/set only by its status|check constraint/);
     });
 
     it('a refund made outside CENTERIVO is recorded only as Stripe reports it, never already returned or reviewed', async () => {
@@ -859,7 +910,6 @@ describe('ESP-04 M5a payment refunds migration (scratch database)', () => {
       });
       const externalId = (await refundRow(scratch, external))
         .providerRefundId as string;
-      await ageSuccess(scratch, external, 31);
       const settle = (refundId: string) =>
         run(
           scratch,
@@ -884,13 +934,11 @@ describe('ESP-04 M5a payment refunds migration (scratch database)', () => {
       await succeed(scratch, rest);
       const restId = (await refundRow(scratch, rest))
         .providerRefundId as string;
-      // Fully refunded, but the last refund could still come back.
-      await expect(settle(restId)).rejects.toThrow(/less than 30 days ago/);
-      await ageSuccess(scratch, rest, 31);
       // A refund id that is not a succeeded refund of this payment.
       await expect(settle('re_NotOurs1')).rejects.toThrow(
         /succeeded refund of its own payment/,
       );
+      // Fully refunded and verified: settled at once (no waiting period).
       await settle(restId);
       const { rows } = await run(
         scratch,
@@ -922,12 +970,11 @@ describe('ESP-04 M5a payment refunds migration (scratch database)', () => {
       const first = await refund(scratch, paid, { amount: 1000 });
       await succeed(scratch, first);
       await setRefund(scratch, first, `status = 'FAILED_AFTER_SUCCESS'`);
-      // The restaurant refunds again from its Dashboard, long ago.
+      // The restaurant refunds again from its Dashboard.
       const replacement = await refund(scratch, paid, {
         origin: 'EXTERNAL',
         amount: 1000,
       });
-      await ageSuccess(scratch, replacement, 31);
       const replacementId = (await refundRow(scratch, replacement))
         .providerRefundId as string;
       await run(
@@ -952,6 +999,24 @@ describe('ESP-04 M5a payment refunds migration (scratch database)', () => {
         [replacement],
       );
       expect(rows[0].detail).toEqual({ obligationAlreadySettled: true });
+      // The settled obligation keeps its history (S5a: REFUNDED never
+      // changes); no replacement refund until a staff member reviews it.
+      const { rows: obligationRows } = await run(
+        scratch,
+        `SELECT status FROM "OrderRefundObligation" WHERE id = $1`,
+        [obligation],
+      );
+      expect(obligationRows[0].status).toBe('REFUNDED');
+      await expect(refund(scratch, paid, { amount: 1000 })).rejects.toThrow(
+        /must be reviewed/,
+      );
+      await setRefund(
+        scratch,
+        replacement,
+        `"lateFailureReviewedAt" = now(), "lateFailureReviewedByInternalUserId" = 'owner-t1', "lateFailureReviewNote" = 'Customer contacted'`,
+      );
+      // Reviewed: what is owed again (all of it) may be refunded.
+      await refund(scratch, paid, { amount: 1000 });
     });
 
     it("a Stripe payment's obligation is never settled by hand (S5c); another provider's still can be", async () => {

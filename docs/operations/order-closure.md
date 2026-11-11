@@ -180,7 +180,9 @@ closure is exactly-once, and a repeat after success is an idempotent replay.
   * Every refund of an order's Stripe payment counts towards its obligation. What is owed is
     the obligation minus those refunds.
   * A Stripe payment's obligation is settled only as `PROCESSOR`, once succeeded refunds cover
-    all of it, none is in flight, and each succeeded at least 30 days ago.
+    all of it (verified from Stripe), none is in flight and no returned refund is unreviewed.
+    A refund that comes back later is owed again and flagged for staff: what is owed is always
+    calculated from the refunds, never from the obligation's status.
   * **`MANUAL_EXTERNAL` is refused for a Stripe payment.** It remains available for other
     providers.
   * An order cannot be closed while a card refund of its payment is still in progress (409).

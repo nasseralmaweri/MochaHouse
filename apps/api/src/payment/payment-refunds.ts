@@ -11,12 +11,13 @@
 //   * an order's refund obligation is for its whole card-paid amount, so
 //     every refund of its payment counts towards it: what is still owed is
 //     the obligation minus those refunds, never the whole obligation again;
-//   * an obligation is satisfied only when succeeded refunds cover all of
-//     it, none is still in flight, and the last succeeded at least
-//     SETTLEMENT_HOLD_DAYS ago (Stripe can return a card refund later);
-//   * a refund whose money came back (FAILED_AFTER_SUCCESS) is owed again,
-//     and blocks any new CENTERIVO refund of the payment until a staff member
-//     has reviewed it.
+//   * an obligation may be recorded settled once Stripe's read-back shows
+//     succeeded refunds covering all of it, none still in flight, and no
+//     returned refund unreviewed;
+//   * a refund whose money came back (FAILED_AFTER_SUCCESS) — even after
+//     settlement — is owed again, flagged for people, and blocks any new
+//     CENTERIVO refund of the payment until a staff member has reviewed it;
+//   * "never created" needs proof (notCreatedEvidenceFor), never a timeout.
 
 export const PAYMENT_REFUND_STATUSES = [
   'REQUESTED',
@@ -215,15 +216,10 @@ export function summarizeRefunds(
   };
 }
 
-// Stripe can return a card refund up to 30 days after it succeeded; an
-// obligation is not recorded as settled before then (the database enforces
-// the same number).
-export const SETTLEMENT_HOLD_DAYS = 30;
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 export interface ObligationStanding {
   obligationMinorUnits: number;
-  // Refunded and confirmed by Stripe.
+  // Refunded and confirmed by Stripe (as the refunds stand NOW: a refund
+  // whose money came back no longer counts).
   refundedMinorUnits: number;
   // On its way (waiting for Stripe's answer).
   inProgressMinorUnits: number;
@@ -232,30 +228,28 @@ export interface ObligationStanding {
   outstandingMinorUnits: number;
   // Succeeded refunds cover all of it and nothing is in flight.
   fullyRefunded: boolean;
-  // When it may be recorded as settled (fully refunded, and the hold has
-  // passed); null while it is not fully refunded.
-  settleableFrom: Date | null;
+  // It may be recorded as settled now: fully refunded, and no returned
+  // refund waits for its review (the database's settlement rule).
+  settleable: boolean;
+  // People must look: a returned refund is unreviewed, or the obligation
+  // was recorded settled but its refunds no longer cover it (money came
+  // back afterwards). Never presented to anyone as satisfied.
+  needsAttention: boolean;
 }
 
 // Where an order's refund obligation stands, from the refunds of its
-// payment (every refund of that payment counts towards it).
+// payment (every refund of that payment counts towards it). The
+// obligation's recorded status is only used to flag a settled obligation
+// whose money came back: what is owed always comes from the refunds.
 export function obligationStanding(
   obligationMinorUnits: number,
   refunds: readonly RefundRow[],
+  recordedStatus?: string,
 ): ObligationStanding {
   const summary = summarizeRefunds(obligationMinorUnits, refunds);
   const fullyRefunded =
     summary.succeededMinorUnits >= obligationMinorUnits &&
     summary.inFlightMinorUnits === 0;
-  let settleableFrom: Date | null = null;
-  if (fullyRefunded) {
-    const latest = Math.max(
-      ...refunds
-        .filter((r) => r.status === 'SUCCEEDED' && r.succeededAt !== null)
-        .map((r) => r.succeededAt!.getTime()),
-    );
-    settleableFrom = new Date(latest + SETTLEMENT_HOLD_DAYS * DAY_MS);
-  }
   return {
     obligationMinorUnits,
     refundedMinorUnits: Math.min(
@@ -268,8 +262,73 @@ export function obligationStanding(
       obligationMinorUnits - summary.reservedMinorUnits,
     ),
     fullyRefunded,
-    settleableFrom,
+    settleable: fullyRefunded && !summary.lateFailureNeedsReview,
+    needsAttention:
+      summary.lateFailureNeedsReview ||
+      (recordedStatus === 'REFUNDED' && !fullyRefunded),
   };
+}
+
+// --- "Never created" needs proof -------------------------------------------
+//
+// NOT_CREATED gives a refund's reserved amount back, so it is never inferred
+// from a timeout, an error or time passing. The evidence the database
+// accepts (PaymentRefund.notCreatedEvidence):
+//   NEVER_SENT               the request was never sent to Stripe;
+//   STRIPE_HISTORY_VERIFIED  it was sent, and a COMPLETE read-back of the
+//                            payment's refunds at Stripe (on its own account),
+//                            made past the idempotency window, shows no refund
+//                            of this operation — and nothing that might be it.
+export type NotCreatedEvidence = 'NEVER_SENT' | 'STRIPE_HISTORY_VERIFIED';
+
+// Stripe keeps idempotency keys for at least 24 hours: before that, the same
+// key could still bring the refund back, so absence proves nothing yet (the
+// database enforces the same window).
+export const REFUND_IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+export interface ListedRefund {
+  providerRefundId: string;
+  amountMinorUnits: number;
+  centerivoRefundId: string | null;
+}
+
+// The evidence for recording a refund operation as never created, or null
+// when its absence is not conclusively proven (it then stays UNKNOWN, its
+// amount reserved). `listed` is the read-back of the payment's refunds:
+// null when it could not be read; `complete` false when not every page was
+// read.
+export function notCreatedEvidenceFor(input: {
+  refundId: string;
+  amountMinorUnits: number;
+  firstSentAt: Date | null;
+  now: Date;
+  listed: { refunds: readonly ListedRefund[]; complete: boolean } | null;
+  // Stripe refund ids already recorded for this payment (any origin):
+  // a listed refund we already know is accounted for.
+  recordedProviderRefundIds: ReadonlySet<string>;
+}): NotCreatedEvidence | null {
+  if (input.firstSentAt === null) return 'NEVER_SENT';
+  if (
+    input.now.getTime() - input.firstSentAt.getTime() <
+    REFUND_IDEMPOTENCY_WINDOW_MS
+  ) {
+    return null;
+  }
+  if (input.listed === null || !input.listed.complete) return null;
+  for (const refund of input.listed.refunds) {
+    // It exists: never "not created".
+    if (refund.centerivoRefundId === input.refundId) return null;
+    // A refund of this payment we have not recorded, for the same amount,
+    // carrying no CENTERIVO id: it might be this one. Not conclusive.
+    if (
+      refund.centerivoRefundId === null &&
+      refund.amountMinorUnits === input.amountMinorUnits &&
+      !input.recordedProviderRefundIds.has(refund.providerRefundId)
+    ) {
+      return null;
+    }
+  }
+  return 'STRIPE_HISTORY_VERIFIED';
 }
 
 // The Stripe idempotency key of ONE refund operation: derived from its own

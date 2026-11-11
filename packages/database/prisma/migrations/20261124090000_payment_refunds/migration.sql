@@ -43,9 +43,14 @@
 --     cancelled instead. Refunds are written at READ COMMITTED (the default)
 --     only, so the capacity count is never stale. Every refund status change
 --     and every obligation settlement takes the payment's lock.
---   * "Never created" (NOT_CREATED) gives the amount back, so it is allowed
---     only for a request never sent, or first sent more than 24 hours ago
---     (past Stripe's idempotency window) — never inferred from a timeout.
+--   * "Never created" (NOT_CREATED) gives the amount back, so it is never
+--     inferred from a timeout or from time passing: it requires recorded
+--     evidence (notCreatedEvidence, stamped with the database time it was
+--     recorded, in the history). NEVER_SENT: the request was never sent to
+--     Stripe. STRIPE_HISTORY_VERIFIED: a complete read-back of the payment's
+--     refund history at Stripe, made past the 24-hour idempotency window (when
+--     the same key can no longer bring the refund back), shows no refund of
+--     this operation. Anything less keeps it UNKNOWN, its amount reserved.
 --   * Times are UTC from the database clock; every function pins its
 --     search_path; history entries the database writes cannot be forged by
 --     an application insert.
@@ -61,13 +66,14 @@
 --     obligation minus those refunds.
 --   * A PROCESSOR settlement (REFUNDED) is allowed only when the refunds of
 --     the payment that SUCCEEDED cover the whole obligation, none is still in
---     flight, no returned refund is unreviewed, its refund id is one of them,
---     and each succeeded at least 30 days ago (Stripe can return a card
---     refund up to 30 days after it succeeded). An obligation is never marked
---     satisfied while it is only partly paid, or while a refund could still
---     come back. A refund returned even after that is recorded, flagged in
---     its history (obligationAlreadySettled), and owed again: what is owed
---     always comes from the refunds, never from the obligation's status.
+--     flight, no returned refund is unreviewed, and its refund id is one of
+--     them. An obligation is never marked satisfied while it is only partly
+--     paid. Stripe can still return a card refund later (FAILED_AFTER_SUCCESS):
+--     the refund's history is kept, the case is flagged for people
+--     (obligationAlreadySettled), its amount is owed again, and no
+--     replacement refund is possible until a staff member has reviewed it.
+--     What is owed is always calculated from the refunds, never read from
+--     the obligation's status (a settled obligation cannot change, S5a).
 --   * A MANUAL_EXTERNAL settlement (S5c) is refused for a Stripe payment:
 --     its refund goes back to the original card, through Stripe.
 --   * An order cannot be closed while a refund of its payment is still in
@@ -135,6 +141,8 @@ BEGIN
       "lateFailureReviewedAt" TIMESTAMP(3),
       "lateFailureReviewedByInternalUserId" TEXT,
       "lateFailureReviewNote" TEXT,
+      "notCreatedEvidence" TEXT,
+      "notCreatedRecordedAt" TIMESTAMP(3),
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP(3) NOT NULL,
       "tenantId" TEXT NOT NULL,
@@ -179,6 +187,14 @@ BEGIN
           AND "providerRefundId" IS NOT NULL)
         OR ("status" = 'NOT_CREATED' AND "providerRefundId" IS NULL)
         OR "status" IN ('REQUESTED', 'UNKNOWN')
+      ),
+      -- "Never created" always carries its evidence (and only it does).
+      CONSTRAINT "PaymentRefund_not_created_evidence_check" CHECK (
+        ("status" = 'NOT_CREATED'
+          AND "notCreatedEvidence" IN ('NEVER_SENT', 'STRIPE_HISTORY_VERIFIED')
+          AND "notCreatedRecordedAt" IS NOT NULL)
+        OR ("status" <> 'NOT_CREATED'
+          AND "notCreatedEvidence" IS NULL AND "notCreatedRecordedAt" IS NULL)
       ),
       CONSTRAINT "PaymentRefund_success_times_check" CHECK (
         ("status" = 'SUCCEEDED' AND "succeededAt" IS NOT NULL AND "failedAfterSuccessAt" IS NULL)
@@ -462,14 +478,36 @@ BEGIN
           USING ERRCODE = 'restrict_violation';
       END IF;
       -- "Never created" gives the amount back, so it is never inferred from a
-      -- timeout: only for a request never sent, or one first sent more than
-      -- 24 hours ago (past Stripe's idempotency window, when the same key can
-      -- no longer bring the refund back and a read-back of the payment's
-      -- refunds is final).
-      IF NEW.status = 'NOT_CREATED' AND OLD."firstSentAt" IS NOT NULL
-         AND OLD."firstSentAt" > (now() AT TIME ZONE 'UTC') - interval '24 hours' THEN
-        RAISE EXCEPTION 'A refund sent to Stripe less than 24 hours ago cannot be recorded as never created (refund %).', OLD.id
-          USING ERRCODE = 'restrict_violation';
+      -- timeout or from time passing: it needs its evidence.
+      --   NEVER_SENT               nothing was ever sent to Stripe;
+      --   STRIPE_HISTORY_VERIFIED  the request was sent, and a COMPLETE
+      --                            read-back of the payment's refund history
+      --                            at Stripe shows no refund of this
+      --                            operation — made past the 24-hour
+      --                            idempotency window (necessary, never
+      --                            sufficient: before it, the same key could
+      --                            still bring the refund back).
+      -- Without evidence it stays UNKNOWN, its amount reserved.
+      IF NEW.status = 'NOT_CREATED' THEN
+        IF NEW."notCreatedEvidence" = 'NEVER_SENT' THEN
+          IF OLD."firstSentAt" IS NOT NULL OR NEW."firstSentAt" IS NOT NULL THEN
+            RAISE EXCEPTION 'A refund sent to Stripe is not "never sent" (refund %).', OLD.id
+              USING ERRCODE = 'restrict_violation';
+          END IF;
+        ELSIF NEW."notCreatedEvidence" = 'STRIPE_HISTORY_VERIFIED' THEN
+          IF OLD."firstSentAt" IS NULL THEN
+            RAISE EXCEPTION 'A refund never sent has no Stripe history to verify; its evidence is NEVER_SENT (refund %).', OLD.id
+              USING ERRCODE = 'restrict_violation';
+          END IF;
+          IF OLD."firstSentAt" > (now() AT TIME ZONE 'UTC') - interval '24 hours' THEN
+            RAISE EXCEPTION 'A refund sent to Stripe less than 24 hours ago cannot be verified as never created (refund %).', OLD.id
+              USING ERRCODE = 'restrict_violation';
+          END IF;
+        ELSE
+          RAISE EXCEPTION 'A refund is recorded as never created only with its evidence (refund %).', OLD.id
+            USING ERRCODE = 'restrict_violation';
+        END IF;
+        NEW."notCreatedRecordedAt" := now() AT TIME ZONE 'UTC';
       END IF;
       -- The database's own clock, never the application's.
       IF NEW.status = 'SUCCEEDED' THEN
@@ -494,8 +532,10 @@ BEGIN
     ELSE
       -- No status change: the times stay as they are.
       IF NEW."succeededAt" IS DISTINCT FROM OLD."succeededAt"
-         OR NEW."failedAfterSuccessAt" IS DISTINCT FROM OLD."failedAfterSuccessAt" THEN
-        RAISE EXCEPTION 'A refund''s success and failure times are set only by its status (refund %).', OLD.id
+         OR NEW."failedAfterSuccessAt" IS DISTINCT FROM OLD."failedAfterSuccessAt"
+         OR NEW."notCreatedEvidence" IS DISTINCT FROM OLD."notCreatedEvidence"
+         OR NEW."notCreatedRecordedAt" IS DISTINCT FROM OLD."notCreatedRecordedAt" THEN
+        RAISE EXCEPTION 'A refund''s success, failure and never-created records are set only by its status (refund %).', OLD.id
           USING ERRCODE = 'restrict_violation';
       END IF;
       IF OLD.status IN ('SUCCEEDED', 'FAILED', 'CANCELED', 'NOT_CREATED', 'FAILED_AFTER_SUCCESS')
@@ -540,6 +580,7 @@ BEGIN
       VALUES (gen_random_uuid()::text, NEW."tenantId", NEW.id, 'STATUS_CHANGED', OLD.status, NEW.status, 'SYSTEM',
               NULLIF(jsonb_strip_nulls(jsonb_build_object(
                 'failureReason', NEW."providerFailureReason",
+                'notCreatedEvidence', NEW."notCreatedEvidence",
                 -- A refund whose money came back after its order's obligation
                 -- was already recorded settled: what is owed again comes from
                 -- the refunds (the settled obligation cannot change), and
@@ -639,15 +680,6 @@ BEGIN
       IF covered < NEW."amountMinorUnits" THEN
         RAISE EXCEPTION 'OrderRefundObligation % is only partly refunded (% of %): it is not settled.',
           NEW.id, covered, NEW."amountMinorUnits"
-          USING ERRCODE = 'restrict_violation';
-      END IF;
-      IF EXISTS (
-        SELECT 1 FROM "PaymentRefund" r
-         WHERE r."tenantId" = NEW."tenantId" AND r."paymentAttemptId" = NEW."paymentAttemptId"
-           AND r.status = 'SUCCEEDED'
-           AND r."succeededAt" > (now() AT TIME ZONE 'UTC') - interval '30 days'
-      ) THEN
-        RAISE EXCEPTION 'OrderRefundObligation % cannot be settled yet: a refund of its payment succeeded less than 30 days ago and could still come back.', NEW.id
           USING ERRCODE = 'restrict_violation';
       END IF;
       -- A refund whose money came back must be reviewed first.

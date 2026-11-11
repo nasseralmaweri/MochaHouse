@@ -1926,9 +1926,11 @@ model OrderRefundObligation {
 // Statuses: REQUESTED (saved, Stripe not yet answered), PENDING (Stripe
 // accepted it; the money is on its way), SUCCEEDED, FAILED / CANCELED (Stripe
 // says it did not happen), UNKNOWN (an answer was lost: it may have
-// happened), NOT_CREATED (proven never created at Stripe), and
+// happened), NOT_CREATED (proven never created at Stripe, with its recorded
+// evidence: NEVER_SENT, or STRIPE_HISTORY_VERIFIED — a complete read-back of
+// the payment's refunds past the idempotency window), and
 // FAILED_AFTER_SUCCESS (it succeeded, then Stripe returned the money — a
-// card refund can fail up to 30 days later). REQUESTED, PENDING, UNKNOWN and
+// card refund can fail later). REQUESTED, PENDING, UNKNOWN and
 // SUCCEEDED refunds count against what is left to refund; the others give
 // their amount back.
 //
@@ -1949,8 +1951,9 @@ model OrderRefundObligation {
 //     PaymentRefundEvent by the database itself.
 // What is still owed on an order's refund obligation is the obligation minus
 // the refunds of its payment; an obligation is settled (REFUNDED, PROCESSOR)
-// only once succeeded refunds cover all of it, none is in flight, and each
-// succeeded at least 30 days ago.
+// only once succeeded refunds cover all of it and none is in flight or an
+// unreviewed late failure. A later late failure is flagged and owed again:
+// what is owed always comes from the refunds, never the obligation's status.
 model PaymentRefund {
   id                                  String         @id @default(uuid(7))
   orderId                             String
@@ -1997,6 +2000,13 @@ model PaymentRefund {
   lateFailureReviewedByInternalUserId String?
   lateFailureReviewedBy               InternalUser?  @relation("PaymentRefundLateFailureReviewedBy", fields: [tenantId, lateFailureReviewedByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   lateFailureReviewNote               String?
+  // NOT_CREATED only: why it is known never to have been created —
+  // NEVER_SENT, or STRIPE_HISTORY_VERIFIED (a complete read-back of the
+  // payment's refunds at Stripe, past the idempotency window, showing none of
+  // this operation) — and when the database recorded it. Never inferred from
+  // a timeout or time passing.
+  notCreatedEvidence                  String?
+  notCreatedRecordedAt                DateTime?
   createdAt                           DateTime       @default(now())
   updatedAt                           DateTime       @updatedAt
 
