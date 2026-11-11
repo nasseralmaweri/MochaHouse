@@ -7,10 +7,12 @@ import {
   PAYMENT_RECOVERY_IN_PROGRESS,
   PAYMENT_RECOVERY_NOT_CONFIRMED,
   PAYMENT_RECOVERY_NOTHING_TO_RECOVER,
+  PAYMENT_RECHECK_NOT_APPLICABLE,
   type PaymentCaseCategory,
   type PaymentCaseStatus,
   type PaymentRecoveryResult,
   type PlatformPaymentCaseDetail,
+  type StripeRecheckResult,
 } from "@mocha-house/contracts";
 
 // ESP-03 PR 5 — wording and answer handling for restaurant payment
@@ -70,6 +72,8 @@ export const REASON_LABEL: Record<string, string> = {
   PROVIDER_SUCCEEDED_UNRECORDED: "The payment succeeded but that could not be recorded at once",
   LEGACY_SUCCEEDED_UNFULFILLED: "Older payment without its order or gift card",
   LEGACY_PENDING_UNRESOLVED: "Older payment whose outcome was never settled",
+  PROVIDER_AMOUNT_MISMATCH: "The provider took a different amount or currency than the checkout",
+  PROVIDER_EVENT_NOT_SETTLED: "A payment event from Stripe could not be settled yet",
 };
 
 export const FAILURE_LABEL: Record<string, string> = {
@@ -78,6 +82,19 @@ export const FAILURE_LABEL: Record<string, string> = {
   SNAPSHOT_UNREADABLE: "The saved checkout could not be read. It needs a manual investigation.",
   GIFT_CARD_ISSUE_FAILED: "The gift card could not be issued. It can be retried.",
   TRANSIENT_ERROR: "A temporary error stopped the recovery. It can be retried.",
+  // ESP-04 M4a — Stripe outcome recovery.
+  STRIPE_UNREADABLE: "Stripe could not be read, or its answer proved nothing. Nothing changed; it is retried.",
+  STRIPE_STATE_CHANGED: "The payment changed while it was being checked. It is retried.",
+  STRIPE_CREATE_EXPIRED:
+    "The payment's creation can no longer be replayed safely (more than 20 hours). It needs a manual investigation in Stripe; its holds stay.",
+  STRIPE_IDEMPOTENCY_CONFLICT:
+    "Stripe refused the original request's key, or the intent belongs to another payment. It needs a manual investigation; its holds stay.",
+  STRIPE_ACCOUNT_MISSING: "No Stripe account was recorded for this payment. It needs a manual investigation.",
+  STRIPE_ACCOUNT_MISMATCH: "The payment's Stripe account is not the business's. It needs a manual investigation.",
+  STRIPE_AMOUNT_MISMATCH:
+    "Stripe took a different amount or currency than this checkout. It is never recorded as paid; it needs a person.",
+  STRIPE_FULFILMENT_PENDING:
+    "The payment is confirmed, but its order could not be created yet. Recovery creates it (exactly once).",
 };
 
 export const EVENT_LABEL: Record<string, string> = {
@@ -86,6 +103,22 @@ export const EVENT_LABEL: Record<string, string> = {
   RECOVERY_STARTED: "Recovery started",
   RECOVERY_SUCCEEDED: "Recovery succeeded",
   RECOVERY_FAILED: "Recovery failed",
+  STRIPE_RECHECK_STARTED: "Stripe recheck started",
+  STRIPE_RECHECK_SUCCEEDED: "Stripe recheck settled the payment",
+  STRIPE_RECHECK_FAILED: "Stripe recheck did not settle the payment",
+  STRIPE_INTENT_LINKED: "Stripe payment found and linked",
+  STRIPE_OUTCOME_RECOVERED: "Payment outcome recovered from Stripe",
+  PROVIDER_REQUIRES_PAYMENT_METHOD: "Waiting for another card",
+};
+
+// ESP-04 M4a — what a Stripe recheck found.
+export const RECHECK_MESSAGE: Record<StripeRecheckResult, string> = {
+  PAID: "Stripe confirms the payment; its order is created (exactly once). Nothing was charged again.",
+  WAITING_FOR_CUSTOMER: "Stripe says nothing was charged yet: the payment waits for the customer's card.",
+  PROCESSING: "Stripe is still processing the payment. It stays held — do not ask the customer to pay again.",
+  NOT_CHARGED: "Stripe confirms the payment was cancelled with nothing taken; its holds are released.",
+  UNCHANGED: "Stripe's answer did not settle the payment. Nothing changed; it stays held.",
+  NEEDS_ATTENTION: "This payment cannot be settled automatically. It stays held for a manual investigation.",
 };
 
 export const RESULT_MESSAGE: Record<PaymentRecoveryResult, string> = {
@@ -181,6 +214,8 @@ const REFUSAL_MESSAGE: Record<string, string> = {
     "There is nothing saved to recover this payment from. It needs a manual investigation.",
   [PAYMENT_RECOVERY_IN_PROGRESS]: "A recovery of this payment is already running. Refresh in a moment.",
   [PAYMENT_RECOVERY_CASE_RESOLVED]: "This case is already resolved. Nothing was done. Reload the page.",
+  [PAYMENT_RECHECK_NOT_APPLICABLE]:
+    "Only a Stripe payment whose outcome is not final can be rechecked. Nothing was done.",
 };
 
 export type PaymentCaseOutcome =
@@ -193,7 +228,7 @@ function field(body: unknown, key: string): unknown {
 }
 
 export function interpretPaymentCaseChange(
-  intent: "recover" | "note",
+  intent: "recover" | "recheck" | "note",
   status: number | null,
   body: unknown,
 ): PaymentCaseOutcome {
@@ -212,6 +247,16 @@ export function interpretPaymentCaseChange(
             : base,
       };
     }
+    if (intent === "recheck") {
+      const result = field(body, "result") as StripeRecheckResult;
+      const failure = field(body, "failure");
+      const base = RECHECK_MESSAGE[result] ?? RECHECK_MESSAGE.UNCHANGED;
+      return {
+        kind: "ok",
+        detail: field(body, "detail") as PlatformPaymentCaseDetail,
+        message: typeof failure === "string" ? `${base} ${labelOf(FAILURE_LABEL, failure)}` : base,
+      };
+    }
     return { kind: "ok", detail: body as PlatformPaymentCaseDetail, message: "Note added." };
   }
   switch (status) {
@@ -222,7 +267,7 @@ export function interpretPaymentCaseChange(
         message:
           typeof message === "string"
             ? message.slice(0, 300)
-            : intent === "recover"
+            : intent !== "note"
               ? PAYMENT_CASE_MESSAGES.reason
               : PAYMENT_CASE_MESSAGES.note,
       };

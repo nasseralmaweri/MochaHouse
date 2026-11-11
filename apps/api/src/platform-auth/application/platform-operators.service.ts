@@ -107,6 +107,10 @@ export const PLATFORM_AUDIT_ACTIONS = {
   // case, or added an internal note to one (target: the case).
   paymentCaseRecoveryRequested: 'platform.payment_case.recovery_requested',
   paymentCaseNoteAdded: 'platform.payment_case.note_added',
+  // ESP-04 M4a — support asked for a Stripe outcome recheck of a restaurant
+  // payment case (target: the case).
+  paymentCaseStripeRecheckRequested:
+    'platform.payment_case.stripe_recheck_requested',
 } as const;
 
 @Injectable()

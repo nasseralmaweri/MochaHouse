@@ -116,12 +116,17 @@ import {
 } from '../../payment/financial-holds';
 import {
   checkPaymentIntent,
+  intentCreationInput,
   canStartPayment,
   paymentAccountContext,
   paymentAccountForAttempt,
   startPaymentIntent,
 } from '../../payment/payment-intent';
 import { StripePaymentIntentProvider } from '../../restaurant-payments/provider/stripe-payment-intent-provider';
+import {
+  RECOVERABLE_HELD_STATES,
+  readBackHeldPayment,
+} from '../../payment/payment-intent-recovery';
 import {
   generateOrderAccessToken,
   generateOrderNumber,
@@ -615,16 +620,13 @@ export class CheckoutService {
       // under the attempt's own key, for the restaurant account our records
       // name (never the request's), and the customer then confirms it.
       const account = await paymentAccountContext(this.prisma, tenantId);
+      // ESP-04 M4a — the attempt was created for exactly this amount and
+      // currency; the shared builder is what a recovery replay uses too.
       const started = await startPaymentIntent(
         this.prisma,
         this.paymentProvider,
         attempt,
-        {
-          amount: chargeAmount,
-          currency: priced.currency,
-          account,
-          metadata: { paymentAttemptId: attempt.id },
-        },
+        intentCreationInput(attempt, account),
       );
       if (started.kind === 'customer-action') {
         return this.paymentRequired(
@@ -1851,6 +1853,33 @@ export class CheckoutService {
       // held for people (with a case): recorded, nothing more to do here.
       if (checked.kind === 'unknown') return 'retry';
       if (checked.kind === 'mismatch') return 'settled';
+      attempt = await this.prisma.paymentAttempt.findFirstOrThrow({
+        where: { id: attempt.id, tenantId },
+      });
+    } else if (
+      // ESP-04 M4a — a HELD payment whose intent is known (CHARGING or
+      // UNKNOWN after a crash or a lost answer): read back from Stripe the
+      // same way outcome recovery does, never "settled" on its stored state.
+      String(attempt.status) === 'PENDING' &&
+      (RECOVERABLE_HELD_STATES as readonly string[]).includes(
+        attempt.paymentState ?? '',
+      ) &&
+      isPaymentIntentProvider(provider) &&
+      attempt.provider === provider.name &&
+      attempt.providerReference !== null
+    ) {
+      const account = await paymentAccountForAttempt(this.prisma, attempt);
+      if (account === null) return 'retry';
+      const read = await readBackHeldPayment(
+        this.prisma,
+        provider,
+        { ...attempt, providerReference: attempt.providerReference },
+        account,
+        timeoutMs,
+      );
+      if (read.kind === 'unreadable' || read.kind === 'changed') return 'retry';
+      // A different amount: held for people, with its case.
+      if (read.kind === 'mismatch') return 'settled';
       attempt = await this.prisma.paymentAttempt.findFirstOrThrow({
         where: { id: attempt.id, tenantId },
       });

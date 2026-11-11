@@ -51,6 +51,13 @@ export class FakeStripeIntents {
   }
   // Report this amount as created (a misbehaving answer).
   createAmountOverride: number | null = null;
+  // ESP-04 M4a — the next creation REACHES Stripe (the intent exists) but
+  // its answer is lost on the way back (a timeout after Stripe acted).
+  loseNextCreateResponse = false;
+  // ESP-04 M4a — idempotency keys whose first request Stripe answered with a
+  // 500 it SAVED: every retry with the same key gets that same 500 back
+  // (Stripe API v1), and no intent exists.
+  readonly saved500Keys = new Set<string>();
 
   readonly create: jest.Mock<
     ReturnType<CreateIntent>,
@@ -60,6 +67,9 @@ export class FakeStripeIntents {
       params: Stripe.PaymentIntentCreateParams,
       options: { stripeAccount: string; idempotencyKey: string },
     ): Promise<Stripe.PaymentIntent> => {
+      if (this.saved500Keys.has(options.idempotencyKey)) {
+        return Promise.reject(stripeError('StripeAPIError', undefined, 500));
+      }
       const key = `${options.stripeAccount}|${options.idempotencyKey}`;
       const serialized = JSON.stringify(params);
       const seen = this.byKey.get(key);
@@ -89,9 +99,27 @@ export class FakeStripeIntents {
           capture_method: 'automatic',
         } as unknown as Stripe.PaymentIntent,
       });
+      if (this.loseNextCreateResponse) {
+        this.loseNextCreateResponse = false;
+        return Promise.reject(stripeError('StripeConnectionError'));
+      }
       return Promise.resolve(this.copy(id));
     },
   );
+
+  // ESP-04 M4a — Stripe pruned this key (it keeps keys "at least 24
+  // hours"): a reuse now would be a NEW request, creating a second intent.
+  prune(idempotencyKey: string): void {
+    for (const key of [...this.byKey.keys()]) {
+      if (key.endsWith(`|${idempotencyKey}`)) this.byKey.delete(key);
+    }
+  }
+  // The intents created on an account (to prove no second one ever was).
+  intentsOn(account: string): string[] {
+    return [...this.intents.entries()]
+      .filter(([, stored]) => stored.account === account)
+      .map(([id]) => id);
+  }
 
   readonly retrieve: jest.Mock<
     ReturnType<RetrieveIntent>,

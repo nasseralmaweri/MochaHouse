@@ -313,6 +313,12 @@ export function resultOf(intent: Stripe.PaymentIntent): PaymentIntentResult {
   if (intent.status !== 'succeeded' && intent.amount_received !== 0) {
     return { status: 'unknown', reason: 'stripe:amount_received', reference };
   }
+  // ESP-04 M4a — what the intent is FOR, reported with every state that is
+  // not final, so recovery can refuse an intent for another amount.
+  const target = {
+    amount: intent.amount,
+    currency: String(intent.currency).toUpperCase(),
+  };
   switch (intent.status) {
     case 'succeeded':
       return {
@@ -326,13 +332,13 @@ export function resultOf(intent: Stripe.PaymentIntent): PaymentIntentResult {
       // A new intent waits for its card; one with a refused attempt may be
       // tried again on the same intent.
       return intent.last_payment_error
-        ? { status: 'requires_payment_method', reference }
-        : { status: 'requires_customer_action', reference };
+        ? { status: 'requires_payment_method', reference, ...target }
+        : { status: 'requires_customer_action', reference, ...target };
     case 'requires_confirmation':
     case 'requires_action':
-      return { status: 'requires_customer_action', reference };
+      return { status: 'requires_customer_action', reference, ...target };
     case 'processing':
-      return { status: 'processing', reference };
+      return { status: 'processing', reference, ...target };
     case 'canceled':
       // Cancelled with nothing taken (checked above): no charge can occur.
       return { status: 'canceled', reference };
@@ -408,6 +414,17 @@ function safeMetadata(
     }
   }
   return out;
+}
+
+// ESP-04 M4a — whether an "unknown" creation answer is Stripe refusing the
+// idempotency key because it was used with OTHER parameters: retrying the
+// same request can never help (people must look). A concurrent request
+// with the same key (idempotency_key_in_use) is NOT this: retry later.
+export function isIdempotencyMismatch(reason: string): boolean {
+  return (
+    reason.startsWith('stripe_create:StripeIdempotencyError') &&
+    !reason.includes('idempotency_key_in_use')
+  );
 }
 
 // A fixed, provider-text-free code for support: the error class and Stripe's
