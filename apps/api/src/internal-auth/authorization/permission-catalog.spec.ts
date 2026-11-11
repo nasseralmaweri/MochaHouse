@@ -26,6 +26,8 @@ describe('internal permission catalog', () => {
         'payments.connect',
         // R1 / S5b
         'orders.cancel',
+        // ESP-04 M5a — card refunds (business owner controlled).
+        'orders.refund',
         // Milestone 5E-1
         'users.view',
         // Milestone 5E-2

@@ -246,10 +246,215 @@ export class FakeStripeIntents {
   private copy(id: string): Stripe.PaymentIntent {
     return structuredClone(this.intents.get(id)!.intent);
   }
+
+  // --- ESP-04 M5a — refunds, per connected account, with Stripe's rules: a
+  // refund is only of a succeeded intent, never more than is left of it
+  // (pending and succeeded refunds count), and the same key on the same
+  // account returns the same refund (other parameters: refused).
+  readonly refunds = new Map<
+    string,
+    { refund: Stripe.Refund; account: string }
+  >();
+  private readonly byRefundKey = new Map<
+    string,
+    { id: string; params: string }
+  >();
+  private nextRefund = 1;
+  set refundCreateError(error: unknown) {
+    oneShotRejection(this.refundCreate, error);
+  }
+  set refundRetrieveError(error: unknown) {
+    oneShotRejection(this.refundRetrieve, error);
+  }
+  set refundListError(error: unknown) {
+    oneShotRejection(this.refundList, error);
+  }
+  // The next refund is made at Stripe, but its answer is lost.
+  loseNextRefundResponse = false;
+  // Report this amount for the next refund made (a misbehaving answer).
+  refundAmountOverride: number | null = null;
+
+  readonly refundCreate: jest.Mock<
+    Promise<Stripe.Refund>,
+    [
+      Stripe.RefundCreateParams,
+      { stripeAccount: string; idempotencyKey: string },
+    ]
+  > = jest.fn(
+    (
+      params: Stripe.RefundCreateParams,
+      options: { stripeAccount: string; idempotencyKey: string },
+    ): Promise<Stripe.Refund> => {
+      const key = `${options.stripeAccount}|${options.idempotencyKey}`;
+      const serialized = JSON.stringify(params);
+      const seen = this.byRefundKey.get(key);
+      if (seen) {
+        if (seen.params !== serialized) {
+          return Promise.reject(
+            stripeError('StripeIdempotencyError', 'idempotency_error'),
+          );
+        }
+        return Promise.resolve(this.refundCopy(seen.id));
+      }
+      const intentId = String(params.payment_intent);
+      const stored = this.intents.get(intentId);
+      if (!stored || stored.account !== options.stripeAccount) {
+        return Promise.reject(
+          stripeError('StripeInvalidRequestError', 'resource_missing'),
+        );
+      }
+      if (stored.intent.status !== 'succeeded') {
+        return Promise.reject(
+          stripeError('StripeInvalidRequestError', 'charge_not_refundable'),
+        );
+      }
+      const left = stored.intent.amount_received - this.refundedOf(intentId);
+      const amount = params.amount ?? left;
+      if (left <= 0) {
+        return Promise.reject(
+          stripeError('StripeInvalidRequestError', 'charge_already_refunded'),
+        );
+      }
+      if (amount > left) {
+        return Promise.reject(
+          stripeError('StripeInvalidRequestError', 'amount_too_large'),
+        );
+      }
+      const id = this.makeRefund(intentId, options.stripeAccount, {
+        amount: this.refundAmountOverride ?? amount,
+        status: 'succeeded',
+        reason: params.reason ?? null,
+        metadata: { ...(params.metadata as Record<string, string>) },
+      });
+      this.byRefundKey.set(key, { id, params: serialized });
+      if (this.loseNextRefundResponse) {
+        this.loseNextRefundResponse = false;
+        return Promise.reject(stripeError('StripeConnectionError'));
+      }
+      return Promise.resolve(this.refundCopy(id));
+    },
+  );
+
+  readonly refundRetrieve: jest.Mock<
+    Promise<Stripe.Refund>,
+    [string, unknown, { stripeAccount: string }]
+  > = jest.fn(
+    (
+      id: string,
+      _params: unknown,
+      options: { stripeAccount: string },
+    ): Promise<Stripe.Refund> => {
+      const stored = this.refunds.get(id);
+      if (!stored || stored.account !== options?.stripeAccount) {
+        return Promise.reject(
+          stripeError('StripeInvalidRequestError', 'resource_missing'),
+        );
+      }
+      return Promise.resolve(this.refundCopy(id));
+    },
+  );
+
+  readonly refundList: jest.Mock<
+    Promise<Stripe.ApiList<Stripe.Refund>>,
+    [Stripe.RefundListParams, { stripeAccount: string }]
+  > = jest.fn(
+    (
+      params: Stripe.RefundListParams,
+      options: { stripeAccount: string },
+    ): Promise<Stripe.ApiList<Stripe.Refund>> => {
+      // Newest first, like Stripe.
+      const all = [...this.refunds.values()]
+        .filter(
+          (r) =>
+            r.account === options?.stripeAccount &&
+            r.refund.payment_intent === params.payment_intent,
+        )
+        .map((r) => r.refund)
+        .reverse();
+      const start = params.starting_after
+        ? all.findIndex((r) => r.id === params.starting_after) + 1
+        : 0;
+      const limit = params.limit ?? 10;
+      const page = all.slice(start, start + limit);
+      return Promise.resolve({
+        object: 'list',
+        data: page.map((r) => structuredClone(r)),
+        has_more: start + limit < all.length,
+        url: '/v1/refunds',
+      } as Stripe.ApiList<Stripe.Refund>);
+    },
+  );
+
+  // A refund made in the restaurant's Stripe Dashboard (no CENTERIVO
+  // metadata), or one changed at Stripe afterwards (pending -> succeeded, a
+  // late failure).
+  dashboardRefund(
+    intentId: string,
+    amount: number,
+    status: Stripe.Refund['status'] = 'succeeded',
+  ): string {
+    const stored = this.intents.get(intentId)!;
+    return this.makeRefund(intentId, stored.account, {
+      amount,
+      status,
+      reason: 'requested_by_customer',
+      metadata: {},
+    });
+  }
+  setRefund(id: string, change: Partial<Stripe.Refund>): void {
+    const stored = this.refunds.get(id)!;
+    stored.refund = { ...stored.refund, ...change };
+  }
+
+  // Pending and succeeded refunds of an intent (what Stripe holds back).
+  refundedOf(intentId: string): number {
+    return [...this.refunds.values()]
+      .filter(
+        (r) =>
+          r.refund.payment_intent === intentId &&
+          (r.refund.status === 'succeeded' || r.refund.status === 'pending'),
+      )
+      .reduce((sum, r) => sum + r.refund.amount, 0);
+  }
+
+  private makeRefund(
+    intentId: string,
+    account: string,
+    values: {
+      amount: number;
+      status: Stripe.Refund['status'];
+      reason: string | null;
+      metadata: Record<string, string>;
+    },
+  ): string {
+    const id = `re_Test${String(this.nextRefund++).padStart(6, '0')}`;
+    const intent = this.intents.get(intentId)!.intent;
+    this.refunds.set(id, {
+      account,
+      refund: {
+        id,
+        object: 'refund',
+        amount: values.amount,
+        currency: intent.currency,
+        payment_intent: intentId,
+        charge: `ch_${intentId.slice(3)}`,
+        status: values.status,
+        reason: values.reason,
+        metadata: values.metadata,
+        failure_reason: undefined,
+        created: Math.floor(Date.now() / 1000),
+      } as unknown as Stripe.Refund,
+    });
+    return id;
+  }
+
+  private refundCopy(id: string): Stripe.Refund {
+    return structuredClone(this.refunds.get(id)!.refund);
+  }
 }
 
-function oneShotRejection<A extends unknown[]>(
-  mock: jest.Mock<Promise<Stripe.PaymentIntent>, A>,
+function oneShotRejection<T, A extends unknown[]>(
+  mock: jest.Mock<Promise<T>, A>,
   error: unknown,
 ): void {
   if (error !== null) {
@@ -289,6 +494,11 @@ export function fakeStripePayments(allowedTenantIds: Set<string>): {
   api.create = intents.create;
   api.retrieve = intents.retrieve;
   api.cancel = intents.stripeCancel;
+  // ESP-04 M5a — refunds.
+  const refunds = stripe.refunds as unknown as Record<string, unknown>;
+  refunds.create = intents.refundCreate;
+  refunds.retrieve = intents.refundRetrieve;
+  refunds.list = intents.refundList;
   const provider = new StripePaymentIntentProvider(stripe, {
     publishableKey: testOnly('pk_test'),
     paymentsWebhookSecret: PAYMENTS_SIGNING_SECRET,

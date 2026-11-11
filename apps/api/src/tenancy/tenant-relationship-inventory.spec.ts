@@ -502,8 +502,9 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       mismatched: [],
     });
     // ESP-03 PR 8 added FinancialHold (5 composite foreign keys); ESP-04 M1
-    // TenantPaymentAccount (1).
-    expect(relationsBetweenBusinessRecords).toHaveLength(109);
+    // TenantPaymentAccount (1); ESP-04 M5a PaymentRefund (4) and
+    // PaymentRefundEvent (2).
+    expect(relationsBetweenBusinessRecords).toHaveLength(115);
     expect(
       relationsBetweenBusinessRecords
         .filter((r) => !isTenantEnforced(r))
@@ -618,6 +619,12 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'PaymentReconciliationEvent.actorInternalUserId',
       'PaymentReconciliationEvent.caseId',
       'PaymentReconciliationNote.caseId',
+      'PaymentRefund.lateFailureReviewedByInternalUserId',
+      'PaymentRefund.orderId',
+      'PaymentRefund.paymentAttemptId',
+      'PaymentRefund.requestedByInternalUserId',
+      'PaymentRefundEvent.actorInternalUserId',
+      'PaymentRefundEvent.refundId',
       'Product.categoryId',
       'ProductModifierGroup.modifierGroupId',
       'ProductModifierGroup.productId',
@@ -659,8 +666,10 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       mismatched: [],
     });
     // ESP-04 M1 added TenantPaymentAccount.externalAccountId; ESP-04 M3
-    // PaymentAttempt.providerAccountId.
-    expect(plainIdColumns).toHaveLength(17);
+    // PaymentAttempt.providerAccountId; ESP-04 M5a
+    // PaymentRefund.providerAccountId / providerRefundId and
+    // PaymentRefundEvent.actorPlatformOperatorId.
+    expect(plainIdColumns).toHaveLength(20);
   });
 
   it('classifies every JSON column on business-owned records', () => {
@@ -675,7 +684,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
           byId.get(id)?.nullable !== optional,
       );
     expect(unclassified).toEqual([]);
-    expect(jsonColumns).toHaveLength(8);
+    // ESP-04 M5a added PaymentRefundEvent.detail.
+    expect(jsonColumns).toHaveLength(9);
   });
 
   it('has no stale entry: every classified relationship exists in the schema exactly as described', () => {
@@ -761,13 +771,14 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       external: count((r) => r.kind === 'external-identifier'),
       total: TENANT_RELATIONSHIPS.length,
     }).toEqual({
-      compositeWithForeignKey: 109,
+      // ESP-04 M5a: +6 composite foreign keys, +1 JSON, +3 external ids.
+      compositeWithForeignKey: 115,
       compositeWithoutForeignKey: 0,
       historicalSnapshot: 8,
       polymorphic: 4,
-      json: 8,
-      external: 5,
-      total: 134,
+      json: 9,
+      external: 8,
+      total: 144,
     });
     // Optional relationships are present and marked optional.
     const optionalForeignKeys = relationsBetweenBusinessRecords.filter(

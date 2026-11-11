@@ -975,6 +975,44 @@ describe('R1 / S5b: order closure engine', () => {
       await expectUntouched(orderId, 'RECEIVED');
     });
 
+    it('ESP-04 M5a: refuses to close an order while a card refund of its payment is in flight; an answered one counts towards the obligation', async () => {
+      const orderId = await placeOrder({ subtotal: 1000 });
+      const order = await db.order.findUniqueOrThrow({
+        where: { id: orderId },
+      });
+      // Its payment as a Stripe one, with a refund made in the restaurant's
+      // Stripe Dashboard that Stripe has not finished yet.
+      await withScratchClient(scratch.url, async (c) => {
+        await c.query(
+          `UPDATE "PaymentAttempt" SET provider = 'stripe', "providerReference" = 'pi_S5bM5a1',
+             "providerAccountId" = 'acct_S5bM5a1' WHERE id = $1`,
+          [order.paymentAttemptId],
+        );
+        await c.query(
+          `INSERT INTO "PaymentRefund" (id, "tenantId", "orderId", "paymentAttemptId", provider, "providerAccountId",
+             origin, "amountMinorUnits", currency, status, "providerRefundId", "updatedAt")
+           VALUES ('rf-s5b-m5a', $1, $2, $3, 'stripe', 'acct_S5bM5a1', 'EXTERNAL', 200, 'USD', 'PENDING',
+             're_S5bM5a1', now())`,
+          [A, orderId, order.paymentAttemptId],
+        );
+      });
+      // A clear 409 from the service (the database refuses it too).
+      const refused = reject(orderId);
+      await expect(refused).rejects.toBeInstanceOf(ConflictException);
+      await expect(refused).rejects.toThrow(/card refund still in progress/);
+      await expectUntouched(orderId, 'RECEIVED');
+      // Answered: the order closes, owing the whole card amount, of which
+      // the refund already counts.
+      await withScratchClient(scratch.url, (c) =>
+        c.query(
+          `UPDATE "PaymentRefund" SET status = 'SUCCEEDED' WHERE id = 'rf-s5b-m5a'`,
+        ),
+      );
+      await expect(reject(orderId)).resolves.toMatchObject({
+        closure: { refundDueMinorUnits: 1000 },
+      });
+    });
+
     it('refuses to close an order whose gift-card ledger disagrees with its snapshot', async () => {
       const card = await newGiftCard(1000);
       const orderId = await placeOrder({

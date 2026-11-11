@@ -3950,6 +3950,12 @@ export const INTERNAL_PERMISSION_KEYS = [
   // purpose: closing an order reverses gift-card, loyalty and promotion
   // effects and creates a refund obligation, so it is granted explicitly.
   "orders.cancel",
+  // ESP-04 M5a — refund an order's card payment (back to the original card
+  // only). A business permission, controlled by the business owner through
+  // access levels: the built-in administrator role (the owner) holds it, and
+  // the owner may assign the "Refund Manager" access level per location.
+  // CENTERIVO platform operators are not business staff and never hold it.
+  "orders.refund",
   "catalog.products.edit",
   "catalog.menu.manage",
   "catalog.overrides.manage",
@@ -4145,9 +4151,22 @@ export const STORE_MANAGER_ROLE: BuiltInInternalRole = {
   ],
 };
 
+// ESP-04 M5a — issues card refunds at the locations it is assigned to. The
+// ONLY built-in way for the business owner to let someone other than an
+// administrator refund: deliberately not part of Store Manager. Refunds go
+// back to the original card only. Assigned per location (location-only).
+export const REFUND_MANAGER_ROLE: BuiltInInternalRole = {
+  key: "refund-manager",
+  displayName: "Refund Manager",
+  description:
+    "Issues card refunds for orders at assigned locations. Refunds go back to the original card only.",
+  permissionKeys: ["orders.view", "orders.refund"],
+};
+
 export const BUILT_IN_INTERNAL_ROLES: readonly BuiltInInternalRole[] = [
   PLATFORM_ADMINISTRATOR_ROLE,
   STORE_MANAGER_ROLE,
+  REFUND_MANAGER_ROLE,
 ];
 
 // --- CENTERIVO SaaS: module catalog (SC2a) ------------------------------
@@ -4226,6 +4245,7 @@ export const PERMISSION_MODULE: Readonly<
   "orders.view": "core",
   "orders.manage_status": "core",
   "orders.cancel": "core",
+  "orders.refund": "core",
   "catalog.products.edit": "core",
   "catalog.menu.manage": "core",
   "catalog.overrides.manage": "core",
@@ -4434,6 +4454,12 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "orders.cancel",
     description:
       "Reject a new order or cancel an accepted one. Restores gift-card value, reverses Mocha Beans and promotion usage, and records any card refund as owed (never refunds a card itself).",
+    allowedScopeTypes: ["CORPORATE", "LOCATION"],
+  },
+  "orders.refund": {
+    key: "orders.refund",
+    description:
+      "Refund an order's card payment, fully or in part, back to the original card only. Controlled by the business owner; never held by CENTERIVO platform support.",
     allowedScopeTypes: ["CORPORATE", "LOCATION"],
   },
   "catalog.products.edit": {

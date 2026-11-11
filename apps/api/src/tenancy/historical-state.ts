@@ -32,6 +32,9 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'RestaurantPaymentProviderEvent',
   // ESP-03 PR 5 — support notes on reconciliation cases (20261116090000).
   'PaymentReconciliationNote',
+  // ESP-04 M5a — payment refunds and their history (20261124090000).
+  'PaymentRefund',
+  'PaymentRefundEvent',
   // SC1a — CENTERIVO platform operators (20261022090000).
   'PlatformOperator',
   'PlatformAuditEvent',

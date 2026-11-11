@@ -442,8 +442,9 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     expect(report.violations).toBe(0);
     expect(report.warnings).toBe(0);
     // ESP-03 PR 8 added FinancialHold (5 composite foreign keys); ESP-04 M1
-    // TenantPaymentAccount (1).
-    expect(report.relationshipsChecked).toBe(123);
+    // TenantPaymentAccount (1); ESP-04 M5a PaymentRefund (4) and
+    // PaymentRefundEvent (2).
+    expect(report.relationshipsChecked).toBe(129);
     expect(report.verdict).toBe('clean');
     expect(report.uncheckedRows).toBe(0);
     // Only the documented by-design exclusions, none holding unchecked rows.
@@ -458,6 +459,10 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
       ['PaymentAttempt.providerAccountId', null],
       ['PaymentReconciliationEvent.detail', null],
       ['PaymentReconciliationNote.authorPlatformOperatorId', null],
+      ['PaymentRefund.providerAccountId', null],
+      ['PaymentRefund.providerRefundId', null],
+      ['PaymentRefundEvent.actorPlatformOperatorId', null],
+      ['PaymentRefundEvent.detail', null],
       ['TenantPaymentAccount.externalAccountId', null],
     ]);
     expect(formatTenantIntegrityReport(report)).toMatch(/^Verdict: CLEAN/);
@@ -723,8 +728,9 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     it('summarizes violations by relationship type', () => {
       expect(report.byKind).toEqual({
         'composite-fk-candidate': {
-          relationships: 109,
-          checked: 109,
+          // ESP-04 M5a added 6 (PaymentRefund, PaymentRefundEvent).
+          relationships: 115,
+          checked: 115,
           violations: 8,
           warnings: 0,
         },
@@ -741,14 +747,17 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
           warnings: 4,
         },
         'json-reference': {
-          relationships: 8,
+          // ESP-04 M5a added PaymentRefundEvent.detail (not checkable).
+          relationships: 9,
           checked: 2,
           violations: 2,
           warnings: 0,
         },
         'external-identifier': {
-          // ESP-04 M3 added PaymentAttempt.providerAccountId.
-          relationships: 5,
+          // ESP-04 M3 added PaymentAttempt.providerAccountId; ESP-04 M5a
+          // PaymentRefund.providerAccountId / providerRefundId and
+          // PaymentRefundEvent.actorPlatformOperatorId.
+          relationships: 8,
           checked: 0,
           violations: 0,
           warnings: 0,

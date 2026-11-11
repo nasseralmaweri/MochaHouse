@@ -424,7 +424,8 @@ describe('SC4b owner self-service provisioning (integration, scratch database)',
     expect(owner.roleAssignments.map((a) => [a.role.key, a.scopeType])).toEqual(
       [['platform-administrator', 'CORPORATE']],
     );
-    expect(await prisma.internalRole.count({ where: { tenantId } })).toBe(2);
+    // Administrator, Store Manager and (ESP-04 M5a) Refund Manager.
+    expect(await prisma.internalRole.count({ where: { tenantId } })).toBe(3);
 
     const subscription = await prisma.tenantSubscription.findUniqueOrThrow({
       where: { subscriberTenantId: tenantId },

@@ -174,6 +174,16 @@ closure is exactly-once, and a repeat after success is an idempotent replay.
 * No customer email is sent when an order is rejected or cancelled. The tracking page
   already shows plain wording, introduced in S5a.
 * No settlement API exists yet. Obligations stay `DUE` until S5c.
+* **ESP-04 M5a (card refunds foundation, see
+  [payment-refunds.md](../security/payment-refunds.md)).** M5a adds guards only; nothing above
+  changes.
+  * Every refund of an order's Stripe payment counts towards its obligation. What is owed is
+    the obligation minus those refunds.
+  * A Stripe payment's obligation is settled only as `PROCESSOR`, once succeeded refunds cover
+    all of it, none is in flight, and each succeeded at least 30 days ago.
+  * **`MANUAL_EXTERNAL` is refused for a Stripe payment.** It remains available for other
+    providers.
+  * An order cannot be closed while a card refund of its payment is still in progress (409).
 * No staff UI exists in this slice. The API is the surface.
 * Orders whose payment needs reconciliation, or whose gift card is at its maximum
   balance, need support or HQ action before they can be closed.

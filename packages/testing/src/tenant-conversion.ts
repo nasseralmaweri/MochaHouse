@@ -83,6 +83,10 @@ export const TENANT_ID_REQUIRED_MODELS: readonly string[] = [
   // ESP-03 PR 5 — platform support's notes on a reconciliation case: a
   // brand-new model, tenantId required from inception.
   'PaymentReconciliationNote',
+  // ESP-04 M5a — payment refunds and their append-only history: brand-new
+  // models, tenantId required from inception.
+  'PaymentRefund',
+  'PaymentRefundEvent',
   // S0D-2E — the internal admin identity/authorization chain. InternalUser
   // and InternalRole have no owning parent (backfilled straight to
   // Tenant #1, like Customer in S0D-2B-1); InternalRolePermission and

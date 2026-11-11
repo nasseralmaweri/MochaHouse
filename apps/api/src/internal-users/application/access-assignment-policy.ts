@@ -18,6 +18,8 @@ export type AccessAssignmentShape = 'corporate-only' | 'location-only';
 const BUILT_IN_ASSIGNMENT_SHAPE: Record<string, AccessAssignmentShape> = {
   'platform-administrator': 'corporate-only',
   'store-manager': 'location-only',
+  // ESP-04 M5a — the owner grants refunds per location.
+  'refund-manager': 'location-only',
 };
 
 // The built-in access levels offered for assignment. There is deliberately
