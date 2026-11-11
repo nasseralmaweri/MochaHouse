@@ -243,6 +243,72 @@ migration.
 - **Case details.** A case's detail shows its Stripe recheck history and the
   next automatic recheck.
 
+## Abandoned Stripe payment cleanup (ESP-04 M4b)
+
+A Stripe payment waiting for its customer keeps its holds (a coupon
+redemption, a gift-card amount, Mocha Beans) until it is paid or cancelled.
+A **third** Stripe phase of the same sweeper cancels the ones whose customer
+has long gone, but only when Stripe proves them unpaid.
+
+### Switches
+
+- `PAYMENT_ABANDONED_INTENT_CANCEL_ENABLED=1` turns it on. It is **off by
+  default**, and runs only inside the automatic sweeper, which also needs
+  `PAYMENT_AUTO_RECOVERY_ENABLED=1`.
+- `PAYMENT_ABANDON_AFTER_MINUTES` sets the deadline: 30 to 1440, default
+  **120**. Any other value stops the API from starting.
+
+### What counts as abandoned
+
+All of these must hold:
+- a Stripe payment, PENDING and REQUIRES_CUSTOMER_ACTION;
+- its intent and connected account are stored;
+- it was created before the deadline;
+- its last **verified activity** (`customerActiveAt`, the checkout page's
+  heartbeat) is also before the deadline.
+
+Inactivity counts from the later of creation and the last heartbeat. Sending
+the client secret to a browser is never counted as activity.
+
+The scan takes at most 10 per sweep, oldest first. It skips cases set aside
+for people, and applies a backoff of 5 min × 2ⁿ with a cap of 5 attempts.
+History is kept as `STRIPE_ABANDON_STARTED`, `_SUCCEEDED` or `_FAILED` on the
+payment's case, which is opened as `STRIPE_ABANDONED_CHECKOUT`.
+
+### One cancellation
+
+Each runs under the **same per-payment lock** as every other recovery.
+
+1. **Database.** The payment is re-read: still waiting, still inactive.
+2. **Stripe.** The intent is read on the stored account, with its latest
+   charge.
+   - **Authentication in progress** (`requires_action`,
+     `requires_confirmation`): **never cancelled**. Held, with a
+     `STRIPE_AUTHENTICATION_STALE` event, and set aside for people (Needs
+     attention).
+   - **Paid, processing, already cancelled, or anything else:** never
+     cancelled here. It is settled from Stripe through the customer's own
+     check path, so a paid payment gets its order exactly once.
+   - **`requires_payment_method`, but not provably unpaid:** another amount
+     or currency, money received, a next action pending, or a latest charge
+     that isn't absent or failed. Held as `STRIPE_ABANDON_UNSAFE`, set aside
+     for people.
+3. **Final check.** Still waiting and still inactive. A heartbeat since step
+   1 means `STILL_ACTIVE`, and nothing is cancelled.
+4. **Cancel.** Reason `abandoned`, key `<payment key>:abandon`, on the
+   stored account. Its answer is only a hint.
+5. **Always read back.** Through the conditional transition:
+
+   | Stripe now says                          | Result                                                                                  |
+   | ---------------------------------------- | --------------------------------------------------------------------------------------- |
+   | Cancelled, nothing received              | FAILED; the database releases the holds; the case resolves `NOT_CHARGED`                |
+   | Paid (the customer paid during the race) | The order, exactly once                                                                 |
+   | Processing                               | Held                                                                                    |
+   | Still waiting, or unreadable             | Unchanged, holds kept, retried (`STRIPE_CANCEL_UNCONFIRMED` / `STRIPE_UNREADABLE`)      |
+
+Holds are never released because time passed, on a cancel answer, on an API
+error, or on anything a browser says.
+
 ## Customer retries (PAY-4)
 
 A retry with the same idempotency key never starts another charge. Depending

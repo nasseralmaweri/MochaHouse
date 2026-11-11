@@ -29,6 +29,19 @@ type RetrieveIntent = (
   params: unknown,
   options: { stripeAccount: string },
 ) => Promise<Stripe.PaymentIntent>;
+type CancelIntent = (
+  id: string,
+  params: Stripe.PaymentIntentCancelParams,
+  options: { stripeAccount: string; idempotencyKey?: string },
+) => Promise<Stripe.PaymentIntent>;
+
+// ESP-04 M4b — the states Stripe lets a PaymentIntent be cancelled from.
+const CANCELABLE = new Set([
+  'requires_payment_method',
+  'requires_confirmation',
+  'requires_action',
+  'requires_capture',
+]);
 
 interface StoredIntent {
   intent: Stripe.PaymentIntent;
@@ -49,6 +62,16 @@ export class FakeStripeIntents {
   set retrieveError(error: unknown) {
     oneShotRejection(this.retrieve, error);
   }
+  // ESP-04 M4b — make the next cancel reject (it may still have reached
+  // Stripe: see cancelActsBeforeError).
+  set cancelError(error: unknown) {
+    oneShotRejection(this.stripeCancel, error);
+  }
+  // ESP-04 M4b — the next cancel takes effect at Stripe, but its answer is
+  // lost (a timeout after Stripe acted).
+  loseNextCancelResponse = false;
+  // ESP-04 M4b — run just before a cancel is applied (to race a payment).
+  beforeCancel: ((id: string) => void) | null = null;
   // Report this amount as created (a misbehaving answer).
   createAmountOverride: number | null = null;
   // ESP-04 M4a — the next creation REACHES Stripe (the intent exists) but
@@ -95,6 +118,8 @@ export class FakeStripeIntents {
           status: 'requires_payment_method',
           client_secret: `${id}_secret_TESTONLY`,
           last_payment_error: null,
+          latest_charge: null,
+          next_action: null,
           metadata: { ...(params.metadata as Record<string, string>) },
           capture_method: 'automatic',
         } as unknown as Stripe.PaymentIntent,
@@ -136,6 +161,47 @@ export class FakeStripeIntents {
         return Promise.reject(
           stripeError('StripeInvalidRequestError', 'resource_missing'),
         );
+      }
+      return Promise.resolve(this.copy(id));
+    },
+  );
+
+  // ESP-04 M4b — Stripe's cancel: only from a cancelable state, on the
+  // intent's own account; otherwise refused (and nothing changes).
+  readonly stripeCancel: jest.Mock<
+    ReturnType<CancelIntent>,
+    Parameters<CancelIntent>
+  > = jest.fn(
+    (
+      id: string,
+      params: Stripe.PaymentIntentCancelParams,
+      options: { stripeAccount: string; idempotencyKey?: string },
+    ): Promise<Stripe.PaymentIntent> => {
+      this.beforeCancel?.(id);
+      const stored = this.intents.get(id);
+      if (!stored || stored.account !== options?.stripeAccount) {
+        return Promise.reject(
+          stripeError('StripeInvalidRequestError', 'resource_missing'),
+        );
+      }
+      if (stored.intent.status === 'canceled') {
+        return Promise.resolve(this.copy(id));
+      }
+      if (!CANCELABLE.has(stored.intent.status)) {
+        return Promise.reject(
+          stripeError(
+            'StripeInvalidRequestError',
+            'payment_intent_unexpected_state',
+          ),
+        );
+      }
+      this.set(id, {
+        status: 'canceled',
+        cancellation_reason: params.cancellation_reason ?? null,
+      });
+      if (this.loseNextCancelResponse) {
+        this.loseNextCancelResponse = false;
+        return Promise.reject(stripeError('StripeConnectionError'));
       }
       return Promise.resolve(this.copy(id));
     },
@@ -222,6 +288,7 @@ export function fakeStripePayments(allowedTenantIds: Set<string>): {
   const api = stripe.paymentIntents as unknown as Record<string, unknown>;
   api.create = intents.create;
   api.retrieve = intents.retrieve;
+  api.cancel = intents.stripeCancel;
   const provider = new StripePaymentIntentProvider(stripe, {
     publishableKey: testOnly('pk_test'),
     paymentsWebhookSecret: PAYMENTS_SIGNING_SECRET,

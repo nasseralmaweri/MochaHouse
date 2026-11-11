@@ -7501,6 +7501,12 @@ export interface CheckoutPaymentCheckRequest {
   checkoutToken: string;
 }
 
+// ESP-04 M4b — POST /api/v1/orders/checkout-sessions/payment/activity: the
+// customer's checkout page is still open on this checkout's payment (a
+// heartbeat). The same session binding as a check; 204, nothing returned.
+// Never a payment id, a business id or a time.
+export type CheckoutPaymentActivityRequest = CheckoutPaymentCheckRequest;
+
 // POST /api/v1/orders/checkout-sessions/payment/simulate — DEVELOPMENT AND
 // TESTS ONLY (refused unless the two-step fake provider is configured and the
 // environment is not production-like). What the "customer" did with this

@@ -3473,6 +3473,7 @@ export interface CheckoutPaymentCheckRequest {
     locationId: string;
     checkoutToken: string;
 }
+export type CheckoutPaymentActivityRequest = CheckoutPaymentCheckRequest;
 export declare const SIMULATED_PAYMENT_OUTCOMES: readonly ["succeed", "decline", "process", "cancel", "unknown"];
 export type CheckoutPaymentSimulationOutcome = (typeof SIMULATED_PAYMENT_OUTCOMES)[number];
 export interface CheckoutPaymentSimulationRequest {

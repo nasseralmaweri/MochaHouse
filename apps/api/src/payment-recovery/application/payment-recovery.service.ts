@@ -28,6 +28,7 @@ import {
 import {
   PAYMENT_EVENT_TYPES,
   StripePaymentIntentProvider,
+  type AbandonmentFacts,
 } from '../../restaurant-payments/provider/stripe-payment-intent-provider';
 
 // ESP-03 PR 5 — payment reconciliation and automatic recovery.
@@ -107,6 +108,47 @@ export type StripeRecheckOutcome =
 // now names this payment (not counted toward the automatic cap).
 export type StripeRecheckTrigger = RecoveryTrigger | 'stripe_event';
 
+// ESP-04 M4b — why an abandoned payment was not cleaned up. Retryable:
+// Stripe could not be read, the cancel did not take, or the order of a
+// payment found paid is not created yet. Not retryable (people must look):
+// an authentication that may still be under way (never cancelled), an
+// intent not provably unpaid (another amount, money received, an action or
+// a charge pending), or the stored account is not the business's.
+export type AbandonFailure =
+  | 'STRIPE_UNREADABLE'
+  | 'STRIPE_CANCEL_UNCONFIRMED'
+  | 'STRIPE_FULFILMENT_PENDING'
+  | 'STRIPE_AUTHENTICATION_STALE'
+  | 'STRIPE_ABANDON_UNSAFE'
+  | 'STRIPE_ACCOUNT_MISMATCH';
+
+// Where an abandoned payment ended: cancelled (holds released), found paid
+// (order once) or processing during the race, or the customer came back.
+export type AbandonResult =
+  'CANCELLED' | 'PAID' | 'PROCESSING' | 'STILL_ACTIVE';
+
+export type AbandonOutcome =
+  | { kind: 'settled'; result: AbandonResult }
+  | { kind: 'failed'; failure: AbandonFailure; retryable: boolean }
+  | { kind: 'not_eligible' }
+  | { kind: 'not_applicable' }
+  | { kind: 'busy' };
+
+// A provider call bounded in time (an unanswered call rejects).
+async function boundedCall<T>(call: () => Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      call(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('provider timeout')), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export type RecoveryFailure =
   | 'FULFILMENT_REJECTED'
   | 'SNAPSHOT_UNREADABLE'
@@ -181,6 +223,50 @@ function resultOfState(attempt: {
     : 'WAITING_FOR_CUSTOMER';
 }
 
+// ESP-04 M4b — abandoned Stripe payment cleanup: its own switch, OFF by
+// default, and it runs only inside the automatic sweeper (which needs
+// PAYMENT_AUTO_RECOVERY_ENABLED=1).
+export function abandonedIntentCancelEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return env.PAYMENT_ABANDONED_INTENT_CANCEL_ENABLED === '1';
+}
+
+export class PaymentRecoveryConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PaymentRecoveryConfigurationError';
+  }
+}
+
+export const DEFAULT_ABANDON_AFTER_MINUTES = 120;
+export const MIN_ABANDON_AFTER_MINUTES = 30;
+export const MAX_ABANDON_AFTER_MINUTES = 1440;
+
+// How long a Stripe payment waits for its customer, with no verified
+// activity, before it counts as abandoned. Unset: 120. Anything that is not a
+// whole number of minutes from 30 to 1440 is refused (the message names the
+// variable, never its value).
+export function abandonAfterMinutes(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env.PAYMENT_ABANDON_AFTER_MINUTES;
+  if (raw === undefined || raw.trim() === '') {
+    return DEFAULT_ABANDON_AFTER_MINUTES;
+  }
+  const value = Number(raw.trim());
+  if (
+    !/^\d+$/.test(raw.trim()) ||
+    value < MIN_ABANDON_AFTER_MINUTES ||
+    value > MAX_ABANDON_AFTER_MINUTES
+  ) {
+    throw new PaymentRecoveryConfigurationError(
+      `PAYMENT_ABANDON_AFTER_MINUTES must be a whole number of minutes from ${MIN_ABANDON_AFTER_MINUTES} to ${MAX_ABANDON_AFTER_MINUTES}.`,
+    );
+  }
+  return value;
+}
+
 export function automaticRecoveryEnabled(): boolean {
   return process.env.PAYMENT_AUTO_RECOVERY_ENABLED === '1';
 }
@@ -198,7 +284,7 @@ export interface RecoveryHistory {
   automaticAttempts: number;
   // The latest attempt of any trigger (its start, or its failure).
   lastAttemptAt: Date | null;
-  lastFailure: RecoveryFailure | StripeRecheckFailure | null;
+  lastFailure: RecoveryFailure | StripeRecheckFailure | AbandonFailure | null;
   lastFailureRetryable: boolean;
   lastFailureAt: Date | null;
   // A RECOVERY_STARTED newer than every outcome and not stale.
@@ -212,14 +298,15 @@ type EventRow = { action: string; detail: unknown; createdAt: Date };
 export function recoveryHistoryOf(
   events: readonly EventRow[],
   now: Date = new Date(),
-  prefix: 'RECOVERY' | 'STRIPE_RECHECK' = 'RECOVERY',
+  prefix: 'RECOVERY' | 'STRIPE_RECHECK' | 'STRIPE_ABANDON' = 'RECOVERY',
 ): RecoveryHistory {
   const sorted = [...events].sort(
     (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
   );
   let automaticAttempts = 0;
   let lastAttemptAt: Date | null = null;
-  let lastFailure: RecoveryFailure | StripeRecheckFailure | null = null;
+  let lastFailure:
+    RecoveryFailure | StripeRecheckFailure | AbandonFailure | null = null;
   let lastFailureRetryable = false;
   let lastFailureAt: Date | null = null;
   let openStart: Date | null = null;
@@ -234,7 +321,8 @@ export function recoveryHistoryOf(
       lastAttemptAt = event.createdAt;
       lastFailure =
         typeof detail.failure === 'string'
-          ? (detail.failure as RecoveryFailure | StripeRecheckFailure)
+          ? (detail.failure as
+              RecoveryFailure | StripeRecheckFailure | AbandonFailure)
           : 'TRANSIENT_ERROR';
       lastFailureRetryable = detail.retryable === true;
       lastFailureAt = event.createdAt;
@@ -243,6 +331,12 @@ export function recoveryHistoryOf(
       event.action === 'RESOLVED'
     ) {
       openStart = null;
+      // An abandonment that settled (e.g. the customer came back) is not a
+      // failed attempt: a later abandonment of the same payment starts a
+      // fresh count, exactly as the candidate query counts it.
+      if (prefix === 'STRIPE_ABANDON' && event.action !== 'RESOLVED') {
+        automaticAttempts = 0;
+      }
     }
   }
   const inProgressSince =
@@ -311,6 +405,9 @@ export class PaymentRecoveryService implements OnModuleInit, OnModuleDestroy {
   // OFF by default: nothing is scheduled unless the deployment explicitly
   // sets PAYMENT_AUTO_RECOVERY_ENABLED=1.
   onModuleInit(): void {
+    // ESP-04 M4b — a malformed abandonment deadline stops the process from
+    // starting (fail closed), whether or not cleanup is switched on.
+    abandonAfterMinutes();
     if (!automaticRecoveryEnabled()) return;
     this.timer = setInterval(() => {
       this.sweep().catch((error: unknown) => {
@@ -357,6 +454,14 @@ export class PaymentRecoveryService implements OnModuleInit, OnModuleDestroy {
             );
           }
           await this.reconcileUnmatchedEvents(now);
+          // ESP-04 M4b — then abandoned Stripe payments (waiting for a
+          // customer who has long gone) are cancelled, only when Stripe
+          // proves them unpaid, and only when its own switch is on.
+          if (abandonedIntentCancelEnabled()) {
+            for (const candidate of await this.abandonmentCandidates(now)) {
+              await this.cancelAbandoned(candidate.id, candidate.tenantId, now);
+            }
+          }
         }
         const due = await this.dueCandidates(now);
         const outcomes: RecoveryOutcome[] = [];
@@ -1052,6 +1157,339 @@ export class PaymentRecoveryService implements OnModuleInit, OnModuleDestroy {
 
   // The payment's case for a Stripe outcome recovery (opened first if a
   // crash left the held payment without one).
+  // --- ESP-04 M4b: abandoned Stripe payment cleanup -----------------------------
+
+  // Stripe payments waiting for a customer who has long gone: no verified
+  // activity (heartbeat) and created for at least the deadline — inactivity
+  // measured from the LATER of the two. Case not resolved, not set aside for
+  // people (decided in SQL, so they never fill the scan), due by the
+  // backoff; oldest first, one batch at most, keyset paging.
+  async abandonmentCandidates(
+    now: Date = new Date(),
+  ): Promise<{ id: string; tenantId: string }[]> {
+    const cutoff = new Date(now.getTime() - abandonAfterMinutes() * 60_000);
+    const due: { id: string; tenantId: string }[] = [];
+    let after: { createdAt: Date; id: string } | null = null;
+    for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
+      const afterCreatedAt: Date = after?.createdAt ?? new Date(0);
+      const afterId: string = after?.id ?? '';
+      const rows: {
+        id: string;
+        tenantId: string;
+        createdAt: Date;
+        caseId: string | null;
+      }[] = await this.prisma.$queryRaw<
+        {
+          id: string;
+          tenantId: string;
+          createdAt: Date;
+          caseId: string | null;
+        }[]
+      >`
+        SELECT pa.id, pa."tenantId", pa."createdAt", c.id AS "caseId"
+        FROM "PaymentAttempt" pa
+        LEFT JOIN "PaymentReconciliationCase" c
+          ON c."paymentAttemptId" = pa.id AND c."tenantId" = pa."tenantId"
+        WHERE pa.provider = 'stripe'
+          AND pa.status::text = 'PENDING'
+          AND pa."paymentState" = 'REQUIRES_CUSTOMER_ACTION'
+          AND pa."providerReference" IS NOT NULL
+          AND pa."providerAccountId" IS NOT NULL
+          AND pa."createdAt" < ${cutoff}
+          AND COALESCE(pa."customerActiveAt", pa."createdAt") < ${cutoff}
+          AND (c.id IS NULL OR c.status <> 'RESOLVED')
+          AND (pa."createdAt", pa.id) > (${afterCreatedAt}, ${afterId})
+          -- Set aside for people: the latest abandonment outcome is a
+          -- failure a retry cannot fix (e.g. a stale authentication).
+          AND NOT EXISTS (
+            SELECT 1 FROM "PaymentReconciliationEvent" f
+            WHERE c.id IS NOT NULL
+              AND f."caseId" = c.id AND f."tenantId" = c."tenantId"
+              AND f.action = 'STRIPE_ABANDON_FAILED'
+              AND f.detail->>'retryable' = 'false'
+              AND NOT EXISTS (
+                SELECT 1 FROM "PaymentReconciliationEvent" g
+                WHERE g."caseId" = c.id AND g."tenantId" = c."tenantId"
+                  AND g.action IN ('STRIPE_ABANDON_FAILED', 'STRIPE_ABANDON_SUCCEEDED')
+                  AND (g."createdAt", g.id) > (f."createdAt", f.id)
+              )
+          )
+          -- Set aside for people: the automatic attempts since the last
+          -- settled abandonment are used up (counted as recoveryHistoryOf
+          -- counts them for the backoff).
+          AND (
+            c.id IS NULL OR (
+              SELECT count(*) FROM "PaymentReconciliationEvent" s
+              WHERE s."caseId" = c.id AND s."tenantId" = c."tenantId"
+                AND s.action = 'STRIPE_ABANDON_STARTED'
+                AND s.detail->>'trigger' = 'automatic'
+                AND NOT EXISTS (
+                  SELECT 1 FROM "PaymentReconciliationEvent" ok
+                  WHERE ok."caseId" = c.id AND ok."tenantId" = c."tenantId"
+                    AND ok.action = 'STRIPE_ABANDON_SUCCEEDED'
+                    AND (ok."createdAt", ok.id) > (s."createdAt", s.id)
+                )
+            ) < ${MAX_AUTOMATIC_ATTEMPTS}
+          )
+        ORDER BY pa."createdAt" ASC, pa.id ASC
+        LIMIT ${SWEEP_PAGE_SIZE}`;
+      if (rows.length === 0) break;
+      const caseIds = rows.flatMap((r) => (r.caseId ? [r.caseId] : []));
+      const events = caseIds.length
+        ? await this.prisma.paymentReconciliationEvent.findMany({
+            where: {
+              caseId: { in: caseIds },
+              action: { startsWith: 'STRIPE_ABANDON_' },
+            },
+            select: {
+              caseId: true,
+              action: true,
+              detail: true,
+              createdAt: true,
+            },
+          })
+        : [];
+      for (const row of rows) {
+        const history = recoveryHistoryOf(
+          events.filter((e) => e.caseId === row.caseId),
+          now,
+          'STRIPE_ABANDON',
+        );
+        if (history.inProgressSince) continue;
+        if (
+          history.lastAttemptAt !== null &&
+          now.getTime() - history.lastAttemptAt.getTime() <
+            backoffAfter(history.automaticAttempts)
+        ) {
+          continue;
+        }
+        due.push({ id: row.id, tenantId: row.tenantId });
+        if (due.length >= SWEEP_BATCH_SIZE) return due;
+      }
+      if (rows.length < SWEEP_PAGE_SIZE) break;
+      const last = rows[rows.length - 1];
+      after = { createdAt: last.createdAt, id: last.id };
+    }
+    return due;
+  }
+
+  // Cancels ONE abandoned Stripe payment if — and only if — Stripe proves it
+  // unpaid, under the SAME per-payment lock as every other recovery of it.
+  // Holds are released only by Stripe's read-back AFTER the cancel request
+  // (cancelled, nothing received, this account and intent), through the
+  // payment's conditional transition and the database's hold guard. Never
+  // on elapsed time, a cancel answer, an error or a browser.
+  async cancelAbandoned(
+    paymentAttemptId: string,
+    tenantId: string,
+    now: Date = new Date(),
+  ): Promise<AbandonOutcome> {
+    try {
+      const outcome = await withSessionLock(
+        `esp03-payment-recovery:${tenantId}:${paymentAttemptId}`,
+        () => this.abandonLocked(paymentAttemptId, tenantId, now),
+      );
+      return outcome ?? { kind: 'busy' };
+    } catch (error) {
+      this.logger.error(
+        `payment attempt ${paymentAttemptId}: abandoned payment cleanup could not run (${
+          error instanceof Error ? error.name : 'unknown error'
+        })`,
+      );
+      return { kind: 'failed', failure: 'STRIPE_UNREADABLE', retryable: true };
+    }
+  }
+
+  private async abandonLocked(
+    paymentAttemptId: string,
+    tenantId: string,
+    now: Date,
+  ): Promise<AbandonOutcome> {
+    const provider = this.provider;
+    if (!(provider instanceof StripePaymentIntentProvider)) {
+      return { kind: 'not_applicable' };
+    }
+    const cutoff = now.getTime() - abandonAfterMinutes() * 60_000;
+    const load = () =>
+      this.prisma.paymentAttempt.findFirst({
+        where: { id: paymentAttemptId, tenantId },
+      });
+    const inactive = (a: Awaited<ReturnType<typeof load>>) =>
+      a !== null &&
+      a.provider === 'stripe' &&
+      String(a.status) === 'PENDING' &&
+      a.paymentState === 'REQUIRES_CUSTOMER_ACTION' &&
+      a.providerReference !== null &&
+      a.providerAccountId !== null &&
+      a.createdAt.getTime() < cutoff &&
+      (a.customerActiveAt ?? a.createdAt).getTime() < cutoff;
+
+    // 1. The database: still waiting for its customer, and still inactive.
+    const attempt = await load();
+    if (!attempt || !inactive(attempt)) return { kind: 'not_eligible' };
+    const reference = attempt.providerReference!;
+
+    const caseId = await this.ensureOutcomeCase(
+      paymentAttemptId,
+      tenantId,
+      'STRIPE_ABANDONED_CHECKOUT',
+    );
+    const base: Record<string, string> = {
+      source: 'stripe-abandonment',
+      trigger: 'automatic',
+      paymentAttemptId,
+    };
+    await this.event(tenantId, caseId, 'STRIPE_ABANDON_STARTED', base);
+    const fail = async (
+      failure: AbandonFailure,
+      retryable: boolean,
+    ): Promise<AbandonOutcome> => {
+      await this.event(tenantId, caseId, 'STRIPE_ABANDON_FAILED', {
+        ...base,
+        failure,
+        retryable,
+      });
+      return { kind: 'failed', failure, retryable };
+    };
+    const settled = async (result: AbandonResult): Promise<AbandonOutcome> => {
+      await this.event(tenantId, caseId, 'STRIPE_ABANDON_SUCCEEDED', {
+        ...base,
+        outcome: result,
+      });
+      return { kind: 'settled', result };
+    };
+
+    // Only ever the account the payment was created on, still the
+    // business's own.
+    const account = await paymentAccountForAttempt(this.prisma, attempt);
+    if (account === null) return fail('STRIPE_ACCOUNT_MISMATCH', false);
+
+    // 2. Stripe: what the intent is now.
+    const facts = await boundedCall(
+      () => provider.abandonmentFactsFor({ reference, account }),
+      STRIPE_RECHECK_TIMEOUT_MS,
+    ).catch(() => null);
+    if (!facts) return fail('STRIPE_UNREADABLE', true);
+
+    if (
+      facts.status === 'requires_action' ||
+      facts.status === 'requires_confirmation'
+    ) {
+      // An authentication (3-D Secure) that may still be under way: NEVER
+      // cancelled automatically. Held and visible to people.
+      await this.event(tenantId, caseId, 'STRIPE_AUTHENTICATION_STALE', {
+        source: 'stripe-abandonment',
+        paymentAttemptId,
+        reasonCode: 'STRIPE_AUTHENTICATION_STALE',
+      });
+      return fail('STRIPE_AUTHENTICATION_STALE', false);
+    }
+    if (facts.status !== 'requires_payment_method') {
+      // Paid, processing, already cancelled or anything else: never
+      // cancelled here — the payment is settled from Stripe's answer through
+      // the customer's own check path (the order exactly once if paid).
+      return this.settleFromStripe(tenantId, paymentAttemptId, settled, fail);
+    }
+    const provablyUnpaid = (f: AbandonmentFacts) =>
+      f.status === 'requires_payment_method' &&
+      f.amount === attempt.amount &&
+      f.currency === attempt.currency.toUpperCase() &&
+      f.amountReceived === 0 &&
+      !f.nextActionPending &&
+      (f.latestCharge === 'none' || f.latestCharge === 'failed');
+    if (!provablyUnpaid(facts)) {
+      // Another amount, money received, an action pending, or a charge that
+      // is (or may be) pending or succeeded: not provably unpaid. Held.
+      return fail('STRIPE_ABANDON_UNSAFE', false);
+    }
+
+    // 3. The final check, just before cancelling: still waiting, still
+    // inactive (a heartbeat since step 1 keeps the checkout open) ...
+    if (!inactive(await load())) return settled('STILL_ACTIVE');
+    // ... and Stripe read AGAIN: a customer who confirmed in the browser since
+    // step 2 (moving the intent to 3-D Secure or processing) is never
+    // cancelled. Stripe has no conditional cancel, so the window left is the
+    // single round trip between this read and the cancel below.
+    const latest = await boundedCall(
+      () => provider.abandonmentFactsFor({ reference, account }),
+      STRIPE_RECHECK_TIMEOUT_MS,
+    ).catch(() => null);
+    if (!latest) return fail('STRIPE_UNREADABLE', true);
+    if (
+      latest.status === 'requires_action' ||
+      latest.status === 'requires_confirmation'
+    ) {
+      // The customer is authenticating right now: not abandoned. Held,
+      // looked at again only after a fresh period of inactivity.
+      return settled('STILL_ACTIVE');
+    }
+    if (latest.status !== 'requires_payment_method') {
+      // Paid or processing since step 2: settled from Stripe's answer.
+      return this.settleFromStripe(tenantId, paymentAttemptId, settled, fail);
+    }
+    if (!provablyUnpaid(latest)) return fail('STRIPE_ABANDON_UNSAFE', false);
+
+    // 4. Cancel (any answer is only a hint), then 5. ALWAYS read back.
+    await boundedCall(
+      () =>
+        provider.cancelPaymentIntent({
+          reference,
+          account,
+          idempotencyKey: `${attempt.idempotencyKey}:abandon`,
+        }),
+      STRIPE_RECHECK_TIMEOUT_MS,
+    ).catch(() => null);
+    return this.settleFromStripe(tenantId, paymentAttemptId, settled, fail);
+  }
+
+  // Reads the payment back from Stripe through the customer's own check path
+  // (conditional transitions; cancelled with nothing received closes it and
+  // the database releases its holds; paid creates its order exactly once)
+  // and reports where it now stands.
+  private async settleFromStripe(
+    tenantId: string,
+    paymentAttemptId: string,
+    settled: (result: AbandonResult) => Promise<AbandonOutcome>,
+    fail: (
+      failure: AbandonFailure,
+      retryable: boolean,
+    ) => Promise<AbandonOutcome>,
+  ): Promise<AbandonOutcome> {
+    const answer = await this.checkout
+      .reconcileProviderPayment(
+        tenantId,
+        paymentAttemptId,
+        STRIPE_RECHECK_TIMEOUT_MS,
+      )
+      .catch(() => 'retry' as const);
+    const current = await this.prisma.paymentAttempt.findFirstOrThrow({
+      where: { id: paymentAttemptId, tenantId },
+      select: { status: true, paymentState: true },
+    });
+    const status = String(current.status);
+    if (status === 'FAILED' || status === 'DECLINED') {
+      // Closed by the read-back's own proof-gated transition; reported as
+      // cancelled only when this read-back is what settled it.
+      return answer === 'settled'
+        ? settled('CANCELLED')
+        : fail('STRIPE_UNREADABLE', true);
+    }
+    if (status === 'SUCCEEDED') {
+      return answer === 'settled'
+        ? settled('PAID')
+        : fail('STRIPE_FULFILMENT_PENDING', true);
+    }
+    if (current.paymentState === 'AWAITING_CONFIRMATION') {
+      return settled('PROCESSING');
+    }
+    // Still waiting (Stripe unreadable, or the cancel did not take): unchanged,
+    // holds kept, tried again later.
+    return fail(
+      answer === 'retry' ? 'STRIPE_UNREADABLE' : 'STRIPE_CANCEL_UNCONFIRMED',
+      true,
+    );
+  }
+
   private async ensureOutcomeCase(
     paymentAttemptId: string,
     tenantId: string,

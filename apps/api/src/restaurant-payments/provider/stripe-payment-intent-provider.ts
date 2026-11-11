@@ -88,6 +88,18 @@ export interface VerifiedPaymentEvent {
   payloadDigest: string;
 }
 
+// ESP-04 M4b — see StripePaymentIntentProvider.abandonmentFactsFor.
+export interface AbandonmentFacts {
+  status: string;
+  amount: number;
+  currency: string;
+  amountReceived: number;
+  nextActionPending: boolean;
+  // 'none' (no charge attempted), a Stripe charge status ('failed',
+  // 'pending', 'succeeded'), or 'unknown'.
+  latestCharge: string;
+}
+
 export class PaymentEventVerificationError extends Error {
   constructor(message: string) {
     super(message);
@@ -229,16 +241,99 @@ export class StripePaymentIntentProvider
     return intent.client_secret;
   }
 
-  // ESP-04 M4 cancels abandoned intents. Nothing in M3 cancels: refused
-  // without contacting Stripe.
-  cancelPaymentIntent(input: {
+  // ESP-04 M4b — cancels an ABANDONED intent on the account it lives on
+  // (the server's stored account; never a client value), with reason
+  // "abandoned" and the caller's stable idempotency key. Whatever Stripe
+  // answers is only a hint: the caller ALWAYS reads the intent back, and only
+  // that read-back can close the payment. Any error is "unknown".
+  async cancelPaymentIntent(input: {
     reference: string;
+    account: PaymentAccountContext;
+    idempotencyKey?: string;
   }): Promise<PaymentIntentResult> {
-    return Promise.resolve({
-      status: 'unknown',
-      reason: 'stripe_cancel:not_available',
-      reference: input.reference,
-    });
+    const account = input.account.connectedAccountId;
+    if (
+      !INTENT_ID.test(input.reference) ||
+      account === null ||
+      !ACCOUNT_ID.test(account)
+    ) {
+      return { status: 'unknown', reason: 'stripe_cancel:refused_locally' };
+    }
+    let intent: Stripe.PaymentIntent;
+    try {
+      intent = await this.stripe.paymentIntents.cancel(
+        input.reference,
+        { cancellation_reason: 'abandoned' },
+        {
+          stripeAccount: account,
+          ...(input.idempotencyKey
+            ? { idempotencyKey: input.idempotencyKey }
+            : {}),
+        },
+      );
+    } catch (error) {
+      return {
+        status: 'unknown',
+        reason: `stripe_cancel:${errorCode(error)}`,
+        reference: input.reference,
+      };
+    }
+    if (intent?.id !== input.reference || intent.livemode !== false) {
+      return {
+        status: 'unknown',
+        reason: 'stripe_cancel:unexpected_answer',
+        reference: input.reference,
+      };
+    }
+    return resultOf(intent);
+  }
+
+  // ESP-04 M4b — what abandoned-payment cleanup must know before it may
+  // cancel: the intent's state, what it is for, what it has received,
+  // whether an action is pending, and its latest charge's status — read on
+  // the stored account. Null when it cannot be read (or is live, or another
+  // intent).
+  async abandonmentFactsFor(input: {
+    reference: string;
+    account: PaymentAccountContext;
+  }): Promise<AbandonmentFacts | null> {
+    const account = input.account.connectedAccountId;
+    if (
+      !INTENT_ID.test(input.reference) ||
+      account === null ||
+      !ACCOUNT_ID.test(account)
+    ) {
+      return null;
+    }
+    let intent: Stripe.PaymentIntent;
+    try {
+      intent = await this.stripe.paymentIntents.retrieve(
+        input.reference,
+        { expand: ['latest_charge'] },
+        { stripeAccount: account },
+      );
+    } catch {
+      return null;
+    }
+    if (intent?.id !== input.reference || intent.livemode !== false) {
+      return null;
+    }
+    const charge = intent.latest_charge;
+    return {
+      status: String(intent.status),
+      amount: intent.amount,
+      currency: String(intent.currency).toUpperCase(),
+      amountReceived: intent.amount_received,
+      nextActionPending: intent.next_action != null,
+      // No charge yet; or the latest charge's status (an unexpanded id
+      // proves nothing: reported as unknown).
+      latestCharge:
+        charge === null || charge === undefined
+          ? 'none'
+          : typeof charge === 'string'
+            ? 'unknown'
+            : String(charge.status),
+    };
   }
 
   // Verifies a payment-events webhook (B1: its own signing secret) over the

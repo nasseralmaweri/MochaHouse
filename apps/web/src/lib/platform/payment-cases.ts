@@ -74,6 +74,9 @@ export const REASON_LABEL: Record<string, string> = {
   LEGACY_PENDING_UNRESOLVED: "Older payment whose outcome was never settled",
   PROVIDER_AMOUNT_MISMATCH: "The provider took a different amount or currency than the checkout",
   PROVIDER_EVENT_NOT_SETTLED: "A payment event from Stripe could not be settled yet",
+  // ESP-04 M4b — abandoned payment cleanup.
+  STRIPE_ABANDONED_CHECKOUT: "The customer left the payment unfinished",
+  STRIPE_AUTHENTICATION_STALE: "A card authentication was left unfinished",
 };
 
 export const FAILURE_LABEL: Record<string, string> = {
@@ -95,6 +98,12 @@ export const FAILURE_LABEL: Record<string, string> = {
     "Stripe took a different amount or currency than this checkout. It is never recorded as paid; it needs a person.",
   STRIPE_FULFILMENT_PENDING:
     "The payment is confirmed, but its order could not be created yet. Recovery creates it (exactly once).",
+  // ESP-04 M4b — abandoned payment cleanup.
+  STRIPE_CANCEL_UNCONFIRMED: "Stripe did not confirm the payment was cancelled. Nothing changed; it is retried.",
+  STRIPE_AUTHENTICATION_STALE:
+    "A card authentication was left unfinished. It is never cancelled automatically; its holds stay until a person looks.",
+  STRIPE_ABANDON_UNSAFE:
+    "Stripe could not prove this payment unpaid (another amount, money received, or a charge pending). It is never cancelled automatically; its holds stay.",
 };
 
 export const EVENT_LABEL: Record<string, string> = {
@@ -109,6 +118,10 @@ export const EVENT_LABEL: Record<string, string> = {
   STRIPE_INTENT_LINKED: "Stripe payment found and linked",
   STRIPE_OUTCOME_RECOVERED: "Payment outcome recovered from Stripe",
   PROVIDER_REQUIRES_PAYMENT_METHOD: "Waiting for another card",
+  STRIPE_ABANDON_STARTED: "Abandoned payment cleanup started",
+  STRIPE_ABANDON_SUCCEEDED: "Abandoned payment cleanup settled the payment",
+  STRIPE_ABANDON_FAILED: "Abandoned payment cleanup left the payment as it was",
+  STRIPE_AUTHENTICATION_STALE: "Card authentication left unfinished",
 };
 
 // ESP-04 M4a — what a Stripe recheck found.

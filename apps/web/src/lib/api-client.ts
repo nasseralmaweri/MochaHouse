@@ -277,6 +277,28 @@ export async function submitCheckoutFromBrowser(
   return readCheckoutResponse(response);
 }
 
+// ESP-04 M4b — the payment page's heartbeat: this checkout's page is still
+// open. Sends the location only; never throws (a lost heartbeat only means
+// no activity is recorded). True when the server accepted it.
+const PAYMENT_ACTIVITY_TIMEOUT_MS = 10_000;
+export async function sendCheckoutPaymentActivityFromBrowser(
+  locationId: string,
+): Promise<boolean> {
+  try {
+    const response = await fetch("/api/checkout/payment/activity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locationId }),
+      cache: "no-store",
+      // A hung request must not silence the heartbeat for the page's life.
+      signal: AbortSignal.timeout(PAYMENT_ACTIVITY_TIMEOUT_MS),
+    });
+    return response.status === 204;
+  } catch {
+    return false;
+  }
+}
+
 // ESP-04 M2 — ask the server what happened to this checkout's two-step
 // payment. The server reads the outcome from the payment provider; this page
 // only ever reports what the server answers. Sends the location only (the

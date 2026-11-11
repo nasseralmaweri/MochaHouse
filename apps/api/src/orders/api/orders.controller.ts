@@ -15,6 +15,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import type {
+  CheckoutPaymentActivityRequest,
   CheckoutPaymentCheckRequest,
   CheckoutPaymentSimulationRequest,
   CheckoutQuoteRequest,
@@ -88,6 +89,27 @@ export class OrdersController {
       tenant,
     );
     return answer(result, response);
+  }
+
+  // ESP-04 M4b — the customer's checkout page is still open on this
+  // checkout's payment (a heartbeat, every 2 minutes while visible, and when
+  // Pay is pressed). The same session binding and rate limit as a check;
+  // 204, nothing returned.
+  @UseGuards(OptionalCustomerAuthGuard, RateLimitGuard)
+  @RateLimit('checkout')
+  @Header('Cache-Control', 'no-store')
+  @Post('checkout-sessions/payment/activity')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async recordPaymentActivity(
+    @Body() body: CheckoutPaymentActivityRequest,
+    @Req() request: CustomerAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ): Promise<void> {
+    await this.checkoutService.recordPaymentActivity(
+      body,
+      request.customerIdentity,
+      tenant,
+    );
   }
 
   // ESP-04 M2 — DEVELOPMENT AND TESTS ONLY: the payment simulator for the
