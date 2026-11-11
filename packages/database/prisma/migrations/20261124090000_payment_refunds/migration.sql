@@ -82,7 +82,8 @@
 -- Permissions: the new tenant permission orders.refund is granted to every
 -- business's built-in administrator role (the business owner), and a new
 -- built-in access level "Refund Manager" (orders.view + orders.refund) is
--- created for every business, for the owner to assign per location. No other
+-- created for every business that has its built-in access levels, for the
+-- owner to assign per location. No other
 -- role is touched; CENTERIVO platform operators are not business staff and
 -- gain nothing.
 --
@@ -276,6 +277,12 @@ BEGIN
   ALTER TABLE "PaymentRefundEvent" ADD CONSTRAINT "PaymentRefundEvent_tenantId_refundId_fkey" FOREIGN KEY ("tenantId", "refundId") REFERENCES "PaymentRefund"("tenantId", "id") ON DELETE RESTRICT ON UPDATE RESTRICT;
   ALTER TABLE "PaymentRefundEvent" ADD CONSTRAINT "PaymentRefundEvent_tenantId_actorInternalUserId_fkey" FOREIGN KEY ("tenantId", "actorInternalUserId") REFERENCES "InternalUser"("tenantId", "id") ON DELETE RESTRICT ON UPDATE RESTRICT;
   ALTER TABLE "PaymentRefundEvent" ADD CONSTRAINT "PaymentRefundEvent_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+
+  -- The Security 4C ownership guard, as on every business-owned table (the
+  -- history is append-only as well).
+  CREATE TRIGGER "PaymentRefundEvent_tenantId_immutable" BEFORE UPDATE OF "tenantId" ON "PaymentRefundEvent"
+    FOR EACH ROW WHEN (OLD."tenantId" IS DISTINCT FROM NEW."tenantId")
+    EXECUTE FUNCTION "reject_tenant_reassignment"();
 
   -- The refund rules (see the header). BEFORE INSERT OR UPDATE OR DELETE.
   CREATE FUNCTION "payment_refund_guard"() RETURNS trigger
@@ -729,13 +736,20 @@ BEGIN
      AND r."isSystem" = true
   ON CONFLICT ("roleId", "permissionKey") DO NOTHING;
 
-  -- The built-in "Refund Manager" access level for every business (the same
-  -- definition as @mocha-house/contracts REFUND_MANAGER_ROLE).
+  -- The built-in "Refund Manager" access level (the same definition as
+  -- @mocha-house/contracts REFUND_MANAGER_ROLE) for every business that has
+  -- its built-in access levels — the ones with the built-in administrator
+  -- role, exactly those the orders.refund grant above reaches. A business
+  -- without built-in roles gets none (its owner has no orders.refund to
+  -- grant either); new businesses get both at provisioning.
   INSERT INTO "InternalRole" ("id", "key", "displayName", "description", "isSystem", "createdAt", "updatedAt", "tenantId")
   SELECT gen_random_uuid()::text, 'refund-manager', 'Refund Manager',
          'Issues card refunds for orders at assigned locations. Refunds go back to the original card only.',
          true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, t."id"
-    FROM "Tenant" t;
+    FROM "Tenant" t
+   WHERE EXISTS (
+     SELECT 1 FROM "InternalRole" admin
+      WHERE admin."tenantId" = t."id" AND admin."key" = 'platform-administrator' AND admin."isSystem" = true);
   INSERT INTO "InternalRolePermission" ("roleId", "permissionKey", "tenantId", "createdAt")
   SELECT r."id", k.key, r."tenantId", CURRENT_TIMESTAMP
     FROM "InternalRole" r

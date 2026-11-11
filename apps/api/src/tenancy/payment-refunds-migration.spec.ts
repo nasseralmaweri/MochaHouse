@@ -311,6 +311,12 @@ describe('ESP-04 M5a payment refunds migration (scratch database)', () => {
           [`admin-role-${slug}`, `manager-role-${slug}`, tenantId],
         );
       }
+      // A business without built-in access levels: given nothing.
+      await run(
+        scratch,
+        `INSERT INTO "Tenant" (id, slug, name, status, "updatedAt")
+         VALUES ('01a0db02-f800-7000-8000-c5a0000000d1', 'bare', 'Bare', 'ACTIVE', now())`,
+      );
       await paidOrder(scratch);
       await applyMigrations(scratch.url, thisOne);
       completed = await paidOrder(scratch);
@@ -320,7 +326,7 @@ describe('ESP-04 M5a payment refunds migration (scratch database)', () => {
       await scratch?.drop();
     });
 
-    it('grants orders.refund to every business owner role and creates the Refund Manager access level; nothing else changes', async () => {
+    it('grants orders.refund to every business owner role and creates the Refund Manager access level for each business with built-in access levels (none for one without); nothing else changes', async () => {
       const { rows } = await run(
         scratch,
         `SELECT r."tenantId", r.key, r."isSystem",
