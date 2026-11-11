@@ -396,7 +396,10 @@ in [payment-reconciliation.md](payment-reconciliation.md#abandoned-stripe-paymen
 
 ## Not in M3 / M4
 
-- Refunds (M5). Gift cards on intents (M6). Live mode (M7).
+- Refunds (M5). M5a adds only the foundation: the refund record and its rules, and the
+  adapter's refund methods, which nothing calls yet. See
+  [payment-refunds.md](payment-refunds.md).
+- Gift cards on intents (M6). Live mode (M7).
 - Wallets, Link and other payment methods (B4: cards only).
 
 ## Before any real test-mode run (owner, Stripe Dashboard)

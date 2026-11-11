@@ -172,13 +172,23 @@ describe('SC1d tenant provisioning (integration, scratch database)', () => {
     });
     expect(roles.map((r) => [r.key, r.isSystem])).toEqual([
       ['platform-administrator', true],
+      // ESP-04 M5a — the owner's way to let someone refund.
+      ['refund-manager', true],
       ['store-manager', true],
     ]);
     expect(roles[0].permissions.map((p) => p.permissionKey).sort()).toEqual(
       [...INTERNAL_PERMISSION_KEYS].sort(),
     );
-    expect(roles[1].permissions.map((p) => p.permissionKey).sort()).toEqual(
+    expect(roles[1].permissions.map((p) => p.permissionKey).sort()).toEqual([
+      'orders.refund',
+      'orders.view',
+    ]);
+    expect(roles[2].permissions.map((p) => p.permissionKey).sort()).toEqual(
       [...STORE_MANAGER_ROLE.permissionKeys].sort(),
+    );
+    // Store Manager never refunds.
+    expect(roles[2].permissions.map((p) => p.permissionKey)).not.toContain(
+      'orders.refund',
     );
 
     const users = await prisma.internalUser.findMany({

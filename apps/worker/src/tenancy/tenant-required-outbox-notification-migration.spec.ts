@@ -100,7 +100,10 @@ const tenantTables = Object.entries(MODEL_TENANCY)
       // ESP-04 M1 added restaurant payment accounts after this migration.
       model !== 'TenantPaymentAccount' &&
       // ESP-03 PR 5 added support notes after this migration.
-      model !== 'PaymentReconciliationNote',
+      model !== 'PaymentReconciliationNote' &&
+      // ESP-04 M5a added payment refunds after this migration.
+      model !== 'PaymentRefund' &&
+      model !== 'PaymentRefundEvent',
   );
 
 const baseUrl = process.env.DATABASE_URL!;

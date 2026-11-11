@@ -4,6 +4,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import {
   INTERNAL_PERMISSION_KEYS,
   PLATFORM_ADMINISTRATOR_ROLE,
+  REFUND_MANAGER_ROLE,
   STORE_MANAGER_ROLE,
 } from '@mocha-house/contracts';
 import { PrismaClient } from '../src/generated/prisma/client';
@@ -487,6 +488,50 @@ async function seedMochaHouseBusinessData(
         },
         update: {},
         create: { tenantId, roleId: storeManagerRole.id, permissionKey },
+      });
+    }
+  }
+
+  // ESP-04 M5a — the built-in "Refund Manager" access level (LOCATION-scoped:
+  // orders.view + orders.refund), from the shared definition provisioning
+  // uses. The same create-once rule as Store Manager; assigned to NOBODY:
+  // the business owner decides who may refund, and where.
+  const refundManagerExisted =
+    (await prisma.internalRole.findUnique({
+      where: { tenantId_key: { tenantId, key: REFUND_MANAGER_ROLE.key } },
+      select: { id: true },
+    })) !== null;
+  const refundManagerRole = await prisma.internalRole.upsert({
+    where: { tenantId_key: { tenantId, key: REFUND_MANAGER_ROLE.key } },
+    update: safety.reset
+      ? {
+          displayName: REFUND_MANAGER_ROLE.displayName,
+          description: REFUND_MANAGER_ROLE.description,
+          isSystem: true,
+        }
+      : {},
+    create: {
+      tenantId,
+      key: REFUND_MANAGER_ROLE.key,
+      displayName: REFUND_MANAGER_ROLE.displayName,
+      description: REFUND_MANAGER_ROLE.description,
+      isSystem: true,
+    },
+  });
+  if (!refundManagerExisted || safety.reset) {
+    await prisma.internalRolePermission.deleteMany({
+      where: {
+        roleId: refundManagerRole.id,
+        permissionKey: { notIn: [...REFUND_MANAGER_ROLE.permissionKeys] },
+      },
+    });
+    for (const permissionKey of REFUND_MANAGER_ROLE.permissionKeys) {
+      await prisma.internalRolePermission.upsert({
+        where: {
+          roleId_permissionKey: { roleId: refundManagerRole.id, permissionKey },
+        },
+        update: {},
+        create: { tenantId, roleId: refundManagerRole.id, permissionKey },
       });
     }
   }

@@ -8,6 +8,7 @@ import type {
   PaymentIntentResult,
   PaymentProvider,
 } from '@mocha-house/integrations';
+import type { StripeRefundState } from '../../payment/payment-refunds';
 
 // ESP-04 M3 — restaurant customer payments through Stripe PaymentIntents, as
 // DIRECT CHARGES on the restaurant's own connected account (ESP-04 M1): the
@@ -98,6 +99,108 @@ export interface AbandonmentFacts {
   // 'none' (no charge attempted), a Stripe charge status ('failed',
   // 'pending', 'succeeded'), or 'unknown'.
   latestCharge: string;
+}
+
+// --- ESP-04 M5a — refunds -------------------------------------------------
+const REFUND_ID = /^re_[A-Za-z0-9]{1,100}$/;
+// Our own ids (uuid) as sent in a refund's metadata.
+const OUR_ID = /^[A-Za-z0-9-]{1,100}$/;
+const REFUND_LIST_PAGE_SIZE = 100;
+const REFUND_LIST_MAX_PAGES = 10;
+
+// The reasons CENTERIVO sends. `fraudulent` is deliberately not one: it is
+// not a staff decision in V1.
+export type StripeRefundReason = 'requested_by_customer' | 'duplicate';
+const STRIPE_REFUND_REASONS: ReadonlySet<string> = new Set([
+  'requested_by_customer',
+  'duplicate',
+]);
+
+// What the payment says before a refund of it is asked for.
+export interface RefundPaymentFacts {
+  status: string;
+  amount: number;
+  amountReceived: number;
+  currency: string;
+  // What Stripe has refunded of the latest charge (CENTERIVO's and the
+  // Dashboard's together); null when not known.
+  chargeAmountRefunded: number | null;
+  chargeDisputed: boolean | null;
+}
+
+// One refund as Stripe reports it — only ever a refund of the intent asked
+// about.
+export interface RefundObservation {
+  providerRefundId: string;
+  state: StripeRefundState;
+  amountMinorUnits: number;
+  currency: string;
+  // Our PaymentRefund id when CENTERIVO made it; null for a refund made
+  // elsewhere (the Dashboard). Matched only within a read-back of the
+  // payment's own refunds on its own account, never from a webhook body.
+  centerivoRefundId: string | null;
+  // Stripe's failure reason code, when failed or canceled.
+  failureReason: string | null;
+}
+
+export type RefundRequestOutcome =
+  | { kind: 'observed'; refund: RefundObservation }
+  // Nothing was sent to Stripe: definitively no refund.
+  | { kind: 'refused_locally' }
+  // Anything else: the refund may exist. Only a read-back settles it.
+  | { kind: 'unknown'; reason: string };
+
+const REFUND_STATES: ReadonlySet<string> = new Set([
+  'pending',
+  'requires_action',
+  'succeeded',
+  'failed',
+  'canceled',
+]);
+
+// A refund object of THIS intent, in our vocabulary; null when it is not a
+// refund, or is another intent's.
+export function observeRefund(
+  refund: Stripe.Refund | null | undefined,
+  reference: string,
+): RefundObservation | null {
+  if (
+    !refund ||
+    typeof refund !== 'object' ||
+    typeof refund.id !== 'string' ||
+    !REFUND_ID.test(refund.id) ||
+    !Number.isSafeInteger(refund.amount) ||
+    refund.amount <= 0 ||
+    typeof refund.currency !== 'string'
+  ) {
+    return null;
+  }
+  const intent =
+    typeof refund.payment_intent === 'string'
+      ? refund.payment_intent
+      : (refund.payment_intent?.id ?? null);
+  if (intent !== reference) return null;
+  const status = String(refund.status);
+  const metadataId = refund.metadata?.centerivo_refund_id;
+  const failure = refund.failure_reason;
+  return {
+    providerRefundId: refund.id,
+    state: REFUND_STATES.has(status)
+      ? (status as StripeRefundState)
+      : 'unknown',
+    amountMinorUnits: refund.amount,
+    currency: refund.currency.toUpperCase(),
+    centerivoRefundId:
+      typeof metadataId === 'string' && OUR_ID.test(metadataId)
+        ? metadataId
+        : null,
+    failureReason:
+      typeof failure === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(failure)
+        ? failure
+        : failure
+          ? 'unknown'
+          : null,
+  };
 }
 
 export class PaymentEventVerificationError extends Error {
@@ -334,6 +437,201 @@ export class StripePaymentIntentProvider
             ? 'unknown'
             : String(charge.status),
     };
+  }
+
+  // --- ESP-04 M5a — refunds (adapter only: nothing in M5a calls these) ------
+  //
+  // A refund is made on the ORIGINAL payment intent, on the connected account
+  // it was made on (a direct charge: the restaurant's balance funds it; no
+  // application fee to return, no transfer to reverse). Refund safety mirrors
+  // payment safety (safeguard 1): the only definitive "nothing was refunded"
+  // answer here is a LOCAL refusal, made before anything is sent. ANY answer
+  // from Stripe that is not a refund for this intent — a 4xx of any kind, an
+  // idempotency conflict, a rate limit, a 5xx, a timeout — is "unknown": the
+  // refund may exist. Only reading refunds back settles anything.
+  //
+  // The Refund object carries no livemode; test mode is guaranteed by the
+  // test-mode key (refused otherwise at startup) and by the intent itself,
+  // read back as test mode (refundFactsFor) before any refund is asked for.
+
+  // What a refund needs to know about the payment first: the intent's state
+  // and amounts, and its latest charge (what Stripe has refunded of it, and
+  // whether it is disputed). Null when it cannot be read, is live, or is
+  // another intent.
+  async refundFactsFor(input: {
+    reference: string;
+    account: PaymentAccountContext;
+  }): Promise<RefundPaymentFacts | null> {
+    const account = input.account.connectedAccountId;
+    if (
+      !INTENT_ID.test(input.reference) ||
+      account === null ||
+      !ACCOUNT_ID.test(account)
+    ) {
+      return null;
+    }
+    let intent: Stripe.PaymentIntent;
+    try {
+      intent = await this.stripe.paymentIntents.retrieve(
+        input.reference,
+        { expand: ['latest_charge'] },
+        { stripeAccount: account },
+      );
+    } catch {
+      return null;
+    }
+    if (intent?.id !== input.reference || intent.livemode !== false) {
+      return null;
+    }
+    const charge = intent.latest_charge;
+    const expanded = charge !== null && typeof charge === 'object';
+    return {
+      status: String(intent.status),
+      amount: intent.amount,
+      amountReceived: intent.amount_received,
+      currency: String(intent.currency).toUpperCase(),
+      // Null when the latest charge was not expanded (proves nothing).
+      chargeAmountRefunded: expanded ? charge.amount_refunded : null,
+      chargeDisputed: expanded ? charge.disputed : null,
+    };
+  }
+
+  // Ask Stripe for ONE refund operation, with that operation's own key.
+  // Every retry of the operation must send the same key and the same
+  // parameters (Stripe refuses a key reused with others).
+  async createRefund(input: {
+    reference: string;
+    account: PaymentAccountContext;
+    amountMinorUnits: number;
+    currency: string;
+    reason: StripeRefundReason;
+    // Our PaymentRefund id, and its business: the only metadata sent.
+    refundId: string;
+    tenantId: string;
+    idempotencyKey: string;
+  }): Promise<RefundRequestOutcome> {
+    const account = input.account.connectedAccountId;
+    if (
+      !INTENT_ID.test(input.reference) ||
+      account === null ||
+      !ACCOUNT_ID.test(account) ||
+      !Number.isSafeInteger(input.amountMinorUnits) ||
+      input.amountMinorUnits <= 0 ||
+      !/^[A-Z]{3}$/.test(input.currency) ||
+      !STRIPE_REFUND_REASONS.has(input.reason) ||
+      !OUR_ID.test(input.refundId) ||
+      !OUR_ID.test(input.tenantId) ||
+      input.idempotencyKey.length === 0 ||
+      input.idempotencyKey.length > 255
+    ) {
+      // Nothing was sent: definitively no refund.
+      return { kind: 'refused_locally' };
+    }
+    let refund: Stripe.Refund;
+    try {
+      refund = await this.stripe.refunds.create(
+        {
+          payment_intent: input.reference,
+          amount: input.amountMinorUnits,
+          reason: input.reason,
+          metadata: {
+            centerivo_tenant_id: input.tenantId,
+            centerivo_refund_id: input.refundId,
+          },
+        },
+        { stripeAccount: account, idempotencyKey: input.idempotencyKey },
+      );
+    } catch (error) {
+      return { kind: 'unknown', reason: `stripe_refund:${errorCode(error)}` };
+    }
+    const observed = observeRefund(refund, input.reference);
+    if (
+      !observed ||
+      observed.amountMinorUnits !== input.amountMinorUnits ||
+      observed.currency !== input.currency ||
+      observed.centerivoRefundId !== input.refundId
+    ) {
+      return { kind: 'unknown', reason: 'stripe_refund:unexpected_answer' };
+    }
+    return { kind: 'observed', refund: observed };
+  }
+
+  // One refund as Stripe holds it now, on the payment's account. Null when
+  // it cannot be read or is not a refund of this intent.
+  async retrieveRefund(input: {
+    providerRefundId: string;
+    reference: string;
+    account: PaymentAccountContext;
+  }): Promise<RefundObservation | null> {
+    const account = input.account.connectedAccountId;
+    if (
+      !REFUND_ID.test(input.providerRefundId) ||
+      !INTENT_ID.test(input.reference) ||
+      account === null ||
+      !ACCOUNT_ID.test(account)
+    ) {
+      return null;
+    }
+    let refund: Stripe.Refund;
+    try {
+      refund = await this.stripe.refunds.retrieve(
+        input.providerRefundId,
+        {},
+        { stripeAccount: account },
+      );
+    } catch {
+      return null;
+    }
+    const observed = observeRefund(refund, input.reference);
+    return observed?.providerRefundId === input.providerRefundId
+      ? observed
+      : null;
+  }
+
+  // Every refund of this intent, on its account (CENTERIVO's and the
+  // Dashboard's), newest first. `complete` is false when there were more
+  // than the bounded number of pages read. Null when they cannot be read or
+  // the list holds a refund of another intent.
+  async listRefundsFor(input: {
+    reference: string;
+    account: PaymentAccountContext;
+  }): Promise<{ refunds: RefundObservation[]; complete: boolean } | null> {
+    const account = input.account.connectedAccountId;
+    if (
+      !INTENT_ID.test(input.reference) ||
+      account === null ||
+      !ACCOUNT_ID.test(account)
+    ) {
+      return null;
+    }
+    const refunds: RefundObservation[] = [];
+    let startingAfter: string | undefined;
+    for (let page = 0; page < REFUND_LIST_MAX_PAGES; page++) {
+      let list: Stripe.ApiList<Stripe.Refund>;
+      try {
+        list = await this.stripe.refunds.list(
+          {
+            payment_intent: input.reference,
+            limit: REFUND_LIST_PAGE_SIZE,
+            ...(startingAfter ? { starting_after: startingAfter } : {}),
+          },
+          { stripeAccount: account },
+        );
+      } catch {
+        return null;
+      }
+      if (!list || !Array.isArray(list.data)) return null;
+      for (const item of list.data) {
+        const observed = observeRefund(item, input.reference);
+        if (!observed) return null;
+        refunds.push(observed);
+      }
+      if (!list.has_more || list.data.length === 0) {
+        return { refunds, complete: true };
+      }
+      startingAfter = list.data[list.data.length - 1].id;
+    }
+    return { refunds, complete: false };
   }
 
   // Verifies a payment-events webhook (B1: its own signing secret) over the

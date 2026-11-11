@@ -119,6 +119,9 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     // R1 / S5a — order closure foundation.
     OrderClosure: 'tenant',
     OrderRefundObligation: 'tenant',
+    // ESP-04 M5a — payment refunds and their history.
+    PaymentRefund: 'tenant',
+    PaymentRefundEvent: 'tenant',
 
     // Internal users, authorization & audit (tenant-scoped per ADR-4)
     InternalUser: 'tenant',

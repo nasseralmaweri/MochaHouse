@@ -1944,7 +1944,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "orders.cancel", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.create", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "notifications.routing.view", "notifications.routing.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide", "reports.view", "billing.view", "billing.manage", "payments.connect"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "orders.cancel", "orders.refund", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.create", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "notifications.routing.view", "notifications.routing.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide", "reports.view", "billing.view", "billing.manage", "payments.connect"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export interface BuiltInInternalRole {
     key: string;
@@ -1954,6 +1954,7 @@ export interface BuiltInInternalRole {
 }
 export declare const PLATFORM_ADMINISTRATOR_ROLE: BuiltInInternalRole;
 export declare const STORE_MANAGER_ROLE: BuiltInInternalRole;
+export declare const REFUND_MANAGER_ROLE: BuiltInInternalRole;
 export declare const BUILT_IN_INTERNAL_ROLES: readonly BuiltInInternalRole[];
 export type SubscriptionModuleKey = "core" | "operations" | "loyalty" | "promotions" | "giftcards" | "crm" | "careers" | "franchising" | "cms" | "marketing";
 export type OptionalModuleKey = Exclude<SubscriptionModuleKey, "core">;

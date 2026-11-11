@@ -47,6 +47,12 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: 'Reject and cancel orders at their locations',
     definition: 'Reject and cancel orders',
   },
+  'orders.refund': {
+    group: 'Orders',
+    effectiveAll: 'Refund card payments at all locations',
+    effectiveScoped: 'Refund card payments at their locations',
+    definition: 'Refund card payments',
+  },
   'operations.view': {
     group: 'Operations',
     effectiveAll: 'View store operations at all locations',
@@ -391,6 +397,7 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'orders.view',
   'orders.manage_status',
   'orders.cancel',
+  'orders.refund',
   'operations.view',
   'operations.tasks.complete',
   'operations.exceptions.manage',

@@ -668,6 +668,22 @@ async function cardRefundDue(
       reconciliationRequired: true,
     },
   });
+  // ESP-04 M5a — a card refund of this payment still waiting for Stripe's
+  // answer: its outcome must be known before the order is closed (the
+  // database refuses it too, OrderClosure_refund_in_flight). Refunds already
+  // answered count towards the obligation this closure creates.
+  const refundsInFlight = await tx.paymentRefund.count({
+    where: {
+      tenantId: order.tenantId,
+      paymentAttemptId: order.paymentAttemptId,
+      status: { in: ['REQUESTED', 'PENDING', 'UNKNOWN'] },
+    },
+  });
+  if (refundsInFlight > 0) {
+    throw new ConflictException(
+      'This order has a card refund still in progress, so it cannot be closed until its outcome is known. Try again later or contact support.',
+    );
+  }
   const external =
     order.subtotal -
     order.promotionDiscountMinorUnits -

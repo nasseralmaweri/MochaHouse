@@ -84,6 +84,8 @@ model Tenant {
   paymentReconciliationEvents          PaymentReconciliationEvent[]
   orderClosures                        OrderClosure[]
   orderRefundObligations               OrderRefundObligation[]
+  paymentRefunds                       PaymentRefund[]
+  paymentRefundEvents                  PaymentRefundEvent[]
   orders                               Order[]
   orderLines                           OrderLine[]
   orderStatusHistories                 OrderStatusHistory[]
@@ -1384,6 +1386,8 @@ model PaymentAttempt {
   checkoutSnapshot   CheckoutSnapshot?
   // R1 / S5a — at most one refund obligation, through its Order.
   refundObligations  OrderRefundObligation[]
+  // ESP-04 M5a — the refunds of this payment (CENTERIVO and external).
+  refunds            PaymentRefund[]
   // Security 4C-3 — the checkout location, now a composite foreign key: a
   // payment attempt can only name a Location of its own business. Locations
   // are never deleted while a payment references them (Restrict, like
@@ -1772,6 +1776,8 @@ model Order {
   // only by the closure workflow updating an existing order.
   closure                 OrderClosure?
   refundObligation        OrderRefundObligation?
+  // ESP-04 M5a — the card refunds of this order's payment.
+  refunds                 PaymentRefund[]
 
   // Milestone S0D-1 / S0D-2C-1 — the owning tenant. REQUIRED since
   // S0D-2C-1: copied from its PaymentAttempt, whose tenant is that of the
@@ -1906,6 +1912,148 @@ model OrderRefundObligation {
   @@index([tenantId, status])
   @@index([paymentAttemptId])
   @@index([settledByInternalUserId])
+}
+
+// --- ESP-04 M5a, the refund foundation ---------------------------------------
+// One row per refund OPERATION on the ORIGINAL Stripe payment of an order (a
+// direct charge on the restaurant's connected account): a refund CENTERIVO
+// asks Stripe for (origin CENTERIVO — saved REQUESTED before Stripe is ever
+// called, with its own server-generated idempotency key, the same for every
+// retry of that operation), or one made outside CENTERIVO, in the
+// restaurant's Stripe Dashboard (origin EXTERNAL — recorded from what Stripe
+// reports). Nothing in M5a moves money or calls Stripe.
+//
+// Statuses: REQUESTED (saved, Stripe not yet answered), PENDING (Stripe
+// accepted it; the money is on its way), SUCCEEDED, FAILED / CANCELED (Stripe
+// says it did not happen), UNKNOWN (an answer was lost: it may have
+// happened), NOT_CREATED (proven never created at Stripe, with its recorded
+// evidence: NEVER_SENT, or STRIPE_HISTORY_VERIFIED — a complete read-back of
+// the payment's refunds past the idempotency window), and
+// FAILED_AFTER_SUCCESS (it succeeded, then Stripe returned the money — a
+// card refund can fail later). REQUESTED, PENDING, UNKNOWN and
+// SUCCEEDED refunds count against what is left to refund; the others give
+// their amount back.
+//
+// Database guarantees (migration 20261124090000_payment_refunds):
+//   - composite tenant keys to the order, its payment and the staff members;
+//     only a CONFIRMED Stripe payment of that order, on its account, in its
+//     currency; a CENTERIVO refund only for a COMPLETED, REJECTED or
+//     CANCELLED order;
+//   - capacity: a CENTERIVO refund never takes the payment's refunds over
+//     what was charged (the payment row is locked; concurrent requests are
+//     serialised);
+//   - identity never changes, the Stripe refund id is written once and
+//     unique, status moves only forward, success / late-failure times come
+//     from the database clock, and a refund is never deleted;
+//   - a late failure blocks another CENTERIVO refund of the payment until a
+//     staff member records a review (once);
+//   - every creation, status change and review is written to
+//     PaymentRefundEvent by the database itself.
+// What is still owed on an order's refund obligation is the obligation minus
+// the refunds of its payment; an obligation is settled (REFUNDED, PROCESSOR)
+// only once succeeded refunds cover all of it and none is in flight or an
+// unreviewed late failure. A later late failure is flagged and owed again:
+// what is owed always comes from the refunds, never the obligation's status.
+model PaymentRefund {
+  id                                  String         @id @default(uuid(7))
+  orderId                             String
+  order                               Order          @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  paymentAttemptId                    String
+  paymentAttempt                      PaymentAttempt @relation(fields: [tenantId, paymentAttemptId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  // "stripe" (CHECK).
+  provider                            String
+  // The connected account (acct_…) the payment was made on; the refund is
+  // made there and nowhere else (trigger).
+  providerAccountId                   String
+  // CENTERIVO | EXTERNAL (CHECK).
+  origin                              String
+  // Positive integer minor units (CHECK).
+  amountMinorUnits                    Int
+  // The payment's own currency, upper case (CHECK, trigger).
+  currency                            String
+  // CENTERIVO only: an UPPER_SNAKE reason code; the staff-visible wording
+  // lives in code.
+  reasonCode                          String?
+  // CENTERIVO only: an internal note, 1-500 characters. Never sent to Stripe,
+  // never shown to the customer, never logged.
+  note                                String?
+  // CENTERIVO only: the staff member who asked for it.
+  requestedByInternalUserId           String?
+  requestedBy                         InternalUser?  @relation("PaymentRefundRequestedBy", fields: [tenantId, requestedByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  // CENTERIVO only: the server-generated Stripe idempotency key of THIS
+  // operation (unique). A retry of the operation always reuses it.
+  idempotencyKey                      String?        @unique
+  status                              String
+  // Stripe's refund id (re_…): written once, unique.
+  providerRefundId                    String?        @unique
+  // Stripe's failure reason code (FAILED / CANCELED / FAILED_AFTER_SUCCESS).
+  providerFailureReason               String?
+  // When CENTERIVO first sent the request to Stripe (written once): bounds
+  // how long the same idempotency key may be replayed.
+  firstSentAt                         DateTime?
+  // Set by the database when the refund succeeds; kept after a late failure.
+  succeededAt                         DateTime?
+  // Set by the database when a succeeded refund's money came back.
+  failedAfterSuccessAt                DateTime?
+  // A staff member's review of a late failure (all three, once).
+  lateFailureReviewedAt               DateTime?
+  lateFailureReviewedByInternalUserId String?
+  lateFailureReviewedBy               InternalUser?  @relation("PaymentRefundLateFailureReviewedBy", fields: [tenantId, lateFailureReviewedByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  lateFailureReviewNote               String?
+  // NOT_CREATED only: why it is known never to have been created —
+  // NEVER_SENT, or STRIPE_HISTORY_VERIFIED (a complete read-back of the
+  // payment's refunds at Stripe, past the idempotency window, showing none of
+  // this operation) — and when the database recorded it. Never inferred from
+  // a timeout or time passing.
+  notCreatedEvidence                  String?
+  notCreatedRecordedAt                DateTime?
+  createdAt                           DateTime       @default(now())
+  updatedAt                           DateTime       @updatedAt
+
+  events PaymentRefundEvent[]
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([paymentAttemptId])
+  @@index([orderId])
+  @@index([requestedByInternalUserId])
+  @@index([lateFailureReviewedByInternalUserId])
+}
+
+// ESP-04 M5a — the append-only history of a payment refund. Creation, every
+// status change and a late-failure review are written by the database
+// itself; the application adds attributed entries (a staff or platform
+// action). Never updated or deleted (trigger).
+model PaymentRefundEvent {
+  id                      String        @id @default(uuid(7))
+  refundId                String
+  refund                  PaymentRefund @relation(fields: [tenantId, refundId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  // UPPER_SNAKE (CHECK): CREATED, STATUS_CHANGED, LATE_FAILURE_REVIEWED, …
+  action                  String
+  fromStatus              String?
+  toStatus                String?
+  // SYSTEM | STAFF | PLATFORM (CHECK).
+  actorKind               String
+  actorInternalUserId     String?
+  actor                   InternalUser? @relation("PaymentRefundEventActor", fields: [tenantId, actorInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  // A CENTERIVO platform operator (support): an id from the platform plane,
+  // deliberately never a foreign key from business data to platform data.
+  actorPlatformOperatorId String?
+  // A small machine-readable object (codes, amounts), at most 2000 bytes;
+  // never free text or personal data.
+  detail                  Json?
+  createdAt               DateTime      @default(now())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([refundId, createdAt])
+  @@index([tenantId])
+  @@index([actorInternalUserId])
 }
 
 // Immutable line snapshot captured at order-creation time: prices and
@@ -2206,6 +2354,11 @@ model InternalUser {
   // obligations this user settled by hand.
   orderClosuresActed            OrderClosure[]               @relation("OrderClosureActor")
   orderRefundsSettled           OrderRefundObligation[]      @relation("OrderRefundObligationSettledBy")
+  // ESP-04 M5a — refunds this staff member asked for, late refund failures
+  // they reviewed, and refund history entries they wrote.
+  paymentRefundsRequested       PaymentRefund[]              @relation("PaymentRefundRequestedBy")
+  paymentRefundsReviewed        PaymentRefund[]              @relation("PaymentRefundLateFailureReviewedBy")
+  paymentRefundEvents           PaymentRefundEvent[]         @relation("PaymentRefundEventActor")
   // Milestone 7A — the manual Mocha Bean adjustments this HQ user performed.
   // onDelete: Restrict (see MochaBeanLedgerEntry) so an internal user who
   // has moved customer Beans cannot be hard-deleted and orphan that record.
