@@ -197,6 +197,9 @@ export interface PaymentIntentProvider {
   cancelPaymentIntent(input: {
     reference: string;
     account: PaymentAccountContext;
+    // ESP-04 M4b — a stable key for this cancellation (derived from the
+    // payment by the caller), so a retried cancel is the same request.
+    idempotencyKey?: string;
   }): Promise<PaymentIntentResult>;
 }
 

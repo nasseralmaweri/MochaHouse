@@ -19,6 +19,7 @@ import {
   CLIENT_PAYMENT_KEY_NOT_ACCEPTED,
   PAYMENT_SIMULATION_NOT_AVAILABLE,
   SIMULATED_PAYMENT_OUTCOMES,
+  type CheckoutPaymentActivityRequest,
   type CheckoutPaymentCheckRequest,
   type CheckoutPaymentRequiredResponse,
   type CheckoutPaymentSimulationRequest,
@@ -202,6 +203,8 @@ class PaymentNotConfirmedError extends ConflictException {
 // abandoned by the request that created it (a provider call is bounded far
 // below this).
 const STRANDED_ATTEMPT_MS = 10 * 60 * 1000;
+// ESP-04 M4b — a payment's customer activity is written at most this often.
+export const PAYMENT_ACTIVITY_WRITE_INTERVAL_MS = 60 * 1000;
 
 const FULFILMENT_RETRY_MESSAGE =
   'Your payment was received but your order could not be confirmed just ' +
@@ -1579,6 +1582,46 @@ export class CheckoutService {
       });
     }
     return this.completed(await this.replay(latest));
+  }
+
+  // ESP-04 M4b — the customer's checkout page is still open on this
+  // checkout's payment (a heartbeat). Bound exactly like a payment check:
+  // this business, this location, this customer (or guest) and the session's
+  // own token (HttpOnly cookie); anything else is the same generic refusal.
+  // Recorded only on the session's LIVE Stripe payment that waits for its
+  // customer, at most once a minute (a conditional update), and never says
+  // whether anything was recorded. The browser names no payment and sends no
+  // time: the time is the server's.
+  async recordPaymentActivity(
+    request: CheckoutPaymentActivityRequest,
+    customerIdentity: CustomerIdentity | undefined,
+    tenant: TenantContext,
+  ): Promise<void> {
+    const session = await this.sessionForPayment(
+      request,
+      customerIdentity,
+      tenant,
+    );
+    const now = new Date();
+    await this.prisma.paymentAttempt.updateMany({
+      where: {
+        tenantId: session.tenantId,
+        checkoutSessionId: session.id,
+        provider: 'stripe',
+        status: 'PENDING',
+        paymentState: 'REQUIRES_CUSTOMER_ACTION',
+        providerReference: { not: null },
+        OR: [
+          { customerActiveAt: null },
+          {
+            customerActiveAt: {
+              lt: new Date(now.getTime() - PAYMENT_ACTIVITY_WRITE_INTERVAL_MS),
+            },
+          },
+        ],
+      },
+      data: { customerActiveAt: now },
+    });
   }
 
   // ESP-04 M2 — DEVELOPMENT AND TESTS ONLY: plays the customer's part with the

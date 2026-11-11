@@ -1,10 +1,15 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Stripe, StripeElements } from "@stripe/stripe-js";
-import { checkCheckoutPaymentFromBrowser } from "@/lib/api-client";
+import {
+  checkCheckoutPaymentFromBrowser,
+  sendCheckoutPaymentActivityFromBrowser,
+} from "@/lib/api-client";
 import {
   confirmWithStripe,
+  createPaymentHeartbeat,
   createSingleFlight,
+  PAYMENT_HEARTBEAT_INTERVAL_MS,
   createStripeLoader,
   paymentReturnUrl,
   stripeAppearanceFrom,
@@ -192,6 +197,108 @@ describe("confirming with Stripe (mocked)", () => {
   });
 });
 
+// ESP-04 M4b — the payment page's heartbeat.
+describe("the payment page heartbeat", () => {
+  function fakeEnvironment() {
+    let visible = true;
+    let tick: (() => void) | null = null;
+    const listeners = new Set<() => void>();
+    return {
+      env: {
+        isVisible: () => visible,
+        onVisibilityChange: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        setInterval: jest.fn((fn: () => void, ms: number) => {
+          expect(ms).toBe(PAYMENT_HEARTBEAT_INTERVAL_MS);
+          tick = fn;
+          return 42;
+        }),
+        clearInterval: jest.fn(),
+      },
+      tick: () => tick?.(),
+      setVisible: (value: boolean) => {
+        visible = value;
+        for (const listener of listeners) listener();
+      },
+      listeners,
+    };
+  }
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  it("beats at once, every 2 minutes while visible, never while hidden, and at once when visible again", async () => {
+    const send = jest.fn(() => Promise.resolve(true));
+    const fake = fakeEnvironment();
+    const beat = createPaymentHeartbeat(send, fake.env);
+    beat.start();
+    expect(PAYMENT_HEARTBEAT_INTERVAL_MS).toBe(120_000);
+    expect(send).toHaveBeenCalledTimes(1);
+    await flush();
+    fake.tick();
+    expect(send).toHaveBeenCalledTimes(2);
+    await flush();
+    fake.setVisible(false);
+    fake.tick();
+    expect(send).toHaveBeenCalledTimes(2); // hidden: nothing sent
+    fake.setVisible(true);
+    expect(send).toHaveBeenCalledTimes(3); // back: at once
+    beat.stop();
+  });
+
+  it("beats at once when Pay is pressed, never twice at the same time, and tolerates failures", async () => {
+    let release!: () => void;
+    const send = jest
+      .fn<Promise<unknown>, []>()
+      .mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve(true))))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(true);
+    const fake = fakeEnvironment();
+    const beat = createPaymentHeartbeat(send, fake.env);
+    beat.start();
+    beat.pulse(); // the first is still in flight: not doubled
+    expect(send).toHaveBeenCalledTimes(1);
+    release();
+    await flush();
+    beat.pulse(); // fails…
+    await flush();
+    beat.pulse(); // …and the next still goes
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+
+  it("stops completely (no timer, no listener, no more beats)", async () => {
+    const send = jest.fn(() => Promise.resolve(true));
+    const fake = fakeEnvironment();
+    const beat = createPaymentHeartbeat(send, fake.env);
+    beat.start();
+    await flush();
+    beat.stop();
+    expect(fake.env.clearInterval).toHaveBeenCalledWith(42);
+    expect(fake.listeners.size).toBe(0);
+    fake.tick();
+    beat.pulse();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends only the location, and never throws", async () => {
+    const original = global.fetch;
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockRejectedValueOnce(new Error("offline"));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      expect(await sendCheckoutPaymentActivityFromBrowser("loc-1")).toBe(true);
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("/api/checkout/payment/activity");
+      expect(JSON.parse(init.body as string)).toEqual({ locationId: "loc-1" });
+      expect(await sendCheckoutPaymentActivityFromBrowser("loc-1")).toBe(false);
+    } finally {
+      global.fetch = original;
+    }
+  });
+});
+
 describe("one Pay at a time", () => {
   it("ignores presses while a confirmation and its check are in flight", async () => {
     const flight = createSingleFlight();
@@ -294,6 +401,16 @@ describe("the payment panel component (source guarantees)", () => {
     expect(page).toMatch(
       /async function checkPaymentAfterConfirm\(\) \{\s+while \(checkInFlightRef\.current\)/,
     );
+  });
+
+  // ESP-04 M4b.
+  it("runs the heartbeat only while the card form is shown, beats when Pay is pressed, and never waits on it", () => {
+    expect(source).toMatch(/beat\.start\(\);/);
+    expect(source).toMatch(/return \(\) => \{\s+beat\.stop\(\);/);
+    expect(source).toMatch(/document\.visibilityState === "visible"/);
+    // Pressed Pay: pulsed BEFORE confirming, not awaited.
+    expect(source).toMatch(/heartbeat\.current\?\.pulse\(\);\s+await flight\.current\.run/);
+    expect(page).toMatch(/onActivity=\{sendPaymentActivity\}/);
   });
 
   it("pauses the page's other payment actions while a card payment is being confirmed", () => {

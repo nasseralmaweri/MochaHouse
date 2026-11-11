@@ -10,6 +10,7 @@ import {
 } from "@stripe/react-stripe-js";
 import {
   confirmWithStripe,
+  createPaymentHeartbeat,
   createSingleFlight,
   createStripeLoader,
   paymentReturnUrl,
@@ -40,6 +41,7 @@ export function StripePaymentPanel({
   disabled,
   onPayingChange,
   onCheck,
+  onActivity,
 }: {
   context: StripeContext;
   // The frozen amount, formatted (display only).
@@ -51,6 +53,9 @@ export function StripePaymentPanel({
   onPayingChange: (paying: boolean) => void;
   // Ask the server where the payment stands (and apply its answer).
   onCheck: () => Promise<void>;
+  // ESP-04 M4b — tell the server this checkout's page is still open (the
+  // heartbeat; failures are ignored).
+  onActivity: () => Promise<unknown>;
 }) {
   const stripePromise = useMemo(
     () => stripeFor(context),
@@ -98,6 +103,7 @@ export function StripePaymentPanel({
         disabled={disabled}
         onPayingChange={onPayingChange}
         onCheck={onCheck}
+        onActivity={onActivity}
       />
     </Elements>
   );
@@ -108,11 +114,13 @@ function PayForm({
   disabled,
   onPayingChange,
   onCheck,
+  onActivity,
 }: {
   amountLabel: string;
   disabled: boolean;
   onPayingChange: (paying: boolean) => void;
   onCheck: () => Promise<void>;
+  onActivity: () => Promise<unknown>;
 }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -135,9 +143,37 @@ function PayForm({
   }, [paying, onPayingChange]);
   useEffect(() => () => onPayingChange(false), [onPayingChange]);
 
+  // ESP-04 M4b — the heartbeat runs while this card form is shown (it is
+  // shown only while the payment waits for its customer) and stops when it
+  // goes away: paid, processing, closed or unmounted.
+  const activity = useRef(onActivity);
+  useEffect(() => {
+    activity.current = onActivity;
+  }, [onActivity]);
+  const heartbeat = useRef<ReturnType<typeof createPaymentHeartbeat> | null>(null);
+  useEffect(() => {
+    const beat = createPaymentHeartbeat(() => activity.current(), {
+      isVisible: () => document.visibilityState === "visible",
+      onVisibilityChange: (listener) => {
+        document.addEventListener("visibilitychange", listener);
+        return () => document.removeEventListener("visibilitychange", listener);
+      },
+      setInterval: (fn, ms) => window.setInterval(fn, ms),
+      clearInterval: (handle) => window.clearInterval(handle as number),
+    });
+    heartbeat.current = beat;
+    beat.start();
+    return () => {
+      beat.stop();
+      heartbeat.current = null;
+    };
+  }, []);
+
   async function pay(event: React.FormEvent) {
     event.preventDefault();
     if (!stripe || !elements || disabled) return;
+    // Pressing Pay is activity (sent at once; never waited for).
+    heartbeat.current?.pulse();
     await flight.current.run(async () => {
       setPaying(true);
       setMessage(null);

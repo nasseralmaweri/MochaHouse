@@ -22,6 +22,7 @@ import {
   getCheckoutQuoteFromBrowser,
   CartLocationNotHereError,
   checkCheckoutPaymentFromBrowser,
+  sendCheckoutPaymentActivityFromBrowser,
   getLocationMenuFromBrowser,
   simulateCheckoutPaymentFromBrowser,
   startCheckoutSessionFromBrowser,
@@ -455,6 +456,13 @@ export default function CheckoutPage() {
   // check already running may have started BEFORE Stripe confirmed, so it is
   // waited for and a fresh one is made: the page always shows what the
   // server says after the confirmation.
+  // ESP-04 M4b — the card form's heartbeat: this checkout's page is still
+  // open (the location only; the session is in the HttpOnly cookie).
+  async function sendPaymentActivity(): Promise<boolean> {
+    if (!cart.locationId) return false;
+    return sendCheckoutPaymentActivityFromBrowser(cart.locationId);
+  }
+
   async function checkPaymentAfterConfirm() {
     while (checkInFlightRef.current) {
       await checkInFlightRef.current.catch(() => undefined);
@@ -670,6 +678,7 @@ export default function CheckoutPage() {
                   disabled={paymentBusy}
                   onPayingChange={setCardPaying}
                   onCheck={checkPaymentAfterConfirm}
+                  onActivity={sendPaymentActivity}
                 />
               ) : (
                 <p role="alert" className="text-status-warning">

@@ -231,3 +231,61 @@ export function stripeAppearanceFrom(read: (token: string) => string): {
   set("borderRadius", "--cx-radius-control");
   return { theme: "stripe", variables };
 }
+
+// ESP-04 M4b — the payment page's heartbeat: while the card form is open and
+// the page is VISIBLE, it tells the server every 2 minutes (and at once when
+// the page becomes visible again, or when Pay is pressed) that this checkout
+// is still in use, so an open checkout is never cleaned up as abandoned. It
+// carries nothing but the checkout (the server's session cookie), and its
+// failures are ignored: the server then simply sees no activity, and
+// abandonment waits long either way. It never starts, confirms or checks a
+// payment, and never touches the client secret.
+export const PAYMENT_HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000;
+
+export interface HeartbeatEnvironment {
+  isVisible: () => boolean;
+  onVisibilityChange: (listener: () => void) => () => void;
+  setInterval: (fn: () => void, ms: number) => unknown;
+  clearInterval: (handle: unknown) => void;
+}
+
+export function createPaymentHeartbeat(
+  send: () => Promise<unknown>,
+  env: HeartbeatEnvironment,
+): { start: () => void; pulse: () => void; stop: () => void } {
+  let handle: unknown = null;
+  let unsubscribe: (() => void) | null = null;
+  let inFlight = false;
+  let stopped = true;
+  const beat = () => {
+    if (stopped || inFlight || !env.isVisible()) return;
+    inFlight = true;
+    void send()
+      .catch(() => undefined)
+      .finally(() => {
+        inFlight = false;
+      });
+  };
+  return {
+    start(): void {
+      if (!stopped) return;
+      stopped = false;
+      beat();
+      handle = env.setInterval(beat, PAYMENT_HEARTBEAT_INTERVAL_MS);
+      unsubscribe = env.onVisibilityChange(() => {
+        if (env.isVisible()) beat();
+      });
+    },
+    // At once (Pay was pressed), whatever the interval.
+    pulse(): void {
+      beat();
+    },
+    stop(): void {
+      stopped = true;
+      if (handle !== null) env.clearInterval(handle);
+      handle = null;
+      unsubscribe?.();
+      unsubscribe = null;
+    },
+  };
+}

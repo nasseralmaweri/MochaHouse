@@ -273,17 +273,94 @@ describe('ESP-04 M3 Stripe PaymentIntents adapter (offline)', () => {
     ).rejects.toThrow('stripe_client_secret:unavailable');
   });
 
-  it('never cancels (ESP-04 M4) and never takes a one-step charge (gift cards stay off)', async () => {
+  it('never takes a one-step charge (gift cards stay off)', async () => {
     const { provider, intents } = setup();
     expect(provider.acceptsOneStepCharges).toBe(false);
     await expect(provider.charge()).resolves.toMatchObject({
       outcome: 'failed',
     });
-    await expect(
-      provider.cancelPaymentIntent({ reference: 'pi_1' }),
-    ).resolves.toMatchObject({ status: 'unknown' });
     expect(intents.create).not.toHaveBeenCalled();
     expect(intents.retrieve).not.toHaveBeenCalled();
+  });
+
+  // ESP-04 M4b — cancelling an abandoned intent.
+  it('cancels on the stored account with reason "abandoned" and the caller\'s key; any error is unknown', async () => {
+    const { provider, intents } = setup();
+    const created = await provider.createPaymentIntent(request());
+    const reference = (created as { reference: string }).reference;
+    await expect(
+      provider.cancelPaymentIntent({
+        reference,
+        account,
+        idempotencyKey: 'ck_test-key-1:cancel',
+      }),
+    ).resolves.toEqual({ status: 'canceled', reference });
+    expect(intents.stripeCancel).toHaveBeenLastCalledWith(
+      reference,
+      { cancellation_reason: 'abandoned' },
+      { stripeAccount: ACCT, idempotencyKey: 'ck_test-key-1:cancel' },
+    );
+    // Another account's intent, a timeout, a refused state: unknown.
+    await expect(
+      provider.cancelPaymentIntent({
+        reference,
+        account: { tenantId: 'b', connectedAccountId: 'acct_1Other' },
+      }),
+    ).resolves.toMatchObject({ status: 'unknown' });
+    intents.cancelError = stripeError('StripeConnectionError');
+    await expect(
+      provider.cancelPaymentIntent({ reference, account }),
+    ).resolves.toMatchObject({ status: 'unknown' });
+    // Malformed ids are never sent.
+    intents.stripeCancel.mockClear();
+    await expect(
+      provider.cancelPaymentIntent({
+        reference: 'fakepi_1',
+        account,
+      }),
+    ).resolves.toMatchObject({ status: 'unknown' });
+    expect(intents.stripeCancel).not.toHaveBeenCalled();
+  });
+
+  it('reports what abandonment must know: status, amount, money received, next action and the latest charge', async () => {
+    const { provider, intents } = setup();
+    const created = await provider.createPaymentIntent(request());
+    const reference = (created as { reference: string }).reference;
+    await expect(
+      provider.abandonmentFactsFor({ reference, account }),
+    ).resolves.toEqual({
+      status: 'requires_payment_method',
+      amount: 1250,
+      currency: 'USD',
+      amountReceived: 0,
+      nextActionPending: false,
+      latestCharge: 'none',
+    });
+    expect(intents.retrieve).toHaveBeenLastCalledWith(
+      reference,
+      { expand: ['latest_charge'] },
+      { stripeAccount: ACCT },
+    );
+    intents.set(reference, {
+      latest_charge: { status: 'pending' } as Stripe.Charge,
+      next_action: { type: 'redirect_to_url' },
+    });
+    await expect(
+      provider.abandonmentFactsFor({ reference, account }),
+    ).resolves.toMatchObject({
+      latestCharge: 'pending',
+      nextActionPending: true,
+    });
+    intents.set(reference, { latest_charge: 'ch_unexpanded' });
+    await expect(
+      provider.abandonmentFactsFor({ reference, account }),
+    ).resolves.toMatchObject({ latestCharge: 'unknown' });
+    await expect(
+      provider.abandonmentFactsFor({
+        reference,
+        account: { tenantId: 'b', connectedAccountId: 'acct_1Other' },
+      }),
+    ).resolves.toBeNull();
   });
 
   it('verifies payment events by signature over the raw body, with its own secret', () => {

@@ -108,6 +108,8 @@ const CASE_SELECT = {
         { action: { startsWith: 'RECOVERY_' } },
         // ESP-04 M4a — Stripe outcome recovery history.
         { action: { startsWith: 'STRIPE_RECHECK_' } },
+        // ESP-04 M4b — abandoned payment cleanup history.
+        { action: { startsWith: 'STRIPE_ABANDON_' } },
       ],
     },
     select: { action: true, detail: true, createdAt: true },
@@ -139,13 +141,17 @@ export function categoryOf(
       // aside (a failure a retry cannot fix, or its attempts used up) needs
       // people.
       if (payment.provider === 'stripe') {
-        const stripe = recoveryHistoryOf(row.events, now, 'STRIPE_RECHECK');
-        if (stripe.inProgressSince) return 'RECOVERY_IN_PROGRESS';
-        if (
-          (stripe.lastFailure !== null && !stripe.lastFailureRetryable) ||
-          stripe.automaticAttempts >= MAX_AUTOMATIC_ATTEMPTS
-        ) {
-          return 'NEEDS_ATTENTION';
+        // ESP-04 M4b — and likewise for abandoned payment cleanup (a stale
+        // authentication, an intent not provably unpaid).
+        for (const prefix of ['STRIPE_RECHECK', 'STRIPE_ABANDON'] as const) {
+          const stripe = recoveryHistoryOf(row.events, now, prefix);
+          if (stripe.inProgressSince) return 'RECOVERY_IN_PROGRESS';
+          if (
+            (stripe.lastFailure !== null && !stripe.lastFailureRetryable) ||
+            stripe.automaticAttempts >= MAX_AUTOMATIC_ATTEMPTS
+          ) {
+            return 'NEEDS_ATTENTION';
+          }
         }
       }
       return 'AWAITING_PAYMENT_OUTCOME';

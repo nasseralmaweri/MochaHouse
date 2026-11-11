@@ -13,6 +13,7 @@ jest.mock("@/lib/auth/session", () => ({
 import * as checkoutRoute from "./checkout/route";
 import * as paymentRoute from "./checkout/payment/route";
 import * as simulateRoute from "./checkout/payment/simulate/route";
+import * as activityRoute from "./checkout/payment/activity/route";
 import {
   CHECKOUT_SESSION_COOKIE,
   serializeCheckoutSessions,
@@ -173,6 +174,63 @@ describe("POST /api/checkout/payment", () => {
       request("/api/checkout/payment", { locationId: "loc-1" }),
     );
     expect(res.status).toBe(503);
+  });
+});
+
+// ESP-04 M4b — the payment page's heartbeat.
+describe("POST /api/checkout/payment/activity", () => {
+  it("forwards only the location and the cookie's token (never a payment, business or time) and answers 204 with nothing", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const res = await activityRoute.POST(
+      request("/api/checkout/payment/activity", {
+        locationId: "loc-1",
+        paymentAttemptId: "pa-forged",
+        tenantId: "t-forged",
+        at: "2030-01-01T00:00:00Z",
+        checkoutToken: "cs_forged",
+      }),
+    );
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(clearsCheckout(res)).toBe(false);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://api.test/api/v1/orders/checkout-sessions/payment/activity");
+    expect(JSON.parse(init.body as string)).toEqual({
+      locationId: "loc-1",
+      checkoutToken: TOKEN_A,
+    });
+  });
+
+  it("refuses a cross-site request and one without a checkout session, without calling the API", async () => {
+    const crossSite = await activityRoute.POST(
+      request(
+        "/api/checkout/payment/activity",
+        { locationId: "loc-1" },
+        { origin: "http://evil.test", "sec-fetch-site": "cross-site", cookie },
+      ),
+    );
+    expect(crossSite.status).toBe(403);
+    const noSession = await activityRoute.POST(
+      request("/api/checkout/payment/activity", { locationId: "loc-2" }),
+    );
+    expect(noSession.status).toBe(409);
+    const noLocation = await activityRoute.POST(
+      request("/api/checkout/payment/activity", {}),
+    );
+    expect(noLocation.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("passes the API's refusal or rate limit through, and answers 503 when it cannot be reached", async () => {
+    fetchMock.mockResolvedValueOnce(json(429, { message: "slow down" }));
+    expect(
+      (await activityRoute.POST(request("/api/checkout/payment/activity", { locationId: "loc-1" }))).status,
+    ).toBe(429);
+    fetchMock.mockRejectedValueOnce(new Error("down"));
+    expect(
+      (await activityRoute.POST(request("/api/checkout/payment/activity", { locationId: "loc-1" }))).status,
+    ).toBe(503);
   });
 });
 

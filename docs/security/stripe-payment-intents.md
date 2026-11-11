@@ -364,10 +364,38 @@ are in [payment-reconciliation.md](payment-reconciliation.md#stripe-outcome-reco
   need to be on, and no redelivery is needed. Linking only ever goes through
   our records, never through an event's metadata.
 
-## Not in M3 / M4a
+## Abandoned payment cleanup (M4b)
 
-- Cancelling abandoned intents (M4b). Until then, a payment waiting for its
-  customer keeps its holds.
+A Stripe payment waiting for a customer who has long gone is cancelled, but
+only when Stripe proves it unpaid. Its holds are then released. Details are
+in [payment-reconciliation.md](payment-reconciliation.md#abandoned-stripe-payment-cleanup-esp-04-m4b).
+
+- **The heartbeat.**
+  - The open card form tells the server the checkout is still in use: every
+    2 minutes while the page is visible, at once when it becomes visible
+    again, and when Pay is pressed.
+  - Route: `POST /api/v1/orders/checkout-sessions/payment/activity`, body
+    `{ locationId }`, through `/api/checkout/payment/activity`. It is bound
+    to the checkout session, its business, location and customer, exactly
+    like a payment check, and has the same rate limit and origin checks.
+  - It records `PaymentAttempt.customerActiveAt` only on that session's live
+    Stripe payment waiting for its customer, at most once a minute, using
+    the server's clock. It answers `204` with nothing.
+  - Sending a client secret is never counted as activity, and a failed
+    heartbeat changes nothing else.
+- **Only provably unpaid intents are cancelled automatically.** That means
+  `requires_payment_method`, for the frozen amount and currency, with nothing
+  received, no next action, and no latest charge or only a failed one.
+  - An authentication in progress (`requires_action`,
+    `requires_confirmation`) is never cancelled: it stays held, with a
+    `STRIPE_AUTHENTICATION_STALE` case.
+  - Processing or paid intents are settled from Stripe instead: the order is
+    created exactly once.
+- **Holds are released only by Stripe's read-back after the cancel.** The
+  read-back must show the intent cancelled with nothing received.
+
+## Not in M3 / M4
+
 - Refunds (M5). Gift cards on intents (M6). Live mode (M7).
 - Wallets, Link and other payment methods (B4: cards only).
 

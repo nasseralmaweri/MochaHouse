@@ -95,6 +95,8 @@ export const COLUMNS_ADDED_AFTER_4C: Readonly<
     'requestFingerprint',
     // ESP-04 M3 (20261122090000).
     'providerAccountId',
+    // ESP-04 M4b (20261123090000).
+    'customerActiveAt',
   ],
   // SC3c-3 — verified-email stamps (20261029090000).
   InternalUser: ['verifiedEmail', 'emailVerifiedAt'],
