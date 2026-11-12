@@ -123,6 +123,7 @@ describe('InternalAuthGuard', () => {
     lastAuthenticatedAt: null,
     verifiedEmail: null,
     emailVerifiedAt: null,
+    loginInvitedAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     // Milestone S0D-1 — an existing internal user row, backfilled to Tenant #1.

@@ -10,6 +10,15 @@ import {
   unambiguousByTenant,
 } from './unbound-email-match';
 import type { InternalIdentity } from '../infrastructure/internal-identity';
+import { InternalAuditService } from '../../audit/internal-audit.service';
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 'P2002'
+  );
+}
 
 // Milestone S0F — "which businesses may this authenticated human enter?"
 //
@@ -67,6 +76,10 @@ export type ActiveTenantSelection =
 
 @Injectable()
 export class InternalTenantMembershipService {
+  // Dependency-free audit writer (only its transaction is used), so this
+  // service keeps its one-argument constructor.
+  private readonly audit = new InternalAuditService();
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findMemberships(
@@ -93,6 +106,7 @@ export class InternalTenantMembershipService {
         ),
       );
       if (unambiguous.size > 0) {
+        await this.activateInvitedMemberships(identity, unambiguous);
         matchers.push({ id: { in: [...unambiguous.values()] } });
       }
     }
@@ -148,6 +162,59 @@ export class InternalTenantMembershipService {
           a.tenantName.localeCompare(b.tenantName) ||
           a.tenantId.localeCompare(b.tenantId),
       );
+  }
+
+  // V1 launch fix 2 — an invited employee's first sign-in. A staff row an
+  // administrator added (INVITED) becomes ACTIVE — and is bound to THIS
+  // login — only when ALL hold, re-checked in the conditional write itself:
+  //   * the login's email is VERIFIED by the identity provider, and the row
+  //     is the business's single unbound row for that address in this
+  //     provider (findUnboundEmailMatches / unambiguousByTenant — which
+  //     also exclude logins created by public owner self-registration);
+  //   * the row is still INVITED and unbound (compare-and-set: two logins
+  //     racing for one invitation can never both bind);
+  //   * the provider CONFIRMED its login invitation (loginInvitedAt) — so a
+  //     row an administrator merely created, or one from before invitations
+  //     existed, never activates, and knowing an address is never enough:
+  //     the temporary password (or the existing login's own password) is
+  //     delivered only to that mailbox.
+  // SUSPENDED and DISABLED rows are never touched. The same verified person
+  // may hold one such row in each business that invited them; the identity
+  // itself is never duplicated or changed.
+  private async activateInvitedMemberships(
+    identity: InternalIdentity,
+    unambiguous: Map<string, string>,
+  ): Promise<void> {
+    if (!identity.subject || identity.emailVerified !== true) return;
+    const subject = identity.subject;
+    for (const [tenantId, rowId] of unambiguous) {
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          const activated = await tx.internalUser.updateMany({
+            where: {
+              id: rowId,
+              tenantId,
+              externalProvider: identity.provider,
+              externalSubject: null,
+              status: 'INVITED',
+              loginInvitedAt: { not: null },
+            },
+            data: {
+              status: 'ACTIVE',
+              externalSubject: subject,
+              activatedAt: new Date(),
+            },
+          });
+          if (activated.count !== 1) return;
+          await this.audit.recordUserActivated(tx, { internalUserId: rowId });
+        });
+      } catch (error) {
+        // This login is already bound to another staff row of the same
+        // business (the per-business identity key): never merged or moved —
+        // that row stays INVITED for people to look at.
+        if (!isUniqueViolation(error)) throw error;
+      }
+    }
   }
 
   // The businesses this identity may actually enter right now: an ACTIVE

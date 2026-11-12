@@ -79,6 +79,9 @@ export type PolicyName =
   | 'payments-intent-webhook'
   // ESP-04 M5b — staff card refunds (each may call Stripe).
   | 'restaurant-refunds'
+  // V1 launch fix 2 — adding an employee / re-sending their sign-in
+  // invitation (each may make the identity provider send an email).
+  | 'staff-invitations'
   | 'account-recovery'
   | 'account-verification'
   // SC4a — business owner self-service registration (no tenant: the tenant
@@ -369,6 +372,24 @@ const DEFAULTS: Record<PolicyName, PolicyDefault> = {
         name: 'tenant',
         key: ['tenant'],
         limit: 30,
+        windowSeconds: HOUR,
+      },
+    ],
+  },
+  // V1 launch fix 2 — an administrator adding employees: a few at a time,
+  // a busy onboarding day at most a few dozen. Each may send an email.
+  'staff-invitations': {
+    scopes: [
+      {
+        name: 'ip',
+        key: ['tenant', 'ip'],
+        limit: 10,
+        windowSeconds: FIVE_MINUTES,
+      },
+      {
+        name: 'tenant',
+        key: ['tenant'],
+        limit: 40,
         windowSeconds: HOUR,
       },
     ],

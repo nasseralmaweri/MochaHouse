@@ -104,7 +104,7 @@ export const COLUMNS_ADDED_AFTER_4C: Readonly<
     'refundsReconciledAt',
   ],
   // SC3c-3 — verified-email stamps (20261029090000).
-  InternalUser: ['verifiedEmail', 'emailVerifiedAt'],
+  InternalUser: ['verifiedEmail', 'emailVerifiedAt', 'loginInvitedAt'],
   // SC4d — the location profile (20261108090000).
   Location: [
     'addressLine1',

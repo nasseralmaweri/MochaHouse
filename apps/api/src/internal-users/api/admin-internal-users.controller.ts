@@ -8,7 +8,10 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { RateLimit } from '../../rate-limit/rate-limit.decorator';
+import { RateLimitGuard } from '../../rate-limit/rate-limit.guard';
 import type {
+  AdminCreateInternalUserRequest,
   AdminAssignInternalUserRoleRequest,
   AdminRemoveInternalUserRoleAssignmentRequest,
   AdminUpdateInternalUserStatusRequest,
@@ -54,6 +57,28 @@ export class AdminInternalUsersController {
     return this.service.getAccessOptions(request.authorization!, tenant);
   }
 
+  // V1 launch fix 2 — add an employee (INVITED, with their first access) and
+  // invite their login. Guarded here by `users.manage_roles`; the service
+  // also requires `users.manage_status` and the privilege ceiling. The actor
+  // and business come from the authenticated request, never the body.
+  // Rate limited: each call may make the identity provider send an email.
+  @RequirePermission('users.manage_roles')
+  @UseGuards(RateLimitGuard)
+  @RateLimit('staff-invitations')
+  @Post()
+  createUser(
+    @Body() body: AdminCreateInternalUserRequest,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.service.createUser(
+      body,
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+  }
+
   @RequirePermission('users.view')
   @Get(':internalUserId')
   getUser(
@@ -83,6 +108,26 @@ export class AdminInternalUsersController {
     return this.service.updateStatus(
       internalUserId,
       body,
+      request.internalUser!.id,
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  // V1 launch fix 2 — send the login invitation again, for someone still
+  // INVITED (the provider was unavailable, or the temporary password
+  // expired). Never changes a login that has been set up.
+  @RequirePermission('users.manage_roles')
+  @UseGuards(RateLimitGuard)
+  @RateLimit('staff-invitations')
+  @Post(':internalUserId/login-invitation')
+  sendLoginInvitation(
+    @Param('internalUserId') internalUserId: string,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.service.sendLoginInvitation(
+      internalUserId,
       request.internalUser!.id,
       request.authorization!,
       tenant,

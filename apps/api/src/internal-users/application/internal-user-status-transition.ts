@@ -5,14 +5,18 @@ import type { InternalUserStatus } from '@mocha-house/contracts';
 //
 //   ACTIVE      <-> SUSPENDED     (reversible temporary lock)
 //   ACTIVE / SUSPENDED -> DISABLED (terminal — never re-enabled here)
-//   INVITED     -> nothing         (invitation / activation is a later slice)
+//   INVITED     -> DISABLED        (V1 launch fix 2: withdraw an invitation —
+//                                   e.g. a mistyped address — before the
+//                                   person signs in; an INVITED row only ever
+//                                   becomes ACTIVE through that person's own
+//                                   verified first sign-in, never here)
 //
 // This endpoint never SETS or LEAVES a user at INVITED.
 const ALLOWED: Record<InternalUserStatus, InternalUserStatus[]> = {
   ACTIVE: ['SUSPENDED', 'DISABLED'],
   SUSPENDED: ['ACTIVE', 'DISABLED'],
   DISABLED: [],
-  INVITED: [],
+  INVITED: ['DISABLED'],
 };
 
 // The statuses this endpoint may be asked to set. INVITED is intentionally
@@ -48,8 +52,7 @@ export function checkStatusTransition(
     return {
       ok: false,
       kind: 'unsupported-status',
-      message:
-        'Status must be one of: active, suspended, disabled.',
+      message: 'Status must be one of: active, suspended, disabled.',
     };
   }
   const target = next as InternalUserStatus;

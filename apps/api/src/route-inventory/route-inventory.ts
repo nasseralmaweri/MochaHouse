@@ -213,6 +213,11 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/admin/gift-cards/:giftCardId/deactivate': { scope: 'tenant' },
   'POST /api/v1/admin/gift-cards/:giftCardId/reactivate': { scope: 'tenant' },
   'POST /api/v1/admin/gift-cards/search': { scope: 'tenant' },
+  // V1 launch fix 2 — add an employee / send their sign-in invitation again.
+  'POST /api/v1/admin/internal-users': { scope: 'tenant' },
+  'POST /api/v1/admin/internal-users/:internalUserId/login-invitation': {
+    scope: 'tenant',
+  },
   'POST /api/v1/admin/internal-users/:internalUserId/role-assignments': {
     scope: 'tenant',
   },
@@ -381,6 +386,9 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'POST /api/v1/auth/verification/resend': { scope: 'public-auth' },
   'POST /api/v1/auth/verify': { scope: 'public-auth' },
   'POST /api/v1/internal/auth/sign-in': { scope: 'public-auth' },
+  // V1 launch fix 2 — an invited employee's first sign-in: answers the
+  // provider's NEW_PASSWORD_REQUIRED challenge (rate limited like sign-in).
+  'POST /api/v1/internal/auth/new-password': { scope: 'public-auth' },
   // SC4a — business owner self-service registration: 404 unless enabled
   // server-side; creates a staff-pool login and a platform record only (no
   // business, staff member or role). Rate limited; enumeration-safe.

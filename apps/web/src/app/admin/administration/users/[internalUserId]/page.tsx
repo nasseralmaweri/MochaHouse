@@ -26,6 +26,8 @@ import {
 import { StatusBadge } from "@/components/admin/StatusBadge";
 import { UserStatusControl } from "@/components/admin/UserStatusControl";
 import { UserAccessControl } from "@/components/admin/UserAccessControl";
+import { SendLoginInvitation } from "@/components/admin/SendLoginInvitation";
+import { loginSetupLabel } from "@/lib/admin/staff-invitation";
 import { BackLink } from "@/components/BackLink";
 import { Card } from "@/components/Card";
 
@@ -149,6 +151,17 @@ export default async function AdminUserDetailPage({
               {userStatusSentence(user.status)}
             </span>
           </div>
+          {user.status === "INVITED" && loginSetupLabel(user.loginSetup) ? (
+            <span className="text-sm text-text-primary">
+              {loginSetupLabel(user.loginSetup)}
+            </span>
+          ) : null}
+          {user.status === "INVITED" &&
+          !isSelf &&
+          can(session.authorization.capabilities, "users.manage_roles") &&
+          can(session.authorization.capabilities, "users.manage_status") ? (
+            <SendLoginInvitation internalUserId={user.id} email={user.email} />
+          ) : null}
           {showStatusActions ? (
             <UserStatusControl
               internalUserId={user.id}
