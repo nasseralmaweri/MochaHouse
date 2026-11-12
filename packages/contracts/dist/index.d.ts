@@ -1011,6 +1011,8 @@ export interface OrderRefundsResponse {
     balances: OrderRefundBalances | null;
     obligation: OrderRefundObligationView | null;
     refunds: OrderRefundView[];
+    attentionRefundIds: string[];
+    paymentNeedsAttention: boolean;
 }
 export interface OrderRefundActionResponse {
     refund: OrderRefundView;

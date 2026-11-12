@@ -460,6 +460,16 @@ describe('ESP-04 M5c: refund reconciliation and recovery (scratch database, offl
       status: 'OPEN',
       reasonCode: 'REFUND_UNKNOWN_CENTERIVO_ID',
     });
+    // M5d — staff see it (read-only) on the order's refunds.
+    const seen = await refunds.listForOrder(
+      paid.orderId,
+      paid.locationId,
+      base.owner,
+      owner(),
+      tA,
+    );
+    expect(seen.paymentNeedsAttention).toBe(true);
+    expect(seen.attentionRefundIds).toEqual([]);
   });
 
   it('with its switch off, a refund webhook is acknowledged and nothing is stored or read', async () => {
@@ -563,6 +573,42 @@ describe('ESP-04 M5c: refund reconciliation and recovery (scratch database, offl
         code: 'UNATTRIBUTED_REFUND_SAME_AMOUNT',
       }) as unknown,
     });
+    // M5d — the flagged refund is marked for staff, view-only staff too
+    // (without its internal note).
+    const viewOnly = AuthorizationContext.of({
+      'orders.view': [{ scopeType: 'CORPORATE', scopeId: null }],
+    });
+    const seen = await refunds.listForOrder(
+      paid.orderId,
+      paid.locationId,
+      base.owner,
+      viewOnly,
+      tA,
+    );
+    expect(seen.attentionRefundIds).toEqual([lost.refund.id]);
+    expect(seen.paymentNeedsAttention).toBe(false);
+    expect(seen.refunds.every((r) => r.note === null)).toBe(true);
+    // A later change to the refund clears the flag (it no longer stands).
+    await db.paymentRefundEvent.create({
+      data: {
+        tenantId: A,
+        refundId: lost.refund.id,
+        action: 'RECHECKED',
+        actorKind: 'SYSTEM',
+        detail: { source: 'm5d-test' },
+      },
+    });
+    expect(
+      (
+        await refunds.listForOrder(
+          paid.orderId,
+          paid.locationId,
+          base.owner,
+          owner(),
+          tA,
+        )
+      ).attentionRefundIds,
+    ).toEqual([]);
   });
 
   it('a full Dashboard refund of a cancelled order settles its obligation; a partial one leaves the rest owed', async () => {

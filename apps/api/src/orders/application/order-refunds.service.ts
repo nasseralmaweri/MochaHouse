@@ -99,6 +99,9 @@ export const REFUND_STRIPE_TIMEOUT_MS = 25_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const OUR_ID = /^[A-Za-z0-9-]{1,100}$/;
 // The same plain-text rule as order closure notes.
+// ESP-04 M5d — how far back a reconciliation flag counts as current.
+const ATTENTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
 const NOTE_FORBIDDEN = new RegExp(
   '[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F' + '​-‏ -‮⁠-⁩﻿]',
 );
@@ -164,7 +167,13 @@ export class OrderRefundsService {
     this.assertSameBusiness(actor, tenant);
     const order = await this.loadOrder(orderId, location, tenant.tenantId);
     const rows = await this.refundsOf(tenant.tenantId, order.paymentAttemptId);
+    const attention = await this.attentionOf(
+      tenant.tenantId,
+      order.paymentAttemptId,
+      rows.map((r) => r.id),
+    );
     return {
+      ...attention,
       orderId: order.id,
       orderStatus: order.status as OrderStatus,
       currency: order.currency,
@@ -1111,6 +1120,45 @@ export class OrderRefundsService {
         status: String(order.paymentAttempt.status),
       },
       obligation: order.refundObligation,
+    };
+  }
+
+  // ESP-04 M5d — read-only signals from M5c's reconciliation: a refund
+  // flagged NEEDS_ATTENTION in the last week with no change to it since
+  // (reconciliation re-flags a persisting anomaly daily), and an unresolved
+  // reconciliation case on the payment. Nothing here resolves anything.
+  private async attentionOf(
+    tenantId: string,
+    paymentAttemptId: string,
+    refundIds: string[],
+  ): Promise<{ attentionRefundIds: string[]; paymentNeedsAttention: boolean }> {
+    const since = new Date(Date.now() - ATTENTION_WINDOW_MS);
+    const [events, openCase] = await Promise.all([
+      refundIds.length === 0
+        ? Promise.resolve([])
+        : this.prisma.paymentRefundEvent.findMany({
+            where: {
+              tenantId,
+              refundId: { in: refundIds },
+              createdAt: { gt: since },
+            },
+            select: { refundId: true, action: true },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          }),
+      this.prisma.paymentReconciliationCase.findFirst({
+        where: { tenantId, paymentAttemptId, status: { not: 'RESOLVED' } },
+        select: { id: true },
+      }),
+    ]);
+    // The latest recent event of each refund decides: a flag not followed
+    // by any change still stands.
+    const latest = new Map<string, string>();
+    for (const e of events) latest.set(e.refundId, e.action);
+    return {
+      attentionRefundIds: refundIds.filter(
+        (id) => latest.get(id) === 'NEEDS_ATTENTION',
+      ),
+      paymentNeedsAttention: openCase !== null,
     };
   }
 
