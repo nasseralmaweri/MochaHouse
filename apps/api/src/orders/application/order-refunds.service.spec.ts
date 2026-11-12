@@ -311,8 +311,12 @@ describe('ESP-04 M5b: refund execution (scratch database, offline Stripe)', () =
     );
   const obligation = (id: string) =>
     db.orderRefundObligation.findUniqueOrThrow({ where: { id } });
-  const audits = (action: string) =>
-    db.internalAuditEvent.findMany({ where: { tenantId: A, action } });
+  // In a fixed order (several tests write the same actions).
+  const audits = (action: string, targetId?: string) =>
+    db.internalAuditEvent.findMany({
+      where: { tenantId: A, action, ...(targetId ? { targetId } : {}) },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
   // The disposable-database superuser bypass (T-2), used ONLY to age a
   // refund's first sending past Stripe's idempotency window.
   const ageSending = (refundId: string, hours: number) =>
@@ -847,12 +851,22 @@ describe('ESP-04 M5b: refund execution (scratch database, offline Stripe)', () =
     await expect(
       ask(paid, {}, { actor: base.manager, auth: storeManager() }),
     ).rejects.toBeInstanceOf(ForbiddenException);
-    const denied = await audits('order.refund_denied');
-    expect(denied.at(-1)).toMatchObject({
-      actorInternalUserId: base.manager.id,
-      targetId: paid.orderId,
-    });
-    // A Refund Manager at another location of the business.
+    // Exactly this attempt, on this order, by this staff member.
+    expect(
+      (await audits('order.refund_denied', paid.orderId)).map((a) => ({
+        actor: a.actorInternalUserId,
+        targetType: a.targetType,
+        afterData: a.afterData,
+      })),
+    ).toEqual([
+      {
+        actor: base.manager.id,
+        targetType: 'order',
+        afterData: { attempted: 'request' },
+      },
+    ]);
+    // A Refund Manager at another location of the business: refused and
+    // audited the same way.
     const elsewhere = await paidOrder({ locationId: base.locA2 });
     await expect(
       ask(
@@ -861,6 +875,14 @@ describe('ESP-04 M5b: refund execution (scratch database, offline Stripe)', () =
         { actor: base.manager, auth: refundManagerAt(base.locA) },
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(
+      (await audits('order.refund_denied', elsewhere.orderId)).map(
+        (a) => a.actorInternalUserId,
+      ),
+    ).toEqual([base.manager.id]);
+    // Nothing was asked of Stripe for either.
+    expect(refundsAt(paid.reference)).toHaveLength(0);
+    expect(refundsAt(elsewhere.reference)).toHaveLength(0);
     // ...and at their own.
     const own = await ask(
       paid,
