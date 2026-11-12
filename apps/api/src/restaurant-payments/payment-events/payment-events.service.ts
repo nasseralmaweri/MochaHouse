@@ -9,10 +9,15 @@ import type { PaymentProvider } from '@mocha-house/integrations';
 import type { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CheckoutService } from '../../orders/application/checkout.service';
+import {
+  RefundReconciliationService,
+  refundReconciliationEnabled,
+} from '../../orders/application/refund-reconciliation.service';
 import { PAYMENT_PROVIDER } from '../../payment/payment-provider.token';
 import { openReconciliationCase } from '../../payment/payment-charge';
 import {
   PAYMENT_EVENT_TYPES,
+  REFUND_EVENT_TYPES,
   StripePaymentIntentProvider,
   type VerifiedPaymentEvent,
 } from '../provider/stripe-payment-intent-provider';
@@ -89,6 +94,7 @@ export class PaymentEventsService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly checkout: CheckoutService,
+    private readonly refunds: RefundReconciliationService,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
   ) {}
 
@@ -125,7 +131,12 @@ export class PaymentEventsService implements OnModuleInit, OnModuleDestroy {
     // Only payment-intent events belong to this endpoint; anything else it
     // is sent is acknowledged and never touches a stored event (an account
     // event recorded by the M1 endpoint stays that endpoint's).
-    if (!PAYMENT_EVENT_TYPES.has(event.type)) return true;
+    if (!handles(event.type)) return true;
+    // ESP-04 M5c — refund events only with refund reconciliation switched on
+    // (OFF by default): otherwise acknowledged and never stored or acted on.
+    if (REFUND_EVENT_TYPES.has(event.type) && !refundReconciliationEnabled()) {
+      return true;
+    }
     const key = {
       provider_externalEventId: {
         provider: event.provider,
@@ -180,7 +191,7 @@ export class PaymentEventsService implements OnModuleInit, OnModuleDestroy {
       const due = await this.prisma.restaurantPaymentProviderEvent.findMany({
         where: {
           status: { in: ['RECEIVED', 'FAILED'] },
-          type: { in: [...PAYMENT_EVENT_TYPES] },
+          type: { in: [...PAYMENT_EVENT_TYPES, ...REFUND_EVENT_TYPES] },
           externalObjectId: { not: null },
           attempts: { lt: REDRIVE_MAX_ATTEMPTS },
           receivedAt: { lt: new Date(now.getTime() - REDRIVE_GRACE_MS) },
@@ -279,6 +290,33 @@ export class PaymentEventsService implements OnModuleInit, OnModuleDestroy {
         return await settle('UNMATCHED', 'NO_MATCHING_PAYMENT');
       }
       matchedAttemptId = attempt.id;
+      // ESP-04 M5c — a refund event: the payment's refunds, read back from
+      // Stripe in full and reconciled (read-only towards Stripe). Not
+      // acknowledged until that worked, so a lost or failed one is delivered
+      // again (and re-driven).
+      if (REFUND_EVENT_TYPES.has(row.type)) {
+        if (!refundReconciliationEnabled()) {
+          return await settle('IGNORED', 'REFUNDS_RECONCILIATION_OFF');
+        }
+        // Only for a business on the test-mode allowlist.
+        if (!this.provider.allowsTenant(account.tenantId)) {
+          return await settle('IGNORED', 'NOT_ALLOWLISTED');
+        }
+        const reconciled = await this.refunds.reconcilePayment(
+          account.tenantId,
+          attempt.id,
+        );
+        if (reconciled.kind === 'reconciled') {
+          return await settle('PROCESSED', 'REFUNDS_RECONCILED');
+        }
+        if (reconciled.kind === 'not_applicable') {
+          return await settle('IGNORED', reconciled.reason);
+        }
+        return await settle(
+          'FAILED',
+          reconciled.kind === 'busy' ? 'REFUNDS_BUSY' : reconciled.reason,
+        );
+      }
       const result = await this.checkout.reconcileProviderPayment(
         account.tenantId,
         attempt.id,
@@ -290,7 +328,10 @@ export class PaymentEventsService implements OnModuleInit, OnModuleDestroy {
       await this.makeVisible(attempt.id);
       return await settle('FAILED', 'PAYMENT_NOT_SETTLED');
     } catch (error) {
-      if (matchedAttemptId) await this.makeVisible(matchedAttemptId);
+      // (A refund event's payment is already settled: no payment case.)
+      if (matchedAttemptId && !REFUND_EVENT_TYPES.has(row.type)) {
+        await this.makeVisible(matchedAttemptId);
+      }
       this.logger.warn(
         `payment event ${row.id}: not processed (${
           error instanceof Error ? error.name : 'unknown error'
@@ -324,6 +365,12 @@ export class PaymentEventsService implements OnModuleInit, OnModuleDestroy {
     });
     return found !== null;
   }
+}
+
+// The events this endpoint keeps and acts on: payment-intent events (ESP-04
+// M3) and refund events (ESP-04 M5c).
+function handles(type: string): boolean {
+  return PAYMENT_EVENT_TYPES.has(type) || REFUND_EVENT_TYPES.has(type);
 }
 
 function isUniqueViolation(error: unknown): boolean {

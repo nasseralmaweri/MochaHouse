@@ -18,6 +18,7 @@ import { CustomerOrdersService } from './application/customer-orders.service';
 import { CustomerReorderService } from './application/customer-reorder.service';
 import { OrderClosureService } from './application/order-closure.service';
 import { OrderRefundsService } from './application/order-refunds.service';
+import { RefundReconciliationService } from './application/refund-reconciliation.service';
 import { AuditModule } from '../audit/audit.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
@@ -64,6 +65,9 @@ import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
     OrderClosureService,
     // ESP-04 M5b — card refunds of an order's Stripe payment.
     OrderRefundsService,
+    // ESP-04 M5c — refund records kept true to Stripe (read-only), for
+    // refund webhooks and the refund recovery.
+    RefundReconciliationService,
   ],
   // PaymentModule — re-exported so the Milestone 5G platform-status read
   // keeps reaching the payment-integration posture through OrdersModule
@@ -72,6 +76,11 @@ import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
   // the same authoritative Order table, customerId-scoped and read-only.
   // CheckoutService — ESP-03 PR 5, for payment recovery (recoverFulfilment;
   // never charges).
-  exports: [PaymentModule, CustomerOrdersService, CheckoutService],
+  exports: [
+    PaymentModule,
+    CustomerOrdersService,
+    CheckoutService,
+    RefundReconciliationService,
+  ],
 })
 export class OrdersModule {}

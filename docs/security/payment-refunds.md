@@ -346,6 +346,105 @@ the admin orders controller.
 * **Never automatic:** cancelling an order never refunds it by itself. S5c's manual
   settlement is not implemented here.
 
+## Refund reconciliation and recovery (ESP-04 M5c)
+
+M5c keeps refund records true to Stripe when an answer is lost, a refund is made in the
+restaurant's Stripe Dashboard, or a completed refund fails later. It is **read-only towards
+Stripe**: it lists and reads refunds, and never creates, replays or cancels one, or uses an
+idempotency key.
+
+### One core: `RefundReconciliationService.reconcilePayment`
+
+It runs for one payment, under that payment's own session lock, with no database
+transaction open across the network.
+
+1. **Read Stripe in full.** It reads the payment's refunds **in full** on the payment's own
+   connected account.
+   * The account must still be the business's.
+   * An unreadable or incomplete history changes nothing.
+2. **Match each Stripe refund to a record**, by its Stripe id, or, for a CENTERIVO request
+   whose answer was lost, by our refund id in its metadata.
+   * The amount and currency must match, otherwise the refund is flagged and nothing is
+     written.
+   * A CENTERIVO refund is changed only while holding that refund's own lock (the one staff
+     refunds send under).
+3. **Move known refunds only as the read-back says**: pending to succeeded or failed, and
+   succeeded to `FAILED_AFTER_SUCCESS`. Anything else is a `NEEDS_ATTENTION` entry in the
+   refund's history.
+4. **Record refunds made outside CENTERIVO.** A refund with no CENTERIVO id is recorded once
+   as **`EXTERNAL`**, exactly as Stripe's read-back reports it (amount, currency, state, Stripe
+   id).
+   * This happens only for an order's own payment; no order is ever invented.
+   * The database guards still apply (capacity, the unique Stripe id).
+   * A Stripe refund naming a CENTERIVO refund this payment does not have is never recorded.
+   * A refund without a CENTERIVO id but of the same amount and currency as one of our
+     unresolved requests may be that request with its metadata lost: it is never recorded
+     `EXTERNAL` while the request is open (flagged on the request; M5a's NOT_CREATED guard
+     then keeps the request `UNKNOWN` until people resolve it).
+   * Where there is no refund record to flag (an unknown CENTERIVO id, a refund on a payment
+     that is not an order's, an `EXTERNAL` insert a guard refused, a state we cannot name),
+     a **payment reconciliation case** is opened, never only a log line.
+5. **NOT_CREATED needs evidence.** A CENTERIVO request Stripe never made is recorded
+   `NOT_CREATED` only with M5a's evidence:
+   * never sent, and at least 15 minutes old (sending needs the refund's lock and marks it
+     first); or
+   * a complete history, past 24 hours.
+
+   Otherwise it stays `UNKNOWN`, with its amount reserved.
+6. **Sync and stamp.** The order's obligation follows (the shared sync, as in M5b), and
+   `PaymentAttempt.refundsReconciledAt` is recorded. That column is the schedule only (migration
+   `20261126090000_payment_refund_reconciliation`).
+
+A database failure is propagated, never acknowledged: the webhook is delivered again, and
+the payment is not stamped. If one of the payment's refunds is being sent or rechecked (its
+lock is held), it is left alone, the result is **busy** and the payment is not stamped either:
+the webhook is delivered again and recovery reads it again on its next sweep.
+
+### Refund webhooks
+
+`refund.created`, `refund.updated` and `refund.failed` come to the **same signed payments
+endpoint**. Subscribe that endpoint to them in the Stripe Dashboard.
+
+* **Off unless `RESTAURANT_REFUND_RECOVERY_ENABLED=1`** (the same switch as recovery). Off,
+  refund events are acknowledged and not stored; on, only a business on the test-mode
+  allowlist is reconciled (others: `IGNORED` / `NOT_ALLOWLISTED`).
+
+* They are verified, stored once and re-driven exactly like payment events.
+* The event's account, and the intent its refund is of, only find the payment: our stored
+  account, that business's payment for that intent.
+* Then the payment's refunds are reconciled. Nothing in the event body (amount, status,
+  metadata, tenant) is trusted.
+* Live mode, an unknown account, or another business's payment: ignored or kept unmatched,
+  and nothing is written.
+* An unreadable history or a busy payment is not acknowledged, so it is delivered again.
+* Payment-event behaviour is unchanged.
+
+### Automatic recovery (off by default)
+
+`RESTAURANT_REFUND_RECOVERY_ENABLED=1` (the same switch as refund webhooks) adds a phase to the existing recovery sweeper, which
+runs only with `PAYMENT_AUTO_RECOVERY_ENABLED=1`. Each sweep takes at most one batch (10) of
+Stripe payments, least recently reconciled first:
+
+| Payment has | Re-read every |
+|---|---|
+| A refund waiting for an answer (`REQUESTED` / `UNKNOWN` / `PENDING`), past a 2-minute grace | 10 minutes |
+| A refund that succeeded in the last 35 days (it could still come back) | 24 hours |
+| An open refund obligation from the last 180 days (a lost Dashboard-refund event) | 6 hours |
+
+Staff-initiated recheck (M5b) is unchanged. It is the only path that may replay a request
+with its own key, and only within the replay window.
+
+### What staff see (through the existing M5b views)
+
+* **Pending, successful and failed refunds:** the refund's status.
+* **Refunds made outside CENTERIVO:** `origin: EXTERNAL`.
+* **Refunds needing attention:**
+  * returned refunds (`FAILED_AFTER_SUCCESS`, `needsAttention`);
+  * history entries `NEEDS_ATTENTION`;
+  * unresolved refunds (`balances.unresolved`).
+* **A settled obligation whose refund came back** shows what is owed again, and a replacement
+  needs a staff review first.
+
 ## Required of M5b / M5c (not enforced by the database)
 
 * **Read-backs only.** Write `EXTERNAL` refunds, and every status change, only from a Stripe

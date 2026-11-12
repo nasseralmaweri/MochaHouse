@@ -55,6 +55,16 @@ export const PAYMENT_EVENT_TYPES: ReadonlySet<string> = new Set([
   'payment_intent.requires_action',
 ]);
 
+// ESP-04 M5c — the refund events this integration acts on, delivered to the
+// same payments endpoint (the Connect account's refunds of a payment).
+// Classic snapshot events; only a nudge: the payment's refunds are always
+// read back from Stripe.
+export const REFUND_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'refund.created',
+  'refund.updated',
+  'refund.failed',
+]);
+
 // Metadata keys we put on an intent: our ids only, never personal data.
 const METADATA_KEYS: ReadonlySet<string> = new Set([
   'centerivo_tenant_id',
@@ -790,12 +800,23 @@ export function parseVerifiedPaymentEvent(
     throw new PaymentEventVerificationError('Incomplete event.');
   }
   const object = record(record(body.data)?.object);
+  // A payment-intent event is about that intent; a refund event (ESP-04
+  // M5c) about the intent the refund is of — only ever used to find the
+  // payment, whose refunds are then read back from Stripe.
+  const refundOf =
+    object?.object === 'refund'
+      ? typeof object.payment_intent === 'string'
+        ? object.payment_intent
+        : record(object.payment_intent)?.id
+      : undefined;
   const intentId =
     object?.object === 'payment_intent' &&
     typeof object.id === 'string' &&
     INTENT_ID.test(object.id)
       ? object.id
-      : null;
+      : typeof refundOf === 'string' && INTENT_ID.test(refundOf)
+        ? refundOf
+        : null;
   const metadata = record(object?.metadata);
   return {
     provider: 'stripe',
@@ -807,7 +828,9 @@ export function parseVerifiedPaymentEvent(
         ? body.account
         : null,
     externalObjectId: intentId,
-    claimsCenterivo: typeof metadata?.centerivo_payment_attempt_id === 'string',
+    claimsCenterivo:
+      typeof metadata?.centerivo_payment_attempt_id === 'string' ||
+      typeof metadata?.centerivo_refund_id === 'string',
     payloadDigest: createHash('sha256').update(rawBody).digest('hex'),
   };
 }
