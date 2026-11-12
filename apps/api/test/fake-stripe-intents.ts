@@ -244,7 +244,31 @@ export class FakeStripeIntents {
   }
 
   private copy(id: string): Stripe.PaymentIntent {
-    return structuredClone(this.intents.get(id)!.intent);
+    const intent = structuredClone(this.intents.get(id)!.intent);
+    // ESP-04 M5b — a charge given with withCharge reports what Stripe holds
+    // back for refunds (pending and succeeded), as Stripe does.
+    const charge = intent.latest_charge as
+      (Stripe.Charge & { trackRefunds?: boolean }) | null;
+    if (charge && typeof charge === 'object' && charge.trackRefunds) {
+      delete charge.trackRefunds;
+      charge.amount_refunded = this.refundedOf(id);
+    }
+    return intent;
+  }
+
+  // ESP-04 M5b — the intent's latest charge (succeeded), whose refunded
+  // amount follows the refunds made of it.
+  withCharge(id: string, values: { disputed?: boolean } = {}): void {
+    this.set(id, {
+      latest_charge: {
+        id: `ch_${id.slice(3)}`,
+        object: 'charge',
+        status: 'succeeded',
+        amount_refunded: 0,
+        disputed: values.disputed ?? false,
+        trackRefunds: true,
+      } as unknown as Stripe.Charge,
+    });
   }
 
   // --- ESP-04 M5a — refunds, per connected account, with Stripe's rules: a
@@ -273,6 +297,9 @@ export class FakeStripeIntents {
   loseNextRefundResponse = false;
   // Report this amount for the next refund made (a misbehaving answer).
   refundAmountOverride: number | null = null;
+  // ESP-04 M5b — the status Stripe gives the next refund made (default
+  // succeeded): pending (e.g. the restaurant's balance is short) or failed.
+  nextRefundStatus: Stripe.Refund['status'] | null = null;
 
   readonly refundCreate: jest.Mock<
     Promise<Stripe.Refund>,
@@ -320,9 +347,11 @@ export class FakeStripeIntents {
           stripeError('StripeInvalidRequestError', 'amount_too_large'),
         );
       }
+      const status = this.nextRefundStatus ?? 'succeeded';
+      this.nextRefundStatus = null;
       const id = this.makeRefund(intentId, options.stripeAccount, {
         amount: this.refundAmountOverride ?? amount,
-        status: 'succeeded',
+        status,
         reason: params.reason ?? null,
         metadata: { ...(params.metadata as Record<string, string>) },
       });

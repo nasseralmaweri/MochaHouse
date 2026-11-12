@@ -2120,6 +2120,166 @@ export interface CloseOrderResponse {
   closure: StoreOrderClosureSummary;
 }
 
+// --- ESP-04 M5b: restaurant card refunds (staff API) ------------------------
+// A refund returns money to the ORIGINAL card of an order's Stripe payment,
+// on the restaurant's own connected account. Only staff holding
+// `orders.refund` at the order's location (the business owner, or a Refund
+// Manager the owner assigned) can ask for one; reading refunds needs
+// `orders.view`. Execution is OFF unless RESTAURANT_REFUNDS_ENABLED=1.
+// Amounts are integer minor units. Internal notes are staff-only.
+
+export const ORDER_REFUND_REASON_CODES = [
+  "CUSTOMER_REQUEST",
+  "MISSING_ITEM",
+  "QUALITY_ISSUE",
+  "WRONG_ORDER",
+  "DUPLICATE_CHARGE",
+  "ORDER_CLOSED",
+  "GOODWILL",
+  "OTHER",
+] as const;
+export type OrderRefundReasonCode = (typeof ORDER_REFUND_REASON_CODES)[number];
+
+export const ORDER_REFUND_REASON_LABELS: Record<OrderRefundReasonCode, string> =
+  {
+    CUSTOMER_REQUEST: "Customer request",
+    MISSING_ITEM: "Missing item",
+    QUALITY_ISSUE: "Quality issue",
+    WRONG_ORDER: "Wrong order",
+    DUPLICATE_CHARGE: "Duplicate charge",
+    ORDER_CLOSED: "Order rejected or cancelled",
+    GOODWILL: "Goodwill",
+    OTHER: "Other",
+  };
+
+export const ORDER_REFUND_NOTE_MAX_LENGTH = 500;
+
+export type OrderRefundStatus =
+  | "REQUESTED"
+  | "PENDING"
+  | "SUCCEEDED"
+  | "FAILED"
+  | "CANCELED"
+  | "UNKNOWN"
+  | "NOT_CREATED"
+  | "FAILED_AFTER_SUCCESS";
+
+// POST /api/v1/admin/orders/:orderId/refunds (orders.refund at the order's
+// location). `requestId` is a UUID the page generates ONCE per submission:
+// repeating the same request returns the same refund; the same id with any
+// other value is refused (409). The payment, its account and the amounts
+// already refunded always come from the server, never from this body.
+export interface CreateOrderRefundRequest {
+  locationId: string;
+  requestId: string;
+  amountMinorUnits: number;
+  currency: string;
+  reasonCode: OrderRefundReasonCode;
+  // Required for OTHER; 1-500 characters; staff-only.
+  note?: string;
+  // What the staff member saw as already refunded plus in progress
+  // (balances.refundedMinorUnits + balances.inProgressMinorUnits). If the
+  // refunds changed since, the request is refused (409) rather than added
+  // on top: two people, or a resubmission, never refund twice by accident.
+  expectedReservedMinorUnits: number;
+}
+
+// POST .../refunds/:refundId/review (orders.refund): a staff member's
+// audited review of a refund whose money came back, required before any
+// replacement refund.
+export interface ReviewOrderRefundRequest {
+  locationId: string;
+  note: string;
+}
+
+export interface OrderRefundView {
+  id: string;
+  // CENTERIVO, or EXTERNAL (made in the restaurant's Stripe Dashboard).
+  origin: "CENTERIVO" | "EXTERNAL";
+  status: OrderRefundStatus;
+  amountMinorUnits: number;
+  currency: string;
+  reasonCode: string | null;
+  reasonLabel: string | null;
+  // Internal staff note (staff-only), or null.
+  note: string | null;
+  requestedBy: { id: string; displayName: string | null } | null;
+  createdAt: string;
+  succeededAt: string | null;
+  failedAfterSuccessAt: string | null;
+  lateFailureReviewedAt: string | null;
+  lateFailureReviewNote: string | null;
+  // NEVER_SENT | STRIPE_HISTORY_VERIFIED, for NOT_CREATED only.
+  notCreatedEvidence: string | null;
+}
+
+// What the order's card payment stands at, from the refund records.
+export interface OrderRefundBalances {
+  chargedMinorUnits: number;
+  refundedMinorUnits: number;
+  inProgressMinorUnits: number;
+  // What a new refund may still be for.
+  refundableMinorUnits: number;
+  // A refund's money came back and nobody has reviewed it: no new refund
+  // until someone does.
+  lateFailureNeedsReview: boolean;
+  // A refund waits for an answer from Stripe (REQUESTED / UNKNOWN): recheck
+  // it before asking for another.
+  unresolved: boolean;
+}
+
+// A rejected / cancelled order's refund obligation, as its refunds stand
+// NOW (never taken from its recorded status alone).
+export interface OrderRefundObligationView {
+  amountMinorUnits: number;
+  // DUE | PROCESSING | REFUNDED | FAILED as recorded.
+  recordedStatus: OrderRefundObligationStatus;
+  refundedMinorUnits: number;
+  inProgressMinorUnits: number;
+  outstandingMinorUnits: number;
+  fullyRefunded: boolean;
+  // People must look (a returned refund, or a settled obligation whose
+  // refunds no longer cover it).
+  needsAttention: boolean;
+}
+
+// GET /api/v1/admin/orders/:orderId/refunds (orders.view).
+export interface OrderRefundsResponse {
+  orderId: string;
+  orderStatus: OrderStatus;
+  currency: string;
+  // Refund execution is switched on and available for this business.
+  refundsEnabled: boolean;
+  // Null when the order had no card payment that can be refunded.
+  balances: OrderRefundBalances | null;
+  obligation: OrderRefundObligationView | null;
+  refunds: OrderRefundView[];
+}
+
+// The answer to a refund request, a recheck or a review.
+export interface OrderRefundActionResponse {
+  refund: OrderRefundView;
+  // True when this request had already been made (nothing new was asked of
+  // Stripe).
+  replayed: boolean;
+  balances: OrderRefundBalances;
+  obligation: OrderRefundObligationView | null;
+}
+
+// GET /api/v1/admin/orders/refund-obligations (orders.view): rejected /
+// cancelled orders at the location whose card money is still owed, or that
+// need attention.
+export interface OrderRefundObligationListItem {
+  orderId: string;
+  orderNumber: string;
+  orderStatus: OrderStatus;
+  currency: string;
+  obligation: OrderRefundObligationView;
+}
+export interface OrderRefundObligationsResponse {
+  obligations: OrderRefundObligationListItem[];
+}
+
 export interface AdvanceOrderStatusRequest {
   locationId: string;
   // Optimistic-concurrency guard, not a target status — the server always
@@ -4122,7 +4282,7 @@ export const PLATFORM_ADMINISTRATOR_ROLE: BuiltInInternalRole = {
   key: "platform-administrator",
   displayName: "Platform Administrator",
   description:
-    "Built-in role holding every internal permission. Granted at corporate scope for platform operators.",
+    "Built-in role holding every internal permission: the business's own full administrator (its owner), at corporate scope. Never for CENTERIVO platform operators.",
   permissionKeys: INTERNAL_PERMISSION_KEYS,
 };
 

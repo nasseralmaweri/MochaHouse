@@ -158,6 +158,36 @@ const REFUND_STATES: ReadonlySet<string> = new Set([
   'canceled',
 ]);
 
+// ESP-04 M5b — whether createRefund would refuse this request without
+// sending anything (the same pure check it uses), so a caller can know
+// BEFORE recording that it was sent.
+export function refundRequestRefusedLocally(input: {
+  reference: string;
+  account: PaymentAccountContext;
+  amountMinorUnits: number;
+  currency: string;
+  reason: string;
+  refundId: string;
+  tenantId: string;
+  idempotencyKey: string;
+}): boolean {
+  const account = input.account.connectedAccountId;
+  return (
+    !INTENT_ID.test(input.reference) ||
+    account === null ||
+    !ACCOUNT_ID.test(account) ||
+    !Number.isSafeInteger(input.amountMinorUnits) ||
+    input.amountMinorUnits <= 0 ||
+    !/^[A-Z]{3}$/.test(input.currency) ||
+    !STRIPE_REFUND_REASONS.has(input.reason) ||
+    !OUR_ID.test(input.refundId) ||
+    !OUR_ID.test(input.tenantId) ||
+    typeof input.idempotencyKey !== 'string' ||
+    input.idempotencyKey.length === 0 ||
+    input.idempotencyKey.length > 255
+  );
+}
+
 // A refund object of THIS intent, in our vocabulary; null when it is not a
 // refund, or is another intent's.
 export function observeRefund(
@@ -511,19 +541,7 @@ export class StripePaymentIntentProvider
     idempotencyKey: string;
   }): Promise<RefundRequestOutcome> {
     const account = input.account.connectedAccountId;
-    if (
-      !INTENT_ID.test(input.reference) ||
-      account === null ||
-      !ACCOUNT_ID.test(account) ||
-      !Number.isSafeInteger(input.amountMinorUnits) ||
-      input.amountMinorUnits <= 0 ||
-      !/^[A-Z]{3}$/.test(input.currency) ||
-      !STRIPE_REFUND_REASONS.has(input.reason) ||
-      !OUR_ID.test(input.refundId) ||
-      !OUR_ID.test(input.tenantId) ||
-      input.idempotencyKey.length === 0 ||
-      input.idempotencyKey.length > 255
-    ) {
+    if (refundRequestRefusedLocally(input) || account === null) {
       // Nothing was sent: definitively no refund.
       return { kind: 'refused_locally' };
     }

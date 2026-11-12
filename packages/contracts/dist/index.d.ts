@@ -948,6 +948,86 @@ export interface CloseOrderResponse {
     closed: boolean;
     closure: StoreOrderClosureSummary;
 }
+export declare const ORDER_REFUND_REASON_CODES: readonly ["CUSTOMER_REQUEST", "MISSING_ITEM", "QUALITY_ISSUE", "WRONG_ORDER", "DUPLICATE_CHARGE", "ORDER_CLOSED", "GOODWILL", "OTHER"];
+export type OrderRefundReasonCode = (typeof ORDER_REFUND_REASON_CODES)[number];
+export declare const ORDER_REFUND_REASON_LABELS: Record<OrderRefundReasonCode, string>;
+export declare const ORDER_REFUND_NOTE_MAX_LENGTH = 500;
+export type OrderRefundStatus = "REQUESTED" | "PENDING" | "SUCCEEDED" | "FAILED" | "CANCELED" | "UNKNOWN" | "NOT_CREATED" | "FAILED_AFTER_SUCCESS";
+export interface CreateOrderRefundRequest {
+    locationId: string;
+    requestId: string;
+    amountMinorUnits: number;
+    currency: string;
+    reasonCode: OrderRefundReasonCode;
+    note?: string;
+    expectedReservedMinorUnits: number;
+}
+export interface ReviewOrderRefundRequest {
+    locationId: string;
+    note: string;
+}
+export interface OrderRefundView {
+    id: string;
+    origin: "CENTERIVO" | "EXTERNAL";
+    status: OrderRefundStatus;
+    amountMinorUnits: number;
+    currency: string;
+    reasonCode: string | null;
+    reasonLabel: string | null;
+    note: string | null;
+    requestedBy: {
+        id: string;
+        displayName: string | null;
+    } | null;
+    createdAt: string;
+    succeededAt: string | null;
+    failedAfterSuccessAt: string | null;
+    lateFailureReviewedAt: string | null;
+    lateFailureReviewNote: string | null;
+    notCreatedEvidence: string | null;
+}
+export interface OrderRefundBalances {
+    chargedMinorUnits: number;
+    refundedMinorUnits: number;
+    inProgressMinorUnits: number;
+    refundableMinorUnits: number;
+    lateFailureNeedsReview: boolean;
+    unresolved: boolean;
+}
+export interface OrderRefundObligationView {
+    amountMinorUnits: number;
+    recordedStatus: OrderRefundObligationStatus;
+    refundedMinorUnits: number;
+    inProgressMinorUnits: number;
+    outstandingMinorUnits: number;
+    fullyRefunded: boolean;
+    needsAttention: boolean;
+}
+export interface OrderRefundsResponse {
+    orderId: string;
+    orderStatus: OrderStatus;
+    currency: string;
+    refundsEnabled: boolean;
+    balances: OrderRefundBalances | null;
+    obligation: OrderRefundObligationView | null;
+    refunds: OrderRefundView[];
+}
+export interface OrderRefundActionResponse {
+    refund: OrderRefundView;
+    replayed: boolean;
+    balances: OrderRefundBalances;
+    obligation: OrderRefundObligationView | null;
+}
+export interface OrderRefundObligationListItem {
+    orderId: string;
+    orderNumber: string;
+    orderStatus: OrderStatus;
+    currency: string;
+    obligation: OrderRefundObligationView;
+}
+export interface OrderRefundObligationsResponse {
+    obligations: OrderRefundObligationListItem[];
+}
 export interface AdvanceOrderStatusRequest {
     locationId: string;
     expectedStatus: OrderStatus;

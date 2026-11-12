@@ -347,6 +347,69 @@ export class InternalAuditService {
   // on OrderClosure alone and is never copied here (only whether one exists).
   // targetType 'order' is a new polymorphic target; the Admin Activity Log
   // ignores it like the other non-`internal_user` targets.
+  // ESP-04 M5b — a card refund of an order: requested, and every outcome its
+  // Stripe read-back proved (pending, succeeded, failed, unknown, never
+  // created, returned), and a late-failure review. Ids, amounts, codes and
+  // statuses only — never the internal note, a card detail or a Stripe
+  // secret.
+  async recordOrderRefundAction(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      action: string;
+      orderId: string;
+      refundId: string;
+      amountMinorUnits: number;
+      currency: string;
+      reasonCode: string | null;
+      status: string;
+      detail: Record<string, string | number | boolean>;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: input.action,
+        targetType: 'order',
+        targetId: input.orderId,
+        afterData: {
+          refundId: input.refundId,
+          amountMinorUnits: input.amountMinorUnits,
+          currency: input.currency,
+          reasonCode: input.reasonCode,
+          status: input.status,
+          ...input.detail,
+        },
+        reason: 'Card refund',
+      },
+    });
+  }
+
+  // ESP-04 M5b — a staff member without `orders.refund` at the order's
+  // location tried to refund (or recheck / review a refund): nothing was
+  // done.
+  async recordOrderRefundDenied(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      orderId: string;
+      attempted: 'request' | 'recheck' | 'review';
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'order.refund_denied',
+        targetType: 'order',
+        targetId: input.orderId,
+        afterData: { attempted: input.attempted },
+        reason: 'Card refund refused: no refund permission at this location',
+      },
+    });
+  }
+
   async recordOrderClosed(
     tx: Prisma.TransactionClient,
     input: {

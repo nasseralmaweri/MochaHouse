@@ -305,6 +305,9 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'GET /api/v1/admin/operations/tasks': { scope: 'location' },
   'GET /api/v1/admin/orders': { scope: 'location' },
   'GET /api/v1/admin/orders/:orderId': { scope: 'location' },
+  // ESP-04 M5b — refund history and balances (orders.view at the location).
+  'GET /api/v1/admin/orders/:orderId/refunds': { scope: 'location' },
+  'GET /api/v1/admin/orders/refund-obligations': { scope: 'location' },
   'PATCH /api/v1/admin/locations/:locationId': { scope: 'location' },
   'PATCH /api/v1/admin/locations/:locationId/digital-ordering': {
     scope: 'location',
@@ -334,6 +337,16 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   // ORDER_CLOSURE_ENABLED=1.
   'POST /api/v1/admin/orders/:orderId/cancel': { scope: 'location' },
   'POST /api/v1/admin/orders/:orderId/reject': { scope: 'location' },
+  // ESP-04 M5b — card refunds: orders.refund at the order's location (the
+  // business owner or an assigned Refund Manager); off unless
+  // RESTAURANT_REFUNDS_ENABLED=1.
+  'POST /api/v1/admin/orders/:orderId/refunds': { scope: 'location' },
+  'POST /api/v1/admin/orders/:orderId/refunds/:refundId/recheck': {
+    scope: 'location',
+  },
+  'POST /api/v1/admin/orders/:orderId/refunds/:refundId/review': {
+    scope: 'location',
+  },
   'PUT /api/v1/admin/catalog/locations/:locationId/menus/:menuId/products/:productId/availability-override':
     { scope: 'location' },
   'PUT /api/v1/admin/catalog/locations/:locationId/menus/:menuId/products/:productId/price-override':

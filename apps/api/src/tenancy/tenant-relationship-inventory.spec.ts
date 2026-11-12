@@ -669,7 +669,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
     // PaymentAttempt.providerAccountId; ESP-04 M5a
     // PaymentRefund.providerAccountId / providerRefundId and
     // PaymentRefundEvent.actorPlatformOperatorId.
-    expect(plainIdColumns).toHaveLength(20);
+    // ESP-04 M5b added PaymentRefund.clientRequestId.
+    expect(plainIdColumns).toHaveLength(21);
   });
 
   it('classifies every JSON column on business-owned records', () => {
@@ -777,8 +778,9 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       historicalSnapshot: 8,
       polymorphic: 4,
       json: 9,
-      external: 8,
-      total: 144,
+      // ESP-04 M5b: +1 external id (PaymentRefund.clientRequestId).
+      external: 9,
+      total: 145,
     });
     // Optional relationships are present and marked optional.
     const optionalForeignKeys = relationsBetweenBusinessRecords.filter(
