@@ -15,6 +15,9 @@ import {
   ORDER_REFUND_REASON_CODES,
 } from "@mocha-house/contracts";
 import { formatPrice } from "@/lib/money";
+// Mutating calls to this app's own /api proxy must carry the request
+// marker header (rejectUntrustedOrigin); markedFetch adds it, like api-client.
+import { markedFetch as fetch } from "@/lib/security/marked-fetch";
 
 // ESP-04 M5d — the staff refund interface's logic, kept out of the React
 // components so it can be tested on its own. The API (M5b/M5c) stays the only

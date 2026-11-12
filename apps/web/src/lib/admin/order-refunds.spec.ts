@@ -510,6 +510,24 @@ describe("reads", () => {
   });
 });
 
+describe("the web proxy's request marker", () => {
+  it("every refund action carries it; reads do not need it", async () => {
+    fetchMock.mockResolvedValue(
+      reply(200, { refund: refund(), replayed: false, balances: balances(), obligation: null }),
+    );
+    await requestOrderRefundFromBrowser(ORDER, request());
+    await recheckOrderRefundFromBrowser(ORDER, "r1", LOC);
+    await reviewOrderRefundFromBrowser(ORDER, "r1", LOC, "Checked");
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("x-centerivo-request")).toBe("1");
+    }
+    fetchMock.mockResolvedValue(reply(200, response()));
+    await getOrderRefundsFromBrowser(ORDER, LOC);
+    expect(fetchMock.mock.calls.at(-1)?.[1]).toEqual({ cache: "no-store" });
+  });
+});
+
 describe("recheck and review", () => {
   it("recheck and review post only the location (and the note)", async () => {
     fetchMock.mockResolvedValue(
