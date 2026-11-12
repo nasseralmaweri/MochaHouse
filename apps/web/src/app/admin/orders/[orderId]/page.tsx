@@ -24,6 +24,8 @@ import { useAdminContext } from "@/components/admin/AdminContext";
 import { usePointsLabel } from "@/lib/points-label-context";
 import { OrderRefundsPanel } from "@/components/admin/OrderRefundsPanel";
 import { closedOrderLine } from "@/lib/admin/order-refunds";
+import { OrderClosureAction } from "@/components/admin/OrderClosureAction";
+import { closureSummaryLines } from "@/lib/admin/order-closure";
 
 const NEXT_ACTION_LABEL: Record<OrderStatus, string | null> = {
   RECEIVED: "Accept",
@@ -90,6 +92,9 @@ export default function AdminOrderDetailPage() {
       // ESP-04 M5d — refund actions only for `orders.refund` at THIS
       // location (the API checks it again for every action).
       canRefund={canAtLocation("orders.refund", locationContext.location.id)}
+      // V1 — reject / cancel only for `orders.cancel` at THIS location (the
+      // API checks it again).
+      canCancel={canAtLocation("orders.cancel", locationContext.location.id)}
       userId={user.id}
     />
   );
@@ -100,12 +105,14 @@ function OrderDetail({
   locationId,
   locationName,
   canRefund,
+  canCancel,
   userId,
 }: {
   orderId: string;
   locationId: string;
   locationName: string;
   canRefund: boolean;
+  canCancel: boolean;
   userId: string;
 }) {
   const pointsLabel = usePointsLabel();
@@ -355,7 +362,57 @@ function OrderDetail({
         </p>
       )}
 
+      {order.closure ? (
+        <Card className="flex flex-col gap-2">
+          <h2 className="text-sm font-semibold text-text-primary">
+            {order.closure.kind === "REJECTED" ? "Rejection" : "Cancellation"}
+          </h2>
+          <dl className="flex flex-col gap-1 text-sm">
+            {closureSummaryLines(order.closure, order.currency, pointsLabel).map(
+              (line) => (
+                <div key={line.label} className="flex justify-between gap-4">
+                  <dt className="text-text-secondary">{line.label}</dt>
+                  <dd
+                    className={`text-right ${
+                      line.emphasis
+                        ? "font-semibold text-status-warning"
+                        : "text-text-primary"
+                    }`}
+                  >
+                    {line.value}
+                  </dd>
+                </div>
+              ),
+            )}
+          </dl>
+          {order.closure.note ? (
+            <p className="break-words text-xs text-text-secondary">
+              <span className="font-medium">Internal note:</span>{" "}
+              {order.closure.note}
+            </p>
+          ) : null}
+          {order.closure.refundDueMinorUnits > 0 ? (
+            <p className="text-xs text-text-secondary">
+              Closing the order did not refund the card. What is still owed
+              now, and refunds made toward it, are in Card refunds below.
+            </p>
+          ) : null}
+        </Card>
+      ) : null}
+
+      {canCancel ? (
+        <OrderClosureAction
+          orderId={order.orderId}
+          locationId={locationId}
+          status={order.status}
+          onChanged={load}
+        />
+      ) : null}
+
       <OrderRefundsPanel
+        // Re-read the refunds whenever the order's status changes (e.g. a
+        // closure just recorded a card refund owed).
+        key={order.status}
         orderId={order.orderId}
         locationId={locationId}
         orderTotalMinorUnits={order.total}
