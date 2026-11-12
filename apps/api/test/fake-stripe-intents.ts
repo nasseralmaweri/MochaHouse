@@ -536,6 +536,51 @@ export function fakeStripePayments(allowedTenantIds: Set<string>): {
   return { stripe, intents, provider };
 }
 
+// ESP-04 M5c — a signed refund event, as Stripe would deliver it to the
+// payments endpoint. Its body's amount and status are deliberately
+// misleading: nothing in an event is trusted.
+export function signedRefundEvent(
+  stripe: Stripe,
+  event: {
+    id: string;
+    type: 'refund.created' | 'refund.updated' | 'refund.failed';
+    account: string | null;
+    refund: {
+      id: string;
+      paymentIntent: string;
+      metadata?: Record<string, string>;
+    };
+    livemode?: boolean;
+  },
+  secret = PAYMENTS_SIGNING_SECRET,
+): { rawBody: Buffer; signatureHeader: string } {
+  const payload = JSON.stringify({
+    id: event.id,
+    object: 'event',
+    type: event.type,
+    livemode: event.livemode ?? false,
+    ...(event.account ? { account: event.account } : {}),
+    data: {
+      object: {
+        id: event.refund.id,
+        object: 'refund',
+        amount: 999_999,
+        currency: 'usd',
+        status: 'succeeded',
+        payment_intent: event.refund.paymentIntent,
+        metadata: event.refund.metadata ?? {},
+      },
+    },
+  });
+  return {
+    rawBody: Buffer.from(payload),
+    signatureHeader: stripe.webhooks.generateTestHeaderString({
+      payload,
+      secret,
+    }),
+  };
+}
+
 // A signed payment event, as Stripe would deliver it to the payments
 // endpoint (classic snapshot event from a connected account).
 export function signedPaymentEvent(

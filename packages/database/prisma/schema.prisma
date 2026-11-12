@@ -1296,31 +1296,34 @@ enum NotificationDeliveryStatus {
 // request with the same key reuses this row's outcome instead of charging
 // or creating an Order again.
 model PaymentAttempt {
-  id                String               @id @default(uuid(7))
-  idempotencyKey    String               @unique
-  provider          String
-  status            PaymentAttemptStatus @default(PENDING)
+  id                  String               @id @default(uuid(7))
+  idempotencyKey      String               @unique
+  provider            String
+  status              PaymentAttemptStatus @default(PENDING)
   // Milestone 7H — nullable: a food-order checkout always sets it; a
   // gift-card purchase (which has no location) leaves it null.
-  locationId        String?
-  amount            Int
-  currency          String
-  providerReference String?
-  failureReason     String?
+  locationId          String?
+  amount              Int
+  currency            String
+  providerReference   String?
+  failureReason       String?
   // ESP-04 M3 — the restaurant's connected account (acct_…) a Stripe payment
   // intent was created on, recorded with the charge claim before Stripe is
   // called; every later read of the intent uses exactly this account. Null
   // for providers without connected accounts. A partial unique index (raw
   // SQL, migration 20261122090000_stripe_payment_intents) lets at most ONE
   // Stripe attempt name a given intent.
-  providerAccountId String?
+  providerAccountId   String?
   // ESP-04 M4b — the last verified activity of the customer's checkout page
   // on this payment (an authenticated heartbeat bound to the checkout
   // session, at most once a minute, only while it waits for its customer).
   // Abandonment is measured from the later of createdAt and this. A partial
   // index (raw SQL, migration 20261123090000_payment_customer_activity)
   // serves the abandonment scan.
-  customerActiveAt  DateTime?
+  customerActiveAt    DateTime?
+  // ESP-04 M5c — when this payment's refunds were last reconciled with
+  // Stripe (read-only): the refund recovery schedule, nothing more.
+  refundsReconciledAt DateTime?
 
   // Set when this attempt's payment SUCCEEDED but the subsequent protected
   // Order transaction did not commit (e.g. the catalog changed underneath

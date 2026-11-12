@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { RefundReconciliationService } from '../orders/application/refund-reconciliation.service';
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -164,6 +165,7 @@ describe('ESP-04 M4a Stripe outcome recovery (integration, offline Stripe)', () 
       ],
       providers: [
         CheckoutService,
+        RefundReconciliationService,
         PaymentEventsService,
         PaymentRecoveryService,
         PlatformPaymentCasesService,

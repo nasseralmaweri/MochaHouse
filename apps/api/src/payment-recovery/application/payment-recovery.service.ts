@@ -5,9 +5,14 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import type { Prisma } from '@mocha-house/database';
 import { withSessionLock } from '../../payment/session-lock';
+import {
+  RefundReconciliationService,
+  refundReconciliationEnabled,
+} from '../../orders/application/refund-reconciliation.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CheckoutService } from '../../orders/application/checkout.service';
 import { UnreadableCheckoutSnapshotError } from '../../orders/application/checkout-snapshot';
@@ -226,6 +231,28 @@ function resultOfState(attempt: {
 // ESP-04 M4b — abandoned Stripe payment cleanup: its own switch, OFF by
 // default, and it runs only inside the automatic sweeper (which needs
 // PAYMENT_AUTO_RECOVERY_ENABLED=1).
+// ESP-04 M5c — the automatic refund recovery: OFF unless
+// RESTAURANT_REFUND_RECOVERY_ENABLED=1, and only inside the automatic
+// sweeper (PAYMENT_AUTO_RECOVERY_ENABLED=1). Read-only towards Stripe.
+export function refundRecoveryEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  // The same switch as refund webhooks (one for all refund reconciliation).
+  return refundReconciliationEnabled(env);
+}
+
+// How often a payment's refunds are re-read: one waiting for an answer
+// (REQUESTED / UNKNOWN / PENDING, past a short grace so a sending in
+// progress finishes first), one that succeeded recently (it could still come
+// back), and an order's open refund obligation (a refund made in the Stripe
+// Dashboard whose event was lost).
+export const REFUND_RECOVERY_GRACE_MS = 2 * 60 * 1000;
+export const REFUND_RECOVERY_UNRESOLVED_EVERY_MS = 10 * 60 * 1000;
+export const REFUND_RECOVERY_SUCCEEDED_EVERY_MS = 24 * 60 * 60 * 1000;
+export const REFUND_RECOVERY_SUCCEEDED_FOR_DAYS = 35;
+export const REFUND_RECOVERY_OBLIGATION_EVERY_MS = 6 * 60 * 60 * 1000;
+export const REFUND_RECOVERY_OBLIGATION_FOR_DAYS = 180;
+
 export function abandonedIntentCancelEnabled(
   env: Record<string, string | undefined> = process.env,
 ): boolean {
@@ -387,6 +414,9 @@ export class PaymentRecoveryService implements OnModuleInit, OnModuleDestroy {
     // (absent when constructed directly, e.g. by older specs).
     @Inject(PAYMENT_PROVIDER)
     private readonly provider: PaymentProvider | null = null,
+    // ESP-04 M5c — refund records kept true to Stripe (read-only).
+    @Optional()
+    private readonly refundReconciliation: RefundReconciliationService | null = null,
   ) {}
 
   // OFF by default: nothing is scheduled unless the deployment explicitly
@@ -449,6 +479,22 @@ export class PaymentRecoveryService implements OnModuleInit, OnModuleDestroy {
               await this.cancelAbandoned(candidate.id, candidate.tenantId, now);
             }
           }
+          // ESP-04 M5c — refunds: each due payment's refunds read back from
+          // Stripe and reconciled. Read-only: never creates, replays or
+          // cancels a refund. Only with its own switch on.
+          if (refundRecoveryEnabled() && this.refundReconciliation) {
+            for (const candidate of await this.refundRecoveryCandidates(now)) {
+              await this.refundReconciliation
+                .reconcilePayment(candidate.tenantId, candidate.id, now)
+                .catch((error: unknown) => {
+                  this.logger.warn(
+                    `payment ${candidate.id}: refund reconciliation failed (${
+                      error instanceof Error ? error.name : 'unknown error'
+                    })`,
+                  );
+                });
+            }
+          }
         }
         const due = await this.dueCandidates(now);
         const outcomes: RecoveryOutcome[] = [];
@@ -467,6 +513,47 @@ export class PaymentRecoveryService implements OnModuleInit, OnModuleDestroy {
     } finally {
       this.sweeping = false;
     }
+  }
+
+  // ESP-04 M5c — Stripe payments whose refunds are due a read-back (see the
+  // REFUND_RECOVERY_* schedule), least recently reconciled first, at most one
+  // batch.
+  async refundRecoveryCandidates(
+    now: Date = new Date(),
+  ): Promise<{ id: string; tenantId: string }[]> {
+    const ago = (ms: number) => new Date(now.getTime() - ms);
+    const days = (n: number) => ago(n * 24 * 60 * 60 * 1000);
+    // Driven from the (small) sets of refunds and open obligations that need
+    // it, never a scan of every payment; each with its own re-read interval.
+    return this.prisma.$queryRaw<{ id: string; tenantId: string }[]>`
+      WITH due AS (
+        SELECT r."tenantId", r."paymentAttemptId" AS id,
+               ${ago(REFUND_RECOVERY_UNRESOLVED_EVERY_MS)}::timestamp AS before
+          FROM "PaymentRefund" r
+         WHERE r.status IN ('REQUESTED', 'UNKNOWN', 'PENDING')
+           AND r."createdAt" < ${ago(REFUND_RECOVERY_GRACE_MS)}
+        UNION ALL
+        SELECT r."tenantId", r."paymentAttemptId",
+               ${ago(REFUND_RECOVERY_SUCCEEDED_EVERY_MS)}::timestamp
+          FROM "PaymentRefund" r
+         WHERE r.status = 'SUCCEEDED'
+           AND r."succeededAt" > ${days(REFUND_RECOVERY_SUCCEEDED_FOR_DAYS)}
+        UNION ALL
+        SELECT ob."tenantId", ob."paymentAttemptId",
+               ${ago(REFUND_RECOVERY_OBLIGATION_EVERY_MS)}::timestamp
+          FROM "OrderRefundObligation" ob
+         WHERE ob.status IN ('DUE', 'PROCESSING', 'FAILED')
+           AND ob."createdAt" > ${days(REFUND_RECOVERY_OBLIGATION_FOR_DAYS)}
+      )
+      SELECT pa.id, pa."tenantId" FROM "PaymentAttempt" pa
+        JOIN (SELECT "tenantId", id, max(before) AS before FROM due GROUP BY "tenantId", id) d
+          ON d."tenantId" = pa."tenantId" AND d.id = pa.id
+       WHERE pa.provider = 'stripe'
+         AND pa."providerReference" IS NOT NULL
+         AND pa."providerAccountId" IS NOT NULL
+         AND (pa."refundsReconciledAt" IS NULL OR pa."refundsReconciledAt" < d.before)
+       ORDER BY pa."refundsReconciledAt" ASC NULLS FIRST, pa.id ASC
+       LIMIT ${SWEEP_BATCH_SIZE}`;
   }
 
   // Confirmed payments with no order whose saved checkout (or card-less

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { RefundReconciliationService } from '../orders/application/refund-reconciliation.service';
 import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -176,6 +177,7 @@ describe('ESP-04 M3 Stripe payments (integration, offline Stripe)', () => {
       controllers: [PaymentEventsController],
       providers: [
         CheckoutService,
+        RefundReconciliationService,
         PaymentEventsService,
         PaymentAccountsService,
         {

@@ -35,6 +35,7 @@ import type { AuthorizationContext } from '../../internal-auth/authorization/aut
 import { PAYMENT_PROVIDER } from '../../payment/payment-provider.token';
 import { paymentAccountForAttempt } from '../../payment/payment-intent';
 import { withSessionLock } from '../../payment/session-lock';
+import { syncRefundObligation } from './refund-obligation-sync';
 import {
   notCreatedEvidenceFor,
   obligationStanding,
@@ -891,80 +892,13 @@ export class OrderRefundsService {
       .catch(() => undefined);
   }
 
-  // The obligation follows its payment's refunds: PROCESSING while a refund
-  // is in flight; REFUNDED (PROCESSOR) as soon as verified refunds cover it
-  // and no returned refund is unreviewed — the database checks all of it
-  // again; FAILED (still owed) when an attempt failed and nothing is in
-  // flight. A REFUNDED obligation never changes (S5a): what is owed after a
-  // late failure is calculated from the refunds.
-  private async syncObligation(
+  // See refund-obligation-sync.ts (shared with refund reconciliation).
+  private syncObligation(
     tx: Prisma.TransactionClient,
     tenantId: string,
     paymentAttemptId: string,
   ): Promise<void> {
-    const obligation = await tx.orderRefundObligation.findFirst({
-      where: { tenantId, paymentAttemptId },
-      select: { id: true, amountMinorUnits: true, status: true },
-    });
-    if (!obligation || obligation.status === 'REFUNDED') return;
-    const refunds = await tx.paymentRefund.findMany({
-      where: { tenantId, paymentAttemptId },
-      select: {
-        status: true,
-        amountMinorUnits: true,
-        origin: true,
-        succeededAt: true,
-        lateFailureReviewedAt: true,
-        providerRefundId: true,
-      },
-      orderBy: [{ succeededAt: 'desc' }, { createdAt: 'desc' }],
-    });
-    const standing = obligationStanding(
-      obligation.amountMinorUnits,
-      refunds.map(rowOf),
-      obligation.status,
-    );
-    if (standing.settleable) {
-      const settling = refunds.find((r) => r.status === 'SUCCEEDED');
-      await tx.orderRefundObligation.updateMany({
-        where: {
-          id: obligation.id,
-          tenantId,
-          status: { in: ['DUE', 'PROCESSING', 'FAILED'] },
-        },
-        data: {
-          status: 'REFUNDED',
-          settlementMethod: 'PROCESSOR',
-          processorRefundId: settling!.providerRefundId,
-          settledAt: new Date(),
-        },
-      });
-      return;
-    }
-    // PROCESSING while a refund toward it is on its way, or part of it has
-    // been refunded (the rest still to ask for); FAILED only when nothing of
-    // it has been refunded and nothing is on its way (every attempt failed).
-    if (standing.inProgressMinorUnits > 0 || standing.refundedMinorUnits > 0) {
-      if (obligation.status !== 'PROCESSING') {
-        await tx.orderRefundObligation.updateMany({
-          where: {
-            id: obligation.id,
-            tenantId,
-            status: { in: ['DUE', 'FAILED'] },
-          },
-          data: { status: 'PROCESSING' },
-        });
-      }
-      return;
-    }
-    if (obligation.status === 'PROCESSING') {
-      // Nothing refunded and nothing on its way: still owed in full, a new
-      // refund is needed.
-      await tx.orderRefundObligation.updateMany({
-        where: { id: obligation.id, tenantId, status: 'PROCESSING' },
-        data: { status: 'FAILED' },
-      });
-    }
+    return syncRefundObligation(tx, tenantId, paymentAttemptId);
   }
 
   // --- Stripe -------------------------------------------------------------------

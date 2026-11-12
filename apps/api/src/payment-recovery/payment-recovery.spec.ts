@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/require-await -- controlled provider doubles are async by contract */
 import 'dotenv/config';
+import { RefundReconciliationService } from '../orders/application/refund-reconciliation.service';
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -181,6 +182,7 @@ describe('ESP-03 PR 5 payment reconciliation and automatic recovery (integration
       ],
       providers: [
         CheckoutService,
+        RefundReconciliationService,
         PaymentRecoveryService,
         PlatformPaymentCasesService,
       ],

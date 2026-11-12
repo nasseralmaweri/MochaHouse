@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { RefundReconciliationService } from '../orders/application/refund-reconciliation.service';
 import { randomUUID } from 'node:crypto';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TENANT_1_MOCHA_HOUSE_ID } from '@mocha-house/database';
@@ -168,6 +169,7 @@ describe('ESP-04 M4b abandoned Stripe payment cleanup (integration, offline Stri
       ],
       providers: [
         CheckoutService,
+        RefundReconciliationService,
         PaymentEventsService,
         PaymentRecoveryService,
         PlatformPaymentCasesService,

@@ -100,6 +100,8 @@ export const COLUMNS_ADDED_AFTER_4C: Readonly<
     'providerAccountId',
     // ESP-04 M4b (20261123090000).
     'customerActiveAt',
+    // ESP-04 M5c — the refund reconciliation schedule.
+    'refundsReconciledAt',
   ],
   // SC3c-3 — verified-email stamps (20261029090000).
   InternalUser: ['verifiedEmail', 'emailVerifiedAt'],
