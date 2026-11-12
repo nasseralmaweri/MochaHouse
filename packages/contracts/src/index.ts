@@ -2254,6 +2254,13 @@ export interface OrderRefundsResponse {
   balances: OrderRefundBalances | null;
   obligation: OrderRefundObligationView | null;
   refunds: OrderRefundView[];
+  // ESP-04 M5d — read-only "needs attention" signals from M5c's
+  // reconciliation: refunds it flagged recently (and that have not changed
+  // since), and whether the order's payment has an unresolved
+  // reconciliation case (e.g. a Stripe refund that could not be matched).
+  // Shown to staff; resolved by support, never from this page.
+  attentionRefundIds: string[];
+  paymentNeedsAttention: boolean;
 }
 
 // The answer to a refund request, a recheck or a review.

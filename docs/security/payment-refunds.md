@@ -445,6 +445,39 @@ with its own key, and only within the replay window.
 * **A settled obligation whose refund came back** shows what is owed again, and a replacement
   needs a staff review first.
 
+## Staff refund interface (ESP-04 M5d)
+
+M5d adds the staff UI on the existing M5b/M5c API. No refund processing, payment state or
+reconciliation rule changed.
+
+* **Order Details → "Card refunds".** Shows the server's balances only: paid by card (never
+  the order total; a note appears when part of the order was paid another way), refunded, in
+  progress, still refundable and still owed. Below that, the refund history in plain language.
+* **Refunding.** Only for `orders.refund` at the order's location, with refunds switched on.
+  The steps are: full remaining or partial amount (typed in integer minor units, with no
+  floating point and no decimal commas), reason, optional internal note, a review showing
+  the exact amount, then Confirm. Nothing is ever sent automatically.
+  * One `requestId` is created at the review step. Every retry sends that identical request,
+    which the server replays and never repeats.
+  * `expectedReservedMinorUnits` comes from the last server response. A review whose figures
+    changed is sent back to the form.
+  * With no definite answer (network, 5xx, 429, an unreadable reply), only "Check the refund"
+    is offered, and it resends the same request. The request is kept in `sessionStorage`
+    under the staff member and order until a definite answer arrives.
+  * A 409 explains what happened, reloads the figures and requires a fresh review.
+* **Recheck and late-failure review** reuse the M5b endpoints. The review needs its mandatory
+  note. New refunds stay blocked while a refund is unresolved or a returned refund is
+  unreviewed.
+* **"Needs attention" (read-only).** The order refunds response adds `attentionRefundIds`
+  (refunds whose latest history entry in the last 7 days is a reconciliation
+  `NEEDS_ATTENTION`) and `paymentNeedsAttention` (an unresolved payment reconciliation case).
+  Both are shown as indicators and pause new refunds from this page. Support resolves them;
+  this page has no resolution action.
+* **Orders workspace → "Refunds owed".** The M5b obligations list for the location, with
+  needs-attention items first, each linking to its order.
+* **Staff with only `orders.view`** see the figures and history. The API already removes
+  internal notes for them, and they get no actions.
+
 ## Required of M5b / M5c (not enforced by the database)
 
 * **Read-backs only.** Write `EXTERNAL` refunds, and every status change, only from a Stripe

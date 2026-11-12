@@ -1,8 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import type { OrderStatus, StoreOrderSummary } from "@mocha-house/contracts";
+import type {
+  OrderRefundObligationListItem,
+  OrderStatus,
+  StoreOrderSummary,
+} from "@mocha-house/contracts";
+import {
+  getRefundObligationsFromBrowser,
+  obligationStatusLabel,
+  obligationsOwedFirst,
+} from "@/lib/admin/order-refunds";
 import {
   advanceStoreOrderStatusFromBrowser,
   getActiveStoreOrdersFromBrowser,
@@ -39,7 +48,7 @@ import {
   AdminLoading,
 } from "@/components/admin/states";
 import { Button } from "@/components/admin/Button";
-import { OrderStatusBadge } from "@/components/admin/StatusBadge";
+import { OrderStatusBadge, StatusBadge } from "@/components/admin/StatusBadge";
 import { useAdminContext } from "@/components/admin/AdminContext";
 
 const NEXT_ACTION_LABEL: Record<OrderStatus, string | null> = {
@@ -397,9 +406,114 @@ function OrdersQueue({
           />
         </div>
       )}
+
+      {/* ESP-04 M5d — closed orders leave the queue, but money still owed
+          on them stays reachable here. */}
+      <RefundsOwedSection locationId={locationId} />
     </AdminPage>
   );
 }
+
+function RefundsOwedSection({ locationId }: { locationId: string }) {
+  const [state, setState] = useState<
+    | { kind: "loading" }
+    | { kind: "error" }
+    | { kind: "hidden" }
+    | { kind: "ok"; items: OrderRefundObligationListItem[] }
+  >({ kind: "loading" });
+
+  const load = useCallback(async () => {
+    const result = await getRefundObligationsFromBrowser(locationId);
+    if (result.outcome === "success") {
+      setState({ kind: "ok", items: obligationsOwedFirst(result.data.obligations) });
+    } else if (result.outcome === "forbidden" || result.outcome === "not-found") {
+      setState({ kind: "hidden" });
+    } else {
+      setState({ kind: "error" });
+    }
+  }, [locationId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getRefundObligationsFromBrowser(locationId).then((result) => {
+      if (cancelled) return;
+      if (result.outcome === "success") {
+        setState({ kind: "ok", items: obligationsOwedFirst(result.data.obligations) });
+      } else if (result.outcome === "forbidden" || result.outcome === "not-found") {
+        setState({ kind: "hidden" });
+      } else {
+        setState({ kind: "error" });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [locationId]);
+
+  if (state.kind === "hidden") return null;
+
+  return (
+    <section aria-labelledby="refunds-owed-heading" className="flex flex-col gap-3">
+      <h2
+        id="refunds-owed-heading"
+        className="flex items-baseline gap-2 text-sm font-semibold uppercase tracking-wide text-text-secondary"
+      >
+        Refunds owed
+        {state.kind === "ok" ? (
+          <span className="text-text-muted">({state.items.length})</span>
+        ) : null}
+        <span className="text-xs font-normal normal-case text-text-muted">
+          Rejected or cancelled orders with card money still to return
+        </span>
+      </h2>
+      {state.kind === "loading" ? (
+        <p className="text-sm text-text-muted">Loading…</p>
+      ) : state.kind === "error" ? (
+        <div className="flex items-center gap-3 text-sm text-text-secondary">
+          <span>Couldn&apos;t load refunds owed.</span>
+          <Button variant="secondary" onClick={() => void load()}>
+            Try again
+          </Button>
+        </div>
+      ) : state.items.length === 0 ? (
+        <p className="text-sm text-text-muted">None right now</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {state.items.map((item) => (
+            <li key={item.orderId}>
+              <Card className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-col gap-0.5">
+                  <Link
+                    href={`/admin/orders/${encodeURIComponent(item.orderId)}?location=${encodeURIComponent(locationId)}`}
+                    className="text-base font-semibold text-text-primary underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                  >
+                    #{item.orderNumber}
+                  </Link>
+                  <span className="text-sm text-text-secondary">
+                    {item.obligation.outstandingMinorUnits === 0 &&
+                    item.obligation.inProgressMinorUnits > 0
+                      ? `${formatPrice(item.obligation.inProgressMinorUnits, item.currency)} being refunded`
+                      : `${formatPrice(item.obligation.outstandingMinorUnits, item.currency)} still owed`}
+                  </span>
+                </div>
+                <div className="flex flex-wrap justify-end gap-1">
+                  <StatusBadge
+                    tone={item.obligation.inProgressMinorUnits > 0 ? "neutral" : "warning"}
+                    label={obligationStatusLabel(item.obligation)}
+                  />
+                  {item.obligation.needsAttention ? (
+                    <StatusBadge tone="warning" label="Needs attention" />
+                  ) : null}
+                </div>
+              </Card>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 
 function QueueSection({
   title,

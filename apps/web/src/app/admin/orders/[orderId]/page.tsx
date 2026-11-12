@@ -22,6 +22,8 @@ import { Button } from "@/components/admin/Button";
 import { ORDER_STATUS_LABEL } from "@/components/admin/StatusBadge";
 import { useAdminContext } from "@/components/admin/AdminContext";
 import { usePointsLabel } from "@/lib/points-label-context";
+import { OrderRefundsPanel } from "@/components/admin/OrderRefundsPanel";
+import { closedOrderLine } from "@/lib/admin/order-refunds";
 
 const NEXT_ACTION_LABEL: Record<OrderStatus, string | null> = {
   RECEIVED: "Accept",
@@ -39,7 +41,7 @@ const NEXT_ACTION_LABEL: Record<OrderStatus, string | null> = {
 // unchanged from the predecessor.
 export default function AdminOrderDetailPage() {
   const params = useParams<{ orderId: string }>();
-  const { can, canAtLocation, locationContext } = useAdminContext();
+  const { can, canAtLocation, locationContext, user } = useAdminContext();
 
   if (!can("orders.view")) {
     return (
@@ -85,6 +87,10 @@ export default function AdminOrderDetailPage() {
       orderId={params.orderId}
       locationId={locationContext.location.id}
       locationName={locationContext.location.name}
+      // ESP-04 M5d — refund actions only for `orders.refund` at THIS
+      // location (the API checks it again for every action).
+      canRefund={canAtLocation("orders.refund", locationContext.location.id)}
+      userId={user.id}
     />
   );
 }
@@ -93,10 +99,14 @@ function OrderDetail({
   orderId,
   locationId,
   locationName,
+  canRefund,
+  userId,
 }: {
   orderId: string;
   locationId: string;
   locationName: string;
+  canRefund: boolean;
+  userId: string;
 }) {
   const pointsLabel = usePointsLabel();
   const [order, setOrder] = useState<StoreOrderDetail | null>(null);
@@ -340,8 +350,18 @@ function OrderDetail({
           {advancing ? "Updating…" : nextActionLabel}
         </Button>
       ) : (
-        <p className="text-sm text-text-muted">This order is complete.</p>
+        <p className="text-sm text-text-muted">
+          {closedOrderLine(order.status)}
+        </p>
       )}
+
+      <OrderRefundsPanel
+        orderId={order.orderId}
+        locationId={locationId}
+        orderTotalMinorUnits={order.total}
+        canRefund={canRefund}
+        userId={userId}
+      />
 
       <BackLink href={backHref}>Back to orders</BackLink>
     </AdminPage>
