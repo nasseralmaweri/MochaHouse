@@ -1832,6 +1832,17 @@ const EXTERNAL_IDENTIFIERS: readonly ExternalIdentifier[] = [
     nullable: true,
     system: 'payment processor',
   },
+  // ESP-04 M5b — the staff request that created a CENTERIVO refund: a UUID
+  // the staff page generates once per submission (unique per business),
+  // never a reference to another record.
+  {
+    id: 'PaymentRefund.clientRequestId',
+    kind: 'external-identifier',
+    model: 'PaymentRefund',
+    column: 'clientRequestId',
+    nullable: true,
+    system: 'staff request (page-generated UUID)',
+  },
   // ESP-04 M5a — the CENTERIVO platform operator who wrote a refund history
   // entry: an id from the platform plane, never a foreign key.
   {

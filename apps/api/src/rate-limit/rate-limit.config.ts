@@ -77,6 +77,8 @@ export type PolicyName =
   | 'payments-connect-webhook'
   // ESP-04 M3 — Stripe payment events (their own endpoint).
   | 'payments-intent-webhook'
+  // ESP-04 M5b — staff card refunds (each may call Stripe).
+  | 'restaurant-refunds'
   | 'account-recovery'
   | 'account-verification'
   // SC4a — business owner self-service registration (no tenant: the tenant
@@ -367,6 +369,24 @@ const DEFAULTS: Record<PolicyName, PolicyDefault> = {
         name: 'tenant',
         key: ['tenant'],
         limit: 30,
+        windowSeconds: HOUR,
+      },
+    ],
+  },
+  // ESP-04 M5b — staff refund requests, rechecks and reviews: each may call
+  // Stripe several times. A refund desk needs a few a minute at most.
+  'restaurant-refunds': {
+    scopes: [
+      {
+        name: 'ip',
+        key: ['tenant', 'ip'],
+        limit: 30,
+        windowSeconds: FIVE_MINUTES,
+      },
+      {
+        name: 'tenant',
+        key: ['tenant'],
+        limit: 120,
         windowSeconds: HOUR,
       },
     ],

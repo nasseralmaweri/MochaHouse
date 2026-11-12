@@ -17,6 +17,7 @@ import { AdminOrdersService } from './application/admin-orders.service';
 import { CustomerOrdersService } from './application/customer-orders.service';
 import { CustomerReorderService } from './application/customer-reorder.service';
 import { OrderClosureService } from './application/order-closure.service';
+import { OrderRefundsService } from './application/order-refunds.service';
 import { AuditModule } from '../audit/audit.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
@@ -61,6 +62,8 @@ import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
     CustomerOrdersService,
     CustomerReorderService,
     OrderClosureService,
+    // ESP-04 M5b — card refunds of an order's Stripe payment.
+    OrderRefundsService,
   ],
   // PaymentModule — re-exported so the Milestone 5G platform-status read
   // keeps reaching the payment-integration posture through OrdersModule

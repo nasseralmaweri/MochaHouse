@@ -2007,6 +2007,13 @@ model PaymentRefund {
   // a timeout or time passing.
   notCreatedEvidence                  String?
   notCreatedRecordedAt                DateTime?
+  // ESP-04 M5b (migration 20261125090000_payment_refund_requests) — the
+  // staff request that created a CENTERIVO refund: a UUID the page generates
+  // once per submission (unique per business), and the server's SHA-256 of
+  // what was asked. A repeated submission finds this operation; the same id
+  // with anything else is a conflict. Never change (trigger).
+  clientRequestId                     String?
+  requestFingerprint                  String?
   createdAt                           DateTime       @default(now())
   updatedAt                           DateTime       @updatedAt
 
@@ -2016,6 +2023,7 @@ model PaymentRefund {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, id])
+  @@unique([tenantId, clientRequestId])
   @@index([tenantId])
   @@index([paymentAttemptId])
   @@index([orderId])

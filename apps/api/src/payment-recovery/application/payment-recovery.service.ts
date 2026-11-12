@@ -6,8 +6,8 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { Client } from 'pg';
 import type { Prisma } from '@mocha-house/database';
+import { withSessionLock } from '../../payment/session-lock';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CheckoutService } from '../../orders/application/checkout.service';
 import { UnreadableCheckoutSnapshotError } from '../../orders/application/checkout-snapshot';
@@ -371,19 +371,6 @@ export function nextAutomaticAttemptAt(
   return new Date(
     history.lastAttemptAt.getTime() + backoffAfter(history.automaticAttempts),
   );
-}
-
-// A connection string for a plain `pg` client: Prisma's own `schema`
-// parameter is not a PostgreSQL option.
-function lockConnectionString(): string {
-  const raw = process.env.DATABASE_URL!;
-  try {
-    const url = new URL(raw);
-    url.searchParams.delete('schema');
-    return url.toString();
-  } catch {
-    return raw;
-  }
 }
 
 @Injectable()
@@ -1564,33 +1551,4 @@ function classify(error: unknown, giftCard: boolean): RecoveryFailure {
     return 'FULFILMENT_REJECTED';
   }
   return 'TRANSIENT_ERROR';
-}
-
-// Runs `fn` holding a session-level advisory lock on a dedicated
-// connection; null (and `fn` not run) when another holder has it. The lock
-// is released when `fn` ends, or by PostgreSQL when the connection drops.
-async function withSessionLock<T>(
-  key: string,
-  fn: () => Promise<T>,
-): Promise<T | null> {
-  const client = new Client({ connectionString: lockConnectionString() });
-  // A dropped lock connection is surfaced by the next query; never crash.
-  client.on('error', () => undefined);
-  await client.connect();
-  try {
-    const { rows } = await client.query<{ locked: boolean }>(
-      'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS locked',
-      [key],
-    );
-    if (rows[0]?.locked !== true) return null;
-    try {
-      return await fn();
-    } finally {
-      await client
-        .query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [key])
-        .catch(() => undefined);
-    }
-  } finally {
-    await client.end().catch(() => undefined);
-  }
 }

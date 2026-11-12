@@ -216,6 +216,136 @@ them in M5a.
   refund by listing the intent's refunds and matching our refund id and amount. It never
   creates a refund for the same operation with a fresh key.
 
+## Refund execution (ESP-04 M5b)
+
+M5b lets staff refund an order's card payment through Stripe, using everything above. The
+service is `apps/api/src/orders/application/order-refunds.service.ts`, and the routes are on
+the admin orders controller.
+
+### Switches and who may refund
+
+* **`RESTAURANT_REFUNDS_ENABLED=1`**, off by default. It also needs Stripe payments
+  configured (test mode) and the business on the test-mode allowlist. Otherwise the execution
+  routes answer 404 and nothing is asked of Stripe.
+* **Refund history** (read-only) stays available with `orders.view`.
+* **Refunding, rechecking and reviewing** need `orders.refund` at the order's location: the
+  business owner, or a Refund Manager the owner assigned for that location.
+  * A Store Manager, or a Refund Manager at another location, gets 403, and the attempt is
+    audited (`order.refund_denied`).
+  * The route guard admits staff with `orders.view`. The service checks `orders.refund` for
+    the specific location before reading anything.
+* **Other businesses' orders**, or a location mismatch, get 404.
+* **CENTERIVO platform operators** have no route here.
+* **Rate limit:** the routes use the `restaurant-refunds` policy (per business and IP, per
+  business).
+* **Billing wind-down:** the routes stay available during a wind-down. Refunding the
+  business's customers is part of winding down.
+
+### Routes
+
+| Route | Permission | Does |
+|---|---|---|
+| `GET /api/v1/admin/orders/:orderId/refunds?locationId=` | `orders.view` | History, balances, the obligation's standing |
+| `GET /api/v1/admin/orders/refund-obligations?locationId=` | `orders.view` | Closed orders whose card money is still owed, or need attention |
+| `POST /api/v1/admin/orders/:orderId/refunds` | `orders.refund` | Ask for a refund |
+| `POST /api/v1/admin/orders/:orderId/refunds/:refundId/recheck` | `orders.refund` | Read an unanswered or pending refund back from Stripe |
+| `POST /api/v1/admin/orders/:orderId/refunds/:refundId/review` | `orders.refund` | The audited review of a returned refund |
+
+### One refund
+
+1. **Request identity.** The page sends a `requestId` (a UUID generated once per
+   submission). The server stores it with a fingerprint of what was asked: order, location,
+   staff member, amount, currency, reason and note (migration
+   `20261125090000_payment_refund_requests`).
+   * A repeat returns the same refund (`replayed: true`).
+   * The same id with anything else is a 409.
+   * A double submission never creates two refunds.
+2. **Locally**, all of these must hold:
+   * a COMPLETED order, or a REJECTED / CANCELLED one with money still owed;
+   * a confirmed Stripe payment, not flagged for reconciliation;
+   * nothing of the payment waiting for Stripe's answer (`REQUESTED` / `UNKNOWN`: recheck it
+     first);
+   * no returned refund unreviewed;
+   * the amount within what is left, and, for an obligation, within what is still owed.
+
+   Gift-card, promotion and Mocha Bean balances are never touched.
+3. **Stripe agrees with our records, before anything is recorded.**
+   * The intent must be test mode, for the payment's amount and currency, with the amount
+     received, and the charge not disputed.
+   * The charge's refunded amount must equal our pending and succeeded refunds.
+   * **Every** refund Stripe lists for the intent (read in full) must be recorded here.
+   * A refund made in the Dashboard that is not yet recorded, an unreadable or incomplete
+     history, or any mismatch **fails closed**. Ingesting Dashboard refunds is M5c.
+4. **The operation is recorded `REQUESTED`** with its own idempotency key, in a short
+   transaction under the payment's row lock. The database re-checks capacity, and a
+   concurrent request is refused. The obligation, if any, becomes `PROCESSING`.
+5. **Under a per-refund session lock**, with no database transaction open across the
+   network:
+   * the sending is recorded (`firstSentAt`);
+   * Stripe is asked;
+   * the refund is **always read back**.
+   * Only the read-back moves it to `PENDING`, `SUCCEEDED`, `FAILED` or `CANCELED`. An
+     error, timeout or unconfirmed answer is `UNKNOWN`, and its amount stays reserved.
+   * If recording the outcome fails, the operation stays `REQUESTED` (sent). The recheck
+     recovers it.
+6. **Every change is audited:** `order.refund_requested`, `_pending`, `_succeeded`,
+   `_failed`, `_unknown`, `_not_created`, `_returned` and `_late_failure_reviewed`. Only ids,
+   amounts, codes and statuses are recorded, never the note.
+
+### Recheck (on demand; the automatic sweeper is M5c)
+
+* **Stripe id known:** the refund is read back.
+* **Never sent** (the sender stopped before asking Stripe): `NOT_CREATED` with `NEVER_SENT`.
+  Sending needs the same lock and a `REQUESTED` refund, so nothing can still send it.
+* **Within 20 hours of the first sending:** the **same** request is replayed with the
+  **same** key. Stripe returns the refund it made, or makes it exactly once. A fresh key is
+  never used.
+* **Past that:** the payment's complete refund history is read.
+  * A refund carrying our id is recorded.
+  * Otherwise `notCreatedEvidenceFor` decides: `NOT_CREATED` (`STRIPE_HISTORY_VERIFIED`) only
+    for a complete history, past 24 hours, with nothing that might be this refund.
+  * In every other case the refund stays `UNKNOWN`.
+
+### Review fixes and operating notes
+
+* **No accidental refund on top.** Each request carries `expectedReservedMinorUnits`: what
+  the staff member saw as refunded plus in progress. It is part of the request fingerprint,
+  and it is checked again under the payment lock. If the refunds changed since (another staff
+  member, or the same refund resubmitted as a new request), the request is refused (409).
+* **Not sent means not created.** A request the adapter would refuse locally is never marked
+  sent. It is recorded `NOT_CREATED` (`NEVER_SENT`) and does not block the payment.
+  `firstSentAt` is stamped by the database.
+* **Needs attention.**
+  * A Stripe answer that cannot be followed, or a database refusal of a Stripe outcome,
+    leaves the status unchanged and adds a `NEEDS_ATTENTION` entry to the refund's history.
+  * When a database guard refuses an outcome, the refund is left `UNKNOWN` with its Stripe
+    id, so it is never re-sent.
+* **Internal notes** are returned only to staff who hold `orders.refund` at the location.
+* **Refunds made outside CENTERIVO** are not rechecked here (that is M5c).
+* **The session lock** is a PostgreSQL session-level advisory lock on `DATABASE_URL`. It
+  needs a direct connection, or PgBouncer in session mode, not transaction pooling. Money
+  correctness does not depend on it: the conditional status and `firstSentAt` writes and
+  Stripe's idempotency carry that.
+* **A connected account that changed** after the payment makes its unresolved refunds
+  impossible to recheck here. Their amounts stay reserved, and support must look.
+
+### Obligations
+
+* **While a refund is in flight, or part of it is refunded**, the obligation is `PROCESSING`.
+  It is `FAILED` only when nothing of it was refunded and nothing is on its way.
+* **What other code must read:** an obligation's recorded `status` alone is not the truth
+  after a late failure. Read what is owed from the refunds (`obligationStanding`), as these
+  views do.
+* **Settled immediately:** it becomes `REFUNDED` (`PROCESSOR`, the latest succeeded refund's
+  id) as soon as verified refunds cover it and no returned refund is unreviewed. There is no
+  waiting period, and the database checks it all again.
+* **A refund returned after settlement** (`FAILED_AFTER_SUCCESS`):
+  * the obligation stays `REFUNDED` (S5a);
+  * the views report what is owed again from the refunds, with `needsAttention`;
+  * no replacement refund is possible until a staff member records the review.
+* **Never automatic:** cancelling an order never refunds it by itself. S5c's manual
+  settlement is not implemented here.
+
 ## Required of M5b / M5c (not enforced by the database)
 
 * **Read-backs only.** Write `EXTERNAL` refunds, and every status change, only from a Stripe
