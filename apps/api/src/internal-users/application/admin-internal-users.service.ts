@@ -64,6 +64,8 @@ const REASON_MAX_LENGTH = 1000;
 const EMPLOYEE_ADDED_REASON = 'Employee added';
 const DISPLAY_NAME_MAX_LENGTH = 120;
 const EMAIL_MAX_LENGTH = 254;
+const PHONE_MAX_LENGTH = 32;
+const JOB_TITLE_MAX_LENGTH = 80;
 
 type AssignmentScope =
   { kind: 'corporate' } | { kind: 'locations'; locationIds: string[] };
@@ -99,6 +101,8 @@ export class AdminInternalUsersService {
         email: true,
         status: true,
         loginInvitedAt: true,
+        jobTitle: true,
+        phone: true,
         roleAssignments: {
           select: {
             scopeType: true,
@@ -563,6 +567,8 @@ export class AdminInternalUsersService {
 
     const displayName = validateDisplayName(request?.displayName);
     const email = validateStaffEmail(request?.email);
+    const phone = validateStaffPhone(request?.phone);
+    const jobTitle = validateJobTitle(request?.jobTitle);
     const roleId =
       typeof request?.roleId === 'string' ? request.roleId.trim() : '';
     if (!roleId) {
@@ -603,6 +609,8 @@ export class AdminInternalUsersService {
             externalSubject: null,
             email,
             displayName,
+            phone,
+            jobTitle,
             status: 'INVITED',
           },
           select: { id: true },
@@ -881,6 +889,8 @@ export class AdminInternalUsersService {
         email: true,
         status: true,
         loginInvitedAt: true,
+        jobTitle: true,
+        phone: true,
         roleAssignments: {
           select: {
             id: true,
@@ -979,6 +989,8 @@ export class AdminInternalUsersService {
       email: string;
       status: AdminInternalUserSummary['status'];
       loginInvitedAt: Date | null;
+      jobTitle: string | null;
+      phone: string | null;
     },
     assignments: AssignmentRow[],
     locationNameById: Map<string, string>,
@@ -1000,6 +1012,8 @@ export class AdminInternalUsersService {
           : user.loginInvitedAt
             ? 'INVITATION_SENT'
             : 'PENDING',
+      jobTitle: user.jobTitle,
+      phone: user.phone,
     };
   }
 }
@@ -1029,6 +1043,44 @@ function validateDisplayName(raw: unknown): string {
 
 const EMAIL_PATTERN =
   /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
+
+// Optional: absent / blank is null. Digits, spaces and + ( ) - . only, with
+// 7 to 15 digits — a contact detail, never an identity or a credential.
+function validateStaffPhone(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string') {
+    throw new BadRequestException('Enter a valid phone number.');
+  }
+  const value = raw.trim();
+  if (value.length === 0) return null;
+  const digits = value.replace(/\D/g, '').length;
+  if (
+    value.length > PHONE_MAX_LENGTH ||
+    !/^\+?[0-9 ().-]+$/.test(value) ||
+    digits < 7 ||
+    digits > 15
+  ) {
+    throw new BadRequestException('Enter a valid phone number.');
+  }
+  return value;
+}
+
+// Optional, plain text. A job title is a label only: it NEVER grants
+// anything (access comes only from role assignments).
+function validateJobTitle(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string') {
+    throw new BadRequestException('Enter a plain job title.');
+  }
+  const value = raw.trim();
+  if (value.length === 0) return null;
+  if (value.length > JOB_TITLE_MAX_LENGTH || NAME_FORBIDDEN.test(value)) {
+    throw new BadRequestException(
+      `Enter a plain job title of at most ${JOB_TITLE_MAX_LENGTH} characters.`,
+    );
+  }
+  return value;
+}
 
 function validateStaffEmail(raw: unknown): string {
   const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';

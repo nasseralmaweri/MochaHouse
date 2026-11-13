@@ -7,37 +7,48 @@ import {
   addEmployeeFromBrowser,
   buildEmployeeRequest,
   invitationMessage,
+  locationChoice,
   loginSetupLabel,
   sendLoginInvitationFromBrowser,
+  type EmployeeDraft,
 } from "./staff-invitation";
 
 // V1 launch fix 2 — "Add employee", against mocked API responses only (no
 // identity provider, no email).
 
-const options: AdminAccessAssignmentOptions = {
-  accessLevels: [
-    {
-      id: "role-store",
-      displayName: "Store Manager",
-      description: null,
-      isBuiltIn: true,
-      assignmentShape: "location-only",
-      capabilities: [],
-    },
-    {
-      id: "role-admin",
-      displayName: "Platform Administrator",
-      description: null,
-      isBuiltIn: true,
-      assignmentShape: "corporate-only",
-      capabilities: [],
-    },
-  ],
-  locations: [
-    { id: "loc-a", name: "Ann Arbor" },
-    { id: "loc-b", name: "Dearborn" },
-  ],
-};
+const levels: AdminAccessAssignmentOptions["accessLevels"] = [
+  {
+    id: "role-store",
+    displayName: "Store Manager",
+    description: null,
+    isBuiltIn: true,
+    assignmentShape: "location-only",
+    capabilities: [],
+  },
+  {
+    id: "role-admin",
+    displayName: "Platform Administrator",
+    description: null,
+    isBuiltIn: true,
+    assignmentShape: "corporate-only",
+    capabilities: [],
+  },
+];
+const withLocations = (
+  locations: { id: string; name: string }[],
+): AdminAccessAssignmentOptions => ({ accessLevels: levels, locations });
+const options = withLocations([
+  { id: "loc-a", name: "Ann Arbor" },
+  { id: "loc-b", name: "Dearborn" },
+]);
+
+const draft = (over: Partial<EmployeeDraft>): EmployeeDraft => ({
+  ...EMPTY_EMPLOYEE,
+  displayName: "Jamie",
+  email: "jamie@example.com",
+  accessLevelId: "role-store",
+  ...over,
+});
 
 function reply(status: number, body?: unknown): Response {
   return {
@@ -60,19 +71,15 @@ const created = (invitation: AdminStaffInvitationResponse["invitation"]) =>
   }) as unknown as AdminStaffInvitationResponse;
 
 describe("the Add employee form", () => {
-  it("a location-level access needs at least one location; names and emails are cleaned", () => {
-    const none = buildEmployeeRequest(
-      { displayName: "Jamie", email: "jamie@example.com", accessLevelId: "role-store", locationIds: [] },
-      options,
-    );
-    expect(!none.ok && none.errors.locations).toBeTruthy();
+  it("several active locations: at least one must be chosen; names and emails are cleaned", () => {
+    const none = buildEmployeeRequest(draft({ locationIds: [] }), options);
+    expect(!none.ok && none.errors.locations).toBe("Choose at least one location.");
     const ok = buildEmployeeRequest(
-      {
+      draft({
         displayName: "  Jamie Cook ",
         email: " Jamie@Example.COM ",
-        accessLevelId: "role-store",
         locationIds: ["loc-a", "loc-a", "loc-gone"],
-      },
+      }),
       options,
     );
     expect(ok).toEqual({
@@ -86,12 +93,67 @@ describe("the Add employee form", () => {
     });
   });
 
+  it("one active location: assigned automatically", () => {
+    const single = withLocations([{ id: "loc-only", name: "Main Street" }]);
+    expect(locationChoice(single)).toEqual({
+      kind: "single",
+      location: { id: "loc-only", name: "Main Street" },
+    });
+    const ok = buildEmployeeRequest(draft({ locationIds: [] }), single);
+    expect(ok.ok && ok.request.scope).toEqual({
+      kind: "locations",
+      locationIds: ["loc-only"],
+    });
+  });
+
+  it("no active location: a location-level access explains a location must be set up first", () => {
+    const empty = withLocations([]);
+    expect(locationChoice(empty)).toEqual({ kind: "none" });
+    const blocked = buildEmployeeRequest(draft({}), empty);
+    expect(!blocked.ok && blocked.errors.locations).toMatch(/Set up a location first/);
+    // A business-wide access level needs no location.
+    const corporate = buildEmployeeRequest(draft({ accessLevelId: "role-admin" }), empty);
+    expect(corporate.ok && corporate.request.scope).toEqual({ kind: "corporate" });
+  });
+
   it("a business-wide access level applies to every location (no location list sent)", () => {
     const ok = buildEmployeeRequest(
-      { displayName: "Owner Two", email: "o2@example.com", accessLevelId: "role-admin", locationIds: ["loc-a"] },
+      draft({ accessLevelId: "role-admin", locationIds: ["loc-a"] }),
       options,
     );
     expect(ok.ok && ok.request.scope).toEqual({ kind: "corporate" });
+  });
+
+  it("phone and job title are optional, validated, and never change the access requested", () => {
+    const plain = buildEmployeeRequest(draft({ locationIds: ["loc-a"] }), options);
+    expect(plain.ok && plain.request).not.toHaveProperty("phone");
+    expect(plain.ok && plain.request).not.toHaveProperty("jobTitle");
+
+    const full = buildEmployeeRequest(
+      draft({
+        locationIds: ["loc-a"],
+        phone: " +1 (734) 555-0101 ",
+        jobTitle: " Administrator ",
+      }),
+      options,
+    );
+    expect(full.ok && full.request).toEqual({
+      displayName: "Jamie",
+      email: "jamie@example.com",
+      phone: "+1 (734) 555-0101",
+      jobTitle: "Administrator",
+      roleId: "role-store",
+      scope: { kind: "locations", locationIds: ["loc-a"] },
+    });
+
+    for (const phone of ["12345", "call me", "+1 555 0101 ext 9", "1".repeat(16)]) {
+      const bad = buildEmployeeRequest(draft({ locationIds: ["loc-a"], phone }), options);
+      expect(!bad.ok && bad.errors.phone).toBeTruthy();
+    }
+    for (const jobTitle of ["x".repeat(81), "Manager‮"]) {
+      const bad = buildEmployeeRequest(draft({ locationIds: ["loc-a"], jobTitle }), options);
+      expect(!bad.ok && bad.errors.jobTitle).toBeTruthy();
+    }
   });
 
   it("refuses a missing name, an invalid email and a missing access level", () => {
@@ -103,10 +165,7 @@ describe("the Add employee form", () => {
       expect(bad.errors.accessLevel).toBeTruthy();
     }
     // An access level that is not offered is never sent.
-    const foreign = buildEmployeeRequest(
-      { displayName: "X", email: "x@example.com", accessLevelId: "role-other-business", locationIds: [] },
-      options,
-    );
+    const foreign = buildEmployeeRequest(draft({ accessLevelId: "role-other-business" }), options);
     expect(!foreign.ok && foreign.errors.accessLevel).toBeTruthy();
   });
 });

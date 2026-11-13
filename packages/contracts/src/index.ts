@@ -3909,6 +3909,10 @@ export interface AdminInternalUserSummary {
   //                     invitation; they finish setup by signing in.
   //   "PENDING"         no confirmed invitation yet (send it again).
   loginSetup?: AdminStaffLoginSetup | null;
+  // V1 launch fix 2 — optional and descriptive only: a job title never
+  // grants anything (access comes only from assigned access levels).
+  jobTitle?: string | null;
+  phone?: string | null;
 }
 
 export type AdminStaffLoginSetup = "INVITATION_SENT" | "PENDING";
@@ -3925,6 +3929,10 @@ export type AdminStaffLoginSetup = "INVITATION_SENT" | "PENDING";
 export interface AdminCreateInternalUserRequest {
   displayName: string;
   email: string;
+  // Optional: a contact number (digits, spaces and + ( ) - . only) and a job
+  // title (plain text). Descriptive only — never part of authorization.
+  phone?: string | null;
+  jobTitle?: string | null;
   roleId: string;
   scope:
     | { kind: "corporate" }

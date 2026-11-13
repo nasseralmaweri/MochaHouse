@@ -68,6 +68,11 @@ export function UsersBrowser({
                       <span className="text-sm text-text-secondary">
                         {user.email}
                       </span>
+                      {user.jobTitle ? (
+                        <span className="text-xs text-text-muted">
+                          {user.jobTitle}
+                        </span>
+                      ) : null}
                     </span>
                     <StatusBadge
                       label={userStatusLabel(user.status)}

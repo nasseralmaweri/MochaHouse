@@ -12,6 +12,19 @@ gains the access the administrator granted.
 The request carries the employee's name, email, one of the business's existing
 access levels and, for a location-level access, the locations it covers.
 
+- **Optional details.** Phone (digits, spaces and `+ ( ) - .`, 7–15 digits) and
+  job title (plain text, at most 80 characters) are optional, validated by the
+  API and bounded by database CHECKs (migration
+  `20261201100000_staff_profile_fields`). A job title is a label only and never
+  grants anything; access comes only from the assigned access level.
+- **Locations.** For an access level that applies to specific locations:
+  - one active location is assigned automatically;
+  - several active locations let the administrator choose one or more;
+  - no active location means the page explains that a location must be set up
+    first.
+
+  Business-wide access levels show no selector. The API validates every
+  assignment. A location added later is never granted automatically.
 - **Permissions.** The administrator needs **both** `users.manage_roles` and
   `users.manage_status`, both held at CORPORATE scope, plus the existing
   **privilege ceiling**: an access level can be granted only where the

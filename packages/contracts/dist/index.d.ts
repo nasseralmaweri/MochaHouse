@@ -1919,11 +1919,15 @@ export interface AdminInternalUserSummary {
     accessLevels: string[];
     locationAccess: AdminUserLocationAccess;
     loginSetup?: AdminStaffLoginSetup | null;
+    jobTitle?: string | null;
+    phone?: string | null;
 }
 export type AdminStaffLoginSetup = "INVITATION_SENT" | "PENDING";
 export interface AdminCreateInternalUserRequest {
     displayName: string;
     email: string;
+    phone?: string | null;
+    jobTitle?: string | null;
     roleId: string;
     scope: {
         kind: "corporate";

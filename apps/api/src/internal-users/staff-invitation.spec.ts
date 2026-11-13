@@ -458,6 +458,58 @@ describe('Staff invitation: add an employee, first verified sign-in (integration
     await track(other);
   });
 
+  it('optional phone and job title are validated and stored; a job title never grants anything', async () => {
+    const base = {
+      roleId: storeManagerRoleId,
+      scope: { kind: 'locations', locationIds: [locA] },
+    };
+    for (const phone of ['12345', 'call me', '1'.repeat(16), 7]) {
+      await addEmployee('owner', {
+        ...base,
+        displayName: 'Phone',
+        email: email('phone-bad'),
+        phone,
+      }).expect(400);
+    }
+    for (const jobTitle of ['x'.repeat(81), 'Owner‮', 42]) {
+      await addEmployee('owner', {
+        ...base,
+        displayName: 'Title',
+        email: email('title-bad'),
+        jobTitle,
+      }).expect(400);
+    }
+
+    // "Administrator" as a job title, with Store Manager access at one
+    // location: exactly the Store Manager capabilities, nothing more.
+    const titled = email('titled');
+    const res = await addEmployee('owner', {
+      ...base,
+      displayName: 'Titled',
+      email: titled,
+      phone: ' +1 (734) 555-0101 ',
+      jobTitle: '  Platform Administrator ',
+    }).expect(201);
+    await track(titled);
+    const body = res.body as AdminStaffInvitationResponse;
+    expect(body.user).toMatchObject({
+      phone: '+1 (734) 555-0101',
+      jobTitle: 'Platform Administrator',
+      accessLevels: ['Store Manager'],
+    });
+    const plain = email('untitled');
+    const res2 = await addEmployee('owner', {
+      ...base,
+      displayName: 'Untitled',
+      email: plain,
+    }).expect(201);
+    await track(plain);
+    const plainBody = res2.body as AdminStaffInvitationResponse;
+    expect(plainBody.user).toMatchObject({ phone: null, jobTitle: null });
+    expect(body.user.capabilities).toEqual(plainBody.user.capabilities);
+    expect(body.user.locationAccess).toEqual(plainBody.user.locationAccess);
+  });
+
   it('concurrent attempts to add the same person create exactly one', async () => {
     const address = email('race');
     const body = {

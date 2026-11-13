@@ -9,6 +9,7 @@ import {
   addEmployeeFromBrowser,
   buildEmployeeRequest,
   invitationMessage,
+  locationChoice,
   type EmployeeDraft,
   type EmployeeErrors,
 } from "@/lib/admin/staff-invitation";
@@ -37,6 +38,7 @@ export function AddEmployeeForm({
   const sending = useRef(false);
 
   const level = options.accessLevels.find((l) => l.id === draft.accessLevelId);
+  const where = locationChoice(options);
   const update = (next: Partial<EmployeeDraft>) => {
     setDraft({ ...draft, ...next });
     setErrors({});
@@ -134,6 +136,37 @@ export function AddEmployeeForm({
               onChange={(e) => update({ email: e.target.value })}
             />
           </FormField>
+          <FormField
+            label="Phone (optional)"
+            htmlFor={`${id}-phone`}
+            error={errors.phone}
+          >
+            <input
+              id={`${id}-phone`}
+              type="tel"
+              autoComplete="off"
+              inputMode="tel"
+              maxLength={32}
+              className={`${ADMIN_FIELD_CLASS} min-h-11`}
+              value={draft.phone}
+              onChange={(e) => update({ phone: e.target.value })}
+            />
+          </FormField>
+          <FormField
+            label="Job title (optional)"
+            htmlFor={`${id}-title`}
+            hint="For your team's reference only. It doesn't change what they can do — the access level does."
+            error={errors.jobTitle}
+          >
+            <input
+              id={`${id}-title`}
+              autoComplete="off"
+              maxLength={80}
+              className={`${ADMIN_FIELD_CLASS} min-h-11`}
+              value={draft.jobTitle}
+              onChange={(e) => update({ jobTitle: e.target.value })}
+            />
+          </FormField>
           <FormField label="Access level" htmlFor={`${id}-level`} error={errors.accessLevel}>
             <select
               id={`${id}-level`}
@@ -157,14 +190,26 @@ export function AddEmployeeForm({
             <p className="text-sm text-text-secondary">
               This access level applies to <strong>every location</strong>.
             </p>
+          ) : level?.assignmentShape === "location-only" && where.kind === "none" ? (
+            <p role="alert" className="text-sm text-status-warning">
+              {errors.locations ??
+                "This access level applies to specific locations, and there are no active locations yet. Set up a location first."}
+            </p>
+          ) : level?.assignmentShape === "location-only" && where.kind === "single" ? (
+            <p className="text-sm text-text-secondary">
+              Applies to <strong>{where.location.name}</strong>, your only active
+              location. Locations you add later aren&apos;t included automatically.
+            </p>
           ) : level?.assignmentShape === "location-only" ? (
             <fieldset className="flex flex-col gap-2">
               <legend className="text-sm font-medium text-text-primary">
                 Locations they can work at
               </legend>
-              {options.locations.length === 0 ? (
-                <p className="text-sm text-text-muted">There are no active locations yet.</p>
-              ) : (
+              <p className="text-xs text-text-muted">
+                Choose one or more. Locations you add later aren&apos;t included
+                automatically.
+              </p>
+              {(
                 options.locations.map((location) => (
                   <label
                     key={location.id}

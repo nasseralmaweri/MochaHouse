@@ -22,6 +22,8 @@ const PROXY = "/api/internal/admin";
 export interface EmployeeDraft {
   displayName: string;
   email: string;
+  phone: string;
+  jobTitle: string;
   accessLevelId: string;
   locationIds: string[];
 }
@@ -29,6 +31,8 @@ export interface EmployeeDraft {
 export const EMPTY_EMPLOYEE: EmployeeDraft = {
   displayName: "",
   email: "",
+  phone: "",
+  jobTitle: "",
   accessLevelId: "",
   locationIds: [],
 };
@@ -36,12 +40,41 @@ export const EMPTY_EMPLOYEE: EmployeeDraft = {
 export interface EmployeeErrors {
   displayName?: string;
   email?: string;
+  phone?: string;
+  jobTitle?: string;
   accessLevel?: string;
   locations?: string;
 }
 
 const EMAIL_PATTERN =
   /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
+
+// Where a location-level access applies, from the business's ACTIVE
+// locations (V1 launch fix 2):
+//   "none"   no active location — one must be set up first;
+//   "single" exactly one — it is assigned automatically;
+//   "choose" several — the administrator picks one or more.
+// Only today's locations: a location added later is never granted
+// automatically.
+export type LocationChoice =
+  | { kind: "none" }
+  | { kind: "single"; location: { id: string; name: string } }
+  | { kind: "choose"; locations: { id: string; name: string }[] };
+
+export function locationChoice(
+  options: AdminAccessAssignmentOptions,
+): LocationChoice {
+  if (options.locations.length === 0) return { kind: "none" };
+  if (options.locations.length === 1) {
+    return { kind: "single", location: options.locations[0] };
+  }
+  return { kind: "choose", locations: options.locations };
+}
+
+const PHONE_PATTERN = /^\+?[0-9 ().-]+$/;
+const INVISIBLE = new RegExp(
+  "[\u0000-\u001F\u007F-\u009F" + "\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]",
+);
 
 // Checked again by the API; this only gives readable errors early.
 export function buildEmployeeRequest(
@@ -60,18 +93,45 @@ export function buildEmployeeRequest(
     errors.email = "Enter a valid email address.";
   }
 
+  const phone = draft.phone.trim();
+  const phoneDigits = phone.replace(/\D/g, "").length;
+  if (
+    phone.length > 0 &&
+    (phone.length > 32 || !PHONE_PATTERN.test(phone) || phoneDigits < 7 || phoneDigits > 15)
+  ) {
+    errors.phone = "Enter a valid phone number, or leave it blank.";
+  }
+  const jobTitle = draft.jobTitle.trim();
+  if (jobTitle.length > 80 || INVISIBLE.test(jobTitle)) {
+    errors.jobTitle = "Keep the job title to 80 plain characters.";
+  }
+
   const level = options.accessLevels.find((l) => l.id === draft.accessLevelId);
   if (!level) errors.accessLevel = "Choose an access level.";
 
-  const activeIds = new Set(options.locations.map((l) => l.id));
-  const locationIds = [...new Set(draft.locationIds)].filter((id) =>
-    activeIds.has(id),
-  );
-  if (level?.assignmentShape === "location-only" && locationIds.length === 0) {
-    errors.locations = "Choose at least one location.";
+  let locationIds: string[] = [];
+  if (level?.assignmentShape === "location-only") {
+    const choice = locationChoice(options);
+    if (choice.kind === "none") {
+      errors.locations =
+        "Set up a location first: this access level applies to specific locations.";
+    } else if (choice.kind === "single") {
+      locationIds = [choice.location.id];
+    } else {
+      const activeIds = new Set(choice.locations.map((l) => l.id));
+      locationIds = [...new Set(draft.locationIds)].filter((id) => activeIds.has(id));
+      if (locationIds.length === 0) errors.locations = "Choose at least one location.";
+    }
   }
 
-  if (errors.displayName || errors.email || errors.accessLevel || errors.locations) {
+  if (
+    errors.displayName ||
+    errors.email ||
+    errors.phone ||
+    errors.jobTitle ||
+    errors.accessLevel ||
+    errors.locations
+  ) {
     return { ok: false, errors };
   }
   return {
@@ -79,6 +139,8 @@ export function buildEmployeeRequest(
     request: {
       displayName,
       email,
+      ...(phone ? { phone } : {}),
+      ...(jobTitle ? { jobTitle } : {}),
       roleId: level!.id,
       scope:
         level!.assignmentShape === "corporate-only"

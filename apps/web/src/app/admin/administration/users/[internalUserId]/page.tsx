@@ -179,6 +179,22 @@ export default async function AdminUserDetailPage({
             </span>
             <span className="text-base text-text-primary">{user.email}</span>
           </div>
+          {user.jobTitle ? (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-xs font-medium uppercase tracking-wide text-text-muted">
+                Job title
+              </span>
+              <span className="text-base text-text-primary">{user.jobTitle}</span>
+            </div>
+          ) : null}
+          {user.phone ? (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-xs font-medium uppercase tracking-wide text-text-muted">
+                Phone
+              </span>
+              <span className="text-base text-text-primary">{user.phone}</span>
+            </div>
+          ) : null}
           <div className="flex flex-col gap-0.5">
             <span className="text-xs font-medium uppercase tracking-wide text-text-muted">
               Access level
