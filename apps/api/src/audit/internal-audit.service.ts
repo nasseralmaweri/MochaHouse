@@ -340,6 +340,26 @@ export class InternalAuditService {
     });
   }
 
+  // V1 launch fix 2 — an employee just added was taken back out because the
+  // identity provider refused their address (no login could ever exist).
+  async recordUserCreationReverted(
+    tx: Prisma.TransactionClient,
+    input: { actorInternalUserId: string; targetInternalUserId: string },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'user.creation_reverted',
+        targetType: 'internal_user',
+        targetId: input.targetInternalUserId,
+        beforeData: { status: 'INVITED' },
+        afterData: Prisma.JsonNull,
+        reason: 'The sign-in service did not accept the email address',
+      },
+    });
+  }
+
   // V1 launch fix 2 — the identity provider CONFIRMED a login invitation
   // (a new login emailed, or an existing login found). Never recorded for an
   // invitation the provider did not confirm.

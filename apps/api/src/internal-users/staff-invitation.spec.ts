@@ -531,6 +531,82 @@ describe('Staff invitation: add an employee, first verified sign-in (integration
     expect(invite).toHaveBeenCalledTimes(1);
   });
 
+  it('the provider refuses the address: nothing is left behind, history kept, and the admin can retry (same or corrected address)', async () => {
+    const address = email('refused');
+    const body = {
+      displayName: 'Refused',
+      email: address,
+      roleId: storeManagerRoleId,
+      scope: { kind: 'locations', locationIds: [locA] },
+    };
+    invite.mockResolvedValueOnce({ outcome: 'invalid-email' });
+    const res = await addEmployee('owner', body).expect(400);
+    expect((res.body as { message: string }).message).toMatch(
+      /Nothing was added/,
+    );
+    // No person and no access remain; the history says what happened.
+    expect(await prisma.internalUser.count({ where: { email: address } })).toBe(
+      0,
+    );
+    const history = await prisma.internalAuditEvent.findMany({
+      where: {
+        action: {
+          in: ['user.created', 'user.role_assigned', 'user.creation_reverted'],
+        },
+        afterData: { path: ['email'], equals: address },
+      },
+      select: { targetId: true },
+    });
+    expect(history).toHaveLength(1);
+    const revertedId = history[0].targetId;
+    expect(revertedId).toBeTruthy();
+    userIds.push(revertedId);
+    expect(
+      (
+        await prisma.internalAuditEvent.findMany({
+          where: { targetType: 'internal_user', targetId: revertedId },
+          orderBy: { createdAt: 'asc' },
+          select: { action: true },
+        })
+      ).map((e) => e.action),
+    ).toEqual(['user.created', 'user.role_assigned', 'user.creation_reverted']);
+    expect(
+      await prisma.internalUserRoleAssignment.count({
+        where: { internalUserId: revertedId },
+      }),
+    ).toBe(0);
+
+    // A retry is a fresh attempt — never "already part of this business".
+    await addEmployee('owner', body).expect(201);
+    await track(address);
+
+    // "Send invitation again" for an existing person never removes them.
+    const kept = email('kept');
+    invite.mockResolvedValueOnce({ outcome: 'unavailable' });
+    await addEmployee('owner', {
+      ...body,
+      displayName: 'Kept',
+      email: kept,
+    }).expect(201);
+    await track(kept);
+    const keptRow = await prisma.internalUser.findFirstOrThrow({
+      where: { tenantId: A, email: kept },
+    });
+    invite.mockResolvedValueOnce({ outcome: 'invalid-email' });
+    const retry = await request(app.getHttpServer())
+      .post(`/api/v1/admin/internal-users/${keptRow.id}/login-invitation`)
+      .set('Authorization', `Bearer ${actorToken('owner')}`)
+      .expect(400);
+    expect((retry.body as { message: string }).message).toMatch(
+      /Cancel this invitation/,
+    );
+    expect(
+      await prisma.internalUser.findUniqueOrThrow({
+        where: { id: keptRow.id },
+      }),
+    ).toMatchObject({ status: 'INVITED', loginInvitedAt: null });
+  });
+
   it('provider unavailable: the person is added, setup pending, nothing claimed sent — a later retry sends it', async () => {
     invite.mockResolvedValueOnce({ outcome: 'unavailable' });
     const address = email('later');

@@ -48,6 +48,14 @@ access levels and, for a location-level access, the locations it covers.
   `InternalUser.loginInvitedAt` and `user.login_invited`. When the provider is
   unavailable, the person stays **setup pending** and nothing is claimed as
   sent. `POST …/:internalUserId/login-invitation` sends it again.
+- **Refused addresses.** If the provider refuses the address itself while an
+  employee is being **added**, the just-added person and their access are
+  removed again in one guarded transaction. The guard requires them to be
+  still INVITED, unbound and with no confirmed invitation. The history is kept,
+  with `user.creation_reverted` added, and the administrator is told "Nothing
+  was added", so they can retry with the same or a corrected address. On
+  **Send invitation again**, an existing person is never removed; the
+  administrator is told to cancel the invitation and add them again.
 - **Rate limits.** Both routes are limited (`staff-invitations`: 10 per 5
   minutes per IP, 40 per hour per business).
 - **Withdrawing an invitation.** An administrator can move INVITED → DISABLED,

@@ -660,6 +660,16 @@ export class AdminInternalUsersService {
       actorInternalUserId,
       tenant,
     );
+    if (invitation === 'INVALID_EMAIL') {
+      // The provider refused the address itself: no login exists or can
+      // exist for it, and a person's address cannot be edited — so the
+      // person just added is taken back out (nothing was ever usable) and
+      // the administrator simply tries again with a corrected address.
+      await this.revertUnusableNewUser(created.id, actorInternalUserId, tenant);
+      throw new BadRequestException(
+        'The sign-in service did not accept this email address. Nothing was added — check the address and try again.',
+      );
+    }
     return {
       user: await this.buildUserDetail(created.id, tenant),
       invitation,
@@ -705,6 +715,13 @@ export class AdminInternalUsersService {
       actorInternalUserId,
       tenant,
     );
+    if (invitation === 'INVALID_EMAIL') {
+      // An existing person is never removed here; their address cannot be
+      // edited, so the way forward is to cancel and add them again.
+      throw new BadRequestException(
+        'The sign-in service did not accept this email address. Cancel this invitation and add the person again with a corrected address.',
+      );
+    }
     return {
       user: await this.buildUserDetail(target.id, tenant),
       invitation,
@@ -721,12 +738,10 @@ export class AdminInternalUsersService {
     displayName: string,
     actorInternalUserId: string,
     tenant: TenantContext,
-  ): Promise<AdminStaffInvitationOutcome> {
+  ): Promise<AdminStaffInvitationOutcome | 'INVALID_EMAIL'> {
     const result = await this.loginProvider.inviteLogin({ email, displayName });
     if (result.outcome === 'invalid-email') {
-      throw new BadRequestException(
-        'The sign-in service did not accept this email address. The person was added; correct the address and invite them again.',
-      );
+      return 'INVALID_EMAIL';
     }
     if (result.outcome === 'unavailable') {
       return 'PENDING';
@@ -749,6 +764,52 @@ export class AdminInternalUsersService {
       });
     });
     return result.outcome === 'invited' ? 'INVITATION_SENT' : 'EXISTING_LOGIN';
+  }
+
+  // Takes back out a person this same request just added, when the identity
+  // provider refused their address. Only while they are exactly as created —
+  // INVITED, never bound to a login, no confirmed invitation — re-checked in
+  // the delete itself; otherwise nothing is removed. Their access goes with
+  // them; the history (user.created, user.role_assigned) is kept and
+  // user.creation_reverted is added.
+  private async revertUnusableNewUser(
+    internalUserId: string,
+    actorInternalUserId: string,
+    tenant: TenantContext,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const untouched = await tx.internalUser.count({
+        where: {
+          id: internalUserId,
+          tenantId: tenant.tenantId,
+          status: 'INVITED',
+          externalSubject: null,
+          loginInvitedAt: null,
+        },
+      });
+      if (untouched !== 1) return;
+      await tx.internalUserRoleAssignment.deleteMany({
+        where: { internalUserId, tenantId: tenant.tenantId },
+      });
+      const removed = await tx.internalUser.deleteMany({
+        where: {
+          id: internalUserId,
+          tenantId: tenant.tenantId,
+          status: 'INVITED',
+          externalSubject: null,
+          loginInvitedAt: null,
+        },
+      });
+      if (removed.count !== 1) {
+        throw new ConflictException(
+          'This person changed while being added. Check the Users list.',
+        );
+      }
+      await this.audit.recordUserCreationReverted(tx, {
+        actorInternalUserId,
+        targetInternalUserId: internalUserId,
+      });
+    });
   }
 
   // Remove ONE concrete access grant. Never removes more than the single
