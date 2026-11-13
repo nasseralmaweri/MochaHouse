@@ -10,12 +10,13 @@ import {
   userStatusTone,
 } from "@/lib/admin/user-access";
 import { Card } from "@/components/Card";
+import { loginSetupLabel } from "@/lib/admin/staff-invitation";
 import { StatusBadge } from "./StatusBadge";
 import { ADMIN_FIELD_CLASS } from "./form";
 
 // Administration → Users list (Milestone 5E-1). The list is fully loaded and
 // authorized server-side; this only filters it by name / email in the
-// browser. Read-only — no edit / invite / suspend controls.
+// browser. Invited people show whether their sign-in invitation was sent.
 export function UsersBrowser({
   users,
 }: {
@@ -67,6 +68,11 @@ export function UsersBrowser({
                       <span className="text-sm text-text-secondary">
                         {user.email}
                       </span>
+                      {user.jobTitle ? (
+                        <span className="text-xs text-text-muted">
+                          {user.jobTitle}
+                        </span>
+                      ) : null}
                     </span>
                     <StatusBadge
                       label={userStatusLabel(user.status)}
@@ -78,6 +84,11 @@ export function UsersBrowser({
                     <span aria-hidden="true">·</span>
                     <span>{locationAccessLabel(user.locationAccess)}</span>
                   </div>
+                  {loginSetupLabel(user.loginSetup) ? (
+                    <span className="text-xs text-text-muted">
+                      {loginSetupLabel(user.loginSetup)}
+                    </span>
+                  ) : null}
                 </Card>
               </Link>
             </li>

@@ -7,9 +7,12 @@ import { TOO_MANY_ATTEMPTS_MESSAGE } from "@/lib/rate-limit-message";
 import { redirect } from "next/navigation";
 import type {
   InternalBusinessesResponse,
+  InternalNewPasswordRequest,
+  InternalSignInChallengeResponse,
   InternalSignInRequest,
   InternalSignInResponse,
 } from "@mocha-house/contracts";
+import { cookieName } from "@/lib/security/cookies";
 import {
   ADMIN_LOCATION_COOKIE_BASE,
   INTERNAL_SESSION_COOKIE,
@@ -39,7 +42,19 @@ function getApiUrl(): string {
 
 export interface InternalSignInFormState {
   error: string | null;
+  // V1 launch fix 2 — "new-password": the first sign-in of an invited
+  // employee; the form asks them to choose their own password.
+  step?: "sign-in" | "new-password";
 }
+
+// V1 launch fix 2 — the provider's short-lived first-sign-in challenge,
+// kept server-side between the two steps: HttpOnly (never readable by page
+// script), a few minutes only, and holding the email and the provider's
+// challenge handle — never a password.
+const PASSWORD_SETUP_COOKIE_BASE = "mh_internal_password_setup";
+const PASSWORD_SETUP_TTL_SECONDS = 300;
+const PASSWORD_SETUP_EXPIRED =
+  "Your password setup expired. Sign in again with the temporary password from your invitation email.";
 
 // Server Action backing /internal/sign-in's form. Credentials are posted
 // server-side to the internal auth boundary; the browser never sees the
@@ -89,7 +104,133 @@ export async function internalSignInAction(
     return { error: "Invalid email or password." };
   }
 
-  const result = (await signInResponse.json()) as InternalSignInResponse;
+  const body = (await signInResponse.json()) as
+    | InternalSignInResponse
+    | InternalSignInChallengeResponse;
+
+  if ("challenge" in body) {
+    if (body.challenge !== "NEW_PASSWORD_REQUIRED" || !body.session) {
+      return { error: "Invalid email or password." };
+    }
+    const cookieStore = await cookies();
+    cookieStore.set(
+      cookieName(PASSWORD_SETUP_COOKIE_BASE),
+      JSON.stringify({ identifier, session: body.session }),
+      sessionCookieOptions(PASSWORD_SETUP_TTL_SECONDS),
+    );
+    return { error: null, step: "new-password" };
+  }
+
+  return establishInternalSession(body);
+}
+
+// V1 launch fix 2 — an invited employee's first sign-in: they choose their
+// own password, which goes straight to the identity provider (never stored
+// here); then the session is established exactly like an ordinary sign-in
+// (their access becomes active only through their verified sign-in).
+export async function internalNewPasswordAction(
+  _previousState: InternalSignInFormState,
+  formData: FormData,
+): Promise<InternalSignInFormState> {
+  const newPassword = String(formData.get("newPassword") ?? "");
+  const confirm = String(formData.get("confirmPassword") ?? "");
+  if (newPassword.length < 12) {
+    return {
+      error: "Choose a password of at least 12 characters.",
+      step: "new-password",
+    };
+  }
+  if (newPassword !== confirm) {
+    return { error: "The two passwords don't match.", step: "new-password" };
+  }
+
+  const cookieStore = await cookies();
+  const setupName = cookieName(PASSWORD_SETUP_COOKIE_BASE);
+  let setup: { identifier: string; session: string } | null = null;
+  try {
+    const raw = cookieStore.get(setupName)?.value;
+    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+    if (
+      parsed &&
+      typeof parsed.identifier === "string" &&
+      typeof parsed.session === "string"
+    ) {
+      setup = { identifier: parsed.identifier, session: parsed.session };
+    }
+  } catch {
+    setup = null;
+  }
+  if (!setup) {
+    return { error: PASSWORD_SETUP_EXPIRED, step: "sign-in" };
+  }
+
+  const request: InternalNewPasswordRequest = {
+    identifier: setup.identifier,
+    session: setup.session,
+    newPassword,
+  };
+  let response: Response;
+  try {
+    response = await fetch(`${getApiUrl()}/internal/auth/new-password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(await serverActionClientIpHeaders()),
+      },
+      body: JSON.stringify(request),
+    });
+  } catch {
+    return {
+      error: "Could not reach the server. Check your connection and try again.",
+      step: "new-password",
+    };
+  }
+  if (response.status === 429) {
+    return { error: TOO_MANY_ATTEMPTS_MESSAGE, step: "new-password" };
+  }
+  if (response.status === 400) {
+    const message = await response
+      .json()
+      .then((b: { message?: unknown }) =>
+        typeof b.message === "string" ? b.message : null,
+      )
+      .catch(() => null);
+    return {
+      error: message ?? "Choose a stronger password.",
+      step: "new-password",
+    };
+  }
+  if (!response.ok) {
+    cookieStore.delete(setupName);
+    return {
+      error:
+        response.status === 401
+          ? PASSWORD_SETUP_EXPIRED
+          : "Something went wrong. Sign in again.",
+      step: "sign-in",
+    };
+  }
+  cookieStore.delete(setupName);
+  const result = (await response.json()) as InternalSignInResponse;
+  return establishInternalSession(result);
+}
+
+// The sign-in page's single form action: the hidden `step` field says which
+// step the person submitted (sign in, or choose their first password).
+export async function internalSignInFormAction(
+  previousState: InternalSignInFormState,
+  formData: FormData,
+): Promise<InternalSignInFormState> {
+  return formData.get("step") === "new-password"
+    ? internalNewPasswordAction(previousState, formData)
+    : internalSignInAction(previousState, formData);
+}
+
+// Shared by sign-in and first-sign-in: which businesses may this person
+// enter, and only then a session.
+async function establishInternalSession(
+  result: InternalSignInResponse,
+): Promise<InternalSignInFormState> {
 
   // Milestone S0F: which businesses may this person enter? An account that
   // can enter none gets no session. With exactly one, confirm it is usable

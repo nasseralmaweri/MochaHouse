@@ -1,5 +1,6 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
+import type { InternalCognitoAuthProvider } from '../../internal-auth/infrastructure/internal-cognito-auth.provider';
 import type { InternalCognitoTokenVerifier } from '../../internal-auth/infrastructure/internal-cognito-token-verifier';
 import {
   CognitoOwnerRegistrationProvider,
@@ -48,9 +49,12 @@ const fail = (type: string, message = '') => ({
 describe('CognitoOwnerRegistrationProvider', () => {
   const signIn = jest.fn();
   const verify = jest.fn();
-  const provider = new CognitoOwnerRegistrationProvider({ signIn }, {
-    verify,
-  } as unknown as InternalCognitoTokenVerifier);
+  const provider = new CognitoOwnerRegistrationProvider(
+    { signIn } as unknown as InternalCognitoAuthProvider,
+    {
+      verify,
+    } as unknown as InternalCognitoTokenVerifier,
+  );
   const originalEnv = { ...process.env };
   const expectedHash = createHmac('sha256', CLIENT_SECRET)
     .update(EMAIL + CLIENT_ID)

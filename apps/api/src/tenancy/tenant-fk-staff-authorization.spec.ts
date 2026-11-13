@@ -48,6 +48,7 @@ import { CustomerNotesService } from '../crm/application/customer-notes.service'
 import { AuthorizationService } from '../internal-auth/authorization/authorization.service';
 import { AuthorizationContext } from '../internal-auth/authorization/authorization-context';
 import { AdminInternalUsersService } from '../internal-users/application/admin-internal-users.service';
+import { STAFF_LOGIN_PROVIDER } from '../internal-users/infrastructure/staff-login-provider';
 import { dataChecksum } from './historical-state';
 
 // Security 4C-5 — PostgreSQL-enforced tenant isolation for staff identities
@@ -1646,7 +1647,18 @@ describe('Tenant-enforced staff authorization (Security 4C-5)', () => {
           CustomersModule,
           CrmModule,
         ],
-        providers: [AdminInternalUsersService],
+        providers: [
+          AdminInternalUsersService,
+          // V1 launch fix 2 — AdminInternalUsersService's identity-provider
+          // boundary, MOCKED: no AWS call, no invitation is ever sent here.
+          {
+            provide: STAFF_LOGIN_PROVIDER,
+            useValue: {
+              providerName: 'internal-dev',
+              inviteLogin: jest.fn().mockResolvedValue({ outcome: 'invited' }),
+            },
+          },
+        ],
       }).compile();
       prisma = moduleRef.get(PrismaService);
       users = moduleRef.get(AdminInternalUsersService);

@@ -2341,6 +2341,23 @@ export interface InternalSignInResponse {
   expiresInSeconds: number;
 }
 
+// V1 launch fix 2 — a staff login created by an administrator's invitation
+// must choose its own password at first sign-in (the provider's temporary
+// password is single-use). `session` is the provider's short-lived challenge
+// handle (minutes): it is kept server-side by the web app (HttpOnly cookie),
+// never shown, and useless without the person's new password.
+export interface InternalSignInChallengeResponse {
+  challenge: "NEW_PASSWORD_REQUIRED";
+  session: string;
+}
+
+// POST /api/v1/internal/auth/new-password — answer that challenge.
+export interface InternalNewPasswordRequest {
+  identifier: string;
+  session: string;
+  newPassword: string;
+}
+
 // SC4a — business owner self-service registration
 // (/api/v1/internal/registration/*). Off unless the deployment enables it;
 // the server is the only authority on that.
@@ -3887,6 +3904,59 @@ export interface AdminInternalUserSummary {
   // has no role assignments.
   accessLevels: string[];
   locationAccess: AdminUserLocationAccess;
+  // V1 launch fix 2 — for an INVITED person only (null otherwise):
+  //   "INVITATION_SENT" the identity provider confirmed their login
+  //                     invitation; they finish setup by signing in.
+  //   "PENDING"         no confirmed invitation yet (send it again).
+  loginSetup?: AdminStaffLoginSetup | null;
+  // V1 launch fix 2 — optional and descriptive only: a job title never
+  // grants anything (access comes only from assigned access levels).
+  jobTitle?: string | null;
+  phone?: string | null;
+}
+
+export type AdminStaffLoginSetup = "INVITATION_SENT" | "PENDING";
+
+// POST /api/v1/admin/internal-users — add an employee (V1 launch fix 2).
+// Needs `users.manage_roles` AND `users.manage_status` (both CORPORATE-only)
+// and the privilege ceiling: an access level can only be granted where the
+// administrator holds everything it includes. The business always comes from
+// the administrator's own sign-in; the client never sends a business, an
+// identity subject or a permission.
+//   scope as for role assignments ("corporate" or chosen "locations").
+// The person is created INVITED: they become ACTIVE only when they first sign
+// in themselves with a provider-verified email.
+export interface AdminCreateInternalUserRequest {
+  displayName: string;
+  email: string;
+  // Optional: a contact number (digits, spaces and + ( ) - . only) and a job
+  // title (plain text). Descriptive only — never part of authorization.
+  phone?: string | null;
+  jobTitle?: string | null;
+  roleId: string;
+  scope:
+    | { kind: "corporate" }
+    | { kind: "locations"; locationIds: string[] };
+}
+
+// The identity provider's answer to the login invitation:
+//   "INVITATION_SENT" a new login was created and the provider emailed a
+//                     temporary password (never seen by CENTERIVO);
+//   "EXISTING_LOGIN"  a login already exists for the address — the person
+//                     signs in with their current password (it is never
+//                     changed);
+//   "PENDING"         the provider could not be reached or refused; nothing
+//                     was sent — send the invitation again later.
+export type AdminStaffInvitationOutcome =
+  | "INVITATION_SENT"
+  | "EXISTING_LOGIN"
+  | "PENDING";
+
+// The answer to adding an employee, or to POST
+// /api/v1/admin/internal-users/:internalUserId/login-invitation (send again).
+export interface AdminStaffInvitationResponse {
+  user: AdminInternalUserDetail;
+  invitation: AdminStaffInvitationOutcome;
 }
 
 // One heading of the "What they can do" list, with its plain-language

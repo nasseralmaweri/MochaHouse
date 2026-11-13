@@ -50,7 +50,7 @@ const STATUS_SENTENCE: Record<InternalUserStatus, string> = {
   ACTIVE: "Can use the Admin according to their assigned access.",
   SUSPENDED: "Access is temporarily paused.",
   DISABLED: "This account can no longer use the Admin.",
-  INVITED: "Access has not been activated yet.",
+  INVITED: "Added, but hasn't signed in yet. Their access starts at their first sign-in.",
 };
 
 export function userStatusSentence(status: InternalUserStatus): string {
@@ -59,7 +59,8 @@ export function userStatusSentence(status: InternalUserStatus): string {
 
 // --- Status actions (Milestone 5E-3) ---------------------------------
 // The explicit business actions available from a target's current status.
-// DISABLED and INVITED offer none. Never a raw enum dropdown.
+// DISABLED offers none; INVITED offers only withdrawing the invitation
+// (V1 launch fix 2). Never a raw enum dropdown.
 export type UserStatusActionKey = "suspend" | "reactivate" | "disable";
 
 export interface UserStatusAction {
@@ -75,6 +76,11 @@ export function userStatusActions(
     return [
       { key: "suspend", label: "Suspend access", targetStatus: "SUSPENDED" },
       { key: "disable", label: "Disable account", targetStatus: "DISABLED" },
+    ];
+  }
+  if (status === "INVITED") {
+    return [
+      { key: "disable", label: "Cancel invitation", targetStatus: "DISABLED" },
     ];
   }
   if (status === "SUSPENDED") {

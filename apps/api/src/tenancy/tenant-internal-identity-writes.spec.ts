@@ -16,6 +16,7 @@ import { EntitlementsService } from '../subscriptions/application/entitlements.s
 import { AuthorizationService } from '../internal-auth/authorization/authorization.service';
 import { AuthorizationContext } from '../internal-auth/authorization/authorization-context';
 import { AdminInternalUsersService } from '../internal-users/application/admin-internal-users.service';
+import { STAFF_LOGIN_PROVIDER } from '../internal-users/infrastructure/staff-login-provider';
 import { AdminInternalRolesService } from '../internal-users/application/admin-internal-roles.service';
 
 // Milestone S0D-2E — Tenant-Scoped Internal Identity & Authorization.
@@ -130,6 +131,15 @@ describe('S0D-2E internal identity & authorization tenant ownership (integration
         EntitlementsService,
         AdminInternalUsersService,
         AdminInternalRolesService,
+        // V1 launch fix 2 — AdminInternalUsersService's identity-provider
+        // boundary, MOCKED: no AWS call, no invitation is ever sent here.
+        {
+          provide: STAFF_LOGIN_PROVIDER,
+          useValue: {
+            providerName: 'internal-dev',
+            inviteLogin: jest.fn().mockResolvedValue({ outcome: 'invited' }),
+          },
+        },
       ],
     }).compile();
     prisma = moduleRef.get(PrismaService);

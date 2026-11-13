@@ -310,6 +310,102 @@ export class InternalAuditService {
     });
   }
 
+  // V1 launch fix 2 — an administrator added an employee (created INVITED).
+  // Same `tx` as the InternalUser insert. The address is the business's own
+  // staff record, already visible to administrators; no credential exists.
+  async recordUserCreated(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      targetInternalUserId: string;
+      email: string;
+      displayName: string;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'user.created',
+        targetType: 'internal_user',
+        targetId: input.targetInternalUserId,
+        beforeData: Prisma.JsonNull,
+        afterData: {
+          status: 'INVITED',
+          email: input.email,
+          displayName: input.displayName,
+        },
+        reason: 'Employee added',
+      },
+    });
+  }
+
+  // V1 launch fix 2 — an employee just added was taken back out because the
+  // identity provider refused their address (no login could ever exist).
+  async recordUserCreationReverted(
+    tx: Prisma.TransactionClient,
+    input: { actorInternalUserId: string; targetInternalUserId: string },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'user.creation_reverted',
+        targetType: 'internal_user',
+        targetId: input.targetInternalUserId,
+        beforeData: { status: 'INVITED' },
+        afterData: Prisma.JsonNull,
+        reason: 'The sign-in service did not accept the email address',
+      },
+    });
+  }
+
+  // V1 launch fix 2 — the identity provider CONFIRMED a login invitation
+  // (a new login emailed, or an existing login found). Never recorded for an
+  // invitation the provider did not confirm.
+  async recordLoginInvited(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      targetInternalUserId: string;
+      outcome: 'invited' | 'existing-login';
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: 'user.login_invited',
+        targetType: 'internal_user',
+        targetId: input.targetInternalUserId,
+        beforeData: Prisma.JsonNull,
+        afterData: { invitation: input.outcome },
+        reason: 'Sign-in invitation',
+      },
+    });
+  }
+
+  // V1 launch fix 2 — an invited employee signed in for the first time with
+  // a provider-verified email and became ACTIVE. The actor is the employee
+  // themself (their own verified sign-in), never an administrator.
+  async recordUserActivated(
+    tx: Prisma.TransactionClient,
+    input: { internalUserId: string },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.internalUserId),
+        actorInternalUserId: input.internalUserId,
+        action: 'user.activated',
+        targetType: 'internal_user',
+        targetId: input.internalUserId,
+        beforeData: { status: 'INVITED' },
+        afterData: { status: 'ACTIVE' },
+        reason: 'First verified sign-in',
+      },
+    });
+  }
+
   // Records a logged / cleared Opening Checklist management exception
   // (Milestone 6C). Waiving a standard opening requirement is a significant
   // management decision, so it is durable history — unlike routine task and

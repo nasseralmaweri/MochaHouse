@@ -2,10 +2,14 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  AdminCreateInternalUserRequest,
+  AdminStaffInvitationOutcome,
+  AdminStaffInvitationResponse,
   AdminAccessAssignmentOptions,
   AdminAssignableAccessLevel,
   AdminAssignInternalUserRoleRequest,
@@ -17,7 +21,7 @@ import type {
   AdminUserLocationAccess,
   InternalUserStatus,
 } from '@mocha-house/contracts';
-import type { TenantContext } from '@mocha-house/database';
+import { Prisma, type TenantContext } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorizationService } from '../../internal-auth/authorization/authorization.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
@@ -45,6 +49,10 @@ import {
   resolveAssignmentShape,
   ASSIGNABLE_BUILT_IN_ROLE_KEYS,
 } from './access-assignment-policy';
+import {
+  STAFF_LOGIN_PROVIDER,
+  type StaffLoginProvider,
+} from '../infrastructure/staff-login-provider';
 
 type AssignmentRow = {
   scopeType: 'CORPORATE' | 'LOCATION';
@@ -53,6 +61,11 @@ type AssignmentRow = {
 };
 
 const REASON_MAX_LENGTH = 1000;
+const EMPLOYEE_ADDED_REASON = 'Employee added';
+const DISPLAY_NAME_MAX_LENGTH = 120;
+const EMAIL_MAX_LENGTH = 254;
+const PHONE_MAX_LENGTH = 32;
+const JOB_TITLE_MAX_LENGTH = 80;
 
 type AssignmentScope =
   { kind: 'corporate' } | { kind: 'locations'; locationIds: string[] };
@@ -70,6 +83,8 @@ export class AdminInternalUsersService {
     private readonly prisma: PrismaService,
     private readonly authorizationService: AuthorizationService,
     private readonly audit: InternalAuditService,
+    @Inject(STAFF_LOGIN_PROVIDER)
+    private readonly loginProvider: StaffLoginProvider,
   ) {}
 
   async listUsers(
@@ -85,6 +100,9 @@ export class AdminInternalUsersService {
         displayName: true,
         email: true,
         status: true,
+        loginInvitedAt: true,
+        jobTitle: true,
+        phone: true,
         roleAssignments: {
           select: {
             scopeType: true,
@@ -329,114 +347,13 @@ export class AdminInternalUsersService {
           throw new NotFoundException('Internal user not found.');
         }
 
-        // Milestone S0D-2E — a Tenant A user can never be assigned a
-        // Tenant B role: the same 404 as "role not found" (never
-        // disclosing that a foreign-tenant role exists at all).
-        const role = await tx.internalRole.findUnique({
-          where: { id: roleId },
-          select: {
-            id: true,
-            tenantId: true,
-            key: true,
-            displayName: true,
-            permissions: { select: { permissionKey: true } },
-          },
-        });
-        requireTenantOwnership(role, tenant, 'Access level not found.');
-        if (!role) {
-          throw new NotFoundException('Access level not found.');
-        }
-
-        const permissionKeys = role.permissions.map((p) => p.permissionKey);
-        const unknownKeys = permissionKeys.filter(
-          (key) => !isKnownPermissionKey(key),
+        const { role, desired } = await this.validateGrant(
+          tx,
+          roleId,
+          scope,
+          authorization,
+          tenant,
         );
-        if (unknownKeys.length > 0) {
-          // Fail closed: an access level with a capability the code no
-          // longer recognises cannot be assigned until it is corrected.
-          throw new ConflictException(
-            'This access level includes an unrecognised capability and can’t be assigned until it is corrected.',
-          );
-        }
-        const knownKeys = permissionKeys as InternalPermissionKey[];
-
-        const assignmentShape = resolveAssignmentShape({
-          key: role.key,
-          permissionKeys,
-        });
-        if (!assignmentShape) {
-          throw new ConflictException('This access level can’t be assigned.');
-        }
-        if (
-          assignmentShape === 'corporate-only' &&
-          scope.kind !== 'corporate'
-        ) {
-          throw new BadRequestException(
-            'This access level applies to every location and can’t be limited to specific ones.',
-          );
-        }
-        if (assignmentShape === 'location-only' && scope.kind !== 'locations') {
-          throw new BadRequestException(
-            'Choose the locations this access level should apply to.',
-          );
-        }
-
-        let locations: { id: string; name: string }[] = [];
-        if (scope.kind === 'locations') {
-          const ids = [...new Set(scope.locationIds)];
-          if (ids.length === 0) {
-            throw new BadRequestException('Choose at least one location.');
-          }
-          // Milestone S0D-2E — a chosen location must belong to the
-          // caller's own tenant; a Tenant B id is reported identically to
-          // an unknown one below.
-          const rows = await tx.location.findMany({
-            where: { id: { in: ids }, tenantId: tenant.tenantId },
-            select: { id: true, name: true, isActive: true },
-          });
-          if (rows.length !== ids.length) {
-            throw new BadRequestException(
-              'One or more of the chosen locations no longer exists.',
-            );
-          }
-          if (rows.some((row) => !row.isActive)) {
-            // An assignment to an inactive location would contribute nothing
-            // effective (the /internal/me summary intersects with active
-            // locations), so it is rejected rather than silently stored.
-            throw new BadRequestException(
-              'One or more of the chosen locations is inactive.',
-            );
-          }
-          locations = rows.map((row) => ({ id: row.id, name: row.name }));
-        }
-
-        const ceilingTarget =
-          scope.kind === 'corporate'
-            ? ({ kind: 'corporate' } as const)
-            : ({
-                kind: 'locations',
-                locationIds: locations.map((l) => l.id),
-              } as const);
-        if (!actorCanGrant(authorization, knownKeys, ceilingTarget)) {
-          throw new ForbiddenException(
-            'You can’t grant an access level that includes access you don’t hold yourself.',
-          );
-        }
-
-        const desired =
-          scope.kind === 'corporate'
-            ? [
-                {
-                  scopeType: 'CORPORATE' as const,
-                  scopeId: null as string | null,
-                  locationName: null as string | null,
-                },
-              ]
-            : locations.map((location) => ({
-                scopeType: 'LOCATION' as const,
-                scopeId: location.id,
-                locationName: location.name,
-              }));
 
         const existing = await tx.internalUserRoleAssignment.findMany({
           where: { internalUserId: target.id, roleId: role.id },
@@ -493,6 +410,406 @@ export class AdminInternalUsersService {
     );
 
     return this.buildUserDetail(internalUserId, tenant);
+  }
+
+  // The checks every grant goes through (assigning access, and adding an
+  // employee with their first access): the access level is this business's
+  // own, fully recognised and assignable in that shape; every chosen
+  // location is this business's and active; and the administrator holds
+  // everything it includes there (the privilege ceiling). Runs inside the
+  // caller's Serializable transaction. Returns the rows to grant.
+  private async validateGrant(
+    tx: Prisma.TransactionClient,
+    roleId: string,
+    scope: AssignmentScope,
+    authorization: AuthorizationContext,
+    tenant: TenantContext,
+  ): Promise<{
+    role: { id: string; displayName: string };
+    desired: {
+      scopeType: 'CORPORATE' | 'LOCATION';
+      scopeId: string | null;
+      locationName: string | null;
+    }[];
+  }> {
+    // Milestone S0D-2E — a Tenant A user can never be assigned a
+    // Tenant B role: the same 404 as "role not found" (never
+    // disclosing that a foreign-tenant role exists at all).
+    const role = await tx.internalRole.findUnique({
+      where: { id: roleId },
+      select: {
+        id: true,
+        tenantId: true,
+        key: true,
+        displayName: true,
+        permissions: { select: { permissionKey: true } },
+      },
+    });
+    requireTenantOwnership(role, tenant, 'Access level not found.');
+    if (!role) {
+      throw new NotFoundException('Access level not found.');
+    }
+
+    const permissionKeys = role.permissions.map((p) => p.permissionKey);
+    const unknownKeys = permissionKeys.filter(
+      (key) => !isKnownPermissionKey(key),
+    );
+    if (unknownKeys.length > 0) {
+      // Fail closed: an access level with a capability the code no
+      // longer recognises cannot be assigned until it is corrected.
+      throw new ConflictException(
+        'This access level includes an unrecognised capability and can’t be assigned until it is corrected.',
+      );
+    }
+    const knownKeys = permissionKeys as InternalPermissionKey[];
+
+    const assignmentShape = resolveAssignmentShape({
+      key: role.key,
+      permissionKeys,
+    });
+    if (!assignmentShape) {
+      throw new ConflictException('This access level can’t be assigned.');
+    }
+    if (assignmentShape === 'corporate-only' && scope.kind !== 'corporate') {
+      throw new BadRequestException(
+        'This access level applies to every location and can’t be limited to specific ones.',
+      );
+    }
+    if (assignmentShape === 'location-only' && scope.kind !== 'locations') {
+      throw new BadRequestException(
+        'Choose the locations this access level should apply to.',
+      );
+    }
+
+    let locations: { id: string; name: string }[] = [];
+    if (scope.kind === 'locations') {
+      const ids = [...new Set(scope.locationIds)];
+      if (ids.length === 0) {
+        throw new BadRequestException('Choose at least one location.');
+      }
+      // Milestone S0D-2E — a chosen location must belong to the
+      // caller's own tenant; a Tenant B id is reported identically to
+      // an unknown one below.
+      const rows = await tx.location.findMany({
+        where: { id: { in: ids }, tenantId: tenant.tenantId },
+        select: { id: true, name: true, isActive: true },
+      });
+      if (rows.length !== ids.length) {
+        throw new BadRequestException(
+          'One or more of the chosen locations no longer exists.',
+        );
+      }
+      if (rows.some((row) => !row.isActive)) {
+        // An assignment to an inactive location would contribute nothing
+        // effective (the /internal/me summary intersects with active
+        // locations), so it is rejected rather than silently stored.
+        throw new BadRequestException(
+          'One or more of the chosen locations is inactive.',
+        );
+      }
+      locations = rows.map((row) => ({ id: row.id, name: row.name }));
+    }
+
+    const ceilingTarget =
+      scope.kind === 'corporate'
+        ? ({ kind: 'corporate' } as const)
+        : ({
+            kind: 'locations',
+            locationIds: locations.map((l) => l.id),
+          } as const);
+    if (!actorCanGrant(authorization, knownKeys, ceilingTarget)) {
+      throw new ForbiddenException(
+        'You can’t grant an access level that includes access you don’t hold yourself.',
+      );
+    }
+
+    const desired =
+      scope.kind === 'corporate'
+        ? [
+            {
+              scopeType: 'CORPORATE' as const,
+              scopeId: null as string | null,
+              locationName: null as string | null,
+            },
+          ]
+        : locations.map((location) => ({
+            scopeType: 'LOCATION' as const,
+            scopeId: location.id,
+            locationName: location.name,
+          }));
+
+    return {
+      role: { id: role.id, displayName: role.displayName },
+      desired,
+    };
+  }
+
+  // --- Adding an employee (V1 launch fix 2) ----------------------------
+  // Creates the person INVITED with their first access, then asks the
+  // identity provider to invite their login. Needs BOTH users.manage_roles
+  // and users.manage_status (CORPORATE-only) — granting access and bringing
+  // a new person into the business — plus the privilege ceiling for the
+  // access granted (validateGrant). The business is always the caller's
+  // TenantContext; nothing about identity or business comes from the body.
+  //
+  // The person can do nothing until THEY sign in with a provider-verified
+  // email (InternalTenantMembershipService.activateInvitedMemberships):
+  // creating them never activates them, and the row is never bound to a
+  // login here.
+  async createUser(
+    request: AdminCreateInternalUserRequest,
+    actorInternalUserId: string,
+    authorization: AuthorizationContext,
+    tenant: TenantContext,
+  ): Promise<AdminStaffInvitationResponse> {
+    authorization.assertCorporate('users.manage_roles');
+    authorization.assertCorporate('users.manage_status');
+
+    const displayName = validateDisplayName(request?.displayName);
+    const email = validateStaffEmail(request?.email);
+    const phone = validateStaffPhone(request?.phone);
+    const jobTitle = validateJobTitle(request?.jobTitle);
+    const roleId =
+      typeof request?.roleId === 'string' ? request.roleId.trim() : '';
+    if (!roleId) {
+      throw new BadRequestException('Choose an access level.');
+    }
+    const scope = parseAssignmentScope(request?.scope);
+    const providerName = this.loginProvider.providerName;
+
+    const created = await runSerializable(
+      this.prisma,
+      async (tx) => {
+        // Case-insensitive uniqueness inside this business (the database
+        // key is case-sensitive). Another business may have the same person.
+        const clash = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+          SELECT "id" FROM "InternalUser"
+          WHERE "tenantId" = ${tenant.tenantId}
+            AND LOWER("email") = LOWER(${email})
+          LIMIT 1
+        `);
+        if (clash.length > 0) {
+          throw new ConflictException(
+            'Someone with this email is already part of this business.',
+          );
+        }
+
+        const { role, desired } = await this.validateGrant(
+          tx,
+          roleId,
+          scope,
+          authorization,
+          tenant,
+        );
+
+        const user = await tx.internalUser.create({
+          data: {
+            tenantId: tenant.tenantId,
+            externalProvider: providerName,
+            externalSubject: null,
+            email,
+            displayName,
+            phone,
+            jobTitle,
+            status: 'INVITED',
+          },
+          select: { id: true },
+        });
+        await this.audit.recordUserCreated(tx, {
+          actorInternalUserId,
+          targetInternalUserId: user.id,
+          email,
+          displayName,
+        });
+        for (const row of desired) {
+          await tx.internalUserRoleAssignment.create({
+            data: {
+              internalUserId: user.id,
+              roleId: role.id,
+              scopeType: row.scopeType,
+              scopeId: row.scopeId,
+              tenantId: tenant.tenantId,
+            },
+          });
+          await this.audit.recordRoleAssigned(tx, {
+            actorInternalUserId,
+            targetInternalUserId: user.id,
+            roleId: role.id,
+            roleDisplayName: role.displayName,
+            scope: row.scopeType,
+            locationId: row.scopeId,
+            locationName: row.locationName,
+            reason: EMPLOYEE_ADDED_REASON,
+          });
+        }
+        return user;
+      },
+      // A concurrent request created the same person between this attempt's
+      // check and its insert: re-run, and answer "already part of this
+      // business" from fresh data.
+      { retryIf: isGrantUniqueViolation },
+    );
+
+    // Outside the transaction: a network call is never made while holding
+    // database locks. The person exists (INVITED, setup pending) whatever
+    // the provider answers; an unconfirmed invitation can be sent again.
+    const invitation = await this.inviteLogin(
+      created.id,
+      email,
+      displayName,
+      actorInternalUserId,
+      tenant,
+    );
+    if (invitation === 'INVALID_EMAIL') {
+      // The provider refused the address itself: no login exists or can
+      // exist for it, and a person's address cannot be edited — so the
+      // person just added is taken back out (nothing was ever usable) and
+      // the administrator simply tries again with a corrected address.
+      await this.revertUnusableNewUser(created.id, actorInternalUserId, tenant);
+      throw new BadRequestException(
+        'The sign-in service did not accept this email address. Nothing was added — check the address and try again.',
+      );
+    }
+    return {
+      user: await this.buildUserDetail(created.id, tenant),
+      invitation,
+    };
+  }
+
+  // Send the login invitation again (the provider was unavailable, or the
+  // temporary password expired). Only for someone still INVITED in this
+  // business; never changes an existing login (see StaffLoginProvider).
+  async sendLoginInvitation(
+    internalUserId: string,
+    actorInternalUserId: string,
+    authorization: AuthorizationContext,
+    tenant: TenantContext,
+  ): Promise<AdminStaffInvitationResponse> {
+    authorization.assertCorporate('users.manage_roles');
+    authorization.assertCorporate('users.manage_status');
+
+    const target = await this.prisma.internalUser.findUnique({
+      where: { id: internalUserId },
+      select: {
+        id: true,
+        tenantId: true,
+        status: true,
+        email: true,
+        displayName: true,
+        externalSubject: true,
+      },
+    });
+    requireTenantOwnership(target, tenant, 'Internal user not found.');
+    if (!target) {
+      throw new NotFoundException('Internal user not found.');
+    }
+    if (target.status !== 'INVITED' || target.externalSubject !== null) {
+      throw new ConflictException(
+        'This person has already set up their sign-in.',
+      );
+    }
+    const invitation = await this.inviteLogin(
+      target.id,
+      target.email,
+      target.displayName ?? target.email,
+      actorInternalUserId,
+      tenant,
+    );
+    if (invitation === 'INVALID_EMAIL') {
+      // An existing person is never removed here; their address cannot be
+      // edited, so the way forward is to cancel and add them again.
+      throw new BadRequestException(
+        'The sign-in service did not accept this email address. Cancel this invitation and add the person again with a corrected address.',
+      );
+    }
+    return {
+      user: await this.buildUserDetail(target.id, tenant),
+      invitation,
+    };
+  }
+
+  // Asks the provider to invite the login, and records ONLY what it
+  // confirmed. "invited" / "existing-login" mark the row (loginInvitedAt) so
+  // its own verified first sign-in may activate it; anything else leaves it
+  // pending and claims nothing.
+  private async inviteLogin(
+    internalUserId: string,
+    email: string,
+    displayName: string,
+    actorInternalUserId: string,
+    tenant: TenantContext,
+  ): Promise<AdminStaffInvitationOutcome | 'INVALID_EMAIL'> {
+    const result = await this.loginProvider.inviteLogin({ email, displayName });
+    if (result.outcome === 'invalid-email') {
+      return 'INVALID_EMAIL';
+    }
+    if (result.outcome === 'unavailable') {
+      return 'PENDING';
+    }
+    await this.prisma.$transaction(async (tx) => {
+      const marked = await tx.internalUser.updateMany({
+        where: {
+          id: internalUserId,
+          tenantId: tenant.tenantId,
+          status: 'INVITED',
+          externalSubject: null,
+        },
+        data: { loginInvitedAt: new Date() },
+      });
+      if (marked.count !== 1) return;
+      await this.audit.recordLoginInvited(tx, {
+        actorInternalUserId,
+        targetInternalUserId: internalUserId,
+        outcome: result.outcome,
+      });
+    });
+    return result.outcome === 'invited' ? 'INVITATION_SENT' : 'EXISTING_LOGIN';
+  }
+
+  // Takes back out a person this same request just added, when the identity
+  // provider refused their address. Only while they are exactly as created —
+  // INVITED, never bound to a login, no confirmed invitation — re-checked in
+  // the delete itself; otherwise nothing is removed. Their access goes with
+  // them; the history (user.created, user.role_assigned) is kept and
+  // user.creation_reverted is added.
+  private async revertUnusableNewUser(
+    internalUserId: string,
+    actorInternalUserId: string,
+    tenant: TenantContext,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const untouched = await tx.internalUser.count({
+        where: {
+          id: internalUserId,
+          tenantId: tenant.tenantId,
+          status: 'INVITED',
+          externalSubject: null,
+          loginInvitedAt: null,
+        },
+      });
+      if (untouched !== 1) return;
+      await tx.internalUserRoleAssignment.deleteMany({
+        where: { internalUserId, tenantId: tenant.tenantId },
+      });
+      const removed = await tx.internalUser.deleteMany({
+        where: {
+          id: internalUserId,
+          tenantId: tenant.tenantId,
+          status: 'INVITED',
+          externalSubject: null,
+          loginInvitedAt: null,
+        },
+      });
+      if (removed.count !== 1) {
+        throw new ConflictException(
+          'This person changed while being added. Check the Users list.',
+        );
+      }
+      await this.audit.recordUserCreationReverted(tx, {
+        actorInternalUserId,
+        targetInternalUserId: internalUserId,
+      });
+    });
   }
 
   // Remove ONE concrete access grant. Never removes more than the single
@@ -632,6 +949,9 @@ export class AdminInternalUsersService {
         displayName: true,
         email: true,
         status: true,
+        loginInvitedAt: true,
+        jobTitle: true,
+        phone: true,
         roleAssignments: {
           select: {
             id: true,
@@ -729,6 +1049,9 @@ export class AdminInternalUsersService {
       displayName: string | null;
       email: string;
       status: AdminInternalUserSummary['status'];
+      loginInvitedAt: Date | null;
+      jobTitle: string | null;
+      phone: string | null;
     },
     assignments: AssignmentRow[],
     locationNameById: Map<string, string>,
@@ -744,8 +1067,92 @@ export class AdminInternalUsersService {
       status: user.status,
       accessLevels,
       locationAccess: resolveLocationAccess(assignments, locationNameById),
+      loginSetup:
+        user.status !== 'INVITED'
+          ? null
+          : user.loginInvitedAt
+            ? 'INVITATION_SENT'
+            : 'PENDING',
+      jobTitle: user.jobTitle,
+      phone: user.phone,
     };
   }
+}
+
+// V1 launch fix 2 — the new employee's name and address, as typed by the
+// administrator (plain text; the address is stored lower-case, so the
+// business's case-insensitive uniqueness and the sign-in's
+// case-insensitive matching agree).
+// Control, invisible or direction-changing characters never belong in a name
+// shown across the Admin and audit history.
+const NAME_FORBIDDEN = new RegExp(
+  '[\u0000-\u001F\u007F-\u009F' + '​-‏‪-‮⁦-⁩﻿]',
+);
+
+function validateDisplayName(raw: unknown): string {
+  const value = typeof raw === 'string' ? raw.trim() : '';
+  if (value.length === 0) {
+    throw new BadRequestException("Enter the employee's name.");
+  }
+  if (value.length > DISPLAY_NAME_MAX_LENGTH || NAME_FORBIDDEN.test(value)) {
+    throw new BadRequestException(
+      `Enter a plain name of at most ${DISPLAY_NAME_MAX_LENGTH} characters.`,
+    );
+  }
+  return value;
+}
+
+const EMAIL_PATTERN =
+  /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
+
+// Optional: absent / blank is null. Digits, spaces and + ( ) - . only, with
+// 7 to 15 digits — a contact detail, never an identity or a credential.
+function validateStaffPhone(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string') {
+    throw new BadRequestException('Enter a valid phone number.');
+  }
+  const value = raw.trim();
+  if (value.length === 0) return null;
+  const digits = value.replace(/\D/g, '').length;
+  if (
+    value.length > PHONE_MAX_LENGTH ||
+    !/^\+?[0-9 ().-]+$/.test(value) ||
+    digits < 7 ||
+    digits > 15
+  ) {
+    throw new BadRequestException('Enter a valid phone number.');
+  }
+  return value;
+}
+
+// Optional, plain text. A job title is a label only: it NEVER grants
+// anything (access comes only from role assignments).
+function validateJobTitle(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string') {
+    throw new BadRequestException('Enter a plain job title.');
+  }
+  const value = raw.trim();
+  if (value.length === 0) return null;
+  if (value.length > JOB_TITLE_MAX_LENGTH || NAME_FORBIDDEN.test(value)) {
+    throw new BadRequestException(
+      `Enter a plain job title of at most ${JOB_TITLE_MAX_LENGTH} characters.`,
+    );
+  }
+  return value;
+}
+
+function validateStaffEmail(raw: unknown): string {
+  const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (
+    value.length < 3 ||
+    value.length > EMAIL_MAX_LENGTH ||
+    !EMAIL_PATTERN.test(value)
+  ) {
+    throw new BadRequestException('Enter a valid email address.');
+  }
+  return value;
 }
 
 function resolveLocationAccess(
@@ -841,6 +1248,10 @@ function isGrantUniqueViolation(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const e = error as { code?: unknown; meta?: { modelName?: unknown } };
   return (
-    e.code === 'P2002' && e.meta?.modelName === 'InternalUserRoleAssignment'
+    e.code === 'P2002' &&
+    (e.meta?.modelName === 'InternalUserRoleAssignment' ||
+      // V1 launch fix 2 — two administrators adding the same person at once:
+      // the loser re-runs and is told they already exist.
+      e.meta?.modelName === 'InternalUser')
   );
 }

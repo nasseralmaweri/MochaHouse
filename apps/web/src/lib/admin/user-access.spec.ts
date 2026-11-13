@@ -51,7 +51,9 @@ describe("accessLevelsLabel", () => {
 });
 
 describe("userStatusSentence", () => {
-  it("has a plain sentence for every status and never implies invitation works", () => {
+  // V1 launch fix 2 — invitations now exist: an invited person's access
+  // starts only at their own first sign-in (never on being added).
+  it("has a plain sentence for every status; an invited person has no access until they sign in", () => {
     expect(userStatusSentence("ACTIVE")).toBe(
       "Can use the Admin according to their assigned access.",
     );
@@ -60,7 +62,7 @@ describe("userStatusSentence", () => {
       "This account can no longer use the Admin.",
     );
     expect(userStatusSentence("INVITED")).toBe(
-      "Access has not been activated yet.",
+      "Added, but hasn't signed in yet. Their access starts at their first sign-in.",
     );
   });
 });
@@ -79,9 +81,11 @@ describe("userStatusActions", () => {
       "disable",
     ]);
   });
-  it("offers nothing for a disabled or invited person", () => {
+  it("offers nothing for a disabled person; an invited person's invitation can be cancelled", () => {
     expect(userStatusActions("DISABLED")).toEqual([]);
-    expect(userStatusActions("INVITED")).toEqual([]);
+    expect(userStatusActions("INVITED")).toEqual([
+      { key: "disable", label: "Cancel invitation", targetStatus: "DISABLED" },
+    ]);
   });
 });
 
@@ -127,7 +131,7 @@ describe("canShowStatusActions", () => {
         isSelf: false,
         status: "INVITED",
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 

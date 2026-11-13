@@ -1048,6 +1048,15 @@ export interface InternalSignInResponse {
     idToken: string;
     expiresInSeconds: number;
 }
+export interface InternalSignInChallengeResponse {
+    challenge: "NEW_PASSWORD_REQUIRED";
+    session: string;
+}
+export interface InternalNewPasswordRequest {
+    identifier: string;
+    session: string;
+    newPassword: string;
+}
 export type OwnerRegistrationAvailability = {
     enabled: false;
 } | {
@@ -1909,6 +1918,28 @@ export interface AdminInternalUserSummary {
     status: InternalUserStatus;
     accessLevels: string[];
     locationAccess: AdminUserLocationAccess;
+    loginSetup?: AdminStaffLoginSetup | null;
+    jobTitle?: string | null;
+    phone?: string | null;
+}
+export type AdminStaffLoginSetup = "INVITATION_SENT" | "PENDING";
+export interface AdminCreateInternalUserRequest {
+    displayName: string;
+    email: string;
+    phone?: string | null;
+    jobTitle?: string | null;
+    roleId: string;
+    scope: {
+        kind: "corporate";
+    } | {
+        kind: "locations";
+        locationIds: string[];
+    };
+}
+export type AdminStaffInvitationOutcome = "INVITATION_SENT" | "EXISTING_LOGIN" | "PENDING";
+export interface AdminStaffInvitationResponse {
+    user: AdminInternalUserDetail;
+    invitation: AdminStaffInvitationOutcome;
 }
 export interface AdminUserCapabilityGroup {
     group: string;

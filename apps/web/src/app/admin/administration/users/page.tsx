@@ -1,6 +1,9 @@
 import { redirect } from "next/navigation";
 import { getInternalSession } from "@/lib/internal-auth/session";
-import { getAdminUsers } from "@/lib/internal-auth/admin-users";
+import {
+  getAdminAccessOptions,
+  getAdminUsers,
+} from "@/lib/internal-auth/admin-users";
 import { can } from "@/lib/admin/capabilities";
 import { AdminPage } from "@/components/admin/AdminPage";
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
@@ -10,8 +13,11 @@ import {
   AdminForbidden,
 } from "@/components/admin/states";
 import { UsersBrowser } from "@/components/admin/UsersBrowser";
+import { AddEmployeeForm } from "@/components/admin/AddEmployeeForm";
 
-// Administration → Users (Milestone 5E-1). Read-only. `users.view` is
+// Administration → Users (Milestone 5E-1). V1 launch fix 2 — plus
+// "Add employee" for administrators who hold BOTH users.manage_roles and
+// users.manage_status (the API checks both again, and the privilege ceiling). `users.view` is
 // CORPORATE-only and the API enforces it; the check here just keeps the
 // page out of the way for anyone who can't use it.
 export default async function AdminUsersPage() {
@@ -41,6 +47,14 @@ export default async function AdminUsersPage() {
   }
 
   const result = await getAdminUsers();
+  const canAddEmployees =
+    can(session.authorization.capabilities, "users.manage_roles") &&
+    can(session.authorization.capabilities, "users.manage_status");
+  const optionsResult = canAddEmployees ? await getAdminAccessOptions() : null;
+  const addEmployee =
+    optionsResult?.outcome === "success" ? (
+      <AddEmployeeForm options={optionsResult.data} />
+    ) : null;
 
   if (result.outcome === "unauthenticated") {
     redirect("/internal/sign-in");
@@ -66,6 +80,7 @@ export default async function AdminUsersPage() {
     return (
       <AdminPage>
         {header}
+        {addEmployee}
         <AdminEmptyState
           title="No users yet"
           description="There are no internal users."
@@ -77,6 +92,7 @@ export default async function AdminUsersPage() {
   return (
     <AdminPage>
       {header}
+      {addEmployee}
       <UsersBrowser users={result.data} />
     </AdminPage>
   );

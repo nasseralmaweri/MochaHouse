@@ -2346,6 +2346,14 @@ model InternalUser {
   // can never widen access.
   invitedAt           DateTime  @default(now())
   activatedAt         DateTime?
+  // V1 launch fix 2 — the identity provider confirmed this person's login
+  // invitation. Only an INVITED row with it set can become ACTIVE, on its own
+  // person's first sign-in with a provider-verified email.
+  loginInvitedAt      DateTime?
+  // V1 launch fix 2 — optional, descriptive only (a job title never grants
+  // anything; access comes only from role assignments).
+  phone               String?
+  jobTitle            String?
   lastAuthenticatedAt DateTime?
   // SC3c-3 — the address the identity provider last asserted as VERIFIED
   // for this person (lower-cased) and when. Billing email goes only to an

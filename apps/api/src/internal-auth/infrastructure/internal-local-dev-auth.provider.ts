@@ -4,6 +4,7 @@ import { requireInternalEnv } from './require-internal-env';
 import { signInternalDevJwt } from './internal-dev-jwt';
 import type {
   InternalAuthProvider,
+  InternalNewPasswordOutcome,
   InternalSignInOutcome,
 } from '../application/internal-sign-in.types';
 
@@ -42,5 +43,11 @@ export class InternalLocalDevAuthProvider implements InternalAuthProvider {
       idToken,
       expiresInSeconds: TOKEN_TTL_SECONDS,
     });
+  }
+
+  // The local stand-in never issues the first-sign-in challenge, so there is
+  // never a challenge of its own to answer.
+  completeNewPassword(): Promise<InternalNewPasswordOutcome> {
+    return Promise.resolve({ outcome: 'session-expired' });
   }
 }
