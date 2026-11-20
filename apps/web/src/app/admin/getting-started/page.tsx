@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getInternalSession } from "@/lib/internal-auth/session";
 import { getAdminGettingStarted } from "@/lib/internal-auth/admin-locations";
-import { isCorporateFor } from "@/lib/admin/capabilities";
+import { can, isCorporateFor } from "@/lib/admin/capabilities";
 import { AdminPage } from "@/components/admin/AdminPage";
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import { AdminErrorState, AdminForbidden } from "@/components/admin/states";
@@ -45,7 +45,10 @@ export default async function GettingStartedPage() {
   return (
     <AdminPage>
       {header}
-      <GettingStartedChecklist checklist={checklist} />
+      <GettingStartedChecklist
+        checklist={checklist}
+        canManageTax={can(session.authorization.capabilities, "tax.manage")}
+      />
     </AdminPage>
   );
 }

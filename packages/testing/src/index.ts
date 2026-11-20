@@ -32,6 +32,7 @@ export {
   removePaymentAccountsForTest,
   removePaymentRecoveryRecordsForTest,
 } from "./payment-recovery";
+export { removeTaxSettingsForTest } from "./tax-settings";
 export {
   DISPOSABLE_NAME_SETTING,
   DISPOSABLE_TOKEN_SETTING,

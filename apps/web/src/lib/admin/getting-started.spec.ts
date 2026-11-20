@@ -33,6 +33,7 @@ function checklist(
     locationId: null,
     menuId: null,
     storefrontLive: false,
+    salesTax: { totalLocations: 1, confirmedLocations: 0 },
     ...extra,
   };
 }

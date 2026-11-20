@@ -103,7 +103,12 @@ const tenantTables = Object.entries(MODEL_TENANCY)
       model !== 'PaymentReconciliationNote' &&
       // ESP-04 M5a added payment refunds after this migration.
       model !== 'PaymentRefund' &&
-      model !== 'PaymentRefundEvent',
+      model !== 'PaymentRefundEvent' &&
+      // V1 Sales Tax PR 1 added tax settings after this migration.
+      model !== 'TaxClass' &&
+      model !== 'LocationTaxVersion' &&
+      model !== 'LocationTaxComponent' &&
+      model !== 'LocationTaxComponentClass',
   );
 
 const baseUrl = process.env.DATABASE_URL!;

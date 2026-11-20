@@ -461,10 +461,14 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
     data: { id: i('location'), tenantId, name: 'Store', slug: i('location') },
   });
   await prisma.category.create({
+    // Only the id back: an older-migration database lacks later columns.
+    select: { id: true },
     data: { id: i('category'), tenantId, name: 'Drinks', slug: i('category') },
   });
   for (const name of ['product', 'product-2']) {
     await prisma.product.create({
+      // Only the id back: an older-migration database lacks later columns.
+      select: { id: true },
       data: {
         id: i(name),
         tenantId,

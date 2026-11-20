@@ -35,6 +35,12 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   // ESP-04 M5a — payment refunds and their history (20261124090000).
   'PaymentRefund',
   'PaymentRefundEvent',
+  // V1 Sales Tax PR 1 — tax classes and location tax settings
+  // (20261202090000).
+  'TaxClass',
+  'LocationTaxVersion',
+  'LocationTaxComponent',
+  'LocationTaxComponentClass',
   // SC1a — CENTERIVO platform operators (20261022090000).
   'PlatformOperator',
   'PlatformAuditEvent',
@@ -123,6 +129,9 @@ export const COLUMNS_ADDED_AFTER_4C: Readonly<
     'phone',
     'openingHoursSetAt',
   ],
+  // V1 Sales Tax PR 1 — tax classification (20261202090000).
+  Category: ['taxClassId', 'taxClassReviewedAt'],
+  Product: ['taxClassId'],
 };
 
 // A checksum of every row of every table that existed at the 4C-era migrations,

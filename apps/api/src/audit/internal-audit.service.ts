@@ -48,8 +48,58 @@ async function actorTenantId(
   return actor.tenantId;
 }
 
+// V1 Sales Tax PR 1 — sales tax settings history.
+export type TaxSettingsAuditAction =
+  | 'tax.class_created'
+  | 'tax.class_renamed'
+  | 'tax.category_classified'
+  | 'tax.product_class_set'
+  | 'tax.product_class_cleared'
+  | 'tax.location_draft_saved'
+  | 'tax.location_draft_discarded'
+  | 'tax.location_confirmed';
+
+const TAX_SETTINGS_AUDIT_REASONS: Record<TaxSettingsAuditAction, string> = {
+  'tax.class_created': 'Tax class created.',
+  'tax.class_renamed': 'Tax class renamed.',
+  'tax.category_classified': 'Category tax class reviewed.',
+  'tax.product_class_set': 'Product tax class override set.',
+  'tax.product_class_cleared': 'Product tax class override cleared.',
+  'tax.location_draft_saved': 'Location tax settings draft saved.',
+  'tax.location_draft_discarded': 'Location tax settings draft discarded.',
+  'tax.location_confirmed': 'Location tax settings confirmed.',
+};
+
 @Injectable()
 export class InternalAuditService {
+  // V1 Sales Tax PR 1 — a change to the business's sales tax settings, by
+  // its authorized administrator. Records the exact integer rates (parts per
+  // million) and the class ids involved.
+  async recordTaxSettingsAction(
+    tx: Prisma.TransactionClient,
+    input: {
+      actorInternalUserId: string;
+      action: TaxSettingsAuditAction;
+      targetType: 'tax_class' | 'category' | 'product' | 'location';
+      targetId: string;
+      beforeData?: Prisma.InputJsonValue;
+      afterData?: Prisma.InputJsonValue;
+    },
+  ): Promise<void> {
+    await tx.internalAuditEvent.create({
+      data: {
+        tenantId: await actorTenantId(tx, input.actorInternalUserId),
+        actorInternalUserId: input.actorInternalUserId,
+        action: input.action,
+        targetType: input.targetType,
+        targetId: input.targetId,
+        beforeData: input.beforeData,
+        afterData: input.afterData,
+        reason: TAX_SETTINGS_AUDIT_REASONS[input.action],
+      },
+    });
+  }
+
   // ESP-04 M1 — the owner connected the restaurant's own payment account
   // (Stripe Connect) or opened its hosted onboarding. Records WHICH account —
   // never the provider's onboarding URL (a bearer link).

@@ -503,8 +503,10 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
     });
     // ESP-03 PR 8 added FinancialHold (5 composite foreign keys); ESP-04 M1
     // TenantPaymentAccount (1); ESP-04 M5a PaymentRefund (4) and
-    // PaymentRefundEvent (2).
-    expect(relationsBetweenBusinessRecords).toHaveLength(115);
+    // PaymentRefundEvent (2). V1 Sales Tax PR 1: Category / Product tax class
+    // (2), LocationTaxVersion (2), LocationTaxComponent (1),
+    // LocationTaxComponentClass (2).
+    expect(relationsBetweenBusinessRecords).toHaveLength(122);
     expect(
       relationsBetweenBusinessRecords
         .filter((r) => !isTenantEnforced(r))
@@ -530,6 +532,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'Campaign.promotionId',
       'CampaignProduct.campaignId',
       'CampaignProduct.productId',
+      'Category.taxClassId',
       'ChecklistInstance.locationId',
       'ChecklistInstance.templateId',
       'ChecklistInstanceItem.checklistInstanceId',
@@ -576,6 +579,11 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'LocationProductPriceOverride.locationId',
       'LocationProductPriceOverride.menuId',
       'LocationProductPriceOverride.productId',
+      'LocationTaxComponent.versionId',
+      'LocationTaxComponentClass.componentId',
+      'LocationTaxComponentClass.taxClassId',
+      'LocationTaxVersion.confirmedByInternalUserId',
+      'LocationTaxVersion.locationId',
       'LoyaltyBonusPromotionLocation.locationId',
       'LoyaltyBonusPromotionLocation.promotionId',
       'LoyaltyBonusPromotionProduct.productId',
@@ -626,6 +634,7 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'PaymentRefundEvent.actorInternalUserId',
       'PaymentRefundEvent.refundId',
       'Product.categoryId',
+      'Product.taxClassId',
       'ProductModifierGroup.modifierGroupId',
       'ProductModifierGroup.productId',
       'PromotionCategory.categoryId',
@@ -773,14 +782,15 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       total: TENANT_RELATIONSHIPS.length,
     }).toEqual({
       // ESP-04 M5a: +6 composite foreign keys, +1 JSON, +3 external ids.
-      compositeWithForeignKey: 115,
+      // V1 Sales Tax PR 1: +7 composite foreign keys.
+      compositeWithForeignKey: 122,
       compositeWithoutForeignKey: 0,
       historicalSnapshot: 8,
       polymorphic: 4,
       json: 9,
       // ESP-04 M5b: +1 external id (PaymentRefund.clientRequestId).
       external: 9,
-      total: 145,
+      total: 152,
     });
     // Optional relationships are present and marked optional.
     const optionalForeignKeys = relationsBetweenBusinessRecords.filter(

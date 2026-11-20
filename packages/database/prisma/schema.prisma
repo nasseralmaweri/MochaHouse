@@ -86,6 +86,11 @@ model Tenant {
   orderRefundObligations               OrderRefundObligation[]
   paymentRefunds                       PaymentRefund[]
   paymentRefundEvents                  PaymentRefundEvent[]
+  // V1 Sales Tax PR 1 — tax classes and versioned location tax settings.
+  taxClasses                           TaxClass[]
+  locationTaxVersions                  LocationTaxVersion[]
+  locationTaxComponents                LocationTaxComponent[]
+  locationTaxComponentClasses          LocationTaxComponentClass[]
   orders                               Order[]
   orderLines                           OrderLine[]
   orderStatusHistories                 OrderStatusHistory[]
@@ -840,6 +845,8 @@ model Location {
   checkoutSessions                 CheckoutSession[]
   preferredByCustomers             CustomerPreferredLocation[]
   checklistInstances               ChecklistInstance[]
+  // V1 Sales Tax PR 1 — this location's tax settings, every version kept.
+  taxVersions                      LocationTaxVersion[]
   operationsTasks                  OperationsTask[]
   loyaltyBonusPromotionEligibility LoyaltyBonusPromotionLocation[]
   promotionEligibility             PromotionLocation[]
@@ -874,6 +881,13 @@ model Category {
   products                 Product[]
   loyaltyRewardEligibility LoyaltyRewardCategory[]
   promotionEligibility     PromotionCategory[]
+  // V1 Sales Tax PR 1 — the category's tax class. Null means the business's
+  // default class (Prepared Food). taxClassReviewedAt is set only when an
+  // authorized administrator explicitly classifies it; location tax settings
+  // cannot be confirmed while an active category is unreviewed.
+  taxClassId               String?
+  taxClass                 TaxClass?               @relation(fields: [tenantId, taxClassId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  taxClassReviewedAt       DateTime?
 
   // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
   // every write supplies it explicitly (root writes from the request's
@@ -887,6 +901,7 @@ model Category {
   // (composite foreign keys arrive in Security 4C-3).
   @@unique([tenantId, id])
   @@index([tenantId])
+  @@index([tenantId, taxClassId])
 }
 
 model Product {
@@ -911,6 +926,10 @@ model Product {
   // Milestone 8G — a Campaign's ordered Featured Products. onDelete:
   // Restrict from the Product side (see CampaignProduct).
   campaignFeatureEligibility       CampaignProduct[]
+  // V1 Sales Tax PR 1 — an optional product-level tax class that overrides
+  // its category's. Null means "use the category's class".
+  taxClassId                       String?
+  taxClass                         TaxClass?                             @relation(fields: [tenantId, taxClassId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   // Milestone S0D-1 / S0D-2A — the owning tenant. REQUIRED since S0D-2A:
   // every write supplies it explicitly (root writes from the request's
@@ -925,6 +944,7 @@ model Product {
   @@unique([tenantId, id])
   @@index([categoryId])
   @@index([tenantId])
+  @@index([tenantId, taxClassId])
 }
 
 model Menu {
@@ -2426,13 +2446,15 @@ model InternalUser {
   // AuthorizationService can evaluate every grant within one trusted tenant
   // boundary. No default: every existing row was already Tenant #1 (the
   // single-tenant era's only tenant).
-  tenantId                 String
-  tenant                   Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  tenantId                     String
+  tenant                       Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   // Security 4C-2 — composite tenant key: lets child tables reference
   // (tenantId, id) so the database itself can refuse a cross-business link
   // (composite foreign keys arrive in Security 4C-3).
   // ESP-04 M1 — the restaurant payment account this owner connected.
-  connectedPaymentAccounts TenantPaymentAccount[]
+  connectedPaymentAccounts     TenantPaymentAccount[]
+  // V1 Sales Tax PR 1 — location tax settings this administrator confirmed.
+  confirmedLocationTaxVersions LocationTaxVersion[]
 
   @@unique([tenantId, externalProvider, externalSubject])
   @@unique([tenantId, email])
@@ -4911,4 +4933,113 @@ model BillingAdjustmentEvent {
 
   @@index([adjustmentId, createdAt])
   @@index([actorPlatformOperatorId])
+}
+
+// --- V1 Sales Tax PR 1: tax settings and configuration ----------------------
+// Built-in, per-location sales tax rules, configured and confirmed by the
+// business's authorized administrator. Nothing here changes an order total:
+// tax calculation arrives in PR 2. Every table is tenant-owned and every link
+// is a composite (tenantId, id) foreign key, so a business can never point
+// at another business's records.
+
+// A business-level tax class ("Prepared Food", "Packaged Food", ...). Each
+// tax component lists the classes it applies to; a class no component
+// applies to is not taxed at that location. Names are unique per business
+// (case-insensitive, migration index). systemKey marks the business's
+// default class (PREPARED_FOOD), created on first use.
+model TaxClass {
+  id        String   @id @default(uuid(7))
+  name      String
+  // PREPARED_FOOD for the business's default class; null for its own.
+  systemKey String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  categories       Category[]
+  products         Product[]
+  componentClasses LocationTaxComponentClass[]
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, systemKey])
+  @@index([tenantId])
+}
+
+// One version of a location's tax settings. A location has at most one
+// DRAFT and at most one CONFIRMED version (partial unique indexes); a
+// confirmed version is never edited — a change is a new DRAFT, and
+// confirming it marks the previous one SUPERSEDED (kept for history). Only a
+// DRAFT's components can change (database guard). V1: built-in rules only
+// (source BUILT_IN) and tax-exclusive prices only (CHECK).
+model LocationTaxVersion {
+  id                        String        @id @default(uuid(7))
+  locationId                String
+  location                  Location      @relation(fields: [tenantId, locationId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  // 1, 2, 3, ... per location (unique).
+  version                   Int
+  // DRAFT | CONFIRMED | SUPERSEDED (CHECK).
+  status                    String
+  // BUILT_IN (CHECK): rules entered here. A future tax provider is a new value.
+  source                    String        @default("BUILT_IN")
+  // Always false in V1 (CHECK): menu prices exclude tax.
+  pricesIncludeTax          Boolean       @default(false)
+  confirmedAt               DateTime?
+  confirmedByInternalUserId String?
+  confirmedBy               InternalUser? @relation(fields: [tenantId, confirmedByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  supersededAt              DateTime?
+  createdAt                 DateTime      @default(now())
+  updatedAt                 DateTime      @updatedAt
+
+  components LocationTaxComponent[]
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, locationId, version])
+  @@index([tenantId])
+}
+
+// One tax in a version (state, county, city or special district). The rate
+// is an exact integer in parts per million of the price: 6% = 60000,
+// 6.25% = 62500 (never a floating-point number). It applies to the listed
+// tax classes only.
+model LocationTaxComponent {
+  id           String             @id @default(uuid(7))
+  versionId    String
+  version      LocationTaxVersion @relation(fields: [tenantId, versionId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  name         String
+  // STATE | COUNTY | CITY | SPECIAL (CHECK).
+  jurisdiction String
+  // 1 – 250000 (0.0001% – 25%) (CHECK).
+  ratePpm      Int
+  displayOrder Int
+  createdAt    DateTime           @default(now())
+
+  classes LocationTaxComponentClass[]
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, versionId, displayOrder])
+  @@index([tenantId])
+}
+
+// Which tax classes a component applies to.
+model LocationTaxComponentClass {
+  componentId String
+  component   LocationTaxComponent @relation(fields: [tenantId, componentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  taxClassId  String
+  taxClass    TaxClass             @relation(fields: [tenantId, taxClassId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  createdAt   DateTime             @default(now())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([componentId, taxClassId])
+  @@index([tenantId, taxClassId])
+  @@index([tenantId])
 }

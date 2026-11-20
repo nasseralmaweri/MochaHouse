@@ -114,6 +114,11 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     FinancialHold: "tenant",
     // ESP-04 M1 — restaurant payment accounts (Stripe Connect).
     TenantPaymentAccount: "tenant",
+    // V1 Sales Tax PR 1 — tax classes and versioned location tax settings.
+    TaxClass: "tenant",
+    LocationTaxVersion: "tenant",
+    LocationTaxComponent: "tenant",
+    LocationTaxComponentClass: "tenant",
     // ESP-03 PR 5 — platform support's append-only notes on a case.
     PaymentReconciliationNote: 'tenant',
     // R1 / S5a — order closure foundation.

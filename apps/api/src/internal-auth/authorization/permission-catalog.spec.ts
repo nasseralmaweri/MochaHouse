@@ -28,6 +28,8 @@ describe('internal permission catalog', () => {
         'orders.cancel',
         // ESP-04 M5a — card refunds (business owner controlled).
         'orders.refund',
+        // V1 Sales Tax PR 1 — sales tax settings (owner).
+        'tax.manage',
         // Milestone 5E-1
         'users.view',
         // Milestone 5E-2
@@ -129,6 +131,8 @@ describe('internal permission catalog', () => {
     expect(allowedScopeTypesFor('audit.view')).toEqual(['CORPORATE']);
     // platform.view — platform status is a corporate read (5G).
     expect(allowedScopeTypesFor('platform.view')).toEqual(['CORPORATE']);
+    // tax.manage — business-level sales tax settings (V1 Sales Tax PR 1).
+    expect(allowedScopeTypesFor('tax.manage')).toEqual(['CORPORATE']);
     // operations.checklists.configure — one corporate checklist standard,
     // no per-location override (Milestone 6B-2).
     expect(allowedScopeTypesFor('operations.checklists.configure')).toEqual([
