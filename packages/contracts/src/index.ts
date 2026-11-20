@@ -1054,12 +1054,13 @@ export interface CheckoutRequest {
   // only ever sent in this request body — never a URL, query string, order
   // record or response.
   giftCardCode?: string | null;
-  // V1 Sales Tax PR 2 — the location tax version the customer's quote was
-  // calculated with (CheckoutQuoteResponse.tax.taxVersionId). With sales tax
-  // on, checkout refuses (409 CHECKOUT_TAX_CHANGED) when it is missing or the
-  // location's confirmed tax settings have changed since, so the customer
-  // always reviews the tax they are charged.
-  taxVersionId?: string | null;
+  // V1 Sales Tax PR 2 — the tax quote the customer reviewed
+  // (CheckoutQuoteResponse.tax.taxQuoteToken). With sales tax on, checkout
+  // refuses (409 CHECKOUT_TAX_CHANGED) when it is missing or anything that
+  // decides the tax has changed since — the location's tax version, any
+  // line's tax class (category class or product override), or the tax that
+  // results — so the customer always reviews the tax they are charged.
+  taxQuoteToken?: string | null;
 }
 
 // The immutable snapshot of the one Mocha Bean reward redeemed on an order
@@ -1120,7 +1121,9 @@ export type CheckoutTaxStatus = "CALCULATED" | "DISABLED" | "NOT_CONFIGURED";
 
 export interface CheckoutQuoteTax {
   taxMinorUnits: number;
-  // Send back as CheckoutRequest.taxVersionId.
+  // Send back as CheckoutRequest.taxQuoteToken. Opaque: a digest of every
+  // input that decides the tax (not a secret, never an authorization).
+  taxQuoteToken: string;
   taxVersionId: string;
   taxVersion: number;
   components: TaxComponentAmount[];

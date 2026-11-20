@@ -154,6 +154,7 @@ import {
   SalesTaxService,
   TaxNotConfiguredError,
   orderTaxDetail,
+  taxQuoteToken,
   toOrderTaxSummary,
   toQuoteTax,
   type FrozenTax,
@@ -494,8 +495,12 @@ export class CheckoutService {
     // V1 Sales Tax PR 2 — with sales tax on, the tax on this order after its
     // store-funded discounts, from the location's CONFIRMED settings (none:
     // refused before anything is recorded). The customer must have reviewed
-    // exactly this tax version on their quote; a change since is refused so
-    // they review the new total first. Frozen with the checkout below.
+    // exactly this tax on their quote: the quote token covers the tax
+    // version, every line's tax class and the resulting tax, so a change to
+    // any of them since (a new version, a category class or a product
+    // override) is refused — before any payment attempt or hold exists —
+    // and the customer reviews the new total first. Frozen with the
+    // checkout below.
     let tax: FrozenTax | null = null;
     if (isSalesTaxEnabled()) {
       tax = await this.planTax(
@@ -505,7 +510,7 @@ export class CheckoutService {
         regularPlan,
         prePaymentPlan,
       );
-      if (request.taxVersionId !== tax.taxVersionId) throw taxChanged();
+      if (request.taxQuoteToken !== taxQuoteToken(tax)) throw taxChanged();
     }
     const taxAmount = tax?.result.taxMinorUnits ?? 0;
 

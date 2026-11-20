@@ -536,8 +536,8 @@ export default function CheckoutPage() {
       loyaltyRewardId: asGuest ? null : selectedRewardId,
       couponCode: appliedCoupon,
       giftCardCode: appliedGiftCard,
-      // V1 Sales Tax PR 2 — the tax version this total was shown with.
-      taxVersionId: quote?.tax?.taxVersionId ?? null,
+      // V1 Sales Tax PR 2 — the tax quote this total was shown with.
+      taxQuoteToken: quote?.tax?.taxQuoteToken ?? null,
     };
 
     const result = await submitCheckoutFromBrowser(request, { asGuest });

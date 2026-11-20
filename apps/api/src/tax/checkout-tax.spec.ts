@@ -464,7 +464,7 @@ describe('V1 Sales Tax PR 2 — checkout tax (integration)', () => {
 
     const confirmation = await submitCheckout(
       checkout,
-      { ...request, taxVersionId: q.tax!.taxVersionId },
+      { ...request, taxQuoteToken: q.tax!.taxQuoteToken },
       undefined,
       tenant,
     );
@@ -527,7 +527,7 @@ describe('V1 Sales Tax PR 2 — checkout tax (integration)', () => {
     ]);
     const confirmation = await submitCheckout(
       checkout,
-      { ...request, taxVersionId: q.tax!.taxVersionId },
+      { ...request, taxQuoteToken: q.tax!.taxQuoteToken },
       undefined,
       tenant,
     );
@@ -555,7 +555,7 @@ describe('V1 Sales Tax PR 2 — checkout tax (integration)', () => {
 
     const confirmation = await submitCheckout(
       checkout,
-      { ...request, taxVersionId: q.tax!.taxVersionId },
+      { ...request, taxQuoteToken: q.tax!.taxQuoteToken },
       undefined,
       tenant,
     );
@@ -578,13 +578,118 @@ describe('V1 Sales Tax PR 2 — checkout tax (integration)', () => {
     expect(q.amountDueAfterGiftCardMinorUnits).toBe(0);
     const confirmation = await submitCheckout(
       checkout,
-      { ...request, taxVersionId: q.tax!.taxVersionId },
+      { ...request, taxQuoteToken: q.tax!.taxQuoteToken },
       undefined,
       tenant,
     );
     expect(confirmation.giftCardTenderMinorUnits).toBe(q.total);
     expect(confirmation.externalPaymentMinorUnits).toBe(0);
     expect(confirmation.taxMinorUnits).toBe(q.tax!.taxMinorUnits);
+  });
+
+  // PR #94 review — tax classes can change without a new tax version: a
+  // category class or a product override changed after the quote must be
+  // reviewed again, refused before any payment attempt or hold exists.
+  async function expectStaleRefusedThenFreshCharged(
+    change: () => Promise<void>,
+    undo: () => Promise<void>,
+    lines?: LabelledCheckoutRequest['lines'],
+  ) {
+    enableTax();
+    const request = body(lines ? { lines } : {});
+    const q = await quote(request);
+    await change();
+    try {
+      expect(
+        await refusal(
+          submitCheckout(
+            checkout,
+            { ...request, taxQuoteToken: q.tax!.taxQuoteToken },
+            undefined,
+            tenant,
+          ),
+        ),
+      ).toBe(CHECKOUT_TAX_CHANGED);
+      // Nothing recorded: no payment attempt, saved checkout or hold.
+      expect(
+        await prisma.paymentAttempt.count({
+          where: attemptsOfCheckout(request.clientRef),
+        }),
+      ).toBe(0);
+      // Same version, yet a different tax: the fresh quote shows it, and
+      // exactly that is charged.
+      const fresh = await quote(request);
+      expect(fresh.tax!.taxVersionId).toBe(q.tax!.taxVersionId);
+      expect(fresh.tax!.taxMinorUnits).not.toBe(q.tax!.taxMinorUnits);
+      expect(fresh.tax!.taxQuoteToken).not.toBe(q.tax!.taxQuoteToken);
+      const confirmation = await submitCheckout(
+        checkout,
+        { ...request, taxQuoteToken: fresh.tax!.taxQuoteToken },
+        undefined,
+        tenant,
+      );
+      expect(confirmation.total).toBe(fresh.total);
+      expect(confirmation.taxMinorUnits).toBe(fresh.tax!.taxMinorUnits);
+    } finally {
+      await undo();
+    }
+  }
+
+  it('refuses a quote made stale by a category tax class change (same tax version)', async () => {
+    await expectStaleRefusedThenFreshCharged(
+      async () => {
+        await prisma.category.update({
+          where: { id: categoryId },
+          data: { taxClassId: groceryClassId, taxClassReviewedAt: new Date() },
+        });
+      },
+      async () => {
+        await prisma.category.update({
+          where: { id: categoryId },
+          data: { taxClassId: null, taxClassReviewedAt: null },
+        });
+      },
+    );
+  });
+
+  it('refuses a quote made stale by a product tax override (same tax version)', async () => {
+    await expectStaleRefusedThenFreshCharged(
+      async () => {
+        await prisma.product.update({
+          where: { id: productId },
+          data: { taxClassId: groceryClassId },
+        });
+      },
+      async () => {
+        await prisma.product.update({
+          where: { id: productId },
+          data: { taxClassId: null },
+        });
+      },
+    );
+  });
+
+  it('accepts an unchanged quote: the same inputs give the same token', async () => {
+    enableTax();
+    const request = body();
+    const [a, b] = [await quote(request), await quote(request)];
+    expect(a.tax!.taxQuoteToken).toBe(b.tax!.taxQuoteToken);
+    expect(a.tax!.taxQuoteToken).toMatch(/^tq1_[A-Za-z0-9_-]{43}$/);
+    // A token for another cart is not this cart's.
+    const other = await quote(
+      body({ lines: [{ productId, quantity: 3, selections: sizeSelection }] }),
+    );
+    expect(other.tax!.taxQuoteToken).not.toBe(a.tax!.taxQuoteToken);
+    expect(
+      await refusal(
+        submitCheckout(
+          checkout,
+          { ...request, taxQuoteToken: other.tax!.taxQuoteToken },
+          undefined,
+          tenant,
+        ),
+      ),
+    ).toBe(CHECKOUT_TAX_CHANGED);
   });
 
   it('refuses a checkout whose tax was not reviewed, or changed since the quote', async () => {
@@ -608,7 +713,7 @@ describe('V1 Sales Tax PR 2 — checkout tax (integration)', () => {
       await refusal(
         submitCheckout(
           checkout,
-          { ...stale, taxVersionId: q.tax!.taxVersionId },
+          { ...stale, taxQuoteToken: q.tax!.taxQuoteToken },
           undefined,
           tenant,
         ),
@@ -624,7 +729,7 @@ describe('V1 Sales Tax PR 2 — checkout tax (integration)', () => {
     expect(fresh.tax!.taxMinorUnits).toBe(halfUp(fresh.subtotal, 70_000));
     const confirmation = await submitCheckout(
       checkout,
-      { ...stale, taxVersionId: fresh.tax!.taxVersionId },
+      { ...stale, taxQuoteToken: fresh.tax!.taxQuoteToken },
       undefined,
       tenant,
     );
@@ -641,7 +746,7 @@ describe('V1 Sales Tax PR 2 — checkout tax (integration)', () => {
     expect(q.total).toBe(q.subtotal);
     const confirmation = await submitCheckout(
       checkout,
-      { ...request, taxVersionId: q.tax!.taxVersionId },
+      { ...request, taxQuoteToken: q.tax!.taxQuoteToken },
       undefined,
       tenant,
     );
@@ -663,7 +768,7 @@ describe('V1 Sales Tax PR 2 — checkout tax (integration)', () => {
     // create the order from the frozen checkout with the switch OFF.
     const confirmation = await submitCheckout(
       checkout,
-      { ...request, taxVersionId: q.tax!.taxVersionId },
+      { ...request, taxQuoteToken: q.tax!.taxQuoteToken },
       undefined,
       tenant,
     );
@@ -672,7 +777,7 @@ describe('V1 Sales Tax PR 2 — checkout tax (integration)', () => {
     // Replaying the paid checkout returns the same taxed order.
     const replay = await submitCheckout(
       checkout,
-      { ...request, taxVersionId: q.tax!.taxVersionId },
+      { ...request, taxQuoteToken: q.tax!.taxQuoteToken },
       undefined,
       tenant,
     );
@@ -686,7 +791,7 @@ describe('V1 Sales Tax PR 2 — checkout tax (integration)', () => {
     const q = await quote(request);
     const confirmation = await submitCheckout(
       checkout,
-      { ...request, taxVersionId: q.tax!.taxVersionId },
+      { ...request, taxQuoteToken: q.tax!.taxQuoteToken },
       undefined,
       tenant,
     );
@@ -908,7 +1013,7 @@ describe('V1 Sales Tax PR 2 — checkout tax (integration)', () => {
     try {
       await submitCheckout(
         checkout,
-        { ...request, taxVersionId: q.tax!.taxVersionId },
+        { ...request, taxQuoteToken: q.tax!.taxQuoteToken },
         undefined,
         tenant,
       ).catch(() => undefined);

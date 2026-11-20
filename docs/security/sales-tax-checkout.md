@@ -56,13 +56,18 @@ order snapshot.
 ## Quote, review and charge
 
 - **The quote shows the tax.** `CheckoutQuoteResponse` returns `taxStatus` and
-  `tax`: each component, the total, and the `taxVersionId` it used. `total`
-  includes tax.
+  `tax`: each component, the total, the tax version and a `taxQuoteToken`.
+  `total` includes tax.
 - **The order request names what the customer reviewed.** It sends back the
-  `taxVersionId` shown in the quote. If it is missing or no longer the
-  location's confirmed version, the API answers 409 `CHECKOUT_TAX_CHANGED`.
-  Nothing is charged, and the page reloads the quote so the customer reviews
-  the new total.
+  `taxQuoteToken`. The token is a digest of everything that decides the tax:
+  the tax version and its components, **each line's tax class** (a category
+  class or a product override can change without a new version), and the
+  resulting tax per component and per line. Checkout recalculates it; if it is
+  missing or different, the API answers 409 `CHECKOUT_TAX_CHANGED` before any
+  payment attempt, saved checkout or hold exists. Nothing is charged, and the
+  page reloads the quote so the customer reviews the new total. The token is
+  not a secret and authorizes nothing; it only proves the customer saw this
+  tax.
 - **The checkout is frozen before the charge.** It is saved as version 3,
   holding the tax version, classes, components, each line's class and the
   full result. The payment amount includes the tax.

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   formatTaxRatePpm,
   type CheckoutQuoteTax,
@@ -330,9 +331,35 @@ function componentAmounts(result: TaxCalculationResult): TaxComponentAmount[] {
   }));
 }
 
+// PR #94 review — a digest of everything that decides a cart's tax: the
+// tax version and its components, each line's tax class (a category class or
+// product override can change without a new version), and the resulting
+// tax per component and per line. Quote and checkout compute it the same
+// way; any difference means the customer has not reviewed this tax.
+export function taxQuoteToken(tax: FrozenTax): string {
+  const material = [
+    1,
+    tax.taxVersionId,
+    tax.taxVersion,
+    tax.source,
+    tax.result.currency,
+    tax.components.map((c) => [c.componentId, c.ratePpm, c.taxClassIds]),
+    tax.lineTaxClassIds,
+    tax.result.lines.map((l) => [
+      l.productId,
+      l.taxableMinorUnits,
+      l.componentTax,
+    ]),
+    tax.result.components.map((c) => [c.taxableMinorUnits, c.taxMinorUnits]),
+    tax.result.taxMinorUnits,
+  ];
+  return `tq1_${createHash('sha256').update(JSON.stringify(material)).digest('base64url')}`;
+}
+
 export function toQuoteTax(tax: FrozenTax): CheckoutQuoteTax {
   return {
     taxMinorUnits: tax.result.taxMinorUnits,
+    taxQuoteToken: taxQuoteToken(tax),
     taxVersionId: tax.taxVersionId,
     taxVersion: tax.taxVersion,
     components: componentAmounts(tax.result),

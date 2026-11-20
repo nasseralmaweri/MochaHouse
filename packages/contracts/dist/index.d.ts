@@ -418,7 +418,7 @@ export interface CheckoutRequest {
     loyaltyRewardId?: string | null;
     couponCode?: string | null;
     giftCardCode?: string | null;
-    taxVersionId?: string | null;
+    taxQuoteToken?: string | null;
 }
 export interface OrderLoyaltyRewardSummary {
     rewardName: string;
@@ -447,6 +447,7 @@ export interface OrderTaxSummary {
 export type CheckoutTaxStatus = "CALCULATED" | "DISABLED" | "NOT_CONFIGURED";
 export interface CheckoutQuoteTax {
     taxMinorUnits: number;
+    taxQuoteToken: string;
     taxVersionId: string;
     taxVersion: number;
     components: TaxComponentAmount[];
