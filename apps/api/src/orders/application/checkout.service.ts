@@ -2521,7 +2521,10 @@ export class CheckoutService {
           // from this Order through the composite (tenantId, orderId) key, so
           // they can never belong to another business.
           lines: {
-            create: priced.lines.map((line) => ({
+            create: priced.lines.map((line, lineIndex) => ({
+              // V1 Sales Tax PR 3 — the line's position, as in the frozen
+              // checkout and the tax snapshot (item refunds use it).
+              lineIndex,
               productId: line.productId,
               productName: line.productName,
               unitPrice: line.unitPrice,

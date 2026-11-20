@@ -23,6 +23,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import { isOrderClosureEnabled } from './order-closure.config';
+import { recordClosureTaxRefund } from '../../tax/application/tax-refunds';
 
 const NOT_FOUND = 'Order not found for this location.';
 const CANCELLABLE_FROM: ReadonlySet<string> = new Set([
@@ -250,6 +251,15 @@ export class OrderClosureService {
         },
       });
     }
+    // V1 Sales Tax PR 3 — a taxed order returns its whole tax with the
+    // closure, attributed line by line from its original snapshot. It counts
+    // as refunded once the card money is (or at once when none was owed).
+    await recordClosureTaxRefund(tx, {
+      tenantId: order.tenantId,
+      orderId: order.id,
+      orderClosureId: closure.id,
+      actorId: actor.id,
+    });
     // The note stays on the closure only — never in status history, which
     // is the customer-facing timeline's source.
     await tx.orderStatusHistory.create({

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type {
   CreateOrderRefundRequest,
+  OrderItemRefundPreview,
   OrderRefundsResponse,
   OrderRefundView,
 } from "@mocha-house/contracts";
@@ -21,6 +22,10 @@ import {
   clearPendingRefund,
   flowAfter,
   getOrderRefundsFromBrowser,
+  itemsCanBeRefunded,
+  itemsOfDraft,
+  previewItemRefundFromBrowser,
+  taxAttributionLabel,
   loadPendingRefund,
   minorUnitDigits,
   needsLateFailureReview,
@@ -67,6 +72,10 @@ export function OrderRefundsPanel({
   const [flow, setFlow] = useState<RefundFlow>({ step: "closed", notice: null });
   const [draft, setDraft] = useState<RefundDraft>(EMPTY_DRAFT);
   const [errors, setErrors] = useState<DraftErrors>({});
+  // V1 Sales Tax PR 3 — the server's figures for the chosen items (shown on
+  // the review step of an item refund).
+  const [itemPreview, setItemPreview] = useState<OrderItemRefundPreview | null>(null);
+  const [previewing, setPreviewing] = useState(false);
   // A second click in the same tick is refused before React re-renders.
   const sending = useRef(false);
 
@@ -270,12 +279,48 @@ export function OrderRefundsPanel({
           setErrors({});
           setFlow({ step: "closed", notice: null });
         }}
-        onReview={() => {
-          if (!balances) return;
+        previewing={previewing}
+        itemPreview={itemPreview}
+        onReview={async () => {
+          if (!balances || previewing) return;
           const checked = validateDraft(draft, access.maxMinorUnits, currency);
           if (!checked.ok) {
             setErrors(checked.errors);
             return;
+          }
+          // V1 Sales Tax PR 3 — chosen items: the server works out what they
+          // refund (net price plus their original tax); that exact amount is
+          // what is asked for.
+          let items: CreateOrderRefundRequest["items"];
+          let amountMinorUnits = checked.value.amountMinorUnits;
+          if (draft.mode === "items") {
+            const chosen = itemsOfDraft(draft, data.itemRefundLines ?? []);
+            if (!chosen.ok) {
+              setErrors({ items: chosen.error });
+              return;
+            }
+            setPreviewing(true);
+            const preview = await previewItemRefundFromBrowser(
+              orderId,
+              locationId,
+              chosen.items,
+            );
+            setPreviewing(false);
+            if (preview.outcome !== "success") {
+              setErrors({ items: preview.message });
+              return;
+            }
+            if (preview.data.totalMinorUnits > access.maxMinorUnits) {
+              setErrors({
+                items: `These items come to ${formatPrice(preview.data.totalMinorUnits, currency)}, more than the ${formatPrice(access.maxMinorUnits, currency)} that can still be refunded to the card.`,
+              });
+              return;
+            }
+            items = chosen.items;
+            amountMinorUnits = preview.data.totalMinorUnits;
+            setItemPreview(preview.data);
+          } else {
+            setItemPreview(null);
           }
           // One request id per submission, made here and kept for retries.
           let requestId: string;
@@ -288,14 +333,13 @@ export function OrderRefundsPanel({
             });
             return;
           }
+          const request = buildRefundRequest(
+            { ...checked.value, amountMinorUnits },
+            { locationId, currency, balances, requestId },
+          );
           setFlow({
             step: "review",
-            request: buildRefundRequest(checked.value, {
-              locationId,
-              currency,
-              balances,
-              requestId,
-            }),
+            request: items ? { ...request, items } : request,
           });
         }}
         onBack={() => setFlow({ step: "editing", notice: null })}
@@ -363,6 +407,8 @@ function RefundAction({
   onBack,
   onSubmit,
   manage,
+  previewing,
+  itemPreview,
 }: {
   data: OrderRefundsResponse;
   access: ReturnType<typeof refundAccess>;
@@ -372,11 +418,13 @@ function RefundAction({
   onDraft: (next: RefundDraft) => void;
   onOpen: () => void;
   onCancel: () => void;
-  onReview: () => void;
+  onReview: () => void | Promise<void>;
   onBack: () => void;
   onSubmit: (request: CreateOrderRefundRequest, retryOfUnknown: boolean) => void;
   // May act on refunds here (orders.refund, refunds on).
   manage: boolean;
+  previewing: boolean;
+  itemPreview: OrderItemRefundPreview | null;
 }) {
   const id = useId();
   const currency = data.currency;
@@ -478,6 +526,26 @@ function RefundAction({
           This goes back to the card the customer paid with for this order. It can&apos;t be
           sent anywhere else, and it can take a few business days to appear on their statement.
         </p>
+        {r.items && itemPreview ? (
+          <div className="flex flex-col gap-1 text-sm">
+            <ul className="flex flex-col gap-1">
+              {itemPreview.lines.map((line) => (
+                <li key={line.lineIndex} className="flex justify-between gap-2">
+                  <span className="text-text-primary">
+                    {line.quantity} × {line.productName}
+                  </span>
+                  <span className="text-text-secondary">
+                    {formatPrice(line.merchandiseMinorUnits, currency)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-text-secondary">
+              Includes {formatPrice(itemPreview.taxMinorUnits, currency)} sales tax, as
+              charged on the original order.
+            </p>
+          </div>
+        ) : null}
         <dl className="flex flex-col gap-1 text-sm">
           <div className="flex gap-2">
             <dt className="text-text-secondary">Reason:</dt>
@@ -536,6 +604,64 @@ function RefundAction({
             Part of it
           </label>
         ) : null}
+        {itemsCanBeRefunded(data.itemRefundLines) ? (
+          <label className="flex min-h-11 items-center gap-2 text-sm text-text-primary">
+            <input
+              type="radio"
+              name={`${id}-mode`}
+              checked={draft.mode === "items"}
+              onChange={() => onDraft({ ...draft, mode: "items" })}
+            />
+            Choose items (refunds their sales tax too)
+          </label>
+        ) : null}
+        {draft.mode === "items" && data.itemRefundLines ? (
+          <div className="flex flex-col gap-2">
+            <ul className="flex flex-col gap-2">
+              {data.itemRefundLines.map((line) => (
+                <li
+                  key={line.lineIndex}
+                  className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <label
+                    htmlFor={`${id}-item-${line.lineIndex}`}
+                    className="text-sm text-text-primary"
+                  >
+                    {line.productName}
+                    <span className="block text-xs text-text-muted">
+                      {line.remainingQuantity} of {line.quantity} left ·{" "}
+                      {formatPrice(line.merchandiseMinorUnits, currency)} +{" "}
+                      {formatPrice(line.taxMinorUnits, currency)} tax for all {line.quantity}
+                    </span>
+                  </label>
+                  <input
+                    id={`${id}-item-${line.lineIndex}`}
+                    inputMode="numeric"
+                    autoComplete="off"
+                    disabled={line.remainingQuantity === 0}
+                    placeholder="0"
+                    className={`${ADMIN_FIELD_CLASS} w-full sm:w-24`}
+                    value={draft.itemQuantities[line.lineIndex] ?? ""}
+                    onChange={(e) =>
+                      onDraft({
+                        ...draft,
+                        itemQuantities: {
+                          ...draft.itemQuantities,
+                          [line.lineIndex]: e.target.value,
+                        },
+                      })
+                    }
+                  />
+                </li>
+              ))}
+            </ul>
+            {errors.items ? (
+              <p role="alert" className="text-sm text-status-warning">
+                {errors.items}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         {draft.mode === "partial" ? (
           <FormField
             label="Amount to refund"
@@ -587,7 +713,9 @@ function RefundAction({
         />
       </FormField>
       <div className="flex flex-col gap-2 sm:flex-row">
-        <Button onClick={onReview}>Review refund</Button>
+        <Button onClick={() => void onReview()} disabled={previewing}>
+          {previewing ? "Checking…" : "Review refund"}
+        </Button>
         <Button variant="secondary" onClick={onCancel}>
           Cancel
         </Button>
@@ -613,6 +741,7 @@ function RefundRow({
 }) {
   const id = useId();
   const status = refundStatusView(refund);
+  const attribution = taxAttributionLabel(refund);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
@@ -675,6 +804,24 @@ function RefundRow({
         </div>
       </div>
       {status.detail ? <p className="text-xs text-text-secondary">{status.detail}</p> : null}
+      {attribution ? (
+        <p
+          className={`text-xs ${
+            attribution.tone === "warning" ? "text-status-warning" : "text-text-secondary"
+          }`}
+        >
+          {attribution.label}
+          {refund.items.length > 0
+            ? `: ${refund.items.map((i) => `${i.quantity} × ${i.productName}`).join(", ")}`
+            : ""}
+          {refund.taxMinorUnits !== null
+            ? ` · includes ${formatPrice(refund.taxMinorUnits, refund.currency)} sales tax`
+            : ""}
+          {attribution.tone === "warning"
+            ? " — this amount refund's sales tax isn't known, so it shows on the sales tax report for review."
+            : ""}
+        </p>
+      ) : null}
       {flagged ? (
         <p className="text-xs text-status-warning">
           Stripe&apos;s records for this refund don&apos;t match ours. Support has been

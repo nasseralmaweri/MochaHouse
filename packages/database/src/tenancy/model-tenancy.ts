@@ -121,6 +121,10 @@ export const MODEL_TENANCY: Readonly<Record<Prisma.ModelName, ModelTenancy>> =
     LocationTaxComponentClass: "tenant",
     // V1 Sales Tax PR 2 — a taxed order's immutable tax snapshot.
     OrderTaxSnapshot: "tenant",
+    // V1 Sales Tax PR 3 — tax refunds.
+    OrderTaxRefund: "tenant",
+    OrderTaxRefundLine: "tenant",
+    OrderTaxRefundComponent: "tenant",
     // ESP-03 PR 5 — platform support's append-only notes on a case.
     PaymentReconciliationNote: 'tenant',
     // R1 / S5a — order closure foundation.

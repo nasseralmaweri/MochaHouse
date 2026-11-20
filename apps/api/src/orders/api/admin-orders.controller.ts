@@ -7,11 +7,13 @@ import {
   Query,
   Req,
   UseGuards,
+  HttpCode,
 } from '@nestjs/common';
 import type {
   AdvanceOrderStatusRequest,
   CancelOrderRequest,
   CreateOrderRefundRequest,
+  PreviewOrderItemRefundRequest,
   RejectOrderRequest,
   ReviewOrderRefundRequest,
 } from '@mocha-house/contracts';
@@ -155,6 +157,29 @@ export class AdminOrdersController {
     @CurrentTenantContext() tenant: TenantContext,
   ) {
     return this.orderRefundsService.request(
+      orderId,
+      body,
+      request.internalUser!,
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  // V1 Sales Tax PR 3 — what an item refund of these items would return,
+  // from the order's original tax snapshot (records nothing).
+  @AllowDuringBillingWindDown()
+  @RequirePermission('orders.view')
+  @UseGuards(RateLimitGuard)
+  @RateLimit('restaurant-refunds')
+  @HttpCode(200)
+  @Post(':orderId/refunds/items/preview')
+  previewItemRefund(
+    @Param('orderId') orderId: string,
+    @Body() body: PreviewOrderItemRefundRequest,
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+  ) {
+    return this.orderRefundsService.previewItems(
       orderId,
       body,
       request.internalUser!,

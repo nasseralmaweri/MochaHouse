@@ -1,5 +1,6 @@
 import "server-only";
 import type {
+  SalesTaxReportResponse,
   AdminCustomerGrowthReport,
   AdminLocationPerformanceReport,
   AdminOperationsChecklistReport,
@@ -246,5 +247,43 @@ export async function getAdminCustomerGrowthReport(query: {
   return {
     outcome: "success",
     data: (await response.json()) as AdminCustomerGrowthReport,
+  };
+}
+
+// V1 Sales Tax PR 3 — the sales tax report (reports.view).
+export type AdminSalesTaxReportResult =
+  | { outcome: "success"; data: SalesTaxReportResponse }
+  | { outcome: "unauthenticated" }
+  | { outcome: "forbidden" }
+  | { outcome: "invalid" }
+  | { outcome: "error" };
+
+export async function getAdminSalesTaxReport(query: {
+  startDate: string;
+  endDate: string;
+  locationId: string | null;
+}): Promise<AdminSalesTaxReportResult> {
+  const token = await getInternalSessionToken();
+  if (!token) return { outcome: "unauthenticated" };
+  const params = new URLSearchParams();
+  params.set("startDate", query.startDate);
+  params.set("endDate", query.endDate);
+  if (query.locationId) params.set("locationId", query.locationId);
+  let response: Response;
+  try {
+    response = await fetch(
+      `${getApiUrl()}/admin/reports/sales-tax?${params.toString()}`,
+      { headers: await internalAuthHeaders(token), cache: "no-store" },
+    );
+  } catch {
+    return { outcome: "error" };
+  }
+  if (response.status === 401) return { outcome: "unauthenticated" };
+  if (response.status === 403) return { outcome: "forbidden" };
+  if (response.status === 400) return { outcome: "invalid" };
+  if (!response.ok) return { outcome: "error" };
+  return {
+    outcome: "success",
+    data: (await response.json()) as SalesTaxReportResponse,
   };
 }

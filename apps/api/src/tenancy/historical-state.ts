@@ -43,6 +43,10 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'LocationTaxComponentClass',
   // V1 Sales Tax PR 2 — order tax snapshots (20261203090000).
   'OrderTaxSnapshot',
+  // V1 Sales Tax PR 3 — tax refunds (20261204090000).
+  'OrderTaxRefund',
+  'OrderTaxRefundLine',
+  'OrderTaxRefundComponent',
   // SC1a — CENTERIVO platform operators (20261022090000).
   'PlatformOperator',
   'PlatformAuditEvent',
@@ -136,6 +140,8 @@ export const COLUMNS_ADDED_AFTER_4C: Readonly<
   Product: ['taxClassId'],
   // V1 Sales Tax PR 2 — the tax charged on an order (20261203090000).
   Order: ['taxMinorUnits'],
+  // V1 Sales Tax PR 3 — an order line's position (20261204090000).
+  OrderLine: ['lineIndex'],
 };
 
 // A checksum of every row of every table that existed at the 4C-era migrations,

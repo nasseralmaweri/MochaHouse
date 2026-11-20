@@ -1,4 +1,7 @@
 import type {
+  OrderItemRefundLine,
+  OrderItemRefundPreview,
+  OrderRefundItemInput,
   CreateOrderRefundRequest,
   OrderRefundActionResponse,
   OrderRefundBalances,
@@ -375,8 +378,12 @@ export function refundAccess(
 // --- the refund form ----------------------------------------------------------------
 
 export interface RefundDraft {
-  mode: "full" | "partial";
+  // V1 Sales Tax PR 3 — "items": chosen items of a taxed order, their
+  // amount (and tax) worked out by the server from the original snapshot.
+  mode: "full" | "partial" | "items";
   amountInput: string;
+  // Quantity typed per line position (items mode only).
+  itemQuantities: Record<number, string>;
   reasonCode: OrderRefundReasonCode | "";
   note: string;
 }
@@ -384,11 +391,13 @@ export interface RefundDraft {
 export const EMPTY_DRAFT: RefundDraft = {
   mode: "full",
   amountInput: "",
+  itemQuantities: {},
   reasonCode: "",
   note: "",
 };
 
 export interface DraftErrors {
+  items?: string;
   amount?: string;
   reason?: string;
   note?: string;
@@ -453,7 +462,10 @@ export function validateDraft(
 ): { ok: true; value: ValidDraft } | { ok: false; errors: DraftErrors } {
   const errors: DraftErrors = {};
   let amount = maxMinorUnits;
-  if (draft.mode === "partial") {
+  if (draft.mode === "items") {
+    // The amount comes from the server's preview of the items.
+    amount = 0;
+  } else if (draft.mode === "partial") {
     const parsed = parseRefundAmount(draft.amountInput, currency);
     if (parsed === null) {
       errors.amount = "Enter an amount like 4.50.";
@@ -755,4 +767,91 @@ export function closedOrderLine(status: OrderStatus): string | null {
     default:
       return null;
   }
+}
+
+// --- V1 Sales Tax PR 3: item refunds -------------------------------------------
+
+// The items chosen in the draft: whole quantities within what is left of
+// each line. At least one item.
+export function itemsOfDraft(
+  draft: RefundDraft,
+  lines: readonly OrderItemRefundLine[],
+): { ok: true; items: OrderRefundItemInput[] } | { ok: false; error: string } {
+  const items: OrderRefundItemInput[] = [];
+  for (const line of lines) {
+    const raw = (draft.itemQuantities[line.lineIndex] ?? "").trim();
+    if (raw === "" || raw === "0") continue;
+    if (!/^\d{1,4}$/.test(raw)) {
+      return { ok: false, error: `Enter a whole number for ${line.productName}.` };
+    }
+    const quantity = Number(raw);
+    if (quantity > line.remainingQuantity) {
+      return {
+        ok: false,
+        error: `Only ${line.remainingQuantity} of ${line.productName} can still be refunded.`,
+      };
+    }
+    items.push({ lineIndex: line.lineIndex, quantity });
+  }
+  if (items.length === 0) {
+    return { ok: false, error: "Choose at least one item to refund." };
+  }
+  return { ok: true, items };
+}
+
+export type ItemPreviewResult =
+  | { outcome: "success"; data: OrderItemRefundPreview }
+  | { outcome: "refused"; message: string };
+
+// What these items would refund (records nothing).
+export async function previewItemRefundFromBrowser(
+  orderId: string,
+  locationId: string,
+  items: OrderRefundItemInput[],
+): Promise<ItemPreviewResult> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${PROXY}/orders/${encodeURIComponent(orderId)}/refunds/items/preview`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locationId, items }),
+      },
+    );
+  } catch {
+    return { outcome: "refused", message: "We couldn't reach the server. Try again." };
+  }
+  if (!response.ok) {
+    return {
+      outcome: "refused",
+      message:
+        (await messageOf(response)) ??
+        "These items can't be refunded right now. Refresh and check the order.",
+    };
+  }
+  return { outcome: "success", data: (await response.json()) as OrderItemRefundPreview };
+}
+
+// How a refund's sales tax reads in the refund history.
+export function taxAttributionLabel(refund: OrderRefundView): {
+  label: string;
+  tone: "neutral" | "warning";
+} | null {
+  switch (refund.taxAttribution) {
+    case "ITEMS":
+      return { label: "Items refunded with their tax", tone: "neutral" };
+    case "CANCELLATION":
+      return { label: "Part of the cancellation", tone: "neutral" };
+    case "UNATTRIBUTED":
+      return { label: "Tax not attributed", tone: "warning" };
+    default:
+      return null;
+  }
+}
+
+export function itemsCanBeRefunded(
+  lines: readonly OrderItemRefundLine[] | null,
+): boolean {
+  return lines !== null && lines.some((l) => l.remainingQuantity > 0);
 }

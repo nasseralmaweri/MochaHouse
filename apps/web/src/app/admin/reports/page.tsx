@@ -60,6 +60,11 @@ export default async function AdminReportsHomePage() {
             title="Customer Growth & Ordering"
             description="Registered customer base size and digital-ordering participation for a date range."
           />
+          <ReportCard
+            href="/admin/reports/sales-tax"
+            title="Sales Tax"
+            description="Taxable sales, tax collected and refunded, and net tax by location and tax, with CSV export."
+          />
         </li>
       </ul>
     </AdminPage>

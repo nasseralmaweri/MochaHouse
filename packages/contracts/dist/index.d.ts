@@ -1000,7 +1000,39 @@ export interface CreateOrderRefundRequest {
     reasonCode: OrderRefundReasonCode;
     note?: string;
     expectedReservedMinorUnits: number;
+    items?: OrderRefundItemInput[];
 }
+export interface OrderRefundItemInput {
+    lineIndex: number;
+    quantity: number;
+}
+export interface PreviewOrderItemRefundRequest {
+    locationId: string;
+    items: OrderRefundItemInput[];
+}
+export interface OrderItemRefundPreview {
+    merchandiseMinorUnits: number;
+    taxMinorUnits: number;
+    totalMinorUnits: number;
+    components: TaxComponentAmount[];
+    lines: {
+        lineIndex: number;
+        productName: string;
+        quantity: number;
+        merchandiseMinorUnits: number;
+        taxMinorUnits: number;
+    }[];
+}
+export interface OrderItemRefundLine {
+    lineIndex: number;
+    productName: string;
+    quantity: number;
+    refundedQuantity: number;
+    remainingQuantity: number;
+    merchandiseMinorUnits: number;
+    taxMinorUnits: number;
+}
+export type OrderRefundTaxAttribution = "ITEMS" | "CANCELLATION" | "UNATTRIBUTED" | "NOT_TAXED";
 export interface ReviewOrderRefundRequest {
     locationId: string;
     note: string;
@@ -1024,6 +1056,13 @@ export interface OrderRefundView {
     lateFailureReviewedAt: string | null;
     lateFailureReviewNote: string | null;
     notCreatedEvidence: string | null;
+    taxAttribution: OrderRefundTaxAttribution;
+    taxMinorUnits: number | null;
+    items: {
+        lineIndex: number;
+        productName: string;
+        quantity: number;
+    }[];
 }
 export interface OrderRefundBalances {
     chargedMinorUnits: number;
@@ -1052,6 +1091,7 @@ export interface OrderRefundsResponse {
     refunds: OrderRefundView[];
     attentionRefundIds: string[];
     paymentNeedsAttention: boolean;
+    itemRefundLines: OrderItemRefundLine[] | null;
 }
 export interface OrderRefundActionResponse {
     refund: OrderRefundView;
@@ -3774,4 +3814,54 @@ export type TaxRateParseResult = {
 };
 export declare function parseTaxRatePercent(input: unknown): TaxRateParseResult;
 export declare function formatTaxRatePpm(ratePpm: number): string;
+export interface SalesTaxReportComponent {
+    name: string;
+    jurisdiction: TaxJurisdiction;
+    ratePercent: string;
+    taxableSalesMinorUnits: number;
+    taxCollectedMinorUnits: number;
+    taxRefundedMinorUnits: number;
+    netTaxMinorUnits: number | null;
+}
+export interface SalesTaxReportLocation {
+    locationId: string;
+    locationName: string;
+    orders: number;
+    netSalesMinorUnits: number;
+    taxableSalesMinorUnits: number;
+    exemptSalesMinorUnits: number;
+    taxCollectedMinorUnits: number;
+    taxRefundedMinorUnits: number;
+    netTaxMinorUnits: number | null;
+    components: SalesTaxReportComponent[];
+}
+export interface SalesTaxReportRefund {
+    orderId: string;
+    orderNumber: string;
+    locationName: string;
+    kind: "ITEM" | "CANCELLATION" | "UNATTRIBUTED";
+    amountMinorUnits: number;
+    taxMinorUnits: number | null;
+    status: "CONFIRMED" | "PENDING" | "FAILED" | "UNRESOLVED";
+    date: string;
+}
+export interface SalesTaxReportResponse {
+    from: string;
+    to: string;
+    timeZone: string;
+    currency: string;
+    locationId: string | null;
+    availableLocations: {
+        id: string;
+        name: string;
+    }[];
+    totals: Omit<SalesTaxReportLocation, "locationId" | "locationName" | "components">;
+    components: SalesTaxReportComponent[];
+    locations: SalesTaxReportLocation[];
+    pendingTaxRefundMinorUnits: number;
+    failedTaxRefundMinorUnits: number;
+    unattributedRefunds: number;
+    unattributedRefundMinorUnits: number;
+    refunds: SalesTaxReportRefund[];
+}
 //# sourceMappingURL=index.d.ts.map

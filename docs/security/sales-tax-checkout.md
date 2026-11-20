@@ -115,7 +115,8 @@ order details:
 - A cancellation owes back the whole card charge (tax included) and restores
   the whole gift-card tender, so tax is never lost or counted twice.
 - Card refunds are still capped at the payment amount.
-- Item-specific refunds that keep the original tax per item are PR 3.
+- Item-specific refunds that keep the original tax per item, and the sales tax
+  report: see [sales-tax-refunds-reporting.md](sales-tax-refunds-reporting.md) (PR 3).
 
 ## Zero-tax confirmation
 
