@@ -4,6 +4,7 @@ import { OrdersOverviewReportService } from './orders-overview.service';
 import { LocationPerformanceReportService } from './location-performance.service';
 import { OperationsChecklistReportService } from './operations-checklist.service';
 import { CustomerGrowthReportService } from './customer-growth.service';
+import { SalesTaxReportService } from './sales-tax-report.service';
 import { buildCsvDocument } from './csv-serializer';
 import { buildExportFilename } from './export-filename';
 import {
@@ -11,6 +12,7 @@ import {
   locationPerformanceCsvRows,
   operationsChecklistCsvRows,
   ordersOverviewCsvRows,
+  salesTaxCsvRows,
 } from './report-csv-rows';
 import type { TenantContext } from '@mocha-house/database';
 import { CurrentTenantContext } from '../tenancy/current-tenant-context.decorator';
@@ -44,7 +46,56 @@ export class AdminReportsController {
     private readonly locationPerformance: LocationPerformanceReportService,
     private readonly operationsChecklist: OperationsChecklistReportService,
     private readonly customerGrowth: CustomerGrowthReportService,
+    private readonly salesTax: SalesTaxReportService,
   ) {}
+
+  // V1 Sales Tax PR 3 — taxable sales, tax collected, refunded (confirmed
+  // only) and net, by location and tax component.
+  @RequirePermission('reports.view')
+  @Get('sales-tax')
+  salesTaxReport(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('locationId') locationId?: string,
+  ) {
+    return this.salesTax.getReport(
+      { startDate, endDate, locationId },
+      request.authorization!,
+      tenant,
+    );
+  }
+
+  @RequirePermission('reports.view')
+  @Get('sales-tax/export')
+  async salesTaxExport(
+    @Req() request: InternalAuthenticatedRequest,
+    @CurrentTenantContext() tenant: TenantContext,
+    @Res() res: Response,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('locationId') locationId?: string,
+  ) {
+    const report = await this.salesTax.getReport(
+      { startDate, endDate, locationId },
+      request.authorization!,
+      tenant,
+    );
+    const location = report.locations.find(
+      (l) => l.locationId === report.locationId,
+    );
+    sendCsv(
+      res,
+      buildCsvDocument(salesTaxCsvRows(report)),
+      buildExportFilename(
+        'sales-tax',
+        report.from,
+        report.to,
+        location?.locationName ?? null,
+      ),
+    );
+  }
 
   @RequirePermission('reports.view')
   @Get('orders-overview')

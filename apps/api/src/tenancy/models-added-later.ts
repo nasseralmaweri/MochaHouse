@@ -27,6 +27,9 @@ import {
 //   LocationTaxComponent         V1 Sales Tax PR 1
 //   LocationTaxComponentClass    V1 Sales Tax PR 1
 //   OrderTaxSnapshot             V1 Sales Tax PR 2
+//   OrderTaxRefund               V1 Sales Tax PR 3
+//   OrderTaxRefundLine           V1 Sales Tax PR 3
+//   OrderTaxRefundComponent      V1 Sales Tax PR 3
 export const MODELS_ADDED_LATER: ReadonlySet<string> = new Set([
   'NotificationRecipient',
   'PaymentReconciliationCase',
@@ -47,6 +50,9 @@ export const MODELS_ADDED_LATER: ReadonlySet<string> = new Set([
   'LocationTaxComponent',
   'LocationTaxComponentClass',
   'OrderTaxSnapshot',
+  'OrderTaxRefund',
+  'OrderTaxRefundLine',
+  'OrderTaxRefundComponent',
 ]);
 
 // The relationship inventory as it applied to a database from BEFORE the models

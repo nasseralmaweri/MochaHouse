@@ -93,6 +93,10 @@ model Tenant {
   locationTaxComponentClasses          LocationTaxComponentClass[]
   // V1 Sales Tax PR 2 — each taxed order's immutable tax snapshot.
   orderTaxSnapshots                    OrderTaxSnapshot[]
+  // V1 Sales Tax PR 3 — tax refunds (item refunds and cancellations).
+  orderTaxRefunds                      OrderTaxRefund[]
+  orderTaxRefundLines                  OrderTaxRefundLine[]
+  orderTaxRefundComponents             OrderTaxRefundComponent[]
   orders                               Order[]
   orderLines                           OrderLine[]
   orderStatusHistories                 OrderStatusHistory[]
@@ -849,6 +853,8 @@ model Location {
   checklistInstances               ChecklistInstance[]
   // V1 Sales Tax PR 1 — this location's tax settings, every version kept.
   taxVersions                      LocationTaxVersion[]
+  // V1 Sales Tax PR 3 — the tax refunded at this location.
+  taxRefunds                       OrderTaxRefund[]
   operationsTasks                  OperationsTask[]
   loyaltyBonusPromotionEligibility LoyaltyBonusPromotionLocation[]
   promotionEligibility             PromotionLocation[]
@@ -1812,6 +1818,9 @@ model Order {
   // V1 Sales Tax PR 2 — the immutable tax snapshot (orders created with
   // sales tax enabled only; never for an order created before it).
   taxSnapshot             OrderTaxSnapshot?
+  // V1 Sales Tax PR 3 — the tax this order's refunds and cancellation
+  // returned, attributed from its snapshot.
+  taxRefunds              OrderTaxRefund[]
   // ESP-04 M5a — the card refunds of this order's payment.
   refunds                 PaymentRefund[]
 
@@ -1876,6 +1885,9 @@ model OrderClosure {
   createdAt                  DateTime     @default(now())
 
   refundObligation OrderRefundObligation?
+
+  // V1 Sales Tax PR 3 — the tax a cancellation of a taxed order returns.
+  taxRefund OrderTaxRefund?
 
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -2053,7 +2065,10 @@ model PaymentRefund {
   createdAt                           DateTime       @default(now())
   updatedAt                           DateTime       @updatedAt
 
-  events PaymentRefundEvent[]
+  events    PaymentRefundEvent[]
+  // V1 Sales Tax PR 3 — the items and tax this refund returns (an item
+  // refund of a taxed order), or none (an amount-only refund).
+  taxRefund OrderTaxRefund?
 
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -2125,6 +2140,12 @@ model OrderLine {
   // S0D-2C-1: copied from its parent Order. No default.
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  // V1 Sales Tax PR 3 — the line's position in its order (0, 1, ...), as
+  // in the frozen checkout and the order's tax snapshot. Set by checkout for
+  // every new order; null on orders created before it. Unique per order and
+  // never changed once set (migration).
+  lineIndex Int?
 
   @@index([orderId])
   // Security 4C-6 — the deleted-product-id reuse guard looks product
@@ -2468,6 +2489,9 @@ model InternalUser {
   connectedPaymentAccounts     TenantPaymentAccount[]
   // V1 Sales Tax PR 1 — location tax settings this administrator confirmed.
   confirmedLocationTaxVersions LocationTaxVersion[]
+  // V1 Sales Tax PR 3 — the item refunds and cancellations this staff member
+  // attributed tax for.
+  orderTaxRefunds              OrderTaxRefund[]
 
   @@unique([tenantId, externalProvider, externalSubject])
   @@unique([tenantId, email])
@@ -5095,6 +5119,8 @@ model OrderTaxSnapshot {
   chargedMinorUnits        Int
   detail                   Json
   createdAt                DateTime           @default(now())
+  // V1 Sales Tax PR 3 — the tax refunds attributed from this snapshot.
+  taxRefunds               OrderTaxRefund[]
 
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -5102,5 +5128,96 @@ model OrderTaxSnapshot {
   @@unique([tenantId, id])
   @@unique([tenantId, orderId])
   @@index([tenantId, locationTaxVersionId])
+  @@index([tenantId])
+}
+
+// --- V1 Sales Tax PR 3: tax refunds ------------------------------------------
+// The sales tax an order's money coming back returns, attributed from the
+// order's ORIGINAL tax snapshot — never recalculated at today's rates.
+// Written once, never updated or deleted (triggers):
+//   ITEM     an item refund of a completed order: the chosen lines and
+//            quantities, their net (after-discount) amounts and their tax per
+//            component; its card refund (PaymentRefund) is for exactly
+//            merchandise + tax.
+//   CLOSURE  a rejected or cancelled taxed order: every line in full.
+// Whether the tax counts as refunded comes from the money: an ITEM record
+// from its card refund's status (only SUCCEEDED counts), a CLOSURE record
+// from its obligation (or at once when nothing was card-paid). Amount-only
+// refunds have no record: their tax is unattributed and reported as such.
+model OrderTaxRefund {
+  id                      String           @id @default(uuid(7))
+  orderId                 String
+  order                   Order            @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  locationId              String
+  location                Location         @relation(fields: [tenantId, locationId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  orderTaxSnapshotId      String
+  orderTaxSnapshot        OrderTaxSnapshot @relation(fields: [tenantId, orderTaxSnapshotId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  // ITEM | CLOSURE (CHECK).
+  kind                    String
+  // ITEM only (unique): the card refund that returns this money.
+  paymentRefundId         String?          @unique
+  paymentRefund           PaymentRefund?   @relation(fields: [tenantId, paymentRefundId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  // CLOSURE only (unique).
+  orderClosureId          String?          @unique
+  orderClosure            OrderClosure?    @relation(fields: [tenantId, orderClosureId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  currency                String
+  // Net (after store-funded discounts) merchandise returned.
+  merchandiseMinorUnits   Int
+  taxMinorUnits           Int
+  createdByInternalUserId String
+  createdBy               InternalUser     @relation(fields: [tenantId, createdByInternalUserId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  createdAt               DateTime         @default(now())
+
+  lines      OrderTaxRefundLine[]
+  components OrderTaxRefundComponent[]
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, paymentRefundId])
+  @@unique([tenantId, orderClosureId])
+  @@index([tenantId, orderId])
+  @@index([tenantId, locationId, createdAt])
+  @@index([tenantId])
+}
+
+// One order line in a tax refund: by its position (OrderLine.lineIndex).
+model OrderTaxRefundLine {
+  id                    String         @id @default(uuid(7))
+  taxRefundId           String
+  taxRefund             OrderTaxRefund @relation(fields: [tenantId, taxRefundId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  lineIndex             Int
+  quantity              Int
+  merchandiseMinorUnits Int
+  taxMinorUnits         Int
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([taxRefundId, lineIndex])
+  @@index([tenantId])
+}
+
+// One tax component of one line in a tax refund, as named and rated in the
+// snapshot (per line, so partial refunds of a line stay exact per component).
+model OrderTaxRefundComponent {
+  id            String         @id @default(uuid(7))
+  taxRefundId   String
+  taxRefund     OrderTaxRefund @relation(fields: [tenantId, taxRefundId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  lineIndex     Int
+  // The component's id in the snapshot (historical; not a live record).
+  componentKey  String
+  name          String
+  jurisdiction  String
+  ratePpm       Int
+  taxMinorUnits Int
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([taxRefundId, lineIndex, componentKey])
   @@index([tenantId])
 }

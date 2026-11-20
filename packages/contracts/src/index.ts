@@ -2263,7 +2263,68 @@ export interface CreateOrderRefundRequest {
   // refunds changed since, the request is refused (409) rather than added
   // on top: two people, or a resubmission, never refund twice by accident.
   expectedReservedMinorUnits: number;
+  // V1 Sales Tax PR 3 — an ITEM refund of a completed taxed order: the
+  // lines (by position) and quantities. The server works out the amount from
+  // the order's ORIGINAL tax snapshot (each item's net price after discounts
+  // plus its tax per component) and requires amountMinorUnits to be exactly
+  // that (as shown by the preview). Omitted: an amount-only refund, exactly
+  // as before (its tax is reported as unattributed on a taxed order).
+  items?: OrderRefundItemInput[];
 }
+
+export interface OrderRefundItemInput {
+  lineIndex: number;
+  quantity: number;
+}
+
+// POST .../refunds/items/preview (orders.refund): what an item refund of
+// these items would return, from the original snapshot. Records nothing.
+export interface PreviewOrderItemRefundRequest {
+  locationId: string;
+  items: OrderRefundItemInput[];
+}
+
+export interface OrderItemRefundPreview {
+  merchandiseMinorUnits: number;
+  taxMinorUnits: number;
+  // merchandise + tax: the card refund's amount.
+  totalMinorUnits: number;
+  components: TaxComponentAmount[];
+  lines: {
+    lineIndex: number;
+    productName: string;
+    quantity: number;
+    merchandiseMinorUnits: number;
+    taxMinorUnits: number;
+  }[];
+}
+
+// An order line as an item refund can return it (taxed orders only).
+export interface OrderItemRefundLine {
+  lineIndex: number;
+  productName: string;
+  quantity: number;
+  // Units already refunded (by item refunds whose card refund has not
+  // failed), and what remains.
+  refundedQuantity: number;
+  remainingQuantity: number;
+  // The line's net price after discounts and its tax, as charged.
+  merchandiseMinorUnits: number;
+  taxMinorUnits: number;
+}
+
+// How a refund's sales tax is attributed:
+//   ITEMS          an item refund: its tax comes from the original snapshot;
+//   CANCELLATION   a refund of a rejected / cancelled order's obligation:
+//                  the whole order's tax is returned by the cancellation;
+//   UNATTRIBUTED   an amount-only refund of a taxed order: how much of it is
+//                  tax is not known (never assumed proportional);
+//   NOT_TAXED      the order was not charged sales tax.
+export type OrderRefundTaxAttribution =
+  | "ITEMS"
+  | "CANCELLATION"
+  | "UNATTRIBUTED"
+  | "NOT_TAXED";
 
 // POST .../refunds/:refundId/review (orders.refund): a staff member's
 // audited review of a refund whose money came back, required before any
@@ -2292,6 +2353,11 @@ export interface OrderRefundView {
   lateFailureReviewNote: string | null;
   // NEVER_SENT | STRIPE_HISTORY_VERIFIED, for NOT_CREATED only.
   notCreatedEvidence: string | null;
+  // V1 Sales Tax PR 3 — how this refund's sales tax is attributed, and for
+  // an item refund its tax and items.
+  taxAttribution: OrderRefundTaxAttribution;
+  taxMinorUnits: number | null;
+  items: { lineIndex: number; productName: string; quantity: number }[];
 }
 
 // What the order's card payment stands at, from the refund records.
@@ -2342,6 +2408,10 @@ export interface OrderRefundsResponse {
   // Shown to staff; resolved by support, never from this page.
   attentionRefundIds: string[];
   paymentNeedsAttention: boolean;
+  // V1 Sales Tax PR 3 — a completed taxed order's lines as item refunds can
+  // return them, or null (not taxed, not completed, or lines that cannot be
+  // matched to the tax record: amount refunds only).
+  itemRefundLines: OrderItemRefundLine[] | null;
 }
 
 // The answer to a refund request, a recheck or a review.
@@ -8172,4 +8242,76 @@ export function formatTaxRatePpm(ratePpm: number): string {
   const whole = Math.floor(ratePpm / 10_000);
   const fraction = String(ratePpm % 10_000).padStart(TAX_RATE_DECIMALS_MAX, "0").replace(/0+$/, "");
   return fraction ? `${whole}.${fraction}` : String(whole);
+}
+
+// --- V1 Sales Tax PR 3: the sales tax report ---------------------------------
+// GET /api/v1/admin/reports/sales-tax?from=YYYY-MM-DD&to=YYYY-MM-DD&locationId=
+// (reports.view, corporate). Orders taxed at checkout only (orders from
+// before sales tax have no tax record and are not included). Dates are the
+// business's reporting dates (America/Detroit), inclusive.
+//   Sales and tax collected: by the order's date.
+//   Tax refunded: confirmed refunds only (an item refund whose card refund
+//     succeeded; a cancellation once its card money is refunded, or at once
+//     when nothing was card-paid), by the record's date. Pending and failed
+//     refunds are shown apart and never counted.
+//   Unattributed: amount-only refunds of taxed orders (their tax is not
+//     known). While any exist in the period, netTaxMinorUnits is null: the
+//     net would be misleading.
+
+export interface SalesTaxReportComponent {
+  name: string;
+  jurisdiction: TaxJurisdiction;
+  ratePercent: string;
+  taxableSalesMinorUnits: number;
+  taxCollectedMinorUnits: number;
+  taxRefundedMinorUnits: number;
+  netTaxMinorUnits: number | null;
+}
+
+export interface SalesTaxReportLocation {
+  locationId: string;
+  locationName: string;
+  orders: number;
+  // Net merchandise (after discounts) of taxed orders, and the part of it
+  // any tax applied to.
+  netSalesMinorUnits: number;
+  taxableSalesMinorUnits: number;
+  exemptSalesMinorUnits: number;
+  taxCollectedMinorUnits: number;
+  taxRefundedMinorUnits: number;
+  netTaxMinorUnits: number | null;
+  components: SalesTaxReportComponent[];
+}
+
+export interface SalesTaxReportRefund {
+  orderId: string;
+  orderNumber: string;
+  locationName: string;
+  kind: "ITEM" | "CANCELLATION" | "UNATTRIBUTED";
+  // The refund (or cancellation) as recorded.
+  amountMinorUnits: number;
+  taxMinorUnits: number | null;
+  status: "CONFIRMED" | "PENDING" | "FAILED" | "UNRESOLVED";
+  date: string;
+}
+
+export interface SalesTaxReportResponse {
+  from: string;
+  to: string;
+  timeZone: string;
+  currency: string;
+  locationId: string | null;
+  // The business's locations, for the filter.
+  availableLocations: { id: string; name: string }[];
+  totals: Omit<SalesTaxReportLocation, "locationId" | "locationName" | "components">;
+  components: SalesTaxReportComponent[];
+  locations: SalesTaxReportLocation[];
+  // Not counted as refunded: in progress, or known not to have happened.
+  pendingTaxRefundMinorUnits: number;
+  failedTaxRefundMinorUnits: number;
+  // Amount-only refunds of taxed orders whose tax is not attributed: while
+  // any exist, every net tax figure above is null.
+  unattributedRefunds: number;
+  unattributedRefundMinorUnits: number;
+  refunds: SalesTaxReportRefund[];
 }

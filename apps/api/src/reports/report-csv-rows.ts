@@ -5,6 +5,7 @@ import type {
   AdminOrdersOverviewReport,
   AdminReportDataSource,
   OrderStatus,
+  SalesTaxReportResponse,
 } from '@mocha-house/contracts';
 import { ALL_ORDER_STATUSES } from '@mocha-house/domain';
 import { escapeCsvCell, numericCsvCell } from './csv-serializer';
@@ -95,10 +96,7 @@ export function ordersOverviewCsvRows(
     BLANK_ROW,
     [escapeCsvCell('Metric'), escapeCsvCell('Value')],
     [escapeCsvCell('Total Orders'), numericCsvCell(report.totalOrders)],
-    [
-      escapeCsvCell('Completed Orders'),
-      numericCsvCell(report.completedOrders),
-    ],
+    [escapeCsvCell('Completed Orders'), numericCsvCell(report.completedOrders)],
     [
       escapeCsvCell('Digital Sales (USD)'),
       numericCsvCell(minorUnitsToDecimalString(report.digitalSalesMinorUnits)),
@@ -140,15 +138,9 @@ export function locationPerformanceCsvRows(
   report: AdminLocationPerformanceReport,
 ): string[][] {
   return [
-    ...metadataRows(
-      'Location Performance',
-      report.filters,
-      [],
-      report.source,
-      [
-        'Completed % reflects orders whose current status is Completed. Orders still in progress lower this figure, so it is most meaningful for a period that has already ended.',
-      ],
-    ),
+    ...metadataRows('Location Performance', report.filters, [], report.source, [
+      'Completed % reflects orders whose current status is Completed. Orders still in progress lower this figure, so it is most meaningful for a period that has already ended.',
+    ]),
     BLANK_ROW,
     [
       escapeCsvCell('Location'),
@@ -259,4 +251,122 @@ export function customerGrowthCsvRows(
     ],
     [escapeCsvCell('Guest Orders'), numericCsvCell(report.guestOrders)],
   ];
+}
+
+// V1 Sales Tax PR 3 — the sales tax report, from the exact JSON result.
+// Amounts are dollars with two decimals; a withheld net (unattributed
+// refunds in the period) is written as "NOT FINAL", never as a number.
+export function salesTaxCsvRows(report: SalesTaxReportResponse): string[][] {
+  const money = (v: number | null) =>
+    v === null
+      ? escapeCsvCell('NOT FINAL')
+      : numericCsvCell(minorUnitsToDecimalString(v));
+  const rows: string[][] = [
+    [escapeCsvCell('Report'), escapeCsvCell('Sales Tax')],
+    [escapeCsvCell('Start Date'), escapeCsvCell(report.from)],
+    [escapeCsvCell('End Date'), escapeCsvCell(report.to)],
+    [escapeCsvCell('Time Zone'), escapeCsvCell(report.timeZone)],
+    [escapeCsvCell('Currency'), escapeCsvCell(report.currency)],
+    [
+      escapeCsvCell('Note'),
+      escapeCsvCell(
+        'Orders taxed at checkout only. Tax refunded counts confirmed refunds only.',
+      ),
+    ],
+  ];
+  if (report.unattributedRefunds > 0) {
+    rows.push([
+      escapeCsvCell('Warning'),
+      escapeCsvCell(
+        `${report.unattributedRefunds} refund(s) totalling ${minorUnitsToDecimalString(report.unattributedRefundMinorUnits)} have no tax attribution: net tax is not final.`,
+      ),
+    ]);
+  }
+  rows.push(
+    BLANK_ROW,
+    [
+      'Location',
+      'Orders',
+      'Net Sales',
+      'Taxable Sales',
+      'Exempt Sales',
+      'Tax Collected',
+      'Tax Refunded',
+      'Net Tax',
+    ].map(escapeCsvCell),
+  );
+  const locationRow = (
+    name: string,
+    l: SalesTaxReportResponse['totals'],
+  ): string[] => [
+    escapeCsvCell(name),
+    numericCsvCell(l.orders),
+    money(l.netSalesMinorUnits),
+    money(l.taxableSalesMinorUnits),
+    money(l.exemptSalesMinorUnits),
+    money(l.taxCollectedMinorUnits),
+    money(l.taxRefundedMinorUnits),
+    money(l.netTaxMinorUnits),
+  ];
+  for (const l of report.locations) rows.push(locationRow(l.locationName, l));
+  rows.push(locationRow('All locations', report.totals));
+  rows.push(
+    BLANK_ROW,
+    [
+      'Location',
+      'Tax',
+      'Jurisdiction',
+      'Rate %',
+      'Taxable Sales',
+      'Tax Collected',
+      'Tax Refunded',
+      'Net Tax',
+    ].map(escapeCsvCell),
+  );
+  const componentRows = (
+    location: string,
+    list: SalesTaxReportResponse['components'],
+  ) =>
+    list.map((c) => [
+      escapeCsvCell(location),
+      escapeCsvCell(c.name),
+      escapeCsvCell(c.jurisdiction),
+      numericCsvCell(c.ratePercent),
+      money(c.taxableSalesMinorUnits),
+      money(c.taxCollectedMinorUnits),
+      money(c.taxRefundedMinorUnits),
+      money(c.netTaxMinorUnits),
+    ]);
+  for (const l of report.locations)
+    rows.push(...componentRows(l.locationName, l.components));
+  rows.push(...componentRows('All locations', report.components));
+  rows.push(
+    BLANK_ROW,
+    [
+      escapeCsvCell('Pending Tax Refunds'),
+      money(report.pendingTaxRefundMinorUnits),
+    ],
+    [
+      escapeCsvCell('Failed Tax Refunds'),
+      money(report.failedTaxRefundMinorUnits),
+    ],
+    BLANK_ROW,
+    ['Date', 'Order', 'Location', 'Kind', 'Amount', 'Tax', 'Status'].map(
+      escapeCsvCell,
+    ),
+  );
+  for (const r of report.refunds) {
+    rows.push([
+      escapeCsvCell(r.date),
+      escapeCsvCell(r.orderNumber),
+      escapeCsvCell(r.locationName),
+      escapeCsvCell(r.kind),
+      money(r.amountMinorUnits),
+      r.taxMinorUnits === null
+        ? escapeCsvCell('UNKNOWN')
+        : money(r.taxMinorUnits),
+      escapeCsvCell(r.status),
+    ]);
+  }
+  return rows;
 }

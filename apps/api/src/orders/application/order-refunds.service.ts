@@ -13,8 +13,11 @@ import {
   ORDER_REFUND_NOTE_MAX_LENGTH,
   ORDER_REFUND_REASON_CODES,
   ORDER_REFUND_REASON_LABELS,
+  type OrderItemRefundPreview,
   type OrderRefundActionResponse,
   type OrderRefundBalances,
+  type OrderRefundItemInput,
+  type OrderRefundTaxAttribution,
   type OrderRefundObligationStatus,
   type OrderRefundObligationView,
   type OrderRefundObligationsResponse,
@@ -36,6 +39,15 @@ import { PAYMENT_PROVIDER } from '../../payment/payment-provider.token';
 import { paymentAccountForAttempt } from '../../payment/payment-intent';
 import { withSessionLock } from '../../payment/session-lock';
 import { syncRefundObligation } from './refund-obligation-sync';
+import {
+  ItemRefundError,
+  allocateFromBasis,
+  itemRefundBasis,
+  itemRefundLinesOf,
+  previewOf,
+  recordItemTaxRefund,
+  type ItemRefundBasis,
+} from '../../tax/application/tax-refunds';
 import {
   notCreatedEvidenceFor,
   obligationStanding,
@@ -172,6 +184,9 @@ export class OrderRefundsService {
       order.paymentAttemptId,
       rows.map((r) => r.id),
     );
+    // V1 Sales Tax PR 3 — each refund's tax attribution, and what an item
+    // refund of this order could still return.
+    const tax = await this.taxViewOf(tenant.tenantId, order);
     return {
       ...attention,
       orderId: order.id,
@@ -180,9 +195,10 @@ export class OrderRefundsService {
       refundsEnabled: this.executionAvailableFor(tenant.tenantId),
       balances: refundablePayment(order) ? balancesOf(order, rows) : null,
       obligation: obligationViewOf(order, rows),
+      itemRefundLines: tax.itemRefundLines,
       // Internal notes only for staff who may refund here.
       refunds: rows
-        .map(viewOf)
+        .map((r) => withTax(viewOf(r), tax))
         .map((r) =>
           authorization.canActOnLocation('orders.refund', location)
             ? r
@@ -288,12 +304,16 @@ export class OrderRefundsService {
       tenant,
     );
     const request = validateRequest(input);
+    // V1 Sales Tax PR 3 — an item refund names its items; an amount refund
+    // (no items) is exactly as before, fingerprint included.
+    const items = validateItems(input.items);
     const fingerprint = fingerprintOf({
       tenantId: tenant.tenantId,
       orderId,
       locationId: location,
       actorId: actor.id,
       ...request,
+      items,
     });
 
     // 2. A request already made: its operation, never a second one.
@@ -345,6 +365,21 @@ export class OrderRefundsService {
         'A refund of this payment came back and must be reviewed before another is made.',
       );
     }
+    // V1 Sales Tax PR 3 — an item refund: a completed taxed order, and the
+    // amount exactly what its items return from the original snapshot (as
+    // previewed). Re-checked under the payment's lock below.
+    if (items) {
+      if (order.status !== 'COMPLETED' || order.obligation) {
+        throw new ConflictException(
+          'Items are refunded only on a completed order. A cancelled order is refunded in full.',
+        );
+      }
+      const allocation = allocateFromBasis(
+        await this.itemBasisOrRefuse(tenant.tenantId, order.id),
+        items,
+      );
+      assertItemAmount(allocation.totalMinorUnits, request.amountMinorUnits);
+    }
     const limit = order.obligation
       ? Math.min(
           summary.refundableMinorUnits,
@@ -392,6 +427,20 @@ export class OrderRefundsService {
             .reservedMinorUnits,
           request,
         );
+        // V1 Sales Tax PR 3 — the items, again under the payment's lock:
+        // what earlier item refunds took is counted now, so two requests can
+        // never refund the same unit or its tax twice.
+        let itemBasis: ItemRefundBasis | null = null;
+        let itemAllocation: ReturnType<typeof allocateFromBasis> | null = null;
+        if (items) {
+          itemBasis = await itemRefundBasis(tx, tenant.tenantId, order.id);
+          if (!itemBasis) throw new ItemRefundError(ITEMS_NOT_TAXED);
+          itemAllocation = allocateFromBasis(itemBasis, items);
+          assertItemAmount(
+            itemAllocation.totalMinorUnits,
+            request.amountMinorUnits,
+          );
+        }
         const refund = await tx.paymentRefund.create({
           data: {
             id: refundId,
@@ -415,6 +464,16 @@ export class OrderRefundsService {
             requestedBy: { select: { id: true, displayName: true } },
           },
         });
+        if (itemBasis && itemAllocation) {
+          await recordItemTaxRefund(tx, {
+            tenantId: tenant.tenantId,
+            orderId: order.id,
+            paymentRefundId: refundId,
+            actorId: actor.id,
+            basis: itemBasis,
+            allocation: itemAllocation,
+          });
+        }
         if (order.obligation) {
           await tx.orderRefundObligation.updateMany({
             where: {
@@ -434,7 +493,15 @@ export class OrderRefundsService {
           currency: request.currency,
           reasonCode: request.reasonCode,
           status: 'REQUESTED',
-          detail: { hasNote: request.note !== null },
+          detail: {
+            hasNote: request.note !== null,
+            ...(itemAllocation
+              ? {
+                  itemRefund: true,
+                  taxMinorUnits: itemAllocation.taxMinorUnits,
+                }
+              : {}),
+          },
         });
         return refund;
       });
@@ -448,6 +515,9 @@ export class OrderRefundsService {
         );
         if (raced) return this.actionResponse(raced, true, location, tenant);
       }
+      if (error instanceof ItemRefundError) {
+        throw new ConflictException(error.message);
+      }
       throw refusalFrom(error);
     }
 
@@ -457,6 +527,119 @@ export class OrderRefundsService {
     );
     const current = sent ?? (await this.reload(tenant.tenantId, refundId));
     return this.actionResponse(current, false, location, tenant);
+  }
+
+  // V1 Sales Tax PR 3 — what an item refund of these items would return,
+  // from the order's original snapshot. Records nothing, asks Stripe
+  // nothing; the same people and switch as a refund.
+  async previewItems(
+    orderId: string,
+    body: unknown,
+    actor: RefundActor,
+    authorization: AuthorizationContext,
+    tenant: TenantContext,
+  ): Promise<OrderItemRefundPreview> {
+    const input = (body ?? {}) as Record<string, unknown>;
+    this.stripeFor(tenant.tenantId);
+    const location = this.requireLocation(input.locationId);
+    await this.authorizeRefund(
+      location,
+      orderId,
+      'request',
+      actor,
+      authorization,
+      tenant,
+    );
+    const items = validateItems(input.items);
+    if (!items) throw new BadRequestException('Choose the items to refund.');
+    const order = await this.loadOrder(orderId, location, tenant.tenantId);
+    if (order.status !== 'COMPLETED') {
+      throw new ConflictException(
+        'Items are refunded only on a completed order. A cancelled order is refunded in full.',
+      );
+    }
+    const basis = await this.itemBasisOrRefuse(tenant.tenantId, order.id);
+    try {
+      return previewOf(basis, allocateFromBasis(basis, items));
+    } catch (error) {
+      if (error instanceof ItemRefundError) {
+        throw new ConflictException(error.message);
+      }
+      throw error;
+    }
+  }
+
+  private async itemBasisOrRefuse(
+    tenantId: string,
+    orderId: string,
+  ): Promise<ItemRefundBasis> {
+    try {
+      const basis = await itemRefundBasis(this.prisma, tenantId, orderId);
+      if (!basis) throw new ItemRefundError(ITEMS_NOT_TAXED);
+      return basis;
+    } catch (error) {
+      if (error instanceof ItemRefundError) {
+        throw new ConflictException(error.message);
+      }
+      throw error;
+    }
+  }
+
+  // Each refund's tax attribution (from its tax record, the order's
+  // closure, or the order's snapshot), and the item refund lines.
+  private async taxViewOf(
+    tenantId: string,
+    order: LoadedOrder,
+  ): Promise<TaxView> {
+    const [snapshot, records, closure] = await Promise.all([
+      this.prisma.orderTaxSnapshot.findFirst({
+        where: { tenantId, orderId: order.id },
+        select: { taxMinorUnits: true },
+      }),
+      this.prisma.orderTaxRefund.findMany({
+        where: { tenantId, orderId: order.id, kind: 'ITEM' },
+        select: {
+          paymentRefundId: true,
+          taxMinorUnits: true,
+          lines: { select: { lineIndex: true, quantity: true } },
+        },
+      }),
+      this.prisma.orderClosure.findFirst({
+        where: { tenantId, orderId: order.id },
+        select: { id: true },
+      }),
+    ]);
+    let itemRefundLines: TaxView['itemRefundLines'] = null;
+    let names = new Map<number, string>();
+    if (snapshot && order.status === 'COMPLETED') {
+      try {
+        const basis = await itemRefundBasis(this.prisma, tenantId, order.id);
+        if (basis) {
+          itemRefundLines = itemRefundLinesOf(basis);
+          names = new Map(basis.lines.map((l) => [l.lineIndex, l.productName]));
+        }
+      } catch (error) {
+        if (!(error instanceof ItemRefundError)) throw error;
+      }
+    }
+    return {
+      taxed: snapshot !== null && snapshot.taxMinorUnits > 0,
+      closed: closure !== null,
+      itemRefundLines,
+      items: new Map(
+        records.map((r) => [
+          r.paymentRefundId!,
+          {
+            taxMinorUnits: r.taxMinorUnits,
+            items: r.lines.map((l) => ({
+              lineIndex: l.lineIndex,
+              productName: names.get(l.lineIndex) ?? '',
+              quantity: l.quantity,
+            })),
+          },
+        ]),
+      ),
+    };
   }
 
   // Asks Stripe for ONE recorded operation and records what the read-back
@@ -1247,7 +1430,10 @@ export class OrderRefundsService {
     );
     const rows = await this.refundsOf(tenant.tenantId, order.paymentAttemptId);
     return {
-      refund: viewOf(refund),
+      refund: withTax(
+        viewOf(refund),
+        await this.taxViewOf(tenant.tenantId, order),
+      ),
       replayed,
       balances: balancesOf(order, rows),
       obligation: obligationViewOf(order, rows),
@@ -1425,6 +1611,10 @@ function viewOf(r: RefundRecord): OrderRefundView {
     lateFailureReviewedAt: r.lateFailureReviewedAt?.toISOString() ?? null,
     lateFailureReviewNote: r.lateFailureReviewNote,
     notCreatedEvidence: r.notCreatedEvidence,
+    // Set by withTax.
+    taxAttribution: 'NOT_TAXED',
+    taxMinorUnits: null,
+    items: [],
   };
 }
 
@@ -1552,6 +1742,9 @@ function fingerprintOf(values: {
   reasonCode: string;
   note: string | null;
   expectedReservedMinorUnits: number;
+  // V1 Sales Tax PR 3 — only for an item refund, so an amount refund's
+  // fingerprint is exactly as before.
+  items?: OrderRefundItemInput[] | null;
 }): string {
   return createHash('sha256')
     .update(
@@ -1566,9 +1759,83 @@ function fingerprintOf(values: {
         values.reasonCode,
         values.note,
         values.expectedReservedMinorUnits,
+        ...(values.items ? [values.items] : []),
       ]),
     )
     .digest('hex');
+}
+
+// --- V1 Sales Tax PR 3: item refunds ------------------------------------------
+
+const ITEMS_NOT_TAXED =
+  'This order has no sales tax record, so its items cannot be refunded one by one. Refund an amount instead.';
+
+interface TaxView {
+  taxed: boolean;
+  closed: boolean;
+  itemRefundLines: OrderRefundsResponse['itemRefundLines'];
+  items: Map<
+    string,
+    {
+      taxMinorUnits: number;
+      items: { lineIndex: number; productName: string; quantity: number }[];
+    }
+  >;
+}
+
+function withTax(view: OrderRefundView, tax: TaxView): OrderRefundView {
+  const item = tax.items.get(view.id);
+  const taxAttribution: OrderRefundTaxAttribution = item
+    ? 'ITEMS'
+    : tax.closed
+      ? 'CANCELLATION'
+      : tax.taxed
+        ? 'UNATTRIBUTED'
+        : 'NOT_TAXED';
+  return {
+    ...view,
+    taxAttribution,
+    taxMinorUnits: item?.taxMinorUnits ?? null,
+    items: item?.items ?? [],
+  };
+}
+
+// The requested items: null for an amount refund; otherwise 1-50 distinct
+// lines, each a whole quantity, in line order (so the fingerprint is the same
+// whatever order they were sent in).
+function validateItems(raw: unknown): OrderRefundItemInput[] | null {
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 50) {
+    throw new BadRequestException('items must list the items to refund.');
+  }
+  const items = raw.map((item: unknown) => {
+    const v = (item ?? {}) as Record<string, unknown>;
+    if (
+      typeof v.lineIndex !== 'number' ||
+      !Number.isSafeInteger(v.lineIndex) ||
+      v.lineIndex < 0 ||
+      typeof v.quantity !== 'number' ||
+      !Number.isSafeInteger(v.quantity) ||
+      v.quantity < 1
+    ) {
+      throw new BadRequestException(
+        'Each item needs a line and a whole quantity of at least 1.',
+      );
+    }
+    return { lineIndex: v.lineIndex, quantity: v.quantity };
+  });
+  if (new Set(items.map((i) => i.lineIndex)).size !== items.length) {
+    throw new BadRequestException('Each item can be chosen once.');
+  }
+  return items.sort((a, b) => a.lineIndex - b.lineIndex);
+}
+
+function assertItemAmount(expected: number, requested: number): void {
+  if (expected !== requested) {
+    throw new ConflictException(
+      'The refund for these items changed since you looked. Refresh and check before refunding.',
+    );
+  }
 }
 
 // A refusal by one of the refund guards (a raised exception in a trigger

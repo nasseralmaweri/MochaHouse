@@ -5,6 +5,7 @@ import { OrdersOverviewReportService } from './orders-overview.service';
 import { LocationPerformanceReportService } from './location-performance.service';
 import { OperationsChecklistReportService } from './operations-checklist.service';
 import { CustomerGrowthReportService } from './customer-growth.service';
+import { SalesTaxReportService } from './sales-tax-report.service';
 
 // HQ Reporting (Milestone 9A: Digital Sales & Orders; Milestone 9B:
 // Location Performance; Milestone 9C: Operations Checklist Visibility;
@@ -22,6 +23,8 @@ import { CustomerGrowthReportService } from './customer-growth.service';
     LocationPerformanceReportService,
     OperationsChecklistReportService,
     CustomerGrowthReportService,
+    // V1 Sales Tax PR 3.
+    SalesTaxReportService,
   ],
 })
 export class ReportsModule {}

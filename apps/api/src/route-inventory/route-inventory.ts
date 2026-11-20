@@ -131,6 +131,9 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'GET /api/v1/admin/promotions/options': { scope: 'tenant' },
   'GET /api/v1/admin/reports/customer-growth': { scope: 'tenant' },
   'GET /api/v1/admin/reports/customer-growth/export': { scope: 'tenant' },
+  // V1 Sales Tax PR 3 — the sales tax report (reports.view, corporate).
+  'GET /api/v1/admin/reports/sales-tax': { scope: 'tenant' },
+  'GET /api/v1/admin/reports/sales-tax/export': { scope: 'tenant' },
   'GET /api/v1/admin/reports/location-performance': { scope: 'tenant' },
   'GET /api/v1/admin/reports/location-performance/export': { scope: 'tenant' },
   'GET /api/v1/admin/reports/operations-checklists': { scope: 'tenant' },
@@ -360,6 +363,10 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   // business owner or an assigned Refund Manager); off unless
   // RESTAURANT_REFUNDS_ENABLED=1.
   'POST /api/v1/admin/orders/:orderId/refunds': { scope: 'location' },
+  // V1 Sales Tax PR 3 — an item refund's amounts from the tax snapshot.
+  'POST /api/v1/admin/orders/:orderId/refunds/items/preview': {
+    scope: 'location',
+  },
   'POST /api/v1/admin/orders/:orderId/refunds/:refundId/recheck': {
     scope: 'location',
   },

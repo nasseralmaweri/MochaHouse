@@ -65,6 +65,9 @@ const refund = (over: Partial<OrderRefundView> = {}): OrderRefundView => ({
   lateFailureReviewedAt: null,
   lateFailureReviewNote: null,
   notCreatedEvidence: null,
+  taxAttribution: "NOT_TAXED",
+  taxMinorUnits: null,
+  items: [],
   ...over,
 });
 
@@ -88,6 +91,7 @@ const response = (over: Partial<OrderRefundsResponse> = {}): OrderRefundsRespons
   refundsEnabled: true,
   balances: balances(),
   obligation: null,
+  itemRefundLines: null,
   refunds: [],
   attentionRefundIds: [],
   paymentNeedsAttention: false,
@@ -164,7 +168,7 @@ describe("the refund form", () => {
   });
   it("partial refund: the typed amount, never more than the maximum", () => {
     const ok = validateDraft(
-      { mode: "partial", amountInput: "4.50", reasonCode: "MISSING_ITEM", note: "  one latte  " },
+      { mode: "partial", itemQuantities: {}, amountInput: "4.50", reasonCode: "MISSING_ITEM", note: "  one latte  " },
       1500,
       "USD",
     );
@@ -173,7 +177,7 @@ describe("the refund form", () => {
       value: { amountMinorUnits: 450, reasonCode: "MISSING_ITEM", note: "one latte" },
     });
     const over = validateDraft(
-      { mode: "partial", amountInput: "15.01", reasonCode: "MISSING_ITEM", note: "" },
+      { mode: "partial", itemQuantities: {}, amountInput: "15.01", reasonCode: "MISSING_ITEM", note: "" },
       1500,
       "USD",
     );

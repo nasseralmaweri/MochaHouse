@@ -110,7 +110,11 @@ const tenantTables = Object.entries(MODEL_TENANCY)
       model !== 'LocationTaxComponent' &&
       model !== 'LocationTaxComponentClass' &&
       // V1 Sales Tax PR 2 added order tax snapshots after this migration.
-      model !== 'OrderTaxSnapshot',
+      model !== 'OrderTaxSnapshot' &&
+      // V1 Sales Tax PR 3 added tax refunds after this migration.
+      model !== 'OrderTaxRefund' &&
+      model !== 'OrderTaxRefundLine' &&
+      model !== 'OrderTaxRefundComponent',
   );
 
 const baseUrl = process.env.DATABASE_URL!;

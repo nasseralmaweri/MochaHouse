@@ -506,7 +506,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
     // PaymentRefundEvent (2). V1 Sales Tax PR 1: Category / Product tax class
     // (2), LocationTaxVersion (2), LocationTaxComponent (1),
     // LocationTaxComponentClass (2). V1 Sales Tax PR 2: OrderTaxSnapshot (2).
-    expect(relationsBetweenBusinessRecords).toHaveLength(124);
+    // V1 Sales Tax PR 3: tax refunds (8).
+    expect(relationsBetweenBusinessRecords).toHaveLength(132);
     expect(
       relationsBetweenBusinessRecords
         .filter((r) => !isTenantEnforced(r))
@@ -620,6 +621,14 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'OrderRefundObligation.paymentAttemptId',
       'OrderRefundObligation.settledByInternalUserId',
       'OrderStatusHistory.orderId',
+      'OrderTaxRefund.createdByInternalUserId',
+      'OrderTaxRefund.locationId',
+      'OrderTaxRefund.orderClosureId',
+      'OrderTaxRefund.orderId',
+      'OrderTaxRefund.orderTaxSnapshotId',
+      'OrderTaxRefund.paymentRefundId',
+      'OrderTaxRefundComponent.taxRefundId',
+      'OrderTaxRefundLine.taxRefundId',
       'OrderTaxSnapshot.locationTaxVersionId',
       'OrderTaxSnapshot.orderId',
       'PaymentAttempt.checkoutSessionId',
@@ -787,14 +796,15 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       // ESP-04 M5a: +6 composite foreign keys, +1 JSON, +3 external ids.
       // V1 Sales Tax PR 1: +7 composite foreign keys.
       // V1 Sales Tax PR 2: +2 composite foreign keys, +1 JSON.
-      compositeWithForeignKey: 124,
+      // V1 Sales Tax PR 3: +8 composite foreign keys.
+      compositeWithForeignKey: 132,
       compositeWithoutForeignKey: 0,
       historicalSnapshot: 8,
       polymorphic: 4,
       json: 10,
       // ESP-04 M5b: +1 external id (PaymentRefund.clientRequestId).
       external: 9,
-      total: 155,
+      total: 163,
     });
     // Optional relationships are present and marked optional.
     const optionalForeignKeys = relationsBetweenBusinessRecords.filter(
