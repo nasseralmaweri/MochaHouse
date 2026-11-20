@@ -49,7 +49,10 @@ export const MODELS_ADDED_LATER: ReadonlySet<string> = new Set([
 
 // The relationship inventory as it applied to a database from BEFORE the models
 // above existed: for historical-state suites that run the integrity checker
-// against a scratch database migrated only up to an older migration.
+// against a scratch database migrated only up to an older migration. A
+// polymorphic reference keeps every target type that existed then and loses
+// only the types naming a later model (V1 Sales Tax PR 1: the tax_class audit
+// target) — no row of such a type can exist before its table did.
 export const TENANT_RELATIONSHIPS_BEFORE_LATER_MODELS: readonly TenantRelationship[] =
   TENANT_RELATIONSHIPS.filter(
     (relationship) =>
@@ -57,4 +60,15 @@ export const TENANT_RELATIONSHIPS_BEFORE_LATER_MODELS: readonly TenantRelationsh
       !(
         'target' in relationship && MODELS_ADDED_LATER.has(relationship.target)
       ),
+  ).map((relationship) =>
+    relationship.kind === 'polymorphic'
+      ? {
+          ...relationship,
+          targets: Object.fromEntries(
+            Object.entries(relationship.targets).filter(
+              ([, model]) => !MODELS_ADDED_LATER.has(model),
+            ),
+          ),
+        }
+      : relationship,
   );

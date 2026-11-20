@@ -277,6 +277,8 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
   }
   // A real product for the order line's historical snapshot.
   await prisma.category.create({
+    // Only the id back: an older-migration database lacks later columns.
+    select: { id: true },
     data: {
       id: id(tag, 'category'),
       tenantId,
@@ -285,6 +287,8 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
     },
   });
   await prisma.product.create({
+    // Only the id back: an older-migration database lacks later columns.
+    select: { id: true },
     data: {
       id: id(tag, 'product'),
       tenantId,
