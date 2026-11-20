@@ -25,7 +25,7 @@ import {
   type MigrationProject,
   type ScratchDatabase,
 } from '@mocha-house/testing';
-import { dataChecksum } from './historical-state';
+import { createOrderOnOlderSchema, dataChecksum } from './historical-state';
 
 // Security 4C-6 — PostgreSQL-enforced tenant isolation for the catalog
 // (categories, products, modifiers, menus, location menus and overrides),
@@ -521,19 +521,16 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
       locationId: i('location'),
     },
   });
-  await prisma.order.create({
-    data: {
-      id: i('order'),
-      tenantId,
-      orderNumber: i('order'),
-      accessToken: i('order-token'),
-      locationId: i('location'),
-      paymentAttemptId: i('pay'),
-      guestName: 'Fictional Guest',
-      guestPhone: '5550000000',
-      currency: 'USD',
-      subtotal: 500,
-    },
+  // Original columns only: an older-migration database lacks later ones.
+  await createOrderOnOlderSchema(prisma, {
+    id: i('order'),
+    tenantId,
+    orderNumber: i('order'),
+    accessToken: i('order-token'),
+    locationId: i('location'),
+    customerId: null,
+    paymentAttemptId: i('pay'),
+    subtotal: 500,
   });
   await prisma.orderLine.create({
     data: {

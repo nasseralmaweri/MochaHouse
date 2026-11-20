@@ -16,6 +16,7 @@ import {
   TAX_DRAFT_CHANGED,
   TAX_JURISDICTIONS,
   TAX_SETTINGS_OWNER_ONLY,
+  TAX_ZERO_ACKNOWLEDGEMENT_REQUIRED,
   formatTaxRatePpm,
   parseTaxRatePercent,
   type AdminLocationTaxResponse,
@@ -31,6 +32,7 @@ import {
 import { Prisma } from '@mocha-house/database';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InternalAuditService } from '../../audit/internal-audit.service';
+import { isSalesTaxEnabled } from './sales-tax-provider';
 
 // V1 Sales Tax PR 1 — the business's sales tax settings: its tax classes,
 // how each category (and, optionally, product) is classified, and each
@@ -204,7 +206,7 @@ export class TaxSettingsService {
         (category) => category.isActive && category.taxClassReviewedAt === null,
       ).length,
       pricesIncludeTax: false,
-      taxCollectionEnabled: false,
+      taxCollectionEnabled: isSalesTaxEnabled(),
     };
   }
 
@@ -529,6 +531,9 @@ export class TaxSettingsService {
     if (!draftUpdatedAt) {
       throw new BadRequestException('The draft to confirm is missing.');
     }
+    // V1 Sales Tax PR 2 — settings with no taxes are confirmed only with the
+    // administrator's explicit acknowledgement (the location charges none).
+    const acknowledgeNoTax = input.acknowledgeNoTax === true;
 
     await this.ensureDefaultClass(this.prisma, tenantId);
     return this.prisma.$transaction(async (tx) => {
@@ -546,6 +551,13 @@ export class TaxSettingsService {
           code: TAX_DRAFT_CHANGED,
           message:
             'These tax settings changed since you reviewed them. Review them again before confirming.',
+        });
+      }
+      if (draft.components.length === 0 && !acknowledgeNoTax) {
+        throw new ConflictException({
+          code: TAX_ZERO_ACKNOWLEDGEMENT_REQUIRED,
+          message:
+            'These settings have no taxes, so this location would charge no sales tax. Confirm that this is correct to continue.',
         });
       }
       const unreviewed = await tx.category.count({
@@ -588,6 +600,8 @@ export class TaxSettingsService {
         afterData: {
           versionId: draft.id,
           version: draft.version,
+          // V1 Sales Tax PR 2 — recorded for a zero-tax confirmation.
+          ...(draft.components.length === 0 ? { noTaxAcknowledged: true } : {}),
           components: draft.components.map((component) => ({
             name: component.name,
             jurisdiction: component.jurisdiction,
@@ -700,6 +714,7 @@ export class TaxSettingsService {
       draft: draft ? toVersion(draft) : null,
       history: versions.filter((v) => v.status === 'SUPERSEDED').map(toVersion),
       unreviewedActiveCategories: unreviewed,
+      taxCollectionEnabled: isSalesTaxEnabled(),
     };
   }
 

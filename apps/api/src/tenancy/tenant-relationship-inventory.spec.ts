@@ -505,8 +505,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
     // TenantPaymentAccount (1); ESP-04 M5a PaymentRefund (4) and
     // PaymentRefundEvent (2). V1 Sales Tax PR 1: Category / Product tax class
     // (2), LocationTaxVersion (2), LocationTaxComponent (1),
-    // LocationTaxComponentClass (2).
-    expect(relationsBetweenBusinessRecords).toHaveLength(122);
+    // LocationTaxComponentClass (2). V1 Sales Tax PR 2: OrderTaxSnapshot (2).
+    expect(relationsBetweenBusinessRecords).toHaveLength(124);
     expect(
       relationsBetweenBusinessRecords
         .filter((r) => !isTenantEnforced(r))
@@ -620,6 +620,8 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
       'OrderRefundObligation.paymentAttemptId',
       'OrderRefundObligation.settledByInternalUserId',
       'OrderStatusHistory.orderId',
+      'OrderTaxSnapshot.locationTaxVersionId',
+      'OrderTaxSnapshot.orderId',
       'PaymentAttempt.checkoutSessionId',
       'PaymentAttempt.locationId',
       'PaymentReconciliationCase.assigneeInternalUserId',
@@ -694,8 +696,9 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
           byId.get(id)?.nullable !== optional,
       );
     expect(unclassified).toEqual([]);
-    // ESP-04 M5a added PaymentRefundEvent.detail.
-    expect(jsonColumns).toHaveLength(9);
+    // ESP-04 M5a added PaymentRefundEvent.detail; V1 Sales Tax PR 2
+    // OrderTaxSnapshot.detail.
+    expect(jsonColumns).toHaveLength(10);
   });
 
   it('has no stale entry: every classified relationship exists in the schema exactly as described', () => {
@@ -783,14 +786,15 @@ describe('Tenant relationship inventory (Security 4C-1)', () => {
     }).toEqual({
       // ESP-04 M5a: +6 composite foreign keys, +1 JSON, +3 external ids.
       // V1 Sales Tax PR 1: +7 composite foreign keys.
-      compositeWithForeignKey: 122,
+      // V1 Sales Tax PR 2: +2 composite foreign keys, +1 JSON.
+      compositeWithForeignKey: 124,
       compositeWithoutForeignKey: 0,
       historicalSnapshot: 8,
       polymorphic: 4,
-      json: 9,
+      json: 10,
       // ESP-04 M5b: +1 external id (PaymentRefund.clientRequestId).
       external: 9,
-      total: 152,
+      total: 155,
     });
     // Optional relationships are present and marked optional.
     const optionalForeignKeys = relationsBetweenBusinessRecords.filter(

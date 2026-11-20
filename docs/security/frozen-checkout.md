@@ -98,6 +98,14 @@ PR 5 recovery treats these as non-retryable: no automatic retries, and the
 case is shown as needing attention. Once the cause is resolved, support
 recovery creates the order from the same frozen checkout.
 
+## Version 3 (V1 Sales Tax PR 2)
+
+With sales tax on, the frozen checkout also carries its tax (version 3):
+the confirmed tax version, components, each line's tax class and the full
+calculation. The charge is subtotal − discounts + tax − gift card, and the
+tax is recalculated from its frozen inputs and must match exactly before the
+order is created. See [sales-tax-checkout.md](sales-tax-checkout.md).
+
 ## Compatibility
 
 - Version-1 saved checkouts (payments in flight before PR 7) are still read

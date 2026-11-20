@@ -41,6 +41,8 @@ export const TABLES_ADDED_AFTER_4C: ReadonlySet<string> = new Set([
   'LocationTaxVersion',
   'LocationTaxComponent',
   'LocationTaxComponentClass',
+  // V1 Sales Tax PR 2 — order tax snapshots (20261203090000).
+  'OrderTaxSnapshot',
   // SC1a — CENTERIVO platform operators (20261022090000).
   'PlatformOperator',
   'PlatformAuditEvent',
@@ -132,6 +134,8 @@ export const COLUMNS_ADDED_AFTER_4C: Readonly<
   // V1 Sales Tax PR 1 — tax classification (20261202090000).
   Category: ['taxClassId', 'taxClassReviewedAt'],
   Product: ['taxClassId'],
+  // V1 Sales Tax PR 2 — the tax charged on an order (20261203090000).
+  Order: ['taxMinorUnits'],
 };
 
 // A checksum of every row of every table that existed at the 4C-era migrations,
@@ -162,4 +166,38 @@ export async function dataChecksum(url: string): Promise<string> {
   } finally {
     await client.end();
   }
+}
+
+// V1 Sales Tax PR 2 — an Order row for a database migrated only up to an
+// older migration. Prisma writes every column that has a default
+// (Order.taxMinorUnits, added later) explicitly, which such a database lacks;
+// this writes only the order's original columns and leaves the rest to the
+// database's own defaults (where the column exists).
+export async function createOrderOnOlderSchema(
+  db: {
+    $executeRaw(
+      query: TemplateStringsArray,
+      ...values: unknown[]
+    ): Promise<number>;
+  },
+  order: {
+    id: string;
+    tenantId: string;
+    orderNumber: string;
+    accessToken: string;
+    locationId: string;
+    customerId: string | null;
+    paymentAttemptId: string;
+    subtotal: number;
+  },
+): Promise<void> {
+  await db.$executeRaw`
+    INSERT INTO "Order" ("id", "tenantId", "orderNumber", "accessToken",
+                         "locationId", "customerId", "paymentAttemptId",
+                         "guestName", "guestPhone", "currency", "subtotal",
+                         "updatedAt")
+    VALUES (${order.id}, ${order.tenantId}, ${order.orderNumber},
+            ${order.accessToken}, ${order.locationId}, ${order.customerId},
+            ${order.paymentAttemptId}, 'Fictional Guest', '5550000000',
+            'USD', ${order.subtotal}, CURRENT_TIMESTAMP)`;
 }

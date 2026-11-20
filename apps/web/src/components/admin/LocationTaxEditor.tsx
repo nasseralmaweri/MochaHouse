@@ -52,6 +52,9 @@ export function LocationTaxEditor({ data }: { data: AdminLocationTaxResponse }) 
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
+  // V1 Sales Tax PR 2 — confirming settings with no taxes needs its own
+  // explicit acknowledgement (the API requires it too).
+  const [noTaxAcknowledged, setNoTaxAcknowledged] = useState(false);
 
   const update = (key: string, patch: Partial<TaxComponentDraftRow>) => {
     setRows(rows.map((row) => (row.key === key ? { ...row, ...patch } : row)));
@@ -104,6 +107,9 @@ export function LocationTaxEditor({ data }: { data: AdminLocationTaxResponse }) 
     const result = await confirmLocationTaxDraft(data.location.id, {
       draftId: data.draft.id,
       draftUpdatedAt: data.draft.updatedAt,
+      ...(data.draft.components.length === 0
+        ? { acknowledgeNoTax: noTaxAcknowledged }
+        : {}),
     });
     setPending(false);
     if (result.outcome === "success") {
@@ -317,10 +323,27 @@ export function LocationTaxEditor({ data }: { data: AdminLocationTaxResponse }) 
             I&apos;ve checked these rates against this location&apos;s
             official state and local tax rates.
           </label>
+          {draft.components.length === 0 ? (
+            <label className="flex items-start gap-2 text-sm text-text-primary">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={noTaxAcknowledged}
+                onChange={(event) => setNoTaxAcknowledged(event.target.checked)}
+              />
+              This location charges no sales tax. Customers will pay no tax on
+              their orders here.
+            </label>
+          ) : null}
           <div>
             <Button
               onClick={() => void confirm()}
-              disabled={pending || !canConfirm || !acknowledged}
+              disabled={
+                pending ||
+                !canConfirm ||
+                !acknowledged ||
+                (draft.components.length === 0 && !noTaxAcknowledged)
+              }
             >
               Confirm tax settings
             </Button>

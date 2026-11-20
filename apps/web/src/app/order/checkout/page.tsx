@@ -9,6 +9,8 @@ import {
   CHECKOUT_RESOURCE_UNAVAILABLE,
   CHECKOUT_SESSION_EXPIRED,
   CHECKOUT_SESSION_INVALID,
+  CHECKOUT_TAX_CHANGED,
+  CHECKOUT_TAX_NOT_CONFIGURED,
   type CheckoutPaymentRequiredResponse,
   type CheckoutPaymentSimulationOutcome,
   type CheckoutQuoteResponse,
@@ -31,6 +33,7 @@ import {
   type CheckoutResult,
 } from "@/lib/api-client";
 import { formatPrice } from "@/lib/money";
+import { TAX_NOT_CONFIGURED_MESSAGE, taxLineLabel } from "@/lib/checkout/tax";
 import {
   stripeContextOf,
   withoutPaymentReturnParams,
@@ -344,6 +347,9 @@ export default function CheckoutPage() {
   // orders, or this location not taking online orders, closes checkout
   // (the server refuses regardless).
   const orderingDisabled =
+    // V1 Sales Tax PR 2 — sales tax is on but this location has no
+    // confirmed settings: it cannot take orders (the server refuses too).
+    quote?.taxStatus === "NOT_CONFIGURED" ||
     (profile !== null && !profile.orderingAvailable) ||
     (menu !== null && menu.location.id === cart.locationId
       ? !menu.location.isDigitalOrderingEnabled
@@ -353,6 +359,9 @@ export default function CheckoutPage() {
   const subtotal = quote?.subtotal ?? (priced?.ok ? priced.subtotal : 0);
   const regularDiscount = quote?.regularDiscount ?? null;
   const rewardDiscount = quote?.rewardDiscountMinorUnits ?? 0;
+  // V1 Sales Tax PR 2 — the server's tax for this cart (after discounts).
+  const tax = quote?.tax ?? null;
+  const taxNotConfigured = quote?.taxStatus === "NOT_CONFIGURED";
   const total =
     quote?.total ??
     subtotal -
@@ -527,6 +536,8 @@ export default function CheckoutPage() {
       loyaltyRewardId: asGuest ? null : selectedRewardId,
       couponCode: appliedCoupon,
       giftCardCode: appliedGiftCard,
+      // V1 Sales Tax PR 2 — the tax version this total was shown with.
+      taxVersionId: quote?.tax?.taxVersionId ?? null,
     };
 
     const result = await submitCheckoutFromBrowser(request, { asGuest });
@@ -567,6 +578,17 @@ export default function CheckoutPage() {
         result.code === CHECKOUT_SESSION_EXPIRED
       ) {
         setSubmitError(`${result.message}`);
+        return;
+      }
+      if (
+        result.code === CHECKOUT_TAX_CHANGED ||
+        result.code === CHECKOUT_TAX_NOT_CONFIGURED
+      ) {
+        // V1 Sales Tax PR 2 — the tax changed (or stopped being available)
+        // since this total was shown. Nothing was charged: re-read the quote
+        // so the customer reviews the new total.
+        setQuoteRefresh((n) => n + 1);
+        setSubmitError(result.message);
         return;
       }
       if (result.code === CHECKOUT_RESOURCE_UNAVAILABLE) {
@@ -794,6 +816,29 @@ export default function CheckoutPage() {
                 <span>{pointsLabel} Reward · {selectedReward.name}</span>
                 <span>−{formatPrice(rewardDiscount, currency)}</span>
               </div>
+            ) : null}
+            {tax ? (
+              tax.components.length > 0 ? (
+                tax.components.map((component) => (
+                  <div
+                    key={component.name}
+                    className="flex items-center justify-between text-sm text-text-secondary"
+                  >
+                    <span>{taxLineLabel(component)}</span>
+                    <span>{formatPrice(component.taxMinorUnits, currency)}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="flex items-center justify-between text-sm text-text-secondary">
+                  <span>Sales tax</span>
+                  <span>{formatPrice(0, currency)}</span>
+                </div>
+              )
+            ) : null}
+            {taxNotConfigured ? (
+              <p role="alert" className="text-sm text-status-warning">
+                {TAX_NOT_CONFIGURED_MESSAGE}
+              </p>
             ) : null}
             <div className="flex items-center justify-between">
               <span

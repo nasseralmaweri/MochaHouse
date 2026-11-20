@@ -9,6 +9,7 @@ import {
   TAX_CATEGORIES_UNREVIEWED,
   TAX_CLASS_NAME_TAKEN,
   TAX_DRAFT_CHANGED,
+  TAX_ZERO_ACKNOWLEDGEMENT_REQUIRED,
   TAX_SETTINGS_OWNER_ONLY,
   type AdminGettingStartedResponse,
   type AdminLocationTaxResponse,
@@ -797,5 +798,48 @@ describe('V1 Sales Tax PR 1 — tax settings (integration)', () => {
     expect(
       (checklist.body.steps as { key: string }[]).map((step) => step.key),
     ).not.toContain('tax');
+  });
+
+  // V1 Sales Tax PR 2 — confirming settings with no taxes needs the
+  // administrator's explicit acknowledgement, recorded in the history.
+  it('requires and records an explicit acknowledgement to confirm zero tax', async () => {
+    const second = await prisma.location.findFirstOrThrow({
+      where: { tenantId: T1, id: { not: t1Location.id } },
+      select: { id: true },
+    });
+    const saved = (
+      await as('owner')
+        .put(draft(second.id))
+        .send({ components: [] })
+        .expect(200)
+    ).body as AdminLocationTaxResponse;
+    const review = {
+      draftId: saved.draft!.id,
+      draftUpdatedAt: saved.draft!.updatedAt,
+    };
+    for (const acknowledgeNoTax of [undefined, false, 'yes']) {
+      const refused = await as('owner')
+        .post(confirm(second.id))
+        .send({ ...review, acknowledgeNoTax })
+        .expect(409);
+      expect((refused.body as { code?: string }).code).toBe(
+        TAX_ZERO_ACKNOWLEDGEMENT_REQUIRED,
+      );
+    }
+    const confirmed = (
+      await as('owner')
+        .post(confirm(second.id))
+        .send({ ...review, acknowledgeNoTax: true })
+        .expect(200)
+    ).body as AdminLocationTaxResponse;
+    expect(confirmed.confirmed).toMatchObject({ components: [] });
+    const event = await prisma.internalAuditEvent.findFirstOrThrow({
+      where: {
+        tenantId: T1,
+        action: 'tax.location_confirmed',
+        targetId: second.id,
+      },
+    });
+    expect(event.afterData).toMatchObject({ noTaxAcknowledged: true });
   });
 });

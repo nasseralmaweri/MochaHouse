@@ -67,6 +67,8 @@ interface LockedOrder {
   promotionDiscountMinorUnits: number;
   rewardDiscountMinorUnits: number;
   giftCardTenderMinorUnits: number;
+  // V1 Sales Tax PR 2 — the sales tax charged (0 for an untaxed order).
+  taxMinorUnits: number;
 }
 
 interface Reversals {
@@ -408,7 +410,7 @@ async function lockOrder(
     SELECT "id", "status"::text AS "status", "tenantId", "locationId",
            "paymentAttemptId", "currency", "subtotal",
            "promotionDiscountMinorUnits", "rewardDiscountMinorUnits",
-           "giftCardTenderMinorUnits"
+           "giftCardTenderMinorUnits", "taxMinorUnits"
       FROM "Order"
      WHERE "id" = ${orderId} AND "tenantId" = ${tenantId}
        FOR NO KEY UPDATE`;
@@ -684,10 +686,14 @@ async function cardRefundDue(
       'This order has a card refund still in progress, so it cannot be closed until its outcome is known. Try again later or contact support.',
     );
   }
+  // V1 Sales Tax PR 2 — what was charged includes the sales tax: the whole
+  // charge (tax included) is what the payment records must agree with, and
+  // what a cancellation owes back. Never re-derived from today's rates.
   const external =
     order.subtotal -
     order.promotionDiscountMinorUnits -
-    order.rewardDiscountMinorUnits -
+    order.rewardDiscountMinorUnits +
+    order.taxMinorUnits -
     order.giftCardTenderMinorUnits;
   if (
     !attempt ||

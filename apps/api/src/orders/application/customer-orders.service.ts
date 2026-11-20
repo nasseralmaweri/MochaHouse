@@ -12,6 +12,7 @@ import {
   toOrderLoyaltyRewardSummary,
   toOrderPromotionSummary,
 } from '../infrastructure/order-line-mapper';
+import { toOrderTaxSummary } from '../../tax/application/checkout-tax';
 
 type OrderWithLocation = Prisma.OrderGetPayload<{
   include: { location: true };
@@ -54,6 +55,7 @@ export class CustomerOrdersService {
         loyaltyRewardRedemption: true,
         loyaltyBonus: { include: { items: true } },
         giftCardRedemption: true,
+        taxSnapshot: true,
       },
     });
 
@@ -64,6 +66,7 @@ export class CustomerOrdersService {
     return {
       ...this.toSummary(order),
       lines: order.lines.map(toOrderLineSummary),
+      tax: toOrderTaxSummary(order.taxSnapshot),
       orderPromotion: toOrderPromotionSummary(order.promotionRedemption),
       loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
       loyaltyBonus: toOrderLoyaltyBonusSummary(order.loyaltyBonus),
@@ -84,13 +87,16 @@ export class CustomerOrdersService {
       total:
         order.subtotal -
         order.promotionDiscountMinorUnits -
-        order.rewardDiscountMinorUnits,
+        order.rewardDiscountMinorUnits +
+        order.taxMinorUnits,
       giftCardTenderMinorUnits: order.giftCardTenderMinorUnits,
       externalPaymentMinorUnits:
         order.subtotal -
         order.promotionDiscountMinorUnits -
-        order.rewardDiscountMinorUnits -
+        order.rewardDiscountMinorUnits +
+        order.taxMinorUnits -
         order.giftCardTenderMinorUnits,
+      taxMinorUnits: order.taxMinorUnits,
       currency: order.currency,
     };
   }

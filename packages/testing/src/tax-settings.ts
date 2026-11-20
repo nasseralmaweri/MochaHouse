@@ -2,7 +2,7 @@ import { Client } from "pg";
 import { assertDisposableDatabase } from "./disposable-database";
 
 // V1 Sales Tax PR 1 — removes the sales tax settings of the given test
-// businesses (tax classes, every location tax version and its taxes, category
+// businesses (order tax snapshots, tax classes, every location tax version and its taxes, category
 // and product classifications) and their tax audit history. Confirmed
 // versions are guarded against deletion; this test-only removal bypasses the
 // guard (session_replication_role = replica) on a database proven
@@ -19,6 +19,14 @@ export async function removeTaxSettingsForTest(
     await client.query("BEGIN");
     await client.query("SET LOCAL session_replication_role = replica");
     const ids = [...tenantIds];
+    // V1 Sales Tax PR 2 — order tax snapshots (written once, never deleted
+    // by the application) name the tax versions removed below.
+    if ((await client.query(`SELECT to_regclass('"OrderTaxSnapshot"') AS t`)).rows[0].t) {
+      await client.query(
+        `DELETE FROM "OrderTaxSnapshot" WHERE "tenantId" = ANY($1::text[])`,
+        [ids],
+      );
+    }
     await client.query(
       `DELETE FROM "LocationTaxComponentClass" WHERE "tenantId" = ANY($1::text[])`,
       [ids],

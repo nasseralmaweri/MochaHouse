@@ -10,6 +10,7 @@ import {
 } from "@/lib/api-client";
 import { useStorefrontProfile } from "@/lib/storefront-profile-context";
 import { formatPrice } from "@/lib/money";
+import { CART_TAX_NOTE } from "@/lib/checkout/tax";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { BackLink } from "@/components/BackLink";
@@ -275,7 +276,7 @@ export default function OrderCartPage() {
           </span>
         </div>
         <p className="text-xs text-text-muted">
-          Final pricing is confirmed at checkout.
+          Final pricing is confirmed at checkout. {CART_TAX_NOTE}
         </p>
       </div>
 

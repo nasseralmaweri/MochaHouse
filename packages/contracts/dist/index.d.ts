@@ -418,6 +418,7 @@ export interface CheckoutRequest {
     loyaltyRewardId?: string | null;
     couponCode?: string | null;
     giftCardCode?: string | null;
+    taxVersionId?: string | null;
 }
 export interface OrderLoyaltyRewardSummary {
     rewardName: string;
@@ -430,6 +431,28 @@ export interface OrderGiftCardSummary {
     last4: string;
     amountMinorUnits: number;
 }
+export interface TaxComponentAmount {
+    name: string;
+    jurisdiction: TaxJurisdiction;
+    ratePercent: string;
+    taxableMinorUnits: number;
+    taxMinorUnits: number;
+}
+export interface OrderTaxSummary {
+    taxMinorUnits: number;
+    taxVersion: number;
+    components: TaxComponentAmount[];
+    lineTaxMinorUnits: number[];
+}
+export type CheckoutTaxStatus = "CALCULATED" | "DISABLED" | "NOT_CONFIGURED";
+export interface CheckoutQuoteTax {
+    taxMinorUnits: number;
+    taxVersionId: string;
+    taxVersion: number;
+    components: TaxComponentAmount[];
+}
+export declare const CHECKOUT_TAX_NOT_CONFIGURED = "CHECKOUT_TAX_NOT_CONFIGURED";
+export declare const CHECKOUT_TAX_CHANGED = "CHECKOUT_TAX_CHANGED";
 export type PromotionKind = "AUTOMATIC" | "COUPON";
 export type PromotionDiscountType = "PERCENTAGE_OFF" | "FIXED_AMOUNT" | "FREE_ITEM";
 export interface OrderPromotionSummary {
@@ -479,6 +502,8 @@ export interface OrderConfirmation {
     total: number;
     giftCardTenderMinorUnits: number;
     externalPaymentMinorUnits: number;
+    taxMinorUnits: number;
+    tax: OrderTaxSummary | null;
     currency: string;
     lines: OrderLineSummary[];
     orderPromotion: OrderPromotionSummary | null;
@@ -500,6 +525,8 @@ export interface OrderStatusResponse {
     total: number;
     giftCardTenderMinorUnits: number;
     externalPaymentMinorUnits: number;
+    taxMinorUnits: number;
+    tax: OrderTaxSummary | null;
     currency: string;
     lines: OrderLineSummary[];
     orderPromotion: OrderPromotionSummary | null;
@@ -606,10 +633,12 @@ export interface CustomerOrderSummary {
     total: number;
     giftCardTenderMinorUnits: number;
     externalPaymentMinorUnits: number;
+    taxMinorUnits: number;
     currency: string;
 }
 export interface CustomerOrderDetail extends CustomerOrderSummary {
     lines: OrderLineSummary[];
+    tax: OrderTaxSummary | null;
     orderPromotion: OrderPromotionSummary | null;
     loyaltyReward: OrderLoyaltyRewardSummary | null;
     loyaltyBonus: OrderLoyaltyBonusSummary | null;
@@ -680,6 +709,8 @@ export interface CheckoutQuoteResponse {
     balance: number;
     rewards: CheckoutRewardOption[];
     rewardDiscountMinorUnits: number;
+    taxStatus: CheckoutTaxStatus;
+    tax: CheckoutQuoteTax | null;
     total: number;
     giftCardStatus: GiftCardQuoteStatus | null;
     giftCardMessage: string | null;
@@ -909,6 +940,8 @@ export interface StoreOrderDetail extends StoreOrderSummary {
     total: number;
     giftCardTenderMinorUnits: number;
     externalPaymentMinorUnits: number;
+    taxMinorUnits: number;
+    tax: OrderTaxSummary | null;
     orderPromotion: OrderPromotionSummary | null;
     loyaltyReward: OrderLoyaltyRewardSummary | null;
     loyaltyBonus: OrderLoyaltyBonusSummary | null;
@@ -3667,7 +3700,7 @@ export interface AdminTaxSettingsResponse {
     locations: AdminTaxLocationSummary[];
     unreviewedActiveCategories: number;
     pricesIncludeTax: false;
-    taxCollectionEnabled: false;
+    taxCollectionEnabled: boolean;
 }
 export interface AdminTaxComponent {
     id: string;
@@ -3701,6 +3734,7 @@ export interface AdminLocationTaxResponse {
     draft: AdminTaxVersion | null;
     history: AdminTaxVersion[];
     unreviewedActiveCategories: number;
+    taxCollectionEnabled: boolean;
 }
 export interface SaveTaxClassRequest {
     name: string;
@@ -3723,11 +3757,13 @@ export interface SaveLocationTaxDraftRequest {
 export interface ConfirmLocationTaxDraftRequest {
     draftId: string;
     draftUpdatedAt: string;
+    acknowledgeNoTax?: boolean;
 }
 export declare const TAX_SETTINGS_OWNER_ONLY = "TAX_SETTINGS_OWNER_ONLY";
 export declare const TAX_CATEGORIES_UNREVIEWED = "TAX_CATEGORIES_UNREVIEWED";
 export declare const TAX_DRAFT_CHANGED = "TAX_DRAFT_CHANGED";
 export declare const TAX_CLASS_NAME_TAKEN = "TAX_CLASS_NAME_TAKEN";
+export declare const TAX_ZERO_ACKNOWLEDGEMENT_REQUIRED = "TAX_ZERO_ACKNOWLEDGEMENT_REQUIRED";
 export type TaxRateParseResult = {
     ok: true;
     ratePpm: number;

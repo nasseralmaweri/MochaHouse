@@ -4,6 +4,7 @@ import type { OrderStatus } from "@mocha-house/contracts";
 import { getCustomerSessionToken } from "@/lib/auth/session";
 import { getCustomerOrderDetail } from "@/lib/auth/orders";
 import { formatPrice } from "@/lib/money";
+import { orderTaxLines } from "@/lib/checkout/tax";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { BackLink } from "@/components/BackLink";
@@ -103,6 +104,15 @@ export default async function AccountOrderDetailPage({
               <span>−{formatPrice(order.rewardDiscount, order.currency)}</span>
             </div>
           ) : null}
+          {orderTaxLines(order.taxMinorUnits, order.tax).map((taxLine) => (
+            <div
+              key={taxLine.label}
+              className="flex items-center justify-between text-sm text-text-secondary"
+            >
+              <span>{taxLine.label}</span>
+              <span>{formatPrice(taxLine.amountMinorUnits, order.currency)}</span>
+            </div>
+          ))}
           <div className="flex items-center justify-between">
             <span
               className={`text-sm ${

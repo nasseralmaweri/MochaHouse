@@ -8,9 +8,12 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import {
+  CHECKOUT_TAX_CHANGED,
+  CHECKOUT_TAX_NOT_CONFIGURED,
   CHECKOUT_ALREADY_COMPLETED,
   CHECKOUT_CHANGED_DURING_PAYMENT,
   CHECKOUT_SESSION_EXPIRED,
@@ -90,6 +93,7 @@ import {
   buildCheckoutSnapshot,
   giftCardPlanOf,
   FROZEN_CHECKOUT_SNAPSHOT_VERSION,
+  TAXED_CHECKOUT_SNAPSHOT_VERSION,
   FrozenCheckoutMismatchError,
   LEGACY_CHECKOUT_SNAPSHOT_VERSION,
   freezeCheckout,
@@ -139,6 +143,21 @@ import {
   toOrderLoyaltyRewardSummary,
   toOrderPromotionSummary,
 } from '../infrastructure/order-line-mapper';
+import {
+  BUILT_IN_SALES_TAX_PROVIDER,
+  SALES_TAX_PROVIDER,
+  isSalesTaxEnabled,
+  type SalesTaxProvider,
+} from '../../tax/application/sales-tax-provider';
+import {
+  FrozenTaxMismatchError,
+  SalesTaxService,
+  TaxNotConfiguredError,
+  orderTaxDetail,
+  toOrderTaxSummary,
+  toQuoteTax,
+  type FrozenTax,
+} from '../../tax/application/checkout-tax';
 
 const MAX_ORDER_NUMBER_ATTEMPTS = 5;
 
@@ -153,6 +172,7 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
     loyaltyRewardRedemption: true;
     loyaltyBonus: { include: { items: true } };
     giftCardRedemption: true;
+    taxSnapshot: true;
   };
 }>;
 
@@ -163,12 +183,30 @@ const ORDER_INCLUDE = {
   loyaltyRewardRedemption: true,
   loyaltyBonus: { include: { items: true } },
   giftCardRedemption: true,
+  // V1 Sales Tax PR 2 — the order's tax breakdown.
+  taxSnapshot: true,
 } satisfies Prisma.OrderInclude;
 
 type PaymentAttemptRow = Prisma.PaymentAttemptGetPayload<Record<string, never>>;
 type CheckoutSessionRow = Prisma.CheckoutSessionGetPayload<
   Record<string, never>
 >;
+
+// V1 Sales Tax PR 2 — refusals, before any payment attempt exists.
+function taxNotConfigured(): ConflictException {
+  return new ConflictException({
+    code: CHECKOUT_TAX_NOT_CONFIGURED,
+    message:
+      "This location can't take online orders right now. Please try again later.",
+  });
+}
+function taxChanged(): ConflictException {
+  return new ConflictException({
+    code: CHECKOUT_TAX_CHANGED,
+    message:
+      'The sales tax for this order has changed. Please review your total and place your order again — nothing was charged.',
+  });
+}
 
 // ESP-03 PR 6 — refusals.
 function invalidSession(): ConflictException {
@@ -242,7 +280,18 @@ export class CheckoutService {
     @Inject(PAYMENT_PROVIDER)
     private readonly paymentProvider: PaymentProvider,
     private readonly storefrontFeatures: StorefrontFeaturesService,
-  ) {}
+    // V1 Sales Tax PR 2 — the tax calculation (built-in unless a provider is
+    // bound to SALES_TAX_PROVIDER).
+    @Optional()
+    @Inject(SALES_TAX_PROVIDER)
+    salesTaxProvider?: SalesTaxProvider,
+  ) {
+    this.salesTax = new SalesTaxService(
+      salesTaxProvider ?? BUILT_IN_SALES_TAX_PROVIDER,
+    );
+  }
+
+  private readonly salesTax: SalesTaxService;
 
   // customerIdentity is optional — sign-in is never required to check out
   // (see OrdersController's OptionalCustomerAuthGuard). When present, it
@@ -442,11 +491,31 @@ export class CheckoutService {
       }
     }
 
+    // V1 Sales Tax PR 2 — with sales tax on, the tax on this order after its
+    // store-funded discounts, from the location's CONFIRMED settings (none:
+    // refused before anything is recorded). The customer must have reviewed
+    // exactly this tax version on their quote; a change since is refused so
+    // they review the new total first. Frozen with the checkout below.
+    let tax: FrozenTax | null = null;
+    if (isSalesTaxEnabled()) {
+      tax = await this.planTax(
+        tenantId,
+        request.locationId,
+        priced,
+        regularPlan,
+        prePaymentPlan,
+      );
+      if (request.taxVersionId !== tax.taxVersionId) throw taxChanged();
+    }
+    const taxAmount = tax?.result.taxMinorUnits ?? 0;
+
     // Gross merchandise minus the regular discount minus the reward
-    // discount — the amount owed. Guaranteed >= 0 (each discount is capped
-    // at the merchandise then remaining).
+    // discount, plus sales tax — the amount owed. Guaranteed >= 0 (each
+    // discount is capped at the merchandise then remaining).
     const amountOwed =
-      merchandiseAfterRegular - (prePaymentPlan?.discountMinorUnits ?? 0);
+      merchandiseAfterRegular -
+      (prePaymentPlan?.discountMinorUnits ?? 0) +
+      taxAmount;
 
     // Milestone 7G — resolve the ONE gift card (if a code was supplied) and
     // size its tender against the amount owed, BEFORE any payment attempt
@@ -561,6 +630,7 @@ export class CheckoutService {
         giftCardTender,
         charge: chargeAmount,
         loyalty,
+        tax,
       }),
     };
     const created = await this.createPaymentAttempt(
@@ -1054,24 +1124,51 @@ export class CheckoutService {
         ? request.loyaltyRewardId.trim()
         : null;
     let rewardDiscountMinorUnits = 0;
+    let rewardPlan: RedemptionPlan | null = null;
     if (selectedRewardId !== null && customerId !== null && features.loyalty) {
       try {
-        const plan = await this.redemptionService.buildRedemptionPlan(
+        rewardPlan = await this.redemptionService.buildRedemptionPlan(
           selectedRewardId,
           priced,
           menu,
           tenantId,
           regularRewardContext(regularPlan, merchandiseAfterRegular),
         );
-        rewardDiscountMinorUnits = plan.discountMinorUnits;
+        rewardDiscountMinorUnits = rewardPlan.discountMinorUnits;
       } catch {
         // The selected reward no longer applies with the current cart /
         // regular discount — the quote just shows 0 for it.
         rewardDiscountMinorUnits = 0;
+        rewardPlan = null;
       }
     }
 
-    const total = merchandiseAfterRegular - rewardDiscountMinorUnits;
+    // V1 Sales Tax PR 2 — the tax this cart would pay, exactly as checkout
+    // will calculate it (after the store-funded discounts above).
+    let taxStatus: CheckoutQuoteResponse['taxStatus'] = 'DISABLED';
+    let tax: CheckoutQuoteResponse['tax'] = null;
+    if (isSalesTaxEnabled()) {
+      try {
+        tax = toQuoteTax(
+          await this.planTax(
+            tenantId,
+            request.locationId,
+            priced,
+            regularPlan,
+            rewardPlan,
+          ),
+        );
+        taxStatus = 'CALCULATED';
+      } catch (error) {
+        if (!(error instanceof ConflictException)) throw error;
+        taxStatus = 'NOT_CONFIGURED';
+      }
+    }
+
+    const total =
+      merchandiseAfterRegular -
+      rewardDiscountMinorUnits +
+      (tax?.taxMinorUnits ?? 0);
 
     // Milestone 7G — READ-ONLY gift-card preview. Resolve the supplied code
     // against the current card state and report how much it WOULD apply
@@ -1118,6 +1215,8 @@ export class CheckoutService {
       balance,
       rewards,
       rewardDiscountMinorUnits,
+      taxStatus,
+      tax,
       total,
       giftCardStatus,
       giftCardMessage,
@@ -1161,13 +1260,17 @@ export class CheckoutService {
       total:
         order.subtotal -
         order.promotionDiscountMinorUnits -
-        order.rewardDiscountMinorUnits,
+        order.rewardDiscountMinorUnits +
+        order.taxMinorUnits,
       giftCardTenderMinorUnits: order.giftCardTenderMinorUnits,
       externalPaymentMinorUnits:
         order.subtotal -
         order.promotionDiscountMinorUnits -
-        order.rewardDiscountMinorUnits -
+        order.rewardDiscountMinorUnits +
+        order.taxMinorUnits -
         order.giftCardTenderMinorUnits,
+      taxMinorUnits: order.taxMinorUnits,
+      tax: toOrderTaxSummary(order.taxSnapshot),
       currency: order.currency,
       lines: order.lines.map(toOrderLineSummary),
       orderPromotion: toOrderPromotionSummary(order.promotionRedemption),
@@ -2124,7 +2227,9 @@ export class CheckoutService {
             tenantId,
             paymentAttemptId: row.id,
             version: snapshot.frozen
-              ? FROZEN_CHECKOUT_SNAPSHOT_VERSION
+              ? snapshot.frozen.tax
+                ? TAXED_CHECKOUT_SNAPSHOT_VERSION
+                : FROZEN_CHECKOUT_SNAPSHOT_VERSION
               : LEGACY_CHECKOUT_SNAPSHOT_VERSION,
             payload: snapshot as unknown as Prisma.InputJsonObject,
           },
@@ -2214,12 +2319,22 @@ export class CheckoutService {
       let plan: RedemptionPlan | null = null;
       let rewardDiscount = 0;
       let giftCardTender: number;
+      // V1 Sales Tax PR 2 — the tax charged (0 for a version 1 or 2
+      // checkout: nothing is retroactive) and its frozen calculation.
+      let tax = 0;
+      let frozenTax: FrozenTax | null = null;
       if (checkout.frozen) {
         const frozen = checkout.frozen;
         try {
           verifyFrozenCheckout({ ...checkout, frozen }, attempt);
+          // The frozen tax is repeated from its own frozen inputs and must
+          // come out identical — never recalculated against today's rates.
+          if (frozen.tax) this.salesTax.verifyFrozenTax(frozen.tax, frozen);
         } catch (error) {
-          if (error instanceof FrozenCheckoutMismatchError) {
+          if (
+            error instanceof FrozenCheckoutMismatchError ||
+            error instanceof FrozenTaxMismatchError
+          ) {
             throw new ConflictException(
               `Payment succeeded but its saved checkout could not be verified. ` +
                 `Reference ${paymentAttemptId} for support.`,
@@ -2268,6 +2383,8 @@ export class CheckoutService {
         plan = frozen.rewardPlan;
         rewardDiscount = frozen.totals.rewardDiscount;
         giftCardTender = frozen.totals.giftCardTender;
+        tax = frozen.totals.tax ?? 0;
+        frozenTax = frozen.tax ?? null;
       } else {
         // Revalidate against the current catalog state — payment succeeding
         // does not itself guarantee nothing changed in the window since the
@@ -2393,6 +2510,7 @@ export class CheckoutService {
           promotionDiscountMinorUnits: regularDiscount,
           rewardDiscountMinorUnits: rewardDiscount,
           giftCardTenderMinorUnits: giftCardTender,
+          taxMinorUnits: tax,
           status: 'RECEIVED',
           // Security 4C-3 — nested lines and history take their tenantId
           // from this Order through the composite (tenantId, orderId) key, so
@@ -2414,6 +2532,36 @@ export class CheckoutService {
         },
         include: { location: true },
       });
+
+      // V1 Sales Tax PR 2 — the order's immutable tax snapshot, from the
+      // verified frozen calculation (the database also ties it to the
+      // order's own amounts and to a confirmed version of its location).
+      if (frozenTax) {
+        await tx.orderTaxSnapshot.create({
+          data: {
+            tenantId,
+            orderId: order.id,
+            locationTaxVersionId: frozenTax.taxVersionId,
+            taxVersion: frozenTax.taxVersion,
+            source: frozenTax.source,
+            pricesIncludeTax: false,
+            calculationVersion: frozenTax.result.calculationVersion,
+            currency: priced.currency,
+            merchandiseSubtotal: frozenTax.result.merchandiseSubtotal,
+            discountMinorUnits: frozenTax.result.discountMinorUnits,
+            taxableMinorUnits: frozenTax.result.taxableMinorUnits,
+            taxMinorUnits: frozenTax.result.taxMinorUnits,
+            totalMinorUnits:
+              priced.subtotal - regularDiscount - rewardDiscount + tax,
+            giftCardTenderMinorUnits: giftCardTender,
+            chargedMinorUnits: attempt.amount,
+            detail: orderTaxDetail(
+              frozenTax,
+              priced.lines.map((line) => line.productName),
+            ),
+          },
+        });
+      }
 
       // Genuine transactional outbox: committed atomically with the order
       // above. Nothing reads this table yet — that's the Store Queue
@@ -2686,6 +2834,33 @@ export class CheckoutService {
     };
   }
 
+  // V1 Sales Tax PR 2 — the tax on a priced cart (quote and checkout use
+  // exactly this). No confirmed settings for the location: refused.
+  private async planTax(
+    tenantId: string,
+    locationId: string,
+    priced: {
+      currency: string;
+      lines: { productId: string; lineTotal: number }[];
+    },
+    regularPlan: RegularDiscountPlan | null,
+    rewardPlan: RedemptionPlan | null,
+  ): Promise<FrozenTax> {
+    try {
+      return await this.salesTax.planCheckoutTax(this.prisma, {
+        tenantId,
+        locationId,
+        currency: priced.currency,
+        lines: priced.lines,
+        regularPlan,
+        rewardPlan,
+      });
+    } catch (error) {
+      if (error instanceof TaxNotConfiguredError) throw taxNotConfigured();
+      throw error;
+    }
+  }
+
   private toConfirmation(order: OrderWithRelations): OrderConfirmation {
     return {
       orderId: order.id,
@@ -2701,13 +2876,17 @@ export class CheckoutService {
       total:
         order.subtotal -
         order.promotionDiscountMinorUnits -
-        order.rewardDiscountMinorUnits,
+        order.rewardDiscountMinorUnits +
+        order.taxMinorUnits,
       giftCardTenderMinorUnits: order.giftCardTenderMinorUnits,
       externalPaymentMinorUnits:
         order.subtotal -
         order.promotionDiscountMinorUnits -
-        order.rewardDiscountMinorUnits -
+        order.rewardDiscountMinorUnits +
+        order.taxMinorUnits -
         order.giftCardTenderMinorUnits,
+      taxMinorUnits: order.taxMinorUnits,
+      tax: toOrderTaxSummary(order.taxSnapshot),
       currency: order.currency,
       lines: order.lines.map(toOrderLineSummary),
       orderPromotion: toOrderPromotionSummary(order.promotionRedemption),

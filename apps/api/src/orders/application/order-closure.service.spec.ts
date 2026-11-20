@@ -68,6 +68,8 @@ interface PlaceOptions {
   promotion?: { id: string; discount: number; perCustomer: boolean };
   reward?: { beanCost: number; discount: number };
   giftCard?: { id: string; tender: number };
+  // V1 Sales Tax PR 2 — sales tax charged on the order (with its snapshot).
+  tax?: number;
   earn?: number;
   bonus?: number;
   payment?: Partial<{
@@ -229,7 +231,8 @@ describe('R1 / S5b: order closure engine', () => {
     const promo = o.promotion?.discount ?? 0;
     const reward = o.reward?.discount ?? 0;
     const tender = o.giftCard?.tender ?? 0;
-    const external = subtotal - promo - reward - tender;
+    const tax = o.tax ?? 0;
+    const external = subtotal - promo - reward + tax - tender;
     const customerId = o.customerId ?? null;
 
     return db.$transaction(async (tx) => {
@@ -271,6 +274,7 @@ describe('R1 / S5b: order closure engine', () => {
           promotionDiscountMinorUnits: promo,
           rewardDiscountMinorUnits: reward,
           giftCardTenderMinorUnits: tender,
+          taxMinorUnits: tax,
           status: o.status ?? 'RECEIVED',
           lines: {
             create: {
@@ -286,6 +290,46 @@ describe('R1 / S5b: order closure engine', () => {
           statusHistory: { create: { status: 'RECEIVED' } },
         },
       });
+
+      // V1 Sales Tax PR 2 — a taxed order always has its snapshot, naming a
+      // confirmed tax version of its location.
+      if (tax > 0) {
+        let version = await tx.locationTaxVersion.findFirst({
+          where: { tenantId, locationId, status: 'CONFIRMED' },
+        });
+        if (!version) {
+          const draft = await tx.locationTaxVersion.create({
+            data: { tenantId, locationId, version: 1, status: 'DRAFT' },
+          });
+          version = await tx.locationTaxVersion.update({
+            where: { id: draft.id },
+            data: {
+              status: 'CONFIRMED',
+              confirmedAt: new Date(),
+              confirmedByInternalUserId:
+                tenantId === A ? base.closerA.id : base.actorB.id,
+            },
+          });
+        }
+        await tx.orderTaxSnapshot.create({
+          data: {
+            tenantId,
+            orderId: order.id,
+            locationTaxVersionId: version.id,
+            taxVersion: version.version,
+            source: 'BUILT_IN',
+            currency: 'USD',
+            merchandiseSubtotal: subtotal,
+            discountMinorUnits: promo + reward,
+            taxableMinorUnits: subtotal - promo - reward,
+            taxMinorUnits: tax,
+            totalMinorUnits: subtotal - promo - reward + tax,
+            giftCardTenderMinorUnits: tender,
+            chargedMinorUnits: external,
+            detail: {},
+          },
+        });
+      }
 
       if (o.promotion) {
         await tx.promotion.update({
@@ -823,6 +867,44 @@ describe('R1 / S5b: order closure engine', () => {
   // --- money: tenders and refund obligations ---------------------------------
 
   describe('tenders and refund obligations', () => {
+    // V1 Sales Tax PR 2 — what was charged includes its tax: a cancellation
+    // owes the whole charge back (tax included) and restores the whole gift-
+    // card tender, so the tax is never lost or counted twice.
+    it('a taxed card order: the whole charge, tax included, is owed back', async () => {
+      const orderId = await placeOrder({
+        subtotal: 2000,
+        tax: 125,
+        status: 'ACCEPTED',
+      });
+      const result = await cancel(orderId, 'ACCEPTED');
+      expect(result.closure).toMatchObject({
+        refundDueMinorUnits: 2125,
+        refundStatus: 'DUE',
+        giftCardRestoredMinorUnits: 0,
+      });
+      const [obligation] = (await snapshot(orderId)).obligations;
+      expect(obligation).toMatchObject({ amountMinorUnits: 2125 });
+    });
+
+    it('a taxed order paid partly by gift card: card restored, the rest (tax included) owed', async () => {
+      const card = await newGiftCard(500);
+      const orderId = await placeOrder({
+        subtotal: 1000,
+        tax: 63,
+        giftCard: { id: card.id, tender: 500 },
+      });
+      const result = await reject(orderId);
+      expect(result.closure).toMatchObject({
+        refundDueMinorUnits: 563,
+        giftCardRestoredMinorUnits: 500,
+      });
+      // Restored + owed back = the order's whole total, tax included.
+      expect(
+        result.closure.refundDueMinorUnits +
+          result.closure.giftCardRestoredMinorUnits,
+      ).toBe(1000 + 63);
+    });
+
     it('card only: the whole external charge is owed back, DUE, never settled', async () => {
       const orderId = await placeOrder({ subtotal: 2350, status: 'ACCEPTED' });
       const result = await cancel(orderId, 'ACCEPTED');

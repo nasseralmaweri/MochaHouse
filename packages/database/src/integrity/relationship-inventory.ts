@@ -223,9 +223,35 @@ export const TENANT_MODEL_KEYS: Readonly<
   LocationTaxVersion: ["id"],
   LocationTaxComponent: ["id"],
   LocationTaxComponentClass: ["componentId", "taxClassId"],
+  // V1 Sales Tax PR 2 — the immutable tax snapshot of a taxed order.
+  OrderTaxSnapshot: ["id"],
 });
 
 const DIRECT_REFERENCES: readonly DirectReference[] = [
+  // V1 Sales Tax PR 2 — a taxed order's snapshot names its order and the
+  // confirmed tax version it was calculated with (composite foreign keys).
+  {
+    id: "OrderTaxSnapshot.orderId",
+    kind: "composite-fk-candidate",
+    model: "OrderTaxSnapshot",
+    column: "orderId",
+    target: "Order",
+    nullable: false,
+    hasForeignKey: true,
+    onDelete: "Restrict",
+    tenantEnforced: true,
+  },
+  {
+    id: "OrderTaxSnapshot.locationTaxVersionId",
+    kind: "composite-fk-candidate",
+    model: "OrderTaxSnapshot",
+    column: "locationTaxVersionId",
+    target: "LocationTaxVersion",
+    nullable: false,
+    hasForeignKey: true,
+    onDelete: "Restrict",
+    tenantEnforced: true,
+  },
   // V1 Sales Tax PR 1 — tax classification and versioned location tax
   // settings: every link is a composite (tenantId, id) foreign key.
   {
@@ -1804,6 +1830,15 @@ const JSON_REFERENCES: readonly JsonReference[] = [
     nullable: false,
     paths: [],
     note: 'Modifier snapshot copied by value at checkout; never joined.',
+  },
+  {
+    id: "OrderTaxSnapshot.detail",
+    kind: "json-reference",
+    model: "OrderTaxSnapshot",
+    column: "detail",
+    nullable: false,
+    paths: [],
+    note: "The order's frozen tax calculation (V1 Sales Tax PR 2): tax component and tax class ids, names and rates as they were at checkout, and per-line amounts by line position. Historical values only; never joined to live records or across businesses.",
   },
   {
     id: 'CheckoutSnapshot.payload',

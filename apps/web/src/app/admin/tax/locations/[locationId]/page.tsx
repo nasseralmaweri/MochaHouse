@@ -4,7 +4,7 @@ import { can } from "@/lib/admin/capabilities";
 import { getAdminLocationTax } from "@/lib/internal-auth/admin-tax";
 import {
   JURISDICTION_LABELS,
-  TAX_PAGE_NOTE,
+  taxPageNote,
   classNameOf,
   ratePercentLabel,
 } from "@/lib/admin/tax";
@@ -123,7 +123,7 @@ export default async function AdminLocationTaxPage({
         role="status"
         className="rounded-lg bg-surface-subtle px-3 py-2 text-sm text-text-primary"
       >
-        {TAX_PAGE_NOTE}
+        {taxPageNote(data.taxCollectionEnabled)}
       </p>
 
       <AdminSection title="Confirmed settings">

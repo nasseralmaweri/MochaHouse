@@ -444,8 +444,8 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     // ESP-03 PR 8 added FinancialHold (5 composite foreign keys); ESP-04 M1
     // TenantPaymentAccount (1); ESP-04 M5a PaymentRefund (4) and
     // PaymentRefundEvent (2); V1 Sales Tax PR 1 tax classes and location
-    // tax settings (7).
-    expect(report.relationshipsChecked).toBe(136);
+    // tax settings (7); V1 Sales Tax PR 2 order tax snapshots (2).
+    expect(report.relationshipsChecked).toBe(138);
     expect(report.verdict).toBe('clean');
     expect(report.uncheckedRows).toBe(0);
     // Only the documented by-design exclusions, none holding unchecked rows.
@@ -456,6 +456,7 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
       ['NotificationDelivery.providerMessageId', null],
       ['OrderLine.selections', null],
       ['OrderRefundObligation.processorRefundId', null],
+      ['OrderTaxSnapshot.detail', null],
       ['OutboxEvent.payload', null],
       ['PaymentAttempt.providerAccountId', null],
       ['PaymentReconciliationEvent.detail', null],
@@ -731,9 +732,10 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
       expect(report.byKind).toEqual({
         'composite-fk-candidate': {
           // ESP-04 M5a added 6 (PaymentRefund, PaymentRefundEvent).
-          // V1 Sales Tax PR 1 added 7 (tax classes, location tax settings).
-          relationships: 122,
-          checked: 122,
+          // V1 Sales Tax PR 1 added 7 (tax classes, location tax settings);
+          // V1 Sales Tax PR 2 added 2 (order tax snapshots).
+          relationships: 124,
+          checked: 124,
           violations: 8,
           warnings: 0,
         },
@@ -750,8 +752,9 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
           warnings: 4,
         },
         'json-reference': {
-          // ESP-04 M5a added PaymentRefundEvent.detail (not checkable).
-          relationships: 9,
+          // ESP-04 M5a added PaymentRefundEvent.detail (not checkable);
+          // V1 Sales Tax PR 2 OrderTaxSnapshot.detail (not checkable).
+          relationships: 10,
           checked: 2,
           violations: 2,
           warnings: 0,

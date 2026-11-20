@@ -1054,6 +1054,12 @@ export interface CheckoutRequest {
   // only ever sent in this request body — never a URL, query string, order
   // record or response.
   giftCardCode?: string | null;
+  // V1 Sales Tax PR 2 — the location tax version the customer's quote was
+  // calculated with (CheckoutQuoteResponse.tax.taxVersionId). With sales tax
+  // on, checkout refuses (409 CHECKOUT_TAX_CHANGED) when it is missing or the
+  // location's confirmed tax settings have changed since, so the customer
+  // always reviews the tax they are charged.
+  taxVersionId?: string | null;
 }
 
 // The immutable snapshot of the one Mocha Bean reward redeemed on an order
@@ -1084,6 +1090,45 @@ export interface OrderGiftCardSummary {
   // The amount of the order paid by this gift card, integer minor units.
   amountMinorUnits: number;
 }
+
+// --- V1 Sales Tax PR 2: tax on a checkout and an order ------------------
+// Every amount is integer minor units; a rate is shown exactly as a
+// percentage string ("6.25"). Prices exclude tax.
+
+export interface TaxComponentAmount {
+  name: string;
+  jurisdiction: TaxJurisdiction;
+  ratePercent: string;
+  taxableMinorUnits: number;
+  taxMinorUnits: number;
+}
+
+// The tax on an order, from its immutable snapshot. Null on every order
+// created before sales tax was turned on (nothing is retroactive).
+export interface OrderTaxSummary {
+  taxMinorUnits: number;
+  taxVersion: number;
+  components: TaxComponentAmount[];
+  // Per order line (same order as `lines`): the tax allocated to it.
+  lineTaxMinorUnits: number[];
+}
+
+// Why checkout shows no tax: DISABLED — sales tax is not turned on here
+// (prices are charged as before); NOT_CONFIGURED — this location has no
+// confirmed sales tax settings, so it cannot take orders until it does.
+export type CheckoutTaxStatus = "CALCULATED" | "DISABLED" | "NOT_CONFIGURED";
+
+export interface CheckoutQuoteTax {
+  taxMinorUnits: number;
+  // Send back as CheckoutRequest.taxVersionId.
+  taxVersionId: string;
+  taxVersion: number;
+  components: TaxComponentAmount[];
+}
+
+// 409 refusal codes on checkout.
+export const CHECKOUT_TAX_NOT_CONFIGURED = "CHECKOUT_TAX_NOT_CONFIGURED";
+export const CHECKOUT_TAX_CHANGED = "CHECKOUT_TAX_CHANGED";
 
 // --- Order: the regular Promotion / Coupon snapshot (Milestone 7E) ---
 // The immutable record of the ONE regular Promotion or Coupon used on an
@@ -1182,6 +1227,11 @@ export interface OrderConfirmation {
   total: number;
   giftCardTenderMinorUnits: number;
   externalPaymentMinorUnits: number;
+  // V1 Sales Tax PR 2 — the sales tax included in `total` (0 when none),
+  // and its breakdown from the order's snapshot (null when the order has
+  // no tax snapshot: every order from before sales tax).
+  taxMinorUnits: number;
+  tax: OrderTaxSummary | null;
   currency: string;
   lines: OrderLineSummary[];
   orderPromotion: OrderPromotionSummary | null;
@@ -1206,6 +1256,11 @@ export interface OrderStatusResponse {
   total: number;
   giftCardTenderMinorUnits: number;
   externalPaymentMinorUnits: number;
+  // V1 Sales Tax PR 2 — the sales tax included in `total` (0 when none),
+  // and its breakdown from the order's snapshot (null when the order has
+  // no tax snapshot: every order from before sales tax).
+  taxMinorUnits: number;
+  tax: OrderTaxSummary | null;
   currency: string;
   lines: OrderLineSummary[];
   orderPromotion: OrderPromotionSummary | null;
@@ -1417,11 +1472,15 @@ export interface CustomerOrderSummary {
   // Milestone 7G — the tender split of `total`.
   giftCardTenderMinorUnits: number;
   externalPaymentMinorUnits: number;
+  // V1 Sales Tax PR 2 — the sales tax included in `total` (0 when none).
+  taxMinorUnits: number;
   currency: string;
 }
 
 export interface CustomerOrderDetail extends CustomerOrderSummary {
   lines: OrderLineSummary[];
+  // V1 Sales Tax PR 2 — the tax breakdown, or null (no tax snapshot).
+  tax: OrderTaxSummary | null;
   // Milestone 7E — the regular Promotion/Coupon snapshot, or null.
   orderPromotion: OrderPromotionSummary | null;
   loyaltyReward: OrderLoyaltyRewardSummary | null;
@@ -1596,7 +1655,12 @@ export interface CheckoutQuoteResponse {
   // The discount the currently-selected `loyaltyRewardId` would apply (0
   // when none selected or it no longer applies).
   rewardDiscountMinorUnits: number;
-  // subtotal - regularDiscount - rewardDiscountMinorUnits = the amount owed.
+  // V1 Sales Tax PR 2 — the sales tax on this cart after its store-funded
+  // discounts (null unless taxStatus is CALCULATED).
+  taxStatus: CheckoutTaxStatus;
+  tax: CheckoutQuoteTax | null;
+  // subtotal - regularDiscount - rewardDiscountMinorUnits + tax = the
+  // amount owed.
   total: number;
   // Milestone 7G — present only when a gift-card code was supplied; why it
   // did / didn't apply.
@@ -2002,6 +2066,10 @@ export interface StoreOrderDetail extends StoreOrderSummary {
   // Milestone 7G — the tender split of `total` (0 / null when no gift card).
   giftCardTenderMinorUnits: number;
   externalPaymentMinorUnits: number;
+  // V1 Sales Tax PR 2 — the sales tax included in `total`, and its
+  // breakdown (null when the order has no tax snapshot).
+  taxMinorUnits: number;
+  tax: OrderTaxSummary | null;
   orderPromotion: OrderPromotionSummary | null;
   loyaltyReward: OrderLoyaltyRewardSummary | null;
   // Milestone 7D — bonus Mocha Beans earned from HQ promotions, or null, so
@@ -7969,8 +8037,10 @@ export interface AdminTaxSettingsResponse {
   unreviewedActiveCategories: number;
   // Always false in V1: menu prices exclude tax.
   pricesIncludeTax: false;
-  // Informational in PR 1: confirmed settings are not yet applied to orders.
-  taxCollectionEnabled: false;
+  // V1 Sales Tax PR 2 — whether checkout charges sales tax here now
+  // (SALES_TAX_ENABLED). When on, a location without confirmed settings
+  // cannot take online orders.
+  taxCollectionEnabled: boolean;
 }
 
 export interface AdminTaxComponent {
@@ -8010,6 +8080,8 @@ export interface AdminLocationTaxResponse {
   // Every earlier (superseded) version, newest first.
   history: AdminTaxVersion[];
   unreviewedActiveCategories: number;
+  // V1 Sales Tax PR 2 — whether checkout charges sales tax now.
+  taxCollectionEnabled: boolean;
 }
 
 // POST /api/v1/admin/tax/classes, PATCH /api/v1/admin/tax/classes/:id
@@ -8046,6 +8118,9 @@ export interface ConfirmLocationTaxDraftRequest {
   draftId: string;
   // The draft's updatedAt as shown to the administrator.
   draftUpdatedAt: string;
+  // V1 Sales Tax PR 2 — required (true) to confirm settings with no taxes:
+  // the administrator confirms the location charges no sales tax.
+  acknowledgeNoTax?: boolean;
 }
 
 // Refusal codes.
@@ -8053,6 +8128,10 @@ export const TAX_SETTINGS_OWNER_ONLY = "TAX_SETTINGS_OWNER_ONLY";
 export const TAX_CATEGORIES_UNREVIEWED = "TAX_CATEGORIES_UNREVIEWED";
 export const TAX_DRAFT_CHANGED = "TAX_DRAFT_CHANGED";
 export const TAX_CLASS_NAME_TAKEN = "TAX_CLASS_NAME_TAKEN";
+// V1 Sales Tax PR 2 — confirming settings with no taxes needs the
+// administrator's explicit acknowledgement.
+export const TAX_ZERO_ACKNOWLEDGEMENT_REQUIRED =
+  "TAX_ZERO_ACKNOWLEDGEMENT_REQUIRED";
 
 export type TaxRateParseResult =
   | { ok: true; ratePpm: number }

@@ -28,6 +28,7 @@ import {
 import type { AuthorizationContext } from '../../internal-auth/authorization/authorization-context';
 import { requireTenantOwnership } from '../../tenancy/tenant-ownership';
 import { toClosureSummary } from './order-closure.service';
+import { toOrderTaxSummary } from '../../tax/application/checkout-tax';
 
 type OrderWithLines = Prisma.OrderGetPayload<{ include: { lines: true } }>;
 
@@ -110,6 +111,7 @@ export class AdminOrdersService {
         loyaltyRewardRedemption: true,
         loyaltyBonus: { include: { items: true } },
         giftCardRedemption: true,
+        taxSnapshot: true,
         closure: {
           include: { refundObligation: { select: { status: true } } },
         },
@@ -133,13 +135,18 @@ export class AdminOrdersService {
       total:
         order.subtotal -
         order.promotionDiscountMinorUnits -
-        order.rewardDiscountMinorUnits,
+        order.rewardDiscountMinorUnits +
+        order.taxMinorUnits,
       giftCardTenderMinorUnits: order.giftCardTenderMinorUnits,
       externalPaymentMinorUnits:
         order.subtotal -
         order.promotionDiscountMinorUnits -
-        order.rewardDiscountMinorUnits -
+        order.rewardDiscountMinorUnits +
+        order.taxMinorUnits -
         order.giftCardTenderMinorUnits,
+      // V1 Sales Tax PR 2 — the tax included in the total and its breakdown.
+      taxMinorUnits: order.taxMinorUnits,
+      tax: toOrderTaxSummary(order.taxSnapshot),
       orderPromotion: toOrderPromotionSummary(order.promotionRedemption),
       loyaltyReward: toOrderLoyaltyRewardSummary(order.loyaltyRewardRedemption),
       loyaltyBonus: toOrderLoyaltyBonusSummary(order.loyaltyBonus),

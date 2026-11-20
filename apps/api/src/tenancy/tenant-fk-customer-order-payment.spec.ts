@@ -25,7 +25,7 @@ import {
   type MigrationProject,
   type ScratchDatabase,
 } from '@mocha-house/testing';
-import { dataChecksum } from './historical-state';
+import { createOrderOnOlderSchema, dataChecksum } from './historical-state';
 
 // Security 4C-3 — PostgreSQL-enforced tenant agreement for customer, order
 // and payment relationships: nine composite foreign keys
@@ -342,50 +342,50 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
       },
     });
   }
-  // Nested lines and history: their tenantId comes from the Order through
-  // the composite key (Prisma does not accept one in a nested create).
-  await prisma.order.create({
+  // Original columns only: an older-migration database lacks later ones.
+  await createOrderOnOlderSchema(prisma, {
+    id: id(tag, 'order'),
+    tenantId,
+    orderNumber: id(tag, 'order'),
+    accessToken: id(tag, 'order-token'),
+    locationId: id(tag, 'location'),
+    customerId: id(tag, 'customer'),
+    paymentAttemptId: id(tag, 'payment'),
+    subtotal: 500,
+  });
+  await prisma.orderLine.create({
+    select: { id: true },
     data: {
-      id: id(tag, 'order'),
+      id: id(tag, 'line'),
       tenantId,
-      orderNumber: id(tag, 'order'),
-      accessToken: id(tag, 'order-token'),
-      locationId: id(tag, 'location'),
-      customerId: id(tag, 'customer'),
-      paymentAttemptId: id(tag, 'payment'),
-      guestName: 'Fictional Guest',
-      guestPhone: '5550000000',
+      orderId: id(tag, 'order'),
+      productId: id(tag, 'product'),
+      productName: 'Fictional Latte',
+      unitPrice: 500,
+      quantity: 1,
+      lineTotal: 500,
       currency: 'USD',
-      subtotal: 500,
-      lines: {
-        create: {
-          id: id(tag, 'line'),
-          productId: id(tag, 'product'),
-          productName: 'Fictional Latte',
-          unitPrice: 500,
-          quantity: 1,
-          lineTotal: 500,
-          currency: 'USD',
-          selections: [],
-        },
-      },
-      statusHistory: { create: { id: id(tag, 'history'), status: 'RECEIVED' } },
+      selections: [],
     },
   });
-  await prisma.order.create({
+  await prisma.orderStatusHistory.create({
+    select: { id: true },
     data: {
-      id: id(tag, 'order-2'),
+      id: id(tag, 'history'),
       tenantId,
-      orderNumber: id(tag, 'order-2'),
-      accessToken: id(tag, 'order-2-token'),
-      locationId: id(tag, 'location'),
-      customerId: null,
-      paymentAttemptId: id(tag, 'payment-2'),
-      guestName: 'Fictional Guest',
-      guestPhone: '5550000000',
-      currency: 'USD',
-      subtotal: 500,
+      orderId: id(tag, 'order'),
+      status: 'RECEIVED',
     },
+  });
+  await createOrderOnOlderSchema(prisma, {
+    id: id(tag, 'order-2'),
+    tenantId,
+    orderNumber: id(tag, 'order-2'),
+    accessToken: id(tag, 'order-2-token'),
+    locationId: id(tag, 'location'),
+    customerId: null,
+    paymentAttemptId: id(tag, 'payment-2'),
+    subtotal: 500,
   });
   await prisma.customerNote.create({
     data: {
