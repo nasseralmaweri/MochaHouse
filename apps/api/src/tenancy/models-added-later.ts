@@ -22,6 +22,10 @@ import {
 //   PaymentReconciliationNote    ESP-03 PR 5
 //   PaymentRefund                ESP-04 M5a
 //   PaymentRefundEvent           ESP-04 M5a
+//   TaxClass                     V1 Sales Tax PR 1
+//   LocationTaxVersion           V1 Sales Tax PR 1
+//   LocationTaxComponent         V1 Sales Tax PR 1
+//   LocationTaxComponentClass    V1 Sales Tax PR 1
 export const MODELS_ADDED_LATER: ReadonlySet<string> = new Set([
   'NotificationRecipient',
   'PaymentReconciliationCase',
@@ -37,6 +41,10 @@ export const MODELS_ADDED_LATER: ReadonlySet<string> = new Set([
   'PaymentReconciliationNote',
   'PaymentRefund',
   'PaymentRefundEvent',
+  'TaxClass',
+  'LocationTaxVersion',
+  'LocationTaxComponent',
+  'LocationTaxComponentClass',
 ]);
 
 // The relationship inventory as it applied to a database from BEFORE the models

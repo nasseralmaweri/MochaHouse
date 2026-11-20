@@ -85,6 +85,8 @@ describe('capability presentation (Milestone 5E)', () => {
         'Reports',
         'Billing',
         'Payments',
+        // V1 Sales Tax PR 1
+        'Sales Tax',
         'Administration',
       ]);
       expect(groups.find((g) => g.group === 'Customers')?.items).toEqual([

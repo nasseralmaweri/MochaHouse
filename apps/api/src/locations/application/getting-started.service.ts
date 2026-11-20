@@ -45,7 +45,23 @@ export class GettingStartedService {
     return {
       ...progress,
       storefrontLive: await this.storefrontLive(tenantId),
+      salesTax: await this.salesTax(tenantId),
     };
+  }
+
+  // V1 Sales Tax PR 1 — how many locations have confirmed sales tax
+  // settings. Informational: not a step, not part of setupComplete, and it
+  // blocks nothing (online ordering and checkout are unchanged).
+  private async salesTax(
+    tenantId: string,
+  ): Promise<AdminGettingStartedResponse['salesTax']> {
+    const [totalLocations, confirmedLocations] = await Promise.all([
+      this.prisma.location.count({ where: { tenantId } }),
+      this.prisma.locationTaxVersion.count({
+        where: { tenantId, status: 'CONFIRMED' },
+      }),
+    ]);
+    return { totalLocations, confirmedLocations };
   }
 
   // Legacy routing: the deployment's storefront serves exactly one business.

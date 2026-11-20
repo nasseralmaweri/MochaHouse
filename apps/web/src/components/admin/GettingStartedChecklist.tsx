@@ -7,6 +7,7 @@ import {
   gettingStartedSteps,
   nextGettingStartedStep,
 } from "@/lib/admin/getting-started";
+import { salesTaxSetupNote } from "@/lib/admin/tax";
 import { ButtonLink } from "./Button";
 import { StatusBadge } from "./StatusBadge";
 import { Card } from "@/components/Card";
@@ -16,10 +17,16 @@ import { Card } from "@/components/Card";
 // always paired with the reminder that the business is not publicly live.
 export function GettingStartedChecklist({
   checklist,
+  canManageTax = false,
 }: {
   checklist: AdminGettingStartedResponse;
+  // V1 Sales Tax PR 1 — show the "Set up sales tax" action.
+  canManageTax?: boolean;
 }) {
   const steps = gettingStartedSteps(checklist);
+  const salesTax = checklist.salesTax
+    ? salesTaxSetupNote(checklist.salesTax)
+    : null;
   const percent = Math.round(
     (checklist.completedCount / checklist.totalCount) * 100,
   );
@@ -111,6 +118,31 @@ export function GettingStartedChecklist({
           </li>
         ))}
       </ol>
+
+      {salesTax ? (
+        // V1 Sales Tax PR 1 — informational: not a step, not counted in the
+        // progress, and it blocks nothing.
+        <Card
+          tone={salesTax.done ? "subtle" : "default"}
+          className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="flex flex-col gap-0.5">
+            <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-text-primary">
+              Sales tax
+              <StatusBadge
+                label={salesTax.done ? "Confirmed" : "Recommended"}
+                tone={salesTax.done ? "positive" : "neutral"}
+              />
+            </span>
+            <span className="text-sm text-text-secondary">{salesTax.text}</span>
+          </div>
+          {canManageTax && !salesTax.done ? (
+            <ButtonLink href="/admin/tax" className="w-full shrink-0 sm:w-auto">
+              Set up sales tax
+            </ButtonLink>
+          ) : null}
+        </Card>
+      ) : null}
     </div>
   );
 }

@@ -218,9 +218,93 @@ export const TENANT_MODEL_KEYS: Readonly<
   PromotionCustomerUsage: ["promotionId", "customerId"],
   PromotionLocation: ["promotionId", "locationId"],
   PromotionProduct: ["promotionId", "productId"],
+  // V1 Sales Tax PR 1 — tax classes and versioned location tax settings.
+  TaxClass: ["id"],
+  LocationTaxVersion: ["id"],
+  LocationTaxComponent: ["id"],
+  LocationTaxComponentClass: ["componentId", "taxClassId"],
 });
 
 const DIRECT_REFERENCES: readonly DirectReference[] = [
+  // V1 Sales Tax PR 1 — tax classification and versioned location tax
+  // settings: every link is a composite (tenantId, id) foreign key.
+  {
+    id: "Category.taxClassId",
+    kind: "composite-fk-candidate",
+    model: "Category",
+    column: "taxClassId",
+    target: "TaxClass",
+    nullable: true,
+    hasForeignKey: true,
+    onDelete: "Restrict",
+    tenantEnforced: true,
+  },
+  {
+    id: "Product.taxClassId",
+    kind: "composite-fk-candidate",
+    model: "Product",
+    column: "taxClassId",
+    target: "TaxClass",
+    nullable: true,
+    hasForeignKey: true,
+    onDelete: "Restrict",
+    tenantEnforced: true,
+  },
+  {
+    id: "LocationTaxVersion.locationId",
+    kind: "composite-fk-candidate",
+    model: "LocationTaxVersion",
+    column: "locationId",
+    target: "Location",
+    nullable: false,
+    hasForeignKey: true,
+    onDelete: "Restrict",
+    tenantEnforced: true,
+  },
+  {
+    id: "LocationTaxVersion.confirmedByInternalUserId",
+    kind: "composite-fk-candidate",
+    model: "LocationTaxVersion",
+    column: "confirmedByInternalUserId",
+    target: "InternalUser",
+    nullable: true,
+    hasForeignKey: true,
+    onDelete: "Restrict",
+    tenantEnforced: true,
+  },
+  {
+    id: "LocationTaxComponent.versionId",
+    kind: "composite-fk-candidate",
+    model: "LocationTaxComponent",
+    column: "versionId",
+    target: "LocationTaxVersion",
+    nullable: false,
+    hasForeignKey: true,
+    onDelete: "Restrict",
+    tenantEnforced: true,
+  },
+  {
+    id: "LocationTaxComponentClass.componentId",
+    kind: "composite-fk-candidate",
+    model: "LocationTaxComponentClass",
+    column: "componentId",
+    target: "LocationTaxComponent",
+    nullable: false,
+    hasForeignKey: true,
+    onDelete: "Restrict",
+    tenantEnforced: true,
+  },
+  {
+    id: "LocationTaxComponentClass.taxClassId",
+    kind: "composite-fk-candidate",
+    model: "LocationTaxComponentClass",
+    column: "taxClassId",
+    target: "TaxClass",
+    nullable: false,
+    hasForeignKey: true,
+    onDelete: "Restrict",
+    tenantEnforced: true,
+  },
   {
     id: 'Product.categoryId',
     kind: 'composite-fk-candidate',
@@ -1618,6 +1702,8 @@ const AUDIT_TARGETS = {
   order: 'Order',
   product: 'Product',
   promotion: 'Promotion',
+  // V1 Sales Tax PR 1 — tax class created / renamed.
+  tax_class: 'TaxClass',
 } as const satisfies Record<string, TenantOwnedModel>;
 
 const OUTBOX_AGGREGATES = {

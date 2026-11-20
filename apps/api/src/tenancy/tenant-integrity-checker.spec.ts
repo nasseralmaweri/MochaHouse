@@ -443,8 +443,9 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
     expect(report.warnings).toBe(0);
     // ESP-03 PR 8 added FinancialHold (5 composite foreign keys); ESP-04 M1
     // TenantPaymentAccount (1); ESP-04 M5a PaymentRefund (4) and
-    // PaymentRefundEvent (2).
-    expect(report.relationshipsChecked).toBe(129);
+    // PaymentRefundEvent (2); V1 Sales Tax PR 1 tax classes and location
+    // tax settings (7).
+    expect(report.relationshipsChecked).toBe(136);
     expect(report.verdict).toBe('clean');
     expect(report.uncheckedRows).toBe(0);
     // Only the documented by-design exclusions, none holding unchecked rows.
@@ -730,8 +731,9 @@ describe('Tenant relationship integrity checker (Security 4C-1)', () => {
       expect(report.byKind).toEqual({
         'composite-fk-candidate': {
           // ESP-04 M5a added 6 (PaymentRefund, PaymentRefundEvent).
-          relationships: 115,
-          checked: 115,
+          // V1 Sales Tax PR 1 added 7 (tax classes, location tax settings).
+          relationships: 122,
+          checked: 122,
           violations: 8,
           warnings: 0,
         },

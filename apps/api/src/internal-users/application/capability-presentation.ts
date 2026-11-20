@@ -367,6 +367,13 @@ const WORDING: Record<InternalPermissionKey, PermissionWording> = {
     effectiveScoped: "Connect the restaurant's Stripe account (owner)",
     definition: "Connect the restaurant's Stripe account (owner)",
   },
+  // V1 Sales Tax PR 1 — the business's sales tax settings.
+  'tax.manage': {
+    group: 'Sales Tax',
+    effectiveAll: 'Manage and confirm sales tax settings (owner)',
+    effectiveScoped: 'Manage and confirm sales tax settings (owner)',
+    definition: 'Manage and confirm sales tax settings (owner)',
+  },
 };
 
 const GROUP_ORDER = [
@@ -387,6 +394,7 @@ const GROUP_ORDER = [
   'Reports',
   'Billing',
   'Payments',
+  'Sales Tax',
   'Administration',
 ];
 
@@ -439,6 +447,7 @@ const KEY_DISPLAY_ORDER: InternalPermissionKey[] = [
   'billing.view',
   'billing.manage',
   'payments.connect',
+  'tax.manage',
   'users.view',
   'roles.view',
   'audit.view',

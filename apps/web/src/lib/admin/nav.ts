@@ -255,6 +255,12 @@ export function adminNavItems(
     items.push({ key: "payments", label: "Payments", href: "/admin/payments" });
   }
 
+  // V1 Sales Tax PR 1 — the business's sales tax settings (tax.manage: the
+  // authorized administrator). The page and the API re-check.
+  if (can(capabilities, "tax.manage")) {
+    items.push({ key: "tax", label: "Sales tax", href: "/admin/tax" });
+  }
+
   return items;
 }
 

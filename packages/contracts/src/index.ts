@@ -623,6 +623,16 @@ export interface AdminGettingStartedResponse {
   // routing (SC4f): its online ordering can be on, but customers cannot reach
   // it yet.
   storefrontLive: boolean;
+  // V1 Sales Tax PR 1 — how many of the business's locations have confirmed
+  // sales tax settings. Informational only: it is NOT a step, does not count
+  // towards setupComplete and does not block online ordering or checkout
+  // (tax enforcement arrives with tax calculation).
+  salesTax: GettingStartedSalesTax;
+}
+
+export interface GettingStartedSalesTax {
+  totalLocations: number;
+  confirmedLocations: number;
 }
 
 // 409 from PATCH /api/v1/admin/locations/:id/digital-ordering when online
@@ -4337,6 +4347,12 @@ export const INTERNAL_PERMISSION_KEYS = [
   // (owner) role; the API also requires that role. Never anything about
   // CENTERIVO subscription billing.
   "payments.connect",
+  // V1 Sales Tax PR 1 — the business's sales tax settings: tax classes,
+  // category / product classification and each location's versioned tax
+  // rules, including confirming them. Corporate-only and held only by the
+  // built-in administrator (owner) role; the API also requires that role.
+  // Store Managers never hold it.
+  "tax.manage",
 ] as const;
 
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -4507,6 +4523,7 @@ export const PERMISSION_MODULE: Readonly<
   "billing.view": "core",
   "billing.manage": "core",
   "payments.connect": "core",
+  "tax.manage": "core",
   "operations.view": "operations",
   "operations.tasks.complete": "operations",
   "operations.checklists.configure": "operations",
@@ -5007,6 +5024,12 @@ export const INTERNAL_PERMISSION_METADATA: Record<
     key: "payments.connect",
     description:
       "Connect and manage the restaurant's own Stripe account for customer payments (owner only). A corporate capability.",
+    allowedScopeTypes: ["CORPORATE"],
+  },
+  "tax.manage": {
+    key: "tax.manage",
+    description:
+      "Manage and confirm the business's sales tax settings: tax classes, category and product classification, and each location's tax rates (owner only). A corporate capability.",
     allowedScopeTypes: ["CORPORATE"],
   },
 };
@@ -7858,3 +7881,213 @@ export const PAYMENT_ACCOUNT_OWNER_ONLY = "PAYMENT_ACCOUNT_OWNER_ONLY";
 // An earlier account request was never completed and is past the provider's
 // idempotency window: support checks it (never a silent second account).
 export const PAYMENT_ACCOUNT_NEEDS_SUPPORT = "PAYMENT_ACCOUNT_NEEDS_SUPPORT";
+
+// --- V1 Sales Tax PR 1: tax settings and configuration ----------------------
+// Built-in, per-location sales tax rules. Served only from the guarded
+// `/api/v1/admin/tax/*` routes (InternalAuthGuard + PermissionGuard +
+// `tax.manage` at corporate scope + the business's built-in administrator
+// role). Nothing here changes an order total, payment, refund or report:
+// tax calculation arrives in a later change.
+//
+// Rates are exact: a rate is an integer number of parts per million of the
+// price (`ratePpm`: 6% = 60000, 6.25% = 62500). Staff type a percentage with
+// at most 4 decimal places ("6.25"); it is parsed as a string, digit by digit
+// — never through a floating-point number.
+
+export const TAX_CLASS_SYSTEM_KEYS = ["PREPARED_FOOD"] as const;
+export type TaxClassSystemKey = (typeof TAX_CLASS_SYSTEM_KEYS)[number];
+
+// The name of the business's default class, created on first use.
+export const DEFAULT_TAX_CLASS_NAME = "Prepared Food";
+
+export const TAX_JURISDICTIONS = ["STATE", "COUNTY", "CITY", "SPECIAL"] as const;
+export type TaxJurisdiction = (typeof TAX_JURISDICTIONS)[number];
+
+export const TAX_VERSION_STATUSES = [
+  "DRAFT",
+  "CONFIRMED",
+  "SUPERSEDED",
+] as const;
+export type TaxVersionStatus = (typeof TAX_VERSION_STATUSES)[number];
+
+// Limits (the database enforces the same).
+export const TAX_CLASS_NAME_MAX = 60;
+export const TAX_COMPONENT_NAME_MAX = 80;
+export const TAX_COMPONENTS_MAX = 10;
+export const TAX_RATE_PPM_MAX = 250_000; // 25%
+export const TAX_RATE_DECIMALS_MAX = 4;
+
+export interface AdminTaxClass {
+  id: string;
+  name: string;
+  // True for the business's default class (Prepared Food).
+  isDefault: boolean;
+}
+
+export interface AdminTaxCategory {
+  id: string;
+  name: string;
+  isActive: boolean;
+  // The class its products are taxed as (the default class until reviewed).
+  taxClassId: string;
+  // False until an authorized administrator explicitly classifies it.
+  reviewed: boolean;
+}
+
+export interface AdminTaxProduct {
+  id: string;
+  name: string;
+  isActive: boolean;
+  categoryId: string;
+  // The product's own override, or null to use its category's class.
+  overrideTaxClassId: string | null;
+}
+
+export type LocationTaxState = "NOT_SET" | "DRAFT" | "CONFIRMED";
+
+export interface AdminTaxLocationSummary {
+  id: string;
+  name: string;
+  // NOT_SET: nothing confirmed and no draft; DRAFT: a draft, nothing
+  // confirmed yet; CONFIRMED: confirmed settings (perhaps also a draft).
+  state: LocationTaxState;
+  hasDraft: boolean;
+  confirmedVersion: number | null;
+  confirmedAt: string | null;
+  // Sum of the confirmed rates that apply to the default class, in ppm.
+  confirmedDefaultRatePpm: number | null;
+}
+
+// GET /api/v1/admin/tax/settings
+export interface AdminTaxSettingsResponse {
+  classes: AdminTaxClass[];
+  categories: AdminTaxCategory[];
+  products: AdminTaxProduct[];
+  locations: AdminTaxLocationSummary[];
+  // Active categories not yet explicitly classified: confirmation is
+  // refused while this is above zero.
+  unreviewedActiveCategories: number;
+  // Always false in V1: menu prices exclude tax.
+  pricesIncludeTax: false;
+  // Informational in PR 1: confirmed settings are not yet applied to orders.
+  taxCollectionEnabled: false;
+}
+
+export interface AdminTaxComponent {
+  id: string;
+  name: string;
+  jurisdiction: TaxJurisdiction;
+  ratePpm: number;
+  // The same rate as a percentage string, exactly ("6.25").
+  ratePercent: string;
+  taxClassIds: string[];
+}
+
+export interface AdminTaxVersion {
+  id: string;
+  version: number;
+  status: TaxVersionStatus;
+  source: "BUILT_IN";
+  pricesIncludeTax: false;
+  components: AdminTaxComponent[];
+  createdAt: string;
+  // Changes whenever the draft is saved: confirming requires the value the
+  // administrator reviewed, so a draft changed elsewhere is never confirmed
+  // unseen.
+  updatedAt: string;
+  confirmedAt: string | null;
+  confirmedByName: string | null;
+  supersededAt: string | null;
+}
+
+// GET /api/v1/admin/tax/locations/:locationId (and the result of every
+// location write).
+export interface AdminLocationTaxResponse {
+  location: { id: string; name: string; region: string | null };
+  classes: AdminTaxClass[];
+  confirmed: AdminTaxVersion | null;
+  draft: AdminTaxVersion | null;
+  // Every earlier (superseded) version, newest first.
+  history: AdminTaxVersion[];
+  unreviewedActiveCategories: number;
+}
+
+// POST /api/v1/admin/tax/classes, PATCH /api/v1/admin/tax/classes/:id
+export interface SaveTaxClassRequest {
+  name: string;
+}
+
+// PUT /api/v1/admin/tax/categories/:categoryId — an explicit review.
+export interface SetCategoryTaxClassRequest {
+  taxClassId: string;
+}
+
+// PUT /api/v1/admin/tax/products/:productId — null clears the override.
+export interface SetProductTaxClassRequest {
+  taxClassId: string | null;
+}
+
+export interface TaxComponentInput {
+  name: string;
+  jurisdiction: TaxJurisdiction;
+  // A percentage string: "6", "6.25", "0.0125" (at most 4 decimals).
+  ratePercent: string;
+  taxClassIds: string[];
+}
+
+// PUT /api/v1/admin/tax/locations/:locationId/draft — replaces the draft's
+// taxes (creating the draft when there is none).
+export interface SaveLocationTaxDraftRequest {
+  components: TaxComponentInput[];
+}
+
+// POST /api/v1/admin/tax/locations/:locationId/draft/confirm
+export interface ConfirmLocationTaxDraftRequest {
+  draftId: string;
+  // The draft's updatedAt as shown to the administrator.
+  draftUpdatedAt: string;
+}
+
+// Refusal codes.
+export const TAX_SETTINGS_OWNER_ONLY = "TAX_SETTINGS_OWNER_ONLY";
+export const TAX_CATEGORIES_UNREVIEWED = "TAX_CATEGORIES_UNREVIEWED";
+export const TAX_DRAFT_CHANGED = "TAX_DRAFT_CHANGED";
+export const TAX_CLASS_NAME_TAKEN = "TAX_CLASS_NAME_TAKEN";
+
+export type TaxRateParseResult =
+  | { ok: true; ratePpm: number }
+  | { ok: false; error: string };
+
+// "6.25" -> 62500 parts per million. Digits only, at most 4 decimal places,
+// above 0 and at most 25. Integer arithmetic on the digits — never a float.
+export function parseTaxRatePercent(input: unknown): TaxRateParseResult {
+  if (typeof input !== "string") {
+    return { ok: false, error: "Enter the rate as a percentage, like 6 or 6.25." };
+  }
+  const value = input.trim().replace(/%$/, "").trim();
+  const match = /^(\d{1,3})(?:\.(\d{1,4}))?$/.exec(value);
+  if (!match) {
+    return {
+      ok: false,
+      error: `Enter the rate as a percentage with at most ${TAX_RATE_DECIMALS_MAX} decimal places, like 6 or 6.25.`,
+    };
+  }
+  const whole = Number.parseInt(match[1]!, 10);
+  const fraction = Number.parseInt((match[2] ?? "").padEnd(TAX_RATE_DECIMALS_MAX, "0"), 10);
+  const ratePpm = whole * 10_000 + fraction;
+  if (ratePpm <= 0) return { ok: false, error: "The rate must be above 0%." };
+  if (ratePpm > TAX_RATE_PPM_MAX) {
+    return { ok: false, error: "The rate cannot be above 25%." };
+  }
+  return { ok: true, ratePpm };
+}
+
+// 62500 -> "6.25" (exact; trailing zeros dropped).
+export function formatTaxRatePpm(ratePpm: number): string {
+  if (!Number.isSafeInteger(ratePpm) || ratePpm < 0) {
+    throw new RangeError("A tax rate is a non-negative whole number of parts per million.");
+  }
+  const whole = Math.floor(ratePpm / 10_000);
+  const fraction = String(ratePpm % 10_000).padStart(TAX_RATE_DECIMALS_MAX, "0").replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : String(whole);
+}

@@ -26,6 +26,20 @@ export const ROUTE_INVENTORY: Record<string, RouteClassification> = {
   'GET /api/v1/admin/payments/account': { scope: 'tenant' },
   'POST /api/v1/admin/payments/account/onboarding': { scope: 'tenant' },
   'POST /api/v1/admin/payments/account/refresh': { scope: 'tenant' },
+  // V1 Sales Tax PR 1 — sales tax settings (authorized administrator only).
+  'GET /api/v1/admin/tax/settings': { scope: 'tenant' },
+  'POST /api/v1/admin/tax/classes': { scope: 'tenant' },
+  'PATCH /api/v1/admin/tax/classes/:taxClassId': { scope: 'tenant' },
+  'PUT /api/v1/admin/tax/categories/:categoryId': { scope: 'tenant' },
+  'PUT /api/v1/admin/tax/products/:productId': { scope: 'tenant' },
+  'GET /api/v1/admin/tax/locations/:locationId': { scope: 'tenant' },
+  'PUT /api/v1/admin/tax/locations/:locationId/draft': { scope: 'tenant' },
+  'DELETE /api/v1/admin/tax/locations/:locationId/draft': {
+    scope: 'tenant',
+  },
+  'POST /api/v1/admin/tax/locations/:locationId/draft/confirm': {
+    scope: 'tenant',
+  },
   'POST /api/v1/admin/billing/recovery/invoice': { scope: 'tenant' },
   'POST /api/v1/admin/billing/recovery/portal': { scope: 'tenant' },
   // SC3d-1 — plan change preview (nothing charged or changed).

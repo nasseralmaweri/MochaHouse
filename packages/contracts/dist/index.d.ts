@@ -198,6 +198,11 @@ export interface AdminGettingStartedResponse {
     locationId: string | null;
     menuId: string | null;
     storefrontLive: boolean;
+    salesTax: GettingStartedSalesTax;
+}
+export interface GettingStartedSalesTax {
+    totalLocations: number;
+    confirmedLocations: number;
 }
 export declare const LOCATION_ORDERING_NOT_READY = "LOCATION_ORDERING_NOT_READY";
 export interface LocationOrderingNotReadyBody {
@@ -2057,7 +2062,7 @@ export interface AdminUpdateInternalUserStatusRequest {
     status: "ACTIVE" | "SUSPENDED" | "DISABLED";
     reason: string;
 }
-export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "orders.cancel", "orders.refund", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.create", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "notifications.routing.view", "notifications.routing.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide", "reports.view", "billing.view", "billing.manage", "payments.connect"];
+export declare const INTERNAL_PERMISSION_KEYS: readonly ["orders.view", "orders.manage_status", "orders.cancel", "orders.refund", "catalog.products.edit", "catalog.menu.manage", "catalog.overrides.manage", "catalog.view", "locations.view", "locations.edit", "locations.create", "locations.manage_digital_ordering", "users.view", "roles.view", "users.manage_status", "users.manage_roles", "audit.view", "platform.view", "operations.view", "operations.tasks.complete", "operations.checklists.configure", "operations.exceptions.manage", "loyalty.view", "loyalty.adjust", "loyalty.configure", "promotions.configure", "giftcards.view", "giftcards.manage", "giftcards.configure", "customers.view", "customers.notes.manage", "careers.view", "careers.manage", "applicants.view", "applicants.manage", "franchising.view", "franchising.manage", "notifications.routing.view", "notifications.routing.manage", "cms.view", "cms.manage", "media.view", "media.manage", "marketing.view", "marketing.manage", "approvals.view", "approvals.decide", "reports.view", "billing.view", "billing.manage", "payments.connect", "tax.manage"];
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 export interface BuiltInInternalRole {
     key: string;
@@ -3614,4 +3619,122 @@ export interface AdminPaymentOnboardingResponse {
 export declare const PAYMENTS_PROVIDER_UNAVAILABLE = "PAYMENTS_PROVIDER_UNAVAILABLE";
 export declare const PAYMENT_ACCOUNT_OWNER_ONLY = "PAYMENT_ACCOUNT_OWNER_ONLY";
 export declare const PAYMENT_ACCOUNT_NEEDS_SUPPORT = "PAYMENT_ACCOUNT_NEEDS_SUPPORT";
+export declare const TAX_CLASS_SYSTEM_KEYS: readonly ["PREPARED_FOOD"];
+export type TaxClassSystemKey = (typeof TAX_CLASS_SYSTEM_KEYS)[number];
+export declare const DEFAULT_TAX_CLASS_NAME = "Prepared Food";
+export declare const TAX_JURISDICTIONS: readonly ["STATE", "COUNTY", "CITY", "SPECIAL"];
+export type TaxJurisdiction = (typeof TAX_JURISDICTIONS)[number];
+export declare const TAX_VERSION_STATUSES: readonly ["DRAFT", "CONFIRMED", "SUPERSEDED"];
+export type TaxVersionStatus = (typeof TAX_VERSION_STATUSES)[number];
+export declare const TAX_CLASS_NAME_MAX = 60;
+export declare const TAX_COMPONENT_NAME_MAX = 80;
+export declare const TAX_COMPONENTS_MAX = 10;
+export declare const TAX_RATE_PPM_MAX = 250000;
+export declare const TAX_RATE_DECIMALS_MAX = 4;
+export interface AdminTaxClass {
+    id: string;
+    name: string;
+    isDefault: boolean;
+}
+export interface AdminTaxCategory {
+    id: string;
+    name: string;
+    isActive: boolean;
+    taxClassId: string;
+    reviewed: boolean;
+}
+export interface AdminTaxProduct {
+    id: string;
+    name: string;
+    isActive: boolean;
+    categoryId: string;
+    overrideTaxClassId: string | null;
+}
+export type LocationTaxState = "NOT_SET" | "DRAFT" | "CONFIRMED";
+export interface AdminTaxLocationSummary {
+    id: string;
+    name: string;
+    state: LocationTaxState;
+    hasDraft: boolean;
+    confirmedVersion: number | null;
+    confirmedAt: string | null;
+    confirmedDefaultRatePpm: number | null;
+}
+export interface AdminTaxSettingsResponse {
+    classes: AdminTaxClass[];
+    categories: AdminTaxCategory[];
+    products: AdminTaxProduct[];
+    locations: AdminTaxLocationSummary[];
+    unreviewedActiveCategories: number;
+    pricesIncludeTax: false;
+    taxCollectionEnabled: false;
+}
+export interface AdminTaxComponent {
+    id: string;
+    name: string;
+    jurisdiction: TaxJurisdiction;
+    ratePpm: number;
+    ratePercent: string;
+    taxClassIds: string[];
+}
+export interface AdminTaxVersion {
+    id: string;
+    version: number;
+    status: TaxVersionStatus;
+    source: "BUILT_IN";
+    pricesIncludeTax: false;
+    components: AdminTaxComponent[];
+    createdAt: string;
+    updatedAt: string;
+    confirmedAt: string | null;
+    confirmedByName: string | null;
+    supersededAt: string | null;
+}
+export interface AdminLocationTaxResponse {
+    location: {
+        id: string;
+        name: string;
+        region: string | null;
+    };
+    classes: AdminTaxClass[];
+    confirmed: AdminTaxVersion | null;
+    draft: AdminTaxVersion | null;
+    history: AdminTaxVersion[];
+    unreviewedActiveCategories: number;
+}
+export interface SaveTaxClassRequest {
+    name: string;
+}
+export interface SetCategoryTaxClassRequest {
+    taxClassId: string;
+}
+export interface SetProductTaxClassRequest {
+    taxClassId: string | null;
+}
+export interface TaxComponentInput {
+    name: string;
+    jurisdiction: TaxJurisdiction;
+    ratePercent: string;
+    taxClassIds: string[];
+}
+export interface SaveLocationTaxDraftRequest {
+    components: TaxComponentInput[];
+}
+export interface ConfirmLocationTaxDraftRequest {
+    draftId: string;
+    draftUpdatedAt: string;
+}
+export declare const TAX_SETTINGS_OWNER_ONLY = "TAX_SETTINGS_OWNER_ONLY";
+export declare const TAX_CATEGORIES_UNREVIEWED = "TAX_CATEGORIES_UNREVIEWED";
+export declare const TAX_DRAFT_CHANGED = "TAX_DRAFT_CHANGED";
+export declare const TAX_CLASS_NAME_TAKEN = "TAX_CLASS_NAME_TAKEN";
+export type TaxRateParseResult = {
+    ok: true;
+    ratePpm: number;
+} | {
+    ok: false;
+    error: string;
+};
+export declare function parseTaxRatePercent(input: unknown): TaxRateParseResult;
+export declare function formatTaxRatePpm(ratePpm: number): string;
 //# sourceMappingURL=index.d.ts.map
