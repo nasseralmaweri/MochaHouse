@@ -14,6 +14,7 @@ import {
   hasCredentialParams,
 } from "@/lib/guest-link";
 import { formatPrice } from "@/lib/money";
+import { orderTaxLines } from "@/lib/checkout/tax";
 import {
   PollingController,
   browserPollingEnv,
@@ -308,6 +309,15 @@ function OrderTracking({ orderId }: { orderId: string }) {
               <span>−{formatPrice(status.rewardDiscount, status.currency)}</span>
             </div>
           ) : null}
+          {orderTaxLines(status.taxMinorUnits, status.tax).map((taxLine) => (
+            <div
+              key={taxLine.label}
+              className="flex items-center justify-between text-sm text-text-secondary"
+            >
+              <span>{taxLine.label}</span>
+              <span>{formatPrice(taxLine.amountMinorUnits, status.currency)}</span>
+            </div>
+          ))}
           <div className="flex items-center justify-between">
             <span
               className={`text-sm ${

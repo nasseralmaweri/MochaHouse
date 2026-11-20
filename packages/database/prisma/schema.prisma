@@ -91,6 +91,8 @@ model Tenant {
   locationTaxVersions                  LocationTaxVersion[]
   locationTaxComponents                LocationTaxComponent[]
   locationTaxComponentClasses          LocationTaxComponentClass[]
+  // V1 Sales Tax PR 2 — each taxed order's immutable tax snapshot.
+  orderTaxSnapshots                    OrderTaxSnapshot[]
   orders                               Order[]
   orderLines                           OrderLine[]
   orderStatusHistories                 OrderStatusHistory[]
@@ -1780,6 +1782,14 @@ model Order {
   // remainder (`PaymentAttempt.amount`) is charged externally. The immutable
   // snapshot lives on OrderGiftCardRedemption.
   giftCardTenderMinorUnits    Int    @default(0)
+  // V1 Sales Tax PR 2 — the sales tax charged on this order, in integer minor
+  // units (CHECK >= 0, never changed after the order is created: trigger).
+  // 0 for every order created before sales tax and for an order at a
+  // confirmed zero-tax location. The amount owed is
+  // `subtotal - promotionDiscountMinorUnits - rewardDiscountMinorUnits +
+  // taxMinorUnits`; a gift card and the external payment pay it together.
+  // A taxed order always has its OrderTaxSnapshot (deferred trigger).
+  taxMinorUnits               Int    @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1799,6 +1809,9 @@ model Order {
   // only by the closure workflow updating an existing order.
   closure                 OrderClosure?
   refundObligation        OrderRefundObligation?
+  // V1 Sales Tax PR 2 — the immutable tax snapshot (orders created with
+  // sales tax enabled only; never for an order created before it).
+  taxSnapshot             OrderTaxSnapshot?
   // ESP-04 M5a — the card refunds of this order's payment.
   refunds                 PaymentRefund[]
 
@@ -4992,7 +5005,9 @@ model LocationTaxVersion {
   createdAt                 DateTime      @default(now())
   updatedAt                 DateTime      @updatedAt
 
-  components LocationTaxComponent[]
+  components        LocationTaxComponent[]
+  // V1 Sales Tax PR 2 — the orders taxed under this version.
+  orderTaxSnapshots OrderTaxSnapshot[]
 
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -5041,5 +5056,51 @@ model LocationTaxComponentClass {
 
   @@id([componentId, taxClassId])
   @@index([tenantId, taxClassId])
+  @@index([tenantId])
+}
+
+// --- V1 Sales Tax PR 2: the order's tax snapshot ----------------------------
+// Written once, in the order's own transaction, from the frozen checkout the
+// customer was charged for; never updated or deleted (trigger). The columns
+// are the reconciled totals (CHECKs tie them together, and an insert trigger
+// ties them to the order's own amounts); `detail` is the complete
+// calculation: every tax component with its rate, classes, taxable amount
+// and tax, every line's tax class, discount allocations, taxable amount and
+// tax per component.
+model OrderTaxSnapshot {
+  id                       String             @id @default(uuid(7))
+  orderId                  String             @unique
+  order                    Order              @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  // The confirmed location tax version the tax was calculated with.
+  locationTaxVersionId     String
+  locationTaxVersion       LocationTaxVersion @relation(fields: [tenantId, locationTaxVersionId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  taxVersion               Int
+  // BUILT_IN (CHECK); a future tax provider is a new value.
+  source                   String
+  // Always false in V1 (CHECK).
+  pricesIncludeTax         Boolean            @default(false)
+  // Calculation format version of `detail` (CHECK: 1).
+  calculationVersion       Int                @default(1)
+  currency                 String
+  merchandiseSubtotal      Int
+  // Store-funded discounts (promotion / coupon and Mocha Bean reward)
+  // applied before tax.
+  discountMinorUnits       Int
+  taxableMinorUnits        Int
+  taxMinorUnits            Int
+  // merchandiseSubtotal - discountMinorUnits + taxMinorUnits (CHECK).
+  totalMinorUnits          Int
+  giftCardTenderMinorUnits Int
+  // totalMinorUnits - giftCardTenderMinorUnits (CHECK): the external charge.
+  chargedMinorUnits        Int
+  detail                   Json
+  createdAt                DateTime           @default(now())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, orderId])
+  @@index([tenantId, locationTaxVersionId])
   @@index([tenantId])
 }

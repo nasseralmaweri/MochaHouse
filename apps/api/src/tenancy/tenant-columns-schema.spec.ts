@@ -27,12 +27,12 @@ describe('S0D-1 tenant columns — schema introspection', () => {
     await moduleRef.close();
   });
 
-  it('covers exactly the 81 tenant-owned models', () => {
+  it('covers exactly the 82 tenant-owned models', () => {
     // ESP-03 PR 8 added FinancialHold; ESP-04 M1 TenantPaymentAccount;
     // ESP-04 M5a PaymentRefund and PaymentRefundEvent; V1 Sales Tax PR 1
     // TaxClass, LocationTaxVersion, LocationTaxComponent and
-    // LocationTaxComponentClass.
-    expect(tenantTables).toHaveLength(81);
+    // LocationTaxComponentClass; V1 Sales Tax PR 2 OrderTaxSnapshot.
+    expect(tenantTables).toHaveLength(82);
     expect(tenantTables).not.toContain('Tenant');
   });
 

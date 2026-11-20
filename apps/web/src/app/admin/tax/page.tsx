@@ -3,7 +3,7 @@ import { getInternalSession } from "@/lib/internal-auth/session";
 import { can } from "@/lib/admin/capabilities";
 import { getAdminTaxSettings } from "@/lib/internal-auth/admin-tax";
 import {
-  TAX_PAGE_NOTE,
+  taxPageNote,
   locationTaxStateLabel,
   ratePercentLabel,
 } from "@/lib/admin/tax";
@@ -60,7 +60,7 @@ export default async function AdminTaxPage() {
         role="status"
         className="rounded-lg bg-surface-subtle px-3 py-2 text-sm text-text-primary"
       >
-        {TAX_PAGE_NOTE}
+        {taxPageNote(settings.taxCollectionEnabled)}
       </p>
 
       <AdminSection

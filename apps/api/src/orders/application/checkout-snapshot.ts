@@ -4,6 +4,10 @@ import type { GiftCardTenderPlan } from '../../gift-cards/application/gift-card-
 import type { RegularDiscountPlan } from '../../promotions/application/promotion-checkout.service';
 import type { RedemptionPlan } from '../../loyalty/application/loyalty-redemption.service';
 import type { LoyaltyBonusPlan } from '../../loyalty/application/loyalty-bonus.service';
+import {
+  isFrozenTax,
+  type FrozenTax,
+} from '../../tax/application/checkout-tax';
 
 // ESP-03 PR 4 — the saved checkout (CheckoutSnapshot.payload, version 1).
 //
@@ -184,6 +188,10 @@ function isGiftCardPlan(
 
 export const LEGACY_CHECKOUT_SNAPSHOT_VERSION = 1;
 export const FROZEN_CHECKOUT_SNAPSHOT_VERSION = 2;
+// V1 Sales Tax PR 2 — the frozen checkout with its sales tax (written only
+// while sales tax is on). Version 2 checkouts carry no tax and are fulfilled
+// exactly as before.
+export const TAXED_CHECKOUT_SNAPSHOT_VERSION = 3;
 
 export interface FrozenLine {
   productId: string;
@@ -209,10 +217,14 @@ export interface FrozenCheckout {
   rewardPlan: RedemptionPlan | null;
   // null when nothing is earned (a guest, or loyalty not in the plan).
   loyalty: { earnBeans: number; bonus: LoyaltyBonusPlan | null } | null;
+  // V1 Sales Tax PR 2 — version 3 only: the frozen tax calculation.
+  tax?: FrozenTax;
   totals: {
     subtotal: number;
     promotionDiscount: number;
     rewardDiscount: number;
+    // Version 3 only: the sales tax included in what is owed.
+    tax?: number;
     giftCardTender: number;
     charge: number;
   };
@@ -232,6 +244,8 @@ export function freezeCheckout(input: {
   giftCardTender: number;
   charge: number;
   loyalty: FrozenCheckout['loyalty'];
+  // V1 Sales Tax PR 2 — present only while sales tax is on (version 3).
+  tax?: FrozenTax | null;
 }): FrozenCheckout {
   return {
     currency: input.currency,
@@ -257,10 +271,12 @@ export function freezeCheckout(input: {
     regularPlan: input.regularPlan ? { ...input.regularPlan } : null,
     rewardPlan: input.rewardPlan ? { ...input.rewardPlan } : null,
     loyalty: input.loyalty,
+    ...(input.tax ? { tax: input.tax } : {}),
     totals: {
       subtotal: input.subtotal,
       promotionDiscount: input.regularPlan?.discountMinorUnits ?? 0,
       rewardDiscount: input.rewardPlan?.discountMinorUnits ?? 0,
+      ...(input.tax ? { tax: input.tax.result.taxMinorUnits } : {}),
       giftCardTender: input.giftCardTender,
       charge: input.charge,
     },
@@ -277,12 +293,26 @@ export function readSavedCheckout(
   if (version === LEGACY_CHECKOUT_SNAPSHOT_VERSION) {
     return readCheckoutSnapshot(version, raw);
   }
-  if (version !== FROZEN_CHECKOUT_SNAPSHOT_VERSION || !isRecord(raw)) {
+  if (
+    (version !== FROZEN_CHECKOUT_SNAPSHOT_VERSION &&
+      version !== TAXED_CHECKOUT_SNAPSHOT_VERSION) ||
+    !isRecord(raw)
+  ) {
     throw new UnreadableCheckoutSnapshotError();
   }
   const { frozen, ...base } = raw;
   const checkout = readCheckoutSnapshot(LEGACY_CHECKOUT_SNAPSHOT_VERSION, base);
   if (!isFrozenCheckout(frozen)) {
+    throw new UnreadableCheckoutSnapshotError();
+  }
+  // Version 2 never carries tax; version 3 always does.
+  const taxed = version === TAXED_CHECKOUT_SNAPSHOT_VERSION;
+  if (
+    taxed !== (frozen.tax !== undefined) ||
+    taxed !== (frozen.totals.tax !== undefined) ||
+    (taxed &&
+      (!isFrozenTax(frozen.tax) || typeof frozen.totals.tax !== 'number'))
+  ) {
     throw new UnreadableCheckoutSnapshotError();
   }
   return { ...checkout, frozen };
@@ -309,11 +339,14 @@ export function verifyFrozenCheckout(
   const fail = (reason: string): never => {
     throw new FrozenCheckoutMismatchError(reason);
   };
+  // V1 Sales Tax PR 2 — the sales tax owed (0 for a version-2 checkout).
+  const tax = f.totals.tax ?? 0;
   const amounts = [
     f.subtotal,
     f.totals.subtotal,
     f.totals.promotionDiscount,
     f.totals.rewardDiscount,
+    tax,
     f.totals.giftCardTender,
     f.totals.charge,
   ];
@@ -347,10 +380,26 @@ export function verifyFrozenCheckout(
   ) {
     fail('gift-card tender');
   }
+  if ((f.tax === undefined) !== (f.totals.tax === undefined)) fail('tax');
+  if (
+    f.tax !== undefined &&
+    (f.tax.result.taxMinorUnits !== tax ||
+      f.tax.result.merchandiseSubtotal !== f.subtotal ||
+      f.tax.result.currency !== f.currency ||
+      f.tax.result.lines.length !== f.lines.length ||
+      f.tax.result.lines.some(
+        (line, i) =>
+          line.productId !== f.lines[i].productId ||
+          line.lineTotal !== f.lines[i].lineTotal,
+      ))
+  ) {
+    fail('tax');
+  }
   if (
     f.subtotal -
       f.totals.promotionDiscount -
-      f.totals.rewardDiscount -
+      f.totals.rewardDiscount +
+      tax -
       f.totals.giftCardTender !==
     f.totals.charge
   ) {

@@ -21,8 +21,12 @@ export const JURISDICTION_LABELS: Record<TaxJurisdiction, string> = {
   SPECIAL: "Special district",
 };
 
-export const TAX_PAGE_NOTE =
-  "Menu prices don't include tax. These settings are saved for each location but are not added to orders yet — tax collection will be switched on in a later update.";
+// V1 Sales Tax PR 2 — whether checkout charges sales tax now.
+export function taxPageNote(taxCollectionEnabled: boolean): string {
+  return taxCollectionEnabled
+    ? "Menu prices don't include tax. Checkout adds each location's confirmed sales tax to every order. A location without confirmed settings can't take online orders."
+    : "Menu prices don't include tax. These settings are saved for each location but are not added to orders yet — tax collection will be switched on in a later update.";
+}
 
 export function locationTaxStateLabel(
   summary: Pick<AdminTaxLocationSummary, "state" | "hasDraft">,

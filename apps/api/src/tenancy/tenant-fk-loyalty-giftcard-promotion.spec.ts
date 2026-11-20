@@ -25,7 +25,7 @@ import {
   type MigrationProject,
   type ScratchDatabase,
 } from '@mocha-house/testing';
-import { dataChecksum } from './historical-state';
+import { createOrderOnOlderSchema, dataChecksum } from './historical-state';
 
 // Security 4C-4 — PostgreSQL-enforced tenant isolation for loyalty, gift
 // cards and promotions:
@@ -533,20 +533,16 @@ async function loadBusiness(prisma: PrismaClient, tag: Tag) {
     ['order-4', 'pay-4', null],
   ];
   for (const [name, pay, customer] of orders) {
-    await prisma.order.create({
-      data: {
-        id: i(name),
-        tenantId,
-        orderNumber: i(name),
-        accessToken: i(`${name}-token`),
-        locationId: i('location'),
-        customerId: customer ? i(customer) : null,
-        paymentAttemptId: i(pay),
-        guestName: 'Fictional Guest',
-        guestPhone: '5550000000',
-        currency: 'USD',
-        subtotal: 500,
-      },
+    // Original columns only: an older-migration database lacks later ones.
+    await createOrderOnOlderSchema(prisma, {
+      id: i(name),
+      tenantId,
+      orderNumber: i(name),
+      accessToken: i(`${name}-token`),
+      locationId: i('location'),
+      customerId: customer ? i(customer) : null,
+      paymentAttemptId: i(pay),
+      subtotal: 500,
     });
   }
   for (const name of ['reward', 'reward-2']) {

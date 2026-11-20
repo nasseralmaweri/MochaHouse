@@ -73,10 +73,13 @@ checkout are never blocked by it in PR 1.
 `packages/database/prisma/rollbacks/20261202090000_tax_settings.down.sql`
 (never automatic). It refuses while any confirmed version exists.
 
-## Later PRs (not in this change)
+## Later PRs
 
-PR 2: tax calculation at checkout, order-level and line-level tax snapshots
-that reconcile exactly, store-funded vs third-party-funded discounts, and
-enforcement of confirmed settings. PR 3: item refunds that preserve the
-original tax amounts (no automatic proportional reversal for arbitrary
-monetary refunds) and tax reporting. Historical orders stay unchanged.
+PR 2 (done, see [sales-tax-checkout.md](sales-tax-checkout.md)): tax
+calculation at checkout behind `SALES_TAX_ENABLED`, order snapshots that
+reconcile exactly, enforcement of confirmed settings, and the zero-tax
+acknowledgement (`acknowledgeNoTax`, recorded in the audit history).
+
+PR 3: item refunds that preserve the original tax amounts (no automatic
+proportional reversal for arbitrary monetary refunds) and tax reporting.
+Historical orders stay unchanged.
